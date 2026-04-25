@@ -305,9 +305,10 @@
             '<div class="err" role="alert">' +
             "<strong>No se pudo cargar el Markdown.</strong><p>" +
             msg +
-            "</p><p>Serví la carpeta del proyecto y abrí esta página por HTTP, por ejemplo:</p>" +
-            "<pre><code>cd food-service-agent\npython3 -m http.server 8765</code></pre>" +
-            "<p>Luego abrí <code>http://localhost:8765/index.html</code></p></div>";
+            "</p><p>Si estás abriendo este archivo con <code>file://</code>, el navegador bloquea <code>fetch</code> por seguridad. Usá el mismo servidor que el proyecto:</p>" +
+            "<pre><code>npm run dev</code></pre>" +
+            "<p>Luego abrí <code>http://localhost:&lt;PORT&gt;/docs/pending-features</code> (el <code>PORT</code> sale de tu <code>.env</code>; el arranque lo imprime en consola).</p>" +
+            "<p>Otra opción (cualquier servidor estático sobre la carpeta del repo): <code>npx --yes serve .</code> y abrí <code>/index.html</code>.</p></div>";
         }
 
         marked.setOptions({
@@ -317,7 +318,12 @@
           mangle: false,
         });
 
-        fetch("PENDING-FEATURES.md", { cache: "no-store" })
+        var mdPath =
+          window.location.pathname.indexOf("/docs/pending-features") !== -1
+            ? "/docs/PENDING-FEATURES.md"
+            : "PENDING-FEATURES.md";
+
+        fetch(mdPath, { cache: "no-store" })
           .then(function (res) {
             if (!res.ok) throw new Error(res.status + " " + res.statusText);
             return res.text();

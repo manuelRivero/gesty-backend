@@ -16,6 +16,7 @@
  */
 
 import 'dotenv/config';
+import path from 'node:path';
 import cors from 'cors';
 import express, { type Request, type Response } from 'express';
 
@@ -33,6 +34,9 @@ setInterval(() => {
 }, DRAFT_ORDER_TICK_MS);
 
 const app = express();
+
+/** Raíz del repo (src/ o dist/ → un nivel arriba). Sirve el visor estático del doc de producto. */
+const REPO_ROOT = path.join(__dirname, '..');
 
 const corsOrigins = (env.CORS_ORIGIN ?? 'http://localhost:3000')
   .split(',')
@@ -60,7 +64,21 @@ app.get('/', (_req: Request, res: Response) => {
       'Agente WhatsApp basado en LangGraph (paridad con food-service-backend)',
     mode: env.AGENT_MODE,
     status: 'OK',
+    docs: {
+      pendingFeaturesHtml: `/docs/pending-features`,
+      pendingFeaturesMarkdown: `/docs/PENDING-FEATURES.md`,
+    },
   });
+});
+
+/** Vista HTML de PENDING-FEATURES.md (necesita HTTP; mismo origen que el fetch del .md). */
+app.get('/docs/pending-features', (_req: Request, res: Response) => {
+  res.sendFile(path.join(REPO_ROOT, 'index.html'));
+});
+
+app.get('/docs/PENDING-FEATURES.md', (_req: Request, res: Response) => {
+  res.type('text/markdown; charset=utf-8');
+  res.sendFile(path.join(REPO_ROOT, 'PENDING-FEATURES.md'));
 });
 
 app.get('/health', (_req: Request, res: Response) => {
@@ -113,6 +131,9 @@ const PORT = env.PORT;
 app.listen(PORT, () => {
   console.log(
     `[food-service-agent] listening on http://localhost:${PORT} (mode=${env.AGENT_MODE})`
+  );
+  console.log(
+    `[food-service-agent] pending features doc: http://localhost:${PORT}/docs/pending-features`
   );
 });
 

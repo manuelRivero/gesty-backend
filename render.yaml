@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: food-service-agent
+    env: node
+    rootDir: .
+    buildCommand: npm ci && npm run build
+    startCommand: node dist/index.js
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 22.12.0
