@@ -1,0 +1,25 @@
+{
+  "description": "Texto libre: intención de pedir comida (ORDER_FOOD).",
+  "expectedIntent": "ORDER_FOOD",
+  "payload": {
+    "entry": [
+      {
+        "changes": [
+          {
+            "value": {
+              "metadata": { "phone_number_id": "REPLACE_WHATSAPP_PHONE_ID" },
+              "messages": [
+                {
+                  "from": "REPLACE_CUSTOMER_PHONE",
+                  "type": "text",
+                  "id": "wamid.test-order-001",
+                  "text": { "body": "quiero una hamburguesa con papas" }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

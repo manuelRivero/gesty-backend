@@ -1,0 +1,25 @@
+{
+  "description": "Texto libre: saludo (debería rutear a SMALL_TALK).",
+  "expectedIntent": "SMALL_TALK",
+  "payload": {
+    "entry": [
+      {
+        "changes": [
+          {
+            "value": {
+              "metadata": { "phone_number_id": "REPLACE_WHATSAPP_PHONE_ID" },
+              "messages": [
+                {
+                  "from": "REPLACE_CUSTOMER_PHONE",
+                  "type": "text",
+                  "id": "wamid.test-greeting-001",
+                  "text": { "body": "hola, buenas tardes" }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

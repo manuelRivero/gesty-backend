@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Funcionalidades pendientes · food-service-agent</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #f4f4f2;
+        --paper: #ffffff;
+        --ink: #141414;
+        --muted: #5a5a58;
+        --line: #e2e2de;
+        --accent: #0d6b5c;
+        --accent-soft: rgba(13, 107, 92, 0.08);
+        --radius: 10px;
+        --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
+        --font: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+        --step--1: clamp(0.85rem, 0.82rem + 0.15vw, 0.9rem);
+        --step-0: clamp(0.95rem, 0.9rem + 0.25vw, 1.05rem);
+        --step-1: clamp(1.15rem, 1rem + 0.5vw, 1.35rem);
+        --step-2: clamp(1.35rem, 1.15rem + 0.85vw, 1.65rem);
+        --step-3: clamp(1.6rem, 1.25rem + 1.2vw, 2rem);
+        --space: clamp(1rem, 0.75rem + 1.25vw, 1.75rem);
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        font-family: var(--font);
+        font-size: var(--step-0);
+        line-height: 1.55;
+        color: var(--ink);
+        background: var(--bg);
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .shell {
+        max-width: 46rem;
+        margin: 0 auto;
+        padding: var(--space);
+        padding-bottom: calc(var(--space) * 2);
+      }
+
+      .top {
+        margin-bottom: calc(var(--space) * 1.25);
+      }
+
+      .top__label {
+        font-size: var(--step--1);
+        font-weight: 500;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--muted);
+        margin: 0 0 0.35rem;
+      }
+
+      .top__title {
+        font-size: var(--step-2);
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        line-height: 1.2;
+        margin: 0;
+      }
+
+      .top__meta {
+        margin: 0.6rem 0 0;
+        font-size: var(--step--1);
+        color: var(--muted);
+      }
+
+      .paper {
+        background: var(--paper);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        border: 1px solid var(--line);
+        padding: clamp(1.1rem, 0.9rem + 1vw, 1.75rem) clamp(1rem, 0.65rem + 1.5vw, 2rem);
+      }
+
+      .prose {
+        overflow-wrap: break-word;
+      }
+
+      .prose > *:first-child {
+        margin-top: 0;
+      }
+
+      .prose > *:last-child {
+        margin-bottom: 0;
+      }
+
+      .prose h1 {
+        font-size: var(--step-3);
+        font-weight: 600;
+        letter-spacing: -0.03em;
+        line-height: 1.2;
+        margin: 0 0 0.75rem;
+        padding-bottom: 0.65rem;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .prose h2 {
+        font-size: var(--step-2);
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        margin: 2rem 0 0.65rem;
+        scroll-margin-top: 1rem;
+      }
+
+      .prose h3 {
+        font-size: var(--step-1);
+        font-weight: 600;
+        margin: 1.35rem 0 0.5rem;
+        scroll-margin-top: 1rem;
+      }
+
+      .prose h4 {
+        font-size: 1rem;
+        font-weight: 600;
+        margin: 1rem 0 0.4rem;
+      }
+
+      .prose p,
+      .prose ul,
+      .prose ol {
+        margin: 0.65rem 0;
+        color: var(--ink);
+      }
+
+      .prose ul,
+      .prose ol {
+        padding-left: 1.25rem;
+      }
+
+      .prose li {
+        margin: 0.25rem 0;
+      }
+
+      .prose a {
+        color: var(--accent);
+        text-decoration: none;
+        border-bottom: 1px solid transparent;
+      }
+
+      .prose a:hover {
+        border-bottom-color: currentColor;
+      }
+
+      .prose blockquote {
+        margin: 1rem 0;
+        padding: 0.75rem 1rem;
+        border-left: 3px solid var(--accent);
+        background: var(--accent-soft);
+        border-radius: 0 var(--radius) var(--radius) 0;
+        color: var(--ink);
+      }
+
+      .prose blockquote p {
+        margin: 0;
+      }
+
+      .prose hr {
+        border: none;
+        height: 1px;
+        background: var(--line);
+        margin: 1.75rem 0;
+      }
+
+      .prose code {
+        font-family: ui-monospace, "Cascadia Code", "Source Code Pro", Menlo, monospace;
+        font-size: 0.88em;
+        background: var(--bg);
+        padding: 0.12em 0.35em;
+        border-radius: 4px;
+        border: 1px solid var(--line);
+      }
+
+      .prose pre {
+        margin: 1rem 0;
+        padding: 1rem;
+        background: var(--ink);
+        color: #f0f0ee;
+        border-radius: var(--radius);
+        overflow-x: auto;
+        font-size: var(--step--1);
+        line-height: 1.45;
+      }
+
+      .prose pre code {
+        background: none;
+        border: 0;
+        padding: 0;
+        color: inherit;
+      }
+
+      .prose strong {
+        font-weight: 600;
+      }
+
+      .table-scroll {
+        margin: 1rem -0.25rem;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        border-radius: var(--radius);
+        border: 1px solid var(--line);
+      }
+
+      .prose table {
+        width: 100%;
+        min-width: 32rem;
+        border-collapse: collapse;
+        font-size: var(--step--1);
+      }
+
+      .prose th,
+      .prose td {
+        padding: 0.55rem 0.65rem;
+        text-align: left;
+        vertical-align: top;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .prose th {
+        font-weight: 600;
+        background: var(--bg);
+        white-space: nowrap;
+      }
+
+      .prose tr:last-child td {
+        border-bottom: none;
+      }
+
+      .state {
+        display: inline-block;
+        margin-top: 0.75rem;
+        padding: 0.35rem 0.6rem;
+        font-size: var(--step--1);
+        font-weight: 500;
+        color: var(--muted);
+        background: var(--bg);
+        border-radius: 6px;
+        border: 1px solid var(--line);
+      }
+
+      .err {
+        padding: 1rem 1.25rem;
+        border-radius: var(--radius);
+        background: #fff8f5;
+        border: 1px solid #f0d8ce;
+        color: #5c2e24;
+        font-size: var(--step--1);
+      }
+
+      .err code {
+        font-size: 0.95em;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="top">
+        <p class="top__label">Documentación</p>
+        <h1 class="top__title">Estado del producto</h1>
+        <p class="top__meta">Vista legible de <code>PENDING-FEATURES.md</code></p>
+      </header>
+
+      <div class="paper">
+        <article id="doc" class="prose" aria-live="polite">
+          <p class="state">Cargando documento…</p>
+        </article>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+    <script>
+      (function () {
+        var doc = document.getElementById("doc");
+
+        function wrapTables(root) {
+          var tables = root.querySelectorAll("table");
+          for (var i = 0; i < tables.length; i++) {
+            var t = tables[i];
+            if (t.parentElement && t.parentElement.classList.contains("table-scroll")) continue;
+            var w = document.createElement("div");
+            w.className = "table-scroll";
+            t.parentNode.insertBefore(w, t);
+            w.appendChild(t);
+          }
+        }
+
+        function showError(msg) {
+          doc.innerHTML =
+            '<div class="err" role="alert">' +
+            "<strong>No se pudo cargar el Markdown.</strong><p>" +
+            msg +
+            "</p><p>Serví la carpeta del proyecto y abrí esta página por HTTP, por ejemplo:</p>" +
+            "<pre><code>cd food-service-agent\npython3 -m http.server 8765</code></pre>" +
+            "<p>Luego abrí <code>http://localhost:8765/index.html</code></p></div>";
+        }
+
+        marked.setOptions({
+          gfm: true,
+          breaks: false,
+          headerIds: true,
+          mangle: false,
+        });
+
+        fetch("PENDING-FEATURES.md", { cache: "no-store" })
+          .then(function (res) {
+            if (!res.ok) throw new Error(res.status + " " + res.statusText);
+            return res.text();
+          })
+          .then(function (md) {
+            doc.innerHTML = marked.parse(md);
+            wrapTables(doc);
+          })
+          .catch(function (e) {
+            showError(String(e.message || e));
+          });
+      })();
+    </script>
+  </body>
+</html>

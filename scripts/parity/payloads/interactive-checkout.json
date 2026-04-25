@@ -1,0 +1,30 @@
+{
+  "description": "Botón interactivo: CHECKOUT.",
+  "expectedHandler": "checkout",
+  "payload": {
+    "entry": [
+      {
+        "changes": [
+          {
+            "value": {
+              "metadata": { "phone_number_id": "REPLACE_WHATSAPP_PHONE_ID" },
+              "messages": [
+                {
+                  "from": "REPLACE_CUSTOMER_PHONE",
+                  "type": "interactive",
+                  "id": "wamid.test-int-checkout-001",
+                  "interactive": {
+                    "button_reply": {
+                      "id": "CHECKOUT",
+                      "title": "Finalizar pedido"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

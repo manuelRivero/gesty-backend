@@ -1,0 +1,26 @@
+{
+  "description": "Status-only event (delivered/read). Debe terminar en early-exit 'status_only_event' sin enviar nada.",
+  "expectedEarlyExit": "status_only_event",
+  "payload": {
+    "entry": [
+      {
+        "changes": [
+          {
+            "value": {
+              "messaging_product": "whatsapp",
+              "metadata": { "phone_number_id": "REPLACE_WHATSAPP_PHONE_ID" },
+              "statuses": [
+                {
+                  "id": "wamid.test-status-001",
+                  "status": "delivered",
+                  "timestamp": "1700000000",
+                  "recipient_id": "REPLACE_CUSTOMER_PHONE"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

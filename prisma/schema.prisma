@@ -1,0 +1,586 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["partialIndexes"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model business {
+  id                     String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                   String
+  description            String?
+  timezone               String                   @default("America/Argentina/Buenos_Aires")
+  is_active              Boolean                  @default(true)
+  created_at             DateTime                 @default(now()) @db.Timestamptz(6)
+  openai_api_key         String?
+  openai_model           String?                  @default("gpt-3.5-turbo")
+  openai_active          Boolean?                 @default(true)
+  whatsapp_phone_number  String?
+  whatsapp_phone_id      String?
+  whatsapp_access_token  String?
+  ai_monthly_tokens_used Int                      @default(0)
+  ai_monthly_token_limit Int                      @default(100000)
+  ai_plan                String                   @default("basic")
+  ai_reset_at            DateTime                 @default(now()) @db.Timestamptz(6)
+  ai_blocked             Boolean                  @default(false)
+  currency_code          String?                  @db.Char(3)
+  latitude               Float?
+  longitude              Float?
+  billing_mode           String?                  @default("subscription")
+  slug                   String?                  @unique
+  features               Json?                    @default("{}")
+  currency               currency?                @relation(fields: [currency_code], references: [code], onDelete: NoAction, onUpdate: NoAction)
+  business_config        business_config?
+  business_coverage_zone business_coverage_zone[]
+  business_hours         business_hours[]
+  business_user          business_user[]
+  conversation           conversation[]
+  customer               customer[]
+  draft_order            draft_order[]
+  environment            environment[]
+  menu_category          menu_category[]
+  menu_item              menu_item[]
+  orders                 orders[]
+  reservation            reservation[]
+  reservation_block      reservation_block[]
+  reservation_config     reservation_config?
+  reservation_slot       reservation_slot[]
+  subscription           subscription?
+  table                  table[]
+}
+
+model business_user {
+  id           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id      String         @db.Uuid
+  business_id  String?        @db.Uuid
+  role         String
+  created_at   DateTime?      @default(now()) @db.Timestamptz(6)
+  business     business?      @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_business")
+  app_user     AppUser        @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_user")
+  user_session user_session[]
+
+  @@unique([user_id, business_id], map: "unique_user_business")
+}
+
+model user_session {
+  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id          String        @db.Uuid
+  business_user_id String        @db.Uuid
+  expires_at       DateTime      @db.Timestamptz(6)
+  created_at       DateTime      @default(now()) @db.Timestamptz(6)
+  business_user    business_user @relation(fields: [business_user_id], references: [id], onDelete: Cascade)
+  app_user         AppUser       @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@index([business_user_id])
+}
+
+model conversation {
+  id                      String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id             String                 @db.Uuid
+  customer_id             String                 @unique(map: "conversation_open_customer_unique", where: raw("(status = 'open'::text)")) @db.Uuid
+  channel                 String                 @default("whatsapp")
+  status                  String                 @default("open")
+  started_at              DateTime               @default(now()) @db.Timestamptz(6)
+  last_message_at         DateTime               @default(now()) @db.Timestamptz(6)
+  lastReferencedProductId String?                @map("last_referenced_product_id") @db.Uuid
+  idle_reminder_sent_at   DateTime?              @db.Timestamptz(6)
+  idle_closed_at          DateTime?              @db.Timestamptz(6)
+  business                business               @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  customer                customer               @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  conversation_message    conversation_message[]
+  conversation_state      conversation_state?
+  orders                  orders[]
+  reservation             reservation[]
+
+  @@index([last_message_at], map: "idx_conversation_last_message_at", where: raw("(status = 'open'::text)"))
+}
+
+model conversation_message {
+  id                    String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversation_id       String       @db.Uuid
+  sender                String
+  message               String
+  is_ai_generated       Boolean      @default(false)
+  created_at            DateTime     @default(now()) @db.Timestamptz(6)
+  externalMessageId     String?      @unique
+  ai_prompt_tokens      Int?
+  ai_completion_tokens  Int?
+  ai_total_tokens       Int?
+  ai_estimated_cost_usd Decimal?     @db.Decimal(10, 6)
+  whatsapp_message_id   String?      @unique
+  conversation          conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model conversation_state {
+  conversation_id  String       @id @db.Uuid
+  current_intent   String?
+  is_human_handled Boolean      @default(false)
+  updated_at       DateTime     @default(now()) @db.Timestamptz(6)
+  metadata         Json?
+  pending_action   String?
+  mode             String       @default("GLOBAL")
+  conversation     conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model currency {
+  code            String            @id @db.Char(3)
+  name            String
+  symbol          String
+  is_active       Boolean           @default(true)
+  business        business[]
+  customer        customer[]
+  menu_item_price menu_item_price[]
+  orders          orders[]
+}
+
+model customer {
+  id                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id        String             @db.Uuid
+  phone_number       String
+  name               String?
+  preferred_currency String?            @db.Char(3)
+  created_at         DateTime           @default(now()) @db.Timestamptz(6)
+  conversation       conversation?
+  business           business           @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  currency           currency?          @relation(fields: [preferred_currency], references: [code], onDelete: NoAction, onUpdate: NoAction)
+  customer_address   customer_address[]
+  orders             orders[]
+  reservation        reservation[]
+
+  @@unique([business_id, phone_number])
+}
+
+model draft_order {
+  id               String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id      String?            @db.Uuid
+  customer_phone   String
+  status           String             @default("active")
+  total_amount     Decimal            @default(0) @db.Decimal(10, 2)
+  currency         String             @default("ARS")
+  created_at       DateTime?          @default(now()) @db.Timestamp(6)
+  updated_at       DateTime?          @default(now()) @db.Timestamp(6)
+  expires_at       DateTime?          @db.Timestamptz(6)
+  reminder_sent_at DateTime?          @db.Timestamptz(6)
+  business         business?          @relation(fields: [business_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  draft_order_item draft_order_item[]
+
+  @@index([status, expires_at], map: "idx_draft_order_timeout")
+}
+
+model draft_order_item {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  draft_order_id String?      @db.Uuid
+  product_id     String?      @db.Uuid
+  quantity       Int
+  unit_price     Decimal      @db.Decimal(10, 2)
+  total_price    Decimal      @db.Decimal(10, 2)
+  draft_order    draft_order? @relation(fields: [draft_order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  menu_item      menu_item?   @relation(fields: [product_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model menu_category {
+  id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id  String          @db.Uuid
+  name         String
+  description  String?
+  position     Int             @default(0)
+  is_active    Boolean         @default(true)
+  created_at   DateTime        @default(now()) @db.Timestamptz(6)
+  category_tag MenuCategoryTag @default(OTHER)
+  business     business        @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  menu_item    menu_item[]
+
+  @@index([business_id, category_tag])
+}
+
+model menu_item {
+  id                String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id       String                 @db.Uuid
+  category_id       String                 @db.Uuid
+  name              String
+  description       String?
+  ingredients       String?
+  preparation       String?
+  is_available      Boolean                @default(true)
+  created_at        DateTime               @default(now()) @db.Timestamptz(6)
+  serves_people     Int?
+  is_featured       Boolean                @default(false)
+  ingredients_notes String?
+  image             String?
+  embedding         Unsupported("vector")?
+  draft_order_item  draft_order_item[]
+  business          business               @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  menu_category     menu_category          @relation(fields: [category_id], references: [id], onUpdate: NoAction)
+  menu_item_price   menu_item_price[]
+  order_item        order_item[]
+
+  @@index([embedding])
+}
+
+model business_hours {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id String   @db.Uuid
+  day_of_week Int
+  opens_at    String
+  closes_at   String
+  is_closed   Boolean  @default(false)
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+  business    business @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([business_id, day_of_week])
+}
+
+model reservation_slot {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id    String    @db.Uuid
+  day_of_week    Int
+  start_time     DateTime  @db.Time(6)
+  end_time       DateTime  @db.Time(6)
+  capacity_limit Int?
+  is_active      Boolean?  @default(true)
+  created_at     DateTime? @default(now()) @db.Timestamptz(6)
+  business       business  @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_slot_business")
+}
+
+model menu_item_price {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  menu_item_id  String    @db.Uuid
+  currency_code String    @db.Char(3)
+  amount        Decimal   @db.Decimal(12, 2)
+  valid_from    DateTime  @default(now()) @db.Timestamptz(6)
+  valid_to      DateTime? @db.Timestamptz(6)
+  is_active     Boolean   @default(true)
+  currency      currency  @relation(fields: [currency_code], references: [code], onDelete: NoAction, onUpdate: NoAction)
+  menu_item     menu_item @relation(fields: [menu_item_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model order_item {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  order_id      String    @db.Uuid
+  menu_item_id  String    @db.Uuid
+  quantity      Int       @default(1)
+  unit_price    Decimal   @db.Decimal(12, 2)
+  serves_people Int?
+  created_at    DateTime  @default(now()) @db.Timestamptz(6)
+  menu_item     menu_item @relation(fields: [menu_item_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  orders        orders    @relation(fields: [order_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model orders {
+  id                        String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id               String             @db.Uuid
+  customer_id               String             @db.Uuid
+  conversation_id           String?            @db.Uuid
+  status                    OrderStatus        @default(draft)
+  currency_code             String             @db.Char(3)
+  total_amount              Decimal?           @db.Decimal(12, 2)
+  created_at                DateTime           @default(now()) @db.Timestamptz(6)
+  customer_address_id       String?            @db.Uuid
+  delivery_address_snapshot Json?              @default("{}")
+  payment_status            OrderPaymentStatus @default(unpaid)
+  order_item                order_item[]
+  business                  business           @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  conversation              conversation?      @relation(fields: [conversation_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  currency                  currency           @relation(fields: [currency_code], references: [code], onDelete: NoAction, onUpdate: NoAction)
+  customer_address          customer_address?  @relation(fields: [customer_address_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  customer                  customer           @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([customer_address_id], map: "idx_orders_customer_address")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model business_coverage_zone {
+  id                         String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id                String                   @db.Uuid
+  name                       String                   @db.VarChar(100)
+  description                String?
+  coverage_area              Unsupported("geography")
+  delivery_fee               Decimal?                 @default(0) @db.Decimal(10, 2)
+  min_order_amount           Decimal?                 @default(0) @db.Decimal(10, 2)
+  estimated_delivery_minutes Int?
+  schedule_override          Json?
+  priority                   Int?                     @default(0)
+  is_active                  Boolean?                 @default(true)
+  created_at                 DateTime?                @default(now()) @db.Timestamptz(6)
+  updated_at                 DateTime?                @default(now()) @db.Timestamptz(6)
+  business                   business                 @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([business_id], map: "idx_coverage_zone_active", where: raw("(is_active = true)"))
+  @@index([business_id], map: "idx_coverage_zone_business")
+  @@index([coverage_area], map: "idx_coverage_zone_geometry", type: Gist)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model customer_address {
+  id                    String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customer_id           String                    @db.Uuid
+  street_address        String                    @db.VarChar(255)
+  apartment             String?                   @db.VarChar(50)
+  neighborhood          String?                   @db.VarChar(100)
+  city                  String?                   @default("Ciudad Autónoma de Buenos Aires") @db.VarChar(100)
+  postal_code           String?                   @db.VarChar(20)
+  country               String?                   @default("AR") @db.VarChar(2)
+  location              Unsupported("geography")?
+  location_accuracy     Float?
+  is_verified           Boolean?                  @default(false)
+  verification_method   String?                   @db.VarChar(50)
+  verified_at           DateTime?                 @db.Timestamptz(6)
+  label                 String?                   @db.VarChar(50)
+  is_default            Boolean?                  @default(false)
+  delivery_instructions String?
+  times_used            Int?                      @default(0)
+  last_used_at          DateTime?                 @db.Timestamptz(6)
+  is_active             Boolean?                  @default(true)
+  created_at            DateTime?                 @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime?                 @default(now()) @db.Timestamptz(6)
+  customer              customer                  @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  orders                orders[]
+
+  @@index([customer_id], map: "idx_customer_address_active", where: raw("(is_active = true)"))
+  @@index([customer_id], map: "idx_customer_address_customer_id")
+  @@index([customer_id, is_default], map: "idx_customer_address_default", where: raw("(is_default = true)"))
+  @@index([location], map: "idx_customer_address_location", type: Gist)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model geocoding_cache {
+  id                String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  query_hash        String                    @unique @db.VarChar(64)
+  query_text        String                    @db.VarChar(500)
+  formatted_address String?                   @db.VarChar(500)
+  street_address    String?                   @db.VarChar(255)
+  neighborhood      String?                   @db.VarChar(100)
+  city              String?                   @db.VarChar(100)
+  postal_code       String?                   @db.VarChar(20)
+  latitude          Decimal                   @db.Decimal(10, 8)
+  longitude         Decimal                   @db.Decimal(11, 8)
+  location          Unsupported("geography")?
+  accuracy          String?                   @db.VarChar(20)
+  data_source       String?                   @db.VarChar(50)
+  created_at        DateTime?                 @default(now()) @db.Timestamptz(6)
+  expires_at        DateTime?                 @default(dbgenerated("(now() + '90 days'::interval)")) @db.Timestamptz(6)
+  hit_count         Int?                      @default(1)
+
+  @@index([expires_at], map: "idx_geocoding_cache_expires")
+  @@index([query_hash], map: "idx_geocoding_cache_hash")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model spatial_ref_sys {
+  srid      Int     @id
+  auth_name String? @db.VarChar(256)
+  auth_srid Int?
+  srtext    String? @db.VarChar(2048)
+  proj4text String? @db.VarChar(2048)
+}
+
+model environment {
+  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id       String              @db.Uuid
+  name              String
+  description       String?
+  is_outdoor        Boolean?            @default(false)
+  is_active         Boolean?            @default(true)
+  created_at        DateTime?           @default(now()) @db.Timestamptz(6)
+  business          business            @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_environment_business")
+  reservation_block reservation_block[]
+  table             table[]
+
+  @@index([business_id], map: "idx_environment_business")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model reservation {
+  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id       String              @db.Uuid
+  customer_id       String              @db.Uuid
+  conversation_id   String?             @db.Uuid
+  party_size        Int
+  reservation_date  DateTime            @db.Date
+  start_time        DateTime            @db.Time(6)
+  end_time          DateTime            @db.Time(6)
+  status            String?             @default("confirmed")
+  notes             String?
+  created_at        DateTime?           @default(now()) @db.Timestamptz(6)
+  arrived_count     Int?                @default(0)
+  checkin_token     String?             @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business          business            @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_reservation_business")
+  conversation      conversation?       @relation(fields: [conversation_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_reservation_conversation")
+  customer          customer            @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_reservation_customer")
+  reservation_table reservation_table[]
+
+  @@index([business_id, reservation_date], map: "idx_reservation_business_date")
+  @@index([status], map: "idx_reservation_status")
+}
+
+model reservation_table {
+  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reservation_id String      @db.Uuid
+  table_id       String      @db.Uuid
+  reservation    reservation @relation(fields: [reservation_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_reservation_table_reservation")
+  table          table       @relation(fields: [table_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_reservation_table_table")
+
+  @@unique([reservation_id, table_id], map: "unique_reservation_table")
+  @@index([reservation_id], map: "idx_rt_reservation")
+  @@index([table_id], map: "idx_rt_table")
+}
+
+model reservation_block {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id    String       @db.Uuid
+  table_id       String?      @db.Uuid
+  environment_id String?      @db.Uuid
+  date           DateTime     @db.Date
+  start_time     DateTime     @db.Time(6)
+  end_time       DateTime     @db.Time(6)
+  reason         String?
+  created_at     DateTime?    @default(now()) @db.Timestamptz(6)
+  business       business     @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_block_business")
+  environment    environment? @relation(fields: [environment_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_block_environment")
+  table          table?       @relation(fields: [table_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_block_table")
+
+  @@index([business_id, date], map: "idx_block_business_date")
+}
+
+model table {
+  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id       String              @db.Uuid
+  environment_id    String              @db.Uuid
+  name              String
+  capacity          Int
+  is_active         Boolean?            @default(true)
+  created_at        DateTime?           @default(now()) @db.Timestamptz(6)
+  x                 Float?
+  y                 Float?
+  shape             String?
+  width             Float?
+  height            Float?
+  rotation          Float?
+  reservation_block reservation_block[]
+  reservation_table reservation_table[]
+  business          business            @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_table_business")
+  environment       environment         @relation(fields: [environment_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_table_environment")
+
+  @@index([business_id], map: "idx_table_business")
+  @@index([environment_id], map: "idx_table_environment")
+  @@index([business_id, environment_id], map: "idx_table_business_environment")
+}
+
+model reservation_config {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id             String    @unique @db.Uuid
+  slot_duration_minutes   Int?      @default(120)
+  min_advance_minutes     Int?      @default(30)
+  max_days_ahead          Int?      @default(15)
+  same_day_cutoff         DateTime? @db.Time(6)
+  max_reservation_time    DateTime? @db.Time(6)
+  allow_table_combination Boolean?  @default(true)
+  max_party_size          Int?      @default(20)
+  is_enabled              Boolean?  @default(true)
+  created_at              DateTime? @default(now()) @db.Timestamptz(6)
+  business                business  @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_res_config_business")
+}
+
+model AppUser {
+  id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email         String          @unique
+  password_hash String
+  created_at    DateTime?       @default(now()) @db.Timestamptz(6)
+  business_user business_user[]
+  user_session  user_session[]
+
+  @@map("user")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model business_config {
+  id                                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id                          String   @unique @db.Uuid
+  bot_enabled                          Boolean  @default(true)
+  allow_human_handoff                  Boolean  @default(true)
+  human_handoff_auto_timeout_minutes   Int?
+  send_idle_reminders                  Boolean  @default(true)
+  idle_reminder_minutes                Int      @default(1)
+  idle_close_minutes                   Int      @default(2)
+  send_order_reminders                 Boolean  @default(true)
+  draft_order_reminder_minutes         Int      @default(1)
+  draft_order_expire_minutes           Int      @default(2)
+  reservations_enabled                 Boolean  @default(true)
+  reservation_min_lead_minutes         Int      @default(60)
+  reservation_max_days_ahead           Int      @default(30)
+  reservation_default_duration_minutes Int      @default(90)
+  reservation_require_confirmation     Boolean  @default(true)
+  reservation_allow_same_day           Boolean  @default(true)
+  orders_enabled                       Boolean  @default(true)
+  checkout_enabled                     Boolean  @default(true)
+  created_at                           DateTime @default(now()) @db.Timestamptz(6)
+  updated_at                           DateTime @default(now()) @db.Timestamptz(6)
+  business                             business @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_business_config_business")
+
+  @@index([business_id], map: "idx_business_config_business_id")
+}
+
+model plan {
+  id                String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name              String
+  code              String         @unique
+  monthly_price_usd Decimal?       @db.Decimal(10, 2)
+  token_limit       Int
+  is_active         Boolean?       @default(true)
+  created_at        DateTime?      @default(now()) @db.Timestamptz(6)
+  subscription      subscription[]
+}
+
+model subscription {
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id            String    @unique(map: "unique_business_subscription") @db.Uuid
+  stripe_customer_id     String
+  stripe_subscription_id String    @unique
+  stripe_price_id        String?
+  status                 String
+  cancel_at_period_end   Boolean?  @default(false)
+  current_period_start   DateTime  @db.Timestamptz(6)
+  current_period_end     DateTime  @db.Timestamptz(6)
+  created_at             DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at             DateTime? @default(now()) @db.Timestamptz(6)
+  plan_id                String?   @db.Uuid
+  is_trial               Boolean?  @default(false)
+  trial_end              DateTime? @db.Timestamptz(6)
+  business               business  @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_subscription_business")
+  plan                   plan?     @relation(fields: [plan_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_subscription_plan")
+
+  @@index([business_id], map: "idx_subscription_business_id")
+  @@index([stripe_customer_id], map: "idx_subscription_customer_id")
+}
+
+/// Flujo operativo del pedido (logística). No indica si ya se cobró — ver `payment_status`.
+enum OrderStatus {
+  draft
+  /// Pedido confirmado (en cola / listo para preparar). Antes `pending_payment`.
+  placed
+  preparing
+  shipped
+  delivered
+  cancelled
+}
+
+/// Cobro: independiente del flujo operativo (logística). Solo dos valores: pendiente vs cobrado.
+enum OrderPaymentStatus {
+  /// Aún no cobrado (link, efectivo al entregar, etc.).
+  unpaid
+  /// Cobro registrado (pasarela, caja, etc.).
+  paid
+}
+
+/// Rol de la categoría para complementos (entrada vs plato fuerte, bebida, etc.). OTHER = sin clasificar.
+enum MenuCategoryTag {
+  STARTER
+  MAIN
+  SIDE
+  DRINK
+  DESSERT
+  OTHER
+}

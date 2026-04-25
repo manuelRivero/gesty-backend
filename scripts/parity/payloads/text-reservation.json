@@ -1,0 +1,25 @@
+{
+  "description": "Texto libre: intención de reserva (RESERVATION).",
+  "expectedIntent": "RESERVATION",
+  "payload": {
+    "entry": [
+      {
+        "changes": [
+          {
+            "value": {
+              "metadata": { "phone_number_id": "REPLACE_WHATSAPP_PHONE_ID" },
+              "messages": [
+                {
+                  "from": "REPLACE_CUSTOMER_PHONE",
+                  "type": "text",
+                  "id": "wamid.test-reservation-001",
+                  "text": { "body": "quiero reservar mesa para 4 personas mañana a las 21" }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

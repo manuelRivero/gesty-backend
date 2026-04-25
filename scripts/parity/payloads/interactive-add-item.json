@@ -1,0 +1,30 @@
+{
+  "description": "List reply: ADD_ITEM con product_id (formato real del bot).",
+  "expectedHandler": "addItem",
+  "payload": {
+    "entry": [
+      {
+        "changes": [
+          {
+            "value": {
+              "metadata": { "phone_number_id": "REPLACE_WHATSAPP_PHONE_ID" },
+              "messages": [
+                {
+                  "from": "REPLACE_CUSTOMER_PHONE",
+                  "type": "interactive",
+                  "id": "wamid.test-int-add-item-001",
+                  "interactive": {
+                    "list_reply": {
+                      "id": "ADD_ITEM:REPLACE_PRODUCT_ID:1",
+                      "title": "Agregar 1"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

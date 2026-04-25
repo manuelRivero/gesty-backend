@@ -1,0 +1,25 @@
+{
+  "description": "Texto libre: pregunta de horarios (BUSINESS_HOURS).",
+  "expectedIntent": "BUSINESS_HOURS",
+  "payload": {
+    "entry": [
+      {
+        "changes": [
+          {
+            "value": {
+              "metadata": { "phone_number_id": "REPLACE_WHATSAPP_PHONE_ID" },
+              "messages": [
+                {
+                  "from": "REPLACE_CUSTOMER_PHONE",
+                  "type": "text",
+                  "id": "wamid.test-bh-001",
+                  "text": { "body": "qué horario tienen hoy?" }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

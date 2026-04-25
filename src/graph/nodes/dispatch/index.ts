@@ -1,0 +1,236 @@
+/**
+ * Subgrafos `interactive` y `nlp` colapsados en dos nodos LangGraph que
+ * replican 1:1 el flujo del orquestador original.
+ *
+ * Decisión de diseño: en vez de descomponer cada `IntentHandler` en su propio
+ * nodo LangGraph (35+ nodos triviales con edges idénticos), reusamos los
+ * dispatchers actuales (`dispatchInteractive`, `dispatchIntent`) y la lista
+ * `handlers` exportada por `controllers/webhook/handlers/index.ts`. Cada
+ * handler sigue siendo la "unidad de ejecución" del bot — el grafo solo
+ * orquesta el routing previo (gates, NLP, gates de people-count) y posterior
+ * (envío + persistencia AI).
+ */
+
+import { dispatchIntent, dispatchInteractive } from '../../../controllers/webhook/dispachers';
+import {
+  detectIntentWithConfidence,
+  shouldAskIntentConfirmation,
+} from '../../../services/ai/detection.service';
+import {
+  parsePeopleCountResume,
+  PEOPLE_COUNT_INVALID_REPLY_MESSAGE,
+  PEOPLE_COUNT_PROMPT_MESSAGE,
+  shouldBlockForMissingPeopleCount,
+} from '../../../services/peopleCountGate.service';
+import {
+  normalizeMetadata,
+  partySizeMetadataFields,
+} from '../../../services/productQuery/utils';
+import {
+  findOrCreateConversationState,
+  omitConversationMetadataKeys,
+  patchConversationMetadata,
+} from '../../../repositories';
+import { extractStrictNumericPeopleCount } from '../../../helpers/peopleCountExtraction';
+import { buildIntentAmbiguityInteractiveMessage } from '../../../services/intentAmbiguityConfirmation.service';
+import { isHybridAgentMode } from '../../../config/env';
+import { runHybridReactAgent } from '../../../agents/reactAgent';
+import type {
+  EnrichedContext,
+  HandlerResult,
+} from '../../../controllers/webhook/types';
+import type { AgentState, AgentStateUpdate } from '../../state';
+
+/**
+ * Intents que en modo `AGENT_MODE=hybrid` se enrutan por el ReAct agent en
+ * lugar del handler determinístico. Son los intents "abiertos" donde el
+ * razonamiento con tools agrega más valor que un dispatch fijo.
+ */
+const HYBRID_INTENTS = new Set([
+  'ORDER_FOOD',
+  'PRODUCT_QUERY',
+  'PRODUCT_ATTRIBUTE_QUESTION',
+  'UNKNOWN',
+]);
+
+const dispatchOrHybrid = async (
+  enrichedCtx: EnrichedContext
+): Promise<HandlerResult | null> => {
+  if (
+    isHybridAgentMode() &&
+    HYBRID_INTENTS.has(enrichedCtx.detection.intent)
+  ) {
+    try {
+      const hybrid = await runHybridReactAgent(enrichedCtx);
+      if (hybrid) return hybrid;
+    } catch (err) {
+      console.error('[hybrid-agent] failed, falling back to deterministic', err);
+    }
+  }
+  return dispatchIntent(enrichedCtx);
+};
+
+/**
+ * Subgrafo interactive: limpieza de metadata `CONFIRM_INTENT:*` + dispatch.
+ */
+export const interactiveSubgraphNode = async (
+  state: AgentState
+): Promise<AgentStateUpdate> => {
+  const ctx = state.webhookContext!;
+  const enrichedBase = state.enrichedCtx as unknown as EnrichedContext;
+  const conversation = state.conversation as { id: string };
+
+  if (ctx.payloadId?.startsWith('CONFIRM_INTENT:')) {
+    await omitConversationMetadataKeys(conversation.id, [
+      'awaitingIntentConfirmation',
+      'intentCandidates',
+    ]);
+  }
+
+  const result = await dispatchInteractive(enrichedBase);
+  if (!result) {
+    return { earlyExit: 'interactive_no_payload' };
+  }
+  return { handlerResult: result };
+};
+
+/**
+ * Subgrafo NLP: cleanup awaitingIntentConfirmation + people-count gate +
+ * detection LLM + ambigüedad + people-count missing + dispatch.
+ */
+export const nlpSubgraphNode = async (
+  state: AgentState
+): Promise<AgentStateUpdate> => {
+  const ctx = state.webhookContext!;
+  const enrichedBase = state.enrichedCtx as unknown as EnrichedContext;
+  const conversation = state.conversation as { id: string };
+  const detectionContext = state.detectionContext!;
+  let workingConversationState = state.workingConversationState as any;
+
+  const userMessage = ctx.message?.text?.body || '';
+
+  if (
+    normalizeMetadata(workingConversationState.metadata)
+      .awaitingIntentConfirmation &&
+    userMessage.trim()
+  ) {
+    await omitConversationMetadataKeys(conversation.id, [
+      'awaitingIntentConfirmation',
+      'intentCandidates',
+    ]);
+    workingConversationState = await findOrCreateConversationState(
+      conversation.id
+    );
+  }
+
+  const metaPre = normalizeMetadata(workingConversationState.metadata);
+
+  if (metaPre.awaitingPeopleCount) {
+    const resume = parsePeopleCountResume(metaPre);
+    if (resume) {
+      const extractedPeople = extractStrictNumericPeopleCount(userMessage);
+      if (extractedPeople != null && extractedPeople > 0) {
+        await patchConversationMetadata(conversation.id, {
+          ...partySizeMetadataFields(extractedPeople),
+          awaitingPeopleCount: false,
+        });
+        await omitConversationMetadataKeys(conversation.id, ['peopleCountResume']);
+
+        const resumedCtx: EnrichedContext = {
+          ...enrichedBase,
+          detection: resume.detection,
+          message: {
+            ...ctx.message!,
+            type: 'text',
+            text: { body: resume.userMessage },
+          },
+        };
+
+        const resumedResult = await dispatchOrHybrid(resumedCtx);
+        if (!resumedResult) {
+          return { earlyExit: 'no_handler_match' };
+        }
+        return { handlerResult: resumedResult };
+      }
+
+      return {
+        handlerResult: {
+          content: PEOPLE_COUNT_INVALID_REPLY_MESSAGE,
+          isInteractive: false,
+        } satisfies HandlerResult,
+        earlyExit: 'awaiting_people_count_invalid',
+      };
+    }
+
+    await omitConversationMetadataKeys(conversation.id, [
+      'awaitingPeopleCount',
+      'peopleCountResume',
+    ]);
+  }
+
+  const detection = await detectIntentWithConfidence(
+    userMessage,
+    detectionContext
+  );
+
+  console.log('[NLP] Detection result:', detection);
+  console.log('[NLP] Resolution metadata:', {
+    finalIntent: detection.intent,
+    confidence: detection.confidence,
+    source: detection.resolutionSource || 'unknown',
+    topCandidate: detection.topCandidate || null,
+    rescueMargin: detection.rescueMargin ?? null,
+  });
+
+  if (shouldAskIntentConfirmation(detection)) {
+    const top2 = detection.candidates.slice(0, 2);
+    await patchConversationMetadata(conversation.id, {
+      awaitingIntentConfirmation: true,
+      intentCandidates: top2,
+    });
+    const ambiguityMessage = buildIntentAmbiguityInteractiveMessage(top2);
+    return {
+      handlerResult: { content: ambiguityMessage, isInteractive: true },
+      detection,
+      earlyExit: 'asked_intent_confirmation',
+    };
+  }
+
+  const metaForGate = normalizeMetadata(workingConversationState.metadata);
+
+  if (
+    shouldBlockForMissingPeopleCount({
+      intent: detection.intent,
+      metadata: metaForGate,
+      detectionQuantity: detection.quantity,
+    })
+  ) {
+    await patchConversationMetadata(conversation.id, {
+      awaitingPeopleCount: true,
+      peopleCountResume: {
+        userMessage,
+        detection: JSON.parse(JSON.stringify(detection)),
+      },
+    });
+    return {
+      handlerResult: {
+        content: PEOPLE_COUNT_PROMPT_MESSAGE,
+        isInteractive: false,
+      },
+      detection,
+      earlyExit: 'asked_people_count',
+    };
+  }
+
+  const enrichedCtx: EnrichedContext = {
+    ...enrichedBase,
+    conversationState: workingConversationState,
+    detection,
+  };
+
+  const result = await dispatchOrHybrid(enrichedCtx);
+  if (!result) {
+    return { detection, earlyExit: 'no_handler_match' };
+  }
+  return { handlerResult: result, detection };
+};
