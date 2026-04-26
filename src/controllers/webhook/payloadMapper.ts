@@ -110,6 +110,12 @@ export const detectIntentFromPayload = (
       payloadId
     );
   }
+  if (payloadId.startsWith('FEATURED_PAGE:')) {
+    return buildInteractiveResult(
+      ConversationIntent.FEATURED_PAGE,
+      payloadId
+    );
+  }
   if (payloadId.startsWith('DECREASE_ITEM:')) {
     return buildInteractiveResult(
       ConversationIntent.DECREASE_ITEM,

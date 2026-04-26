@@ -24,6 +24,7 @@ import { OrderFoodHandler } from './orderFoodHandler';
 import { RemoveItemHandler } from './removeItemHandler';
 import { ProductQueryHandler } from './productQueryHandler';
 import { RecommendationRequestHandler } from './recommendationRequestHandler';
+import { FeaturedPageHandler } from './featuredPageHandler';
 import { ProductAttributeQuestionHandler } from './productAttributeQuestionHandler';
 import { SmallTalkHandler } from './smallTalkHandler';
 import { EditAddressHandler } from './editAddressHandler';
@@ -49,6 +50,7 @@ export const handlers = [
   new SelectProductHandler(),
   new SelectOrderProductHandler(),
   new OrderSearchPageHandler(),
+  new FeaturedPageHandler(),
   new CategoryPageHandler(),
   new CategoryListPageHandler(),
   new MenuByTagHandler(),

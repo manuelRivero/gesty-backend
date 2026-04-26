@@ -49,7 +49,6 @@ import type { AgentState, AgentStateUpdate } from '../../state';
 const HYBRID_INTENTS = new Set([
   'ORDER_FOOD',
   'PRODUCT_QUERY',
-  'RECOMMENDATION_REQUEST',
   'PRODUCT_ATTRIBUTE_QUESTION',
   'UNKNOWN',
 ]);

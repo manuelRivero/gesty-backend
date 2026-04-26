@@ -40,6 +40,14 @@ export type MenuItemSearchResult = {
   distance?: number;
 };
 
+export type FeaturedMenuItemsPageResult = {
+  items: MenuItemSearchResult[];
+  page: number;
+  totalPages: number;
+  totalCount: number;
+  pageSize: number;
+};
+
 const formatPrice = (price: MenuPrice): string => {
   const amount = price.amount.toFixed(2);
   return `${amount} ${price.currency_code}`;
@@ -401,5 +409,68 @@ export class MenuService {
         }
       }
     });
+  }
+
+  static async getFeaturedMenuItemsPage(params: {
+    businessId: string;
+    currencyCode?: string | null;
+    page?: number;
+    pageSize?: number;
+  }): Promise<FeaturedMenuItemsPageResult> {
+    const {
+      businessId,
+      currencyCode = null,
+      page = 1,
+      pageSize = 8,
+    } = params;
+    const now = new Date();
+    const priceWhere = buildPriceWhere(currencyCode, now);
+    const safePageSize = Math.max(1, Math.min(pageSize, 20));
+
+    const where = {
+      business_id: businessId,
+      is_available: true,
+      is_featured: true,
+      menu_item_price: {
+        some: priceWhere
+      }
+    } as const;
+
+    const totalCount = await prisma.menu_item.count({ where });
+    const totalPages = Math.max(1, Math.ceil(totalCount / safePageSize));
+    const safePage = Math.min(Math.max(page, 1), totalPages);
+    const skip = (safePage - 1) * safePageSize;
+
+    const items = await prisma.menu_item.findMany({
+      where,
+      orderBy: [{ created_at: 'desc' }],
+      skip,
+      take: safePageSize,
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        ingredients: true,
+        serves_people: true,
+        is_available: true,
+        menu_item_price: {
+          where: priceWhere,
+          orderBy: { valid_from: 'desc' },
+          take: 1,
+          select: {
+            amount: true,
+            currency_code: true
+          }
+        }
+      }
+    });
+
+    return {
+      items,
+      page: safePage,
+      totalPages,
+      totalCount,
+      pageSize: safePageSize,
+    };
   }
 }
