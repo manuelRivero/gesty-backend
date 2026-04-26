@@ -11,8 +11,8 @@
  * (último `AIMessage`) se traduce a un `HandlerResult` plano (texto), igual a
  * lo que produciría `FallbackHandler` en modo determinístico.
  *
- * No se le permite (todavía) crear órdenes ni agregar items: para eso hay que
- * exponer tools de escritura con guardas adicionales (out of scope fase 2).
+ * Pipeline CTA (cuando HYBRID_CTA_ENABLED=true):
+ *  texto ReAct → ctaPlanner (LLM) → ctaResolver (determinístico) → buildHybridCtaInteractive
  */
 
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
@@ -21,6 +21,38 @@ import { getReasonerLlm } from '../config/llm';
 import { allReactTools } from '../tools';
 import type { EnrichedContext, HandlerResult } from '../controllers/webhook/types';
 import { formatBotUserMessage } from '../services/productQuery/utils';
+import {
+  isHybridCtaEnabled,
+  getHybridCtaTargetIntents,
+  isHybridCtaEnabledForBusiness,
+} from '../config/env';
+import { planCta } from './ctaPlanner';
+import { resolveCta } from './ctaResolver';
+import {
+  buildHybridCtaInteractive,
+  extractPrimaryPayload,
+  extractPrimaryProductId,
+} from '../whatsappBuilders/hybridCta';
+import { normalizeMetadata } from '../services/productQuery/utils';
+import { patchConversationMetadata, findOrCreateConversationState } from '../repositories';
+import { MenuService } from '../services/menu.service';
+import type { CtaPlannerInput } from './types';
+
+// ---------------------------------------------------------------------------
+// Constantes
+// ---------------------------------------------------------------------------
+
+/** Mínima confianza de detección para intentar mostrar CTA. */
+const MIN_CTA_CONFIDENCE = 0.6;
+
+/** Ventana de cooldown en ms (5 minutos = 1-2 turnos típicos). */
+const CTA_COOLDOWN_MS = 5 * 60 * 1000;
+
+/** Máximo de caracteres en el texto del bot para mostrar CTA. */
+const MAX_TEXT_FOR_CTA = 600;
+
+/** Número de productos del menú a precargar como contexto para el planner. */
+const TOP_MENU_PRODUCTS_FOR_PLANNER = 5;
 
 let cachedAgent: ReturnType<typeof createReactAgent> | null = null;
 
@@ -33,6 +65,11 @@ const buildAgent = () => {
     });
   }
   return cachedAgent;
+};
+
+/** Solo para uso en tests: resetea el singleton del ReAct agent. */
+export const resetAgentCacheForTesting = (): void => {
+  cachedAgent = null;
 };
 
 const HYBRID_AGENT_SYSTEM_PROMPT = `Sos el asistente conversacional de un restaurante atendiendo por WhatsApp.
@@ -155,10 +192,75 @@ const ensureWhatsAppBotFormat = (text: string): string => {
   return formatBotUserMessage('Respuesta', '💬', normalized);
 };
 
+// ---------------------------------------------------------------------------
+// Cooldown helpers
+// ---------------------------------------------------------------------------
+
+const isCtaCooldownActive = (metadata: ReturnType<typeof normalizeMetadata>): boolean => {
+  const shownAt = metadata.lastCtaShownAt;
+  if (!shownAt) return false;
+  const elapsed = Date.now() - new Date(shownAt).getTime();
+  return elapsed < CTA_COOLDOWN_MS;
+};
+
+// ---------------------------------------------------------------------------
+// CTA pipeline pre-checks
+// ---------------------------------------------------------------------------
+
+/**
+ * Devuelve la razón por la que NO se debe mostrar CTA, o `null` si puede proceder.
+ */
+const ctaSkipReason = (params: {
+  text: string;
+  intent: string;
+  confidence: number;
+  metadata: ReturnType<typeof normalizeMetadata>;
+  businessId: string;
+}): string | null => {
+  const { text, intent, confidence, metadata, businessId } = params;
+
+  if (!isHybridCtaEnabled()) return 'feature_off';
+  if (!isHybridCtaEnabledForBusiness(businessId)) return 'feature_off';
+  if (!getHybridCtaTargetIntents().has(intent)) return 'intent_not_target';
+  if (confidence < MIN_CTA_CONFIDENCE) return 'low_confidence';
+  if (text.length > MAX_TEXT_FOR_CTA) return 'text_too_long';
+  if (isCtaCooldownActive(metadata)) return 'cooldown';
+  return null;
+};
+
+// ---------------------------------------------------------------------------
+// Menu pre-fetch for planner context
+// ---------------------------------------------------------------------------
+
+const prefetchTopMenuProducts = async (params: {
+  businessId: string;
+  keyword: string | null;
+}): Promise<string[]> => {
+  if (!params.keyword || !params.keyword.trim()) return [];
+  try {
+    const results = await MenuService.searchMenuItemsByKeyword({
+      businessId: params.businessId,
+      keyword: params.keyword,
+    });
+    return results
+      .slice(0, TOP_MENU_PRODUCTS_FOR_PLANNER)
+      .map((r) => r.name);
+  } catch {
+    return [];
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Entry point
+// ---------------------------------------------------------------------------
+
 /**
  * Ejecuta el ReAct agent. Si el agente no produce texto utilizable, devuelve
  * `null` para que el caller (nodo `nlpSubgraph` en modo hybrid) caiga al
  * handler determinístico.
+ *
+ * Si HYBRID_CTA_ENABLED=true y el intent es target, ejecuta el pipeline CTA
+ * post-ReAct y devuelve un HandlerResult interactivo cuando aplica.
  */
 export const runHybridReactAgent = async (
   ctx: EnrichedContext
@@ -173,8 +275,130 @@ export const runHybridReactAgent = async (
   };
 
   const out = await agent.invoke(inputs);
-  const text = extractFinalText(out);
-  if (!text) return null;
+  const rawText = extractFinalText(out);
+  if (!rawText) return null;
 
-  return { content: ensureWhatsAppBotFormat(text), isInteractive: false };
+  const formattedText = ensureWhatsAppBotFormat(rawText);
+
+  // --- CTA pipeline ---
+  const businessId =
+    typeof ctx.business === 'object' && ctx.business
+      ? (ctx.business as { id: string }).id
+      : '';
+  const conversationId = ctx.conversationId;
+  const intent = ctx.detection.intent as string;
+  const confidence = ctx.detection.confidence;
+  const userMessage = ctx.message?.text?.body ?? '';
+  const detectedProductName = ctx.detection.detectedProductName;
+  const lastReferencedProductId =
+    (ctx.conversation as { lastReferencedProductId?: string | null })
+      .lastReferencedProductId ?? null;
+
+  const metadata = normalizeMetadata(ctx.conversationState?.metadata);
+
+  const skipReason = ctaSkipReason({
+    text: formattedText,
+    intent,
+    confidence,
+    metadata,
+    businessId,
+  });
+
+  if (skipReason) {
+    console.log(
+      JSON.stringify({
+        event: '[hybrid-cta] cta_skipped',
+        intent,
+        reason: skipReason,
+        conversationId,
+      })
+    );
+    return { content: formattedText, isInteractive: false };
+  }
+
+  // Pre-fetch top menu products for planner context
+  const topMenuProductNames = await prefetchTopMenuProducts({
+    businessId,
+    keyword: detectedProductName,
+  });
+
+  const lastReferencedProductName =
+    typeof metadata === 'object'
+      ? ((metadata as Record<string, unknown>).lastReferencedProductName as string | null | undefined) ??
+        null
+      : null;
+
+  const plannerInput: CtaPlannerInput = {
+    botResponseText: formattedText,
+    intent,
+    detectedProductName,
+    lastReferencedProductName,
+    userMessage,
+    topMenuProductNames,
+  };
+
+  const plannerStart = Date.now();
+  const plannerRaw = await planCta(plannerInput);
+  const plannerLatencyMs = Date.now() - plannerStart;
+
+  console.log(
+    JSON.stringify({
+      event: '[hybrid-cta] cta_evaluated',
+      intent,
+      hadText: true,
+      plannerResult: plannerRaw ? 'plan' : 'null',
+      plannerLatencyMs,
+      conversationId,
+    })
+  );
+
+  if (!plannerRaw) {
+    return { content: formattedText, isInteractive: false };
+  }
+
+  // Resolve productId deterministically
+  const resolvedPlan = await resolveCta({
+    plannerRaw,
+    businessId,
+    lastReferencedProductId,
+    detectedProductName,
+    botResponseText: formattedText,
+    detectionQuantity: ctx.detection.quantity,
+    userMessage,
+  });
+
+  // Build WhatsApp interactive message
+  const handlerResult = buildHybridCtaInteractive(formattedText, resolvedPlan);
+
+  if (!handlerResult) {
+    // Builder failed → fallback to text
+    return { content: formattedText, isInteractive: false };
+  }
+
+  // Persist CTA metadata for cooldown + click tracking
+  const primaryPayload = extractPrimaryPayload(resolvedPlan);
+  const primaryProductId = extractPrimaryProductId(resolvedPlan);
+
+  try {
+    await patchConversationMetadata(conversationId, {
+      lastCtaShownAt: new Date().toISOString(),
+      ...(primaryProductId ? { lastCtaProductId: primaryProductId } : {}),
+      ...(primaryPayload ? { lastCtaPayload: primaryPayload } : {}),
+    });
+  } catch (err) {
+    console.error('[hybrid-cta] patchConversationMetadata failed:', err);
+  }
+
+  console.log(
+    JSON.stringify({
+      event: '[hybrid-cta] cta_shown',
+      intent,
+      primaryKind: resolvedPlan.primary.kind,
+      productId: primaryProductId,
+      hadSecondary: !!resolvedPlan.secondary,
+      conversationId,
+    })
+  );
+
+  return handlerResult;
 };

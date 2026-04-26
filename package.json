@@ -10,6 +10,9 @@
     "prisma:generate": "prisma generate",
     "prisma:sync": "cp ../food-service-backend/prisma/schema.prisma ./prisma/schema.prisma",
     "parity:run": "ts-node --project scripts/parity/tsconfig.json -r dotenv/config scripts/parity/runner.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "postinstall": "prisma generate"
   },
   "engines": {
@@ -38,9 +41,11 @@
     "@types/node": "^25.0.3",
     "@types/pg": "^8.11.10",
     "@types/qrcode": "^1.5.6",
+    "@vitest/coverage-v8": "^4.1.5",
     "nodemon": "^3.1.11",
     "prisma": "^7.4.1",
     "ts-node": "^10.9.2",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.5"
   }
 }

@@ -22,6 +22,30 @@ const envSchema = z.object({
   AGENT_MODE: z.enum(['deterministic', 'hybrid']).default('deterministic'),
 
   /**
+   * Habilita la capa de CTA determinístico post-ReAct.
+   * En false (default), runHybridReactAgent devuelve solo texto (comportamiento actual).
+   */
+  HYBRID_CTA_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true' || v === '1'),
+
+  /**
+   * Intents target para el CTA híbrido, separados por coma.
+   * Default Fase 1: solo informativos. Fase 2: agregar ORDER_FOOD,RECOMMENDATION_REQUEST.
+   */
+  HYBRID_CTA_TARGET_INTENTS: z
+    .string()
+    .optional()
+    .default('PRODUCT_ATTRIBUTE_QUESTION,PRODUCT_QUERY'),
+
+  /**
+   * IDs de negocio habilitados para CTA híbrido (feature flag per-business).
+   * Si está vacío/undefined con HYBRID_CTA_ENABLED=true → habilitado para todos.
+   */
+  HYBRID_CTA_ENABLED_BUSINESS_IDS: z.string().optional(),
+
+  /**
    * Si `true`, los nodos `sendResponseNode` / `persistAIMessageNode` no envían a
    * la WhatsApp Cloud API ni persisten el mensaje del bot — sólo logean el
    * `HandlerResult` resultante. Pensado para los runners de paridad
@@ -51,3 +75,28 @@ export const isHybridAgentMode = (): boolean => env.AGENT_MODE === 'hybrid';
 
 export const isDryRunWhatsAppSend = (): boolean =>
   env.DRY_RUN_WHATSAPP_SEND === true;
+
+export const isHybridCtaEnabled = (): boolean =>
+  env.HYBRID_CTA_ENABLED === true;
+
+/** Devuelve el Set de ConversationIntent strings target para el CTA híbrido. */
+export const getHybridCtaTargetIntents = (): Set<string> =>
+  new Set(
+    env.HYBRID_CTA_TARGET_INTENTS.split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+  );
+
+/**
+ * Verifica si el CTA híbrido está habilitado para un negocio específico.
+ * Si HYBRID_CTA_ENABLED_BUSINESS_IDS está vacío → habilitado para todos.
+ */
+export const isHybridCtaEnabledForBusiness = (businessId: string): boolean => {
+  if (!isHybridCtaEnabled()) return false;
+  const ids = env.HYBRID_CTA_ENABLED_BUSINESS_IDS;
+  if (!ids || !ids.trim()) return true;
+  return ids
+    .split(',')
+    .map((s) => s.trim())
+    .includes(businessId);
+};

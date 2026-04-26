@@ -44,6 +44,18 @@ export type ConversationMetadata = {
     userMessage: string;
     detection: IntentDetectionResult;
   };
+
+  // --- CTA híbrido ---
+
+  /**
+   * ISO timestamp de la última vez que se mostró un CTA híbrido.
+   * Usado para cooldown de 1 turno (5 min window).
+   */
+  lastCtaShownAt?: string | null;
+  /** ID del producto principal del último CTA mostrado (para correlacionar follow-through). */
+  lastCtaProductId?: string | null;
+  /** Payload exacto del botón primario del último CTA (para correlacionar clicks). */
+  lastCtaPayload?: string | null;
 };
 
 export type ConversationMode = 'GLOBAL' | 'FILTER_SET' | 'PRODUCT_FOCUS';

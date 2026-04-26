@@ -45,11 +45,16 @@ import type { AgentState, AgentStateUpdate } from '../../state';
  * Intents que en modo `AGENT_MODE=hybrid` se enrutan por el ReAct agent en
  * lugar del handler determinístico. Son los intents "abiertos" donde el
  * razonamiento con tools agrega más valor que un dispatch fijo.
+ *
+ * Fase 2: RECOMMENDATION_REQUEST se suma para que el ReAct pueda añadir CTA
+ * post-respuesta; el handler determinístico sigue siendo el fallback si el
+ * agente no produce texto.
  */
 const HYBRID_INTENTS = new Set([
   'ORDER_FOOD',
   'PRODUCT_QUERY',
   'PRODUCT_ATTRIBUTE_QUESTION',
+  'RECOMMENDATION_REQUEST',
   'UNKNOWN',
 ]);
 
@@ -72,6 +77,7 @@ const dispatchOrHybrid = async (
 
 /**
  * Subgrafo interactive: limpieza de metadata `CONFIRM_INTENT:*` + dispatch.
+ * Fase 2: log `cta_clicked` cuando el payload coincide con el último CTA mostrado.
  */
 export const interactiveSubgraphNode = async (
   state: AgentState
@@ -87,6 +93,21 @@ export const interactiveSubgraphNode = async (
     ]);
   }
 
+  // Fase 2: correlacionar click con el último CTA mostrado
+  if (ctx.payloadId && enrichedBase.conversationState) {
+    const meta = normalizeMetadata(enrichedBase.conversationState.metadata);
+    if (meta.lastCtaPayload && ctx.payloadId === meta.lastCtaPayload) {
+      console.log(
+        JSON.stringify({
+          event: '[hybrid-cta] cta_clicked',
+          payloadId: ctx.payloadId,
+          lastCtaProductId: meta.lastCtaProductId ?? null,
+          conversationId: conversation.id,
+        })
+      );
+    }
+  }
+
   const result = await dispatchInteractive(enrichedBase);
   if (!result) {
     return { earlyExit: 'interactive_no_payload' };
@@ -97,6 +118,8 @@ export const interactiveSubgraphNode = async (
 /**
  * Subgrafo NLP: cleanup awaitingIntentConfirmation + people-count gate +
  * detection LLM + ambigüedad + people-count missing + dispatch.
+ * Fase 2: log `cta_fallback_post_click` cuando el usuario escribe texto libre
+ * en vez de usar el botón del CTA mostrado en el turno anterior.
  */
 export const nlpSubgraphNode = async (
   state: AgentState
@@ -108,6 +131,21 @@ export const nlpSubgraphNode = async (
   let workingConversationState = state.workingConversationState as any;
 
   const userMessage = ctx.message?.text?.body || '';
+
+  // Fase 2: detectar texto libre post-CTA (fallback del usuario)
+  if (userMessage.trim() && enrichedBase.conversationState) {
+    const meta = normalizeMetadata(enrichedBase.conversationState.metadata);
+    if (meta.lastCtaPayload && meta.lastCtaShownAt) {
+      console.log(
+        JSON.stringify({
+          event: '[hybrid-cta] cta_fallback_post_click',
+          lastCtaPayload: meta.lastCtaPayload,
+          lastCtaProductId: meta.lastCtaProductId ?? null,
+          conversationId: conversation.id,
+        })
+      );
+    }
+  }
 
   if (
     normalizeMetadata(workingConversationState.metadata)
