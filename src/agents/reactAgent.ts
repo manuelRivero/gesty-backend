@@ -3,7 +3,7 @@
  *
  * Sólo se invoca cuando `AGENT_MODE=hybrid` y el intent detectado por
  * `detectIntentWithConfidence` es uno de los abiertos:
- * `ORDER_FOOD`, `PRODUCT_QUERY`, `PRODUCT_ATTRIBUTE_QUESTION` o `UNKNOWN`.
+ * `ORDER_FOOD`, `PRODUCT_QUERY`, `RECOMMENDATION_REQUEST`, `PRODUCT_ATTRIBUTE_QUESTION` o `UNKNOWN`.
  *
  * El agente recibe el `EnrichedContext` (business + customer + conversation +
  * mensaje) en su SystemMessage, y un set de tools de **lectura** (`tools/index.ts`)
@@ -20,6 +20,7 @@ import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { getReasonerLlm } from '../config/llm';
 import { allReactTools } from '../tools';
 import type { EnrichedContext, HandlerResult } from '../controllers/webhook/types';
+import { formatBotUserMessage } from '../services/productQuery/utils';
 
 let cachedAgent: ReturnType<typeof createReactAgent> | null = null;
 
@@ -45,6 +46,7 @@ REGLAS DURAS:
 
 TOOLS DISPONIBLES:
 - search_products(businessId, keyword): busca productos en el menú.
+- get_featured_products(businessId, currencyCode, limit): lista productos destacados (recomendaciones).
 - get_categories(businessId, customerId): lista categorías.
 - get_menu_by_category(businessId, customerId, categoryId): items por categoría.
 - get_cart(businessId, customerPhone): carrito activo (snapshot, no modifica nada).
@@ -56,7 +58,13 @@ CONTEXTO:
 - Usá esos identificadores en las tools que los necesiten.
 
 FORMATO DE SALIDA:
-- Texto plano (sin markdown pesado, sin JSON), listo para enviar por WhatsApp.
+- Devolvé EXCLUSIVAMENTE texto para WhatsApp. Nunca JSON ni objetos (ej.: nunca {"text":"..."}).
+- Usá este estilo visual para que se vea prolijo:
+  - Primera línea: 🤖
+  - Segunda sección: un título corto e importante en negrita con un emoji (ej.: *Recomendación* 🍽️)
+  - Luego el mensaje en 1-3 párrafos cortos, escaneables.
+- Resaltá datos importantes con *negrita* (nombres de platos, precios, horarios, próximos pasos).
+- Evitá markdown pesado, tablas y bloques de código.
 - Máximo ~600 caracteres salvo que el usuario pida un detalle largo.`;
 
 const buildContextMessage = (ctx: EnrichedContext): string => {
@@ -119,6 +127,34 @@ const extractFinalText = (result: unknown): string | null => {
   return null;
 };
 
+const unwrapJsonTextEnvelope = (text: string): string => {
+  const trimmed = text.trim().replace(/^'+|'+$/g, '');
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
+    return trimmed;
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as { text?: unknown; content?: unknown };
+    if (typeof parsed.text === 'string' && parsed.text.trim()) {
+      return parsed.text.trim();
+    }
+    if (typeof parsed.content === 'string' && parsed.content.trim()) {
+      return parsed.content.trim();
+    }
+  } catch {
+    // Si no es JSON válido, se devuelve el texto original.
+  }
+  return trimmed;
+};
+
+const ensureWhatsAppBotFormat = (text: string): string => {
+  const normalized = unwrapJsonTextEnvelope(text).trim();
+  if (!normalized) return normalized;
+  if (normalized.startsWith('🤖')) {
+    return normalized;
+  }
+  return formatBotUserMessage('Respuesta', '💬', normalized);
+};
+
 /**
  * Ejecuta el ReAct agent. Si el agente no produce texto utilizable, devuelve
  * `null` para que el caller (nodo `nlpSubgraph` en modo hybrid) caiga al
@@ -140,5 +176,5 @@ export const runHybridReactAgent = async (
   const text = extractFinalText(out);
   if (!text) return null;
 
-  return { content: text, isInteractive: false };
+  return { content: ensureWhatsAppBotFormat(text), isInteractive: false };
 };

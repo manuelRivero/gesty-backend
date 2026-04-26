@@ -248,8 +248,48 @@ export const getRecentMessagesTool = new DynamicStructuredTool<
   },
 });
 
+const getFeaturedProductsSchema = z.object({
+  businessId: z.string().describe('ID del negocio (UUID)'),
+  currencyCode: z.string().nullable().optional(),
+  limit: z.number().int().positive().max(20).default(8),
+});
+type GetFeaturedProductsInput = z.infer<typeof getFeaturedProductsSchema>;
+
+export const getFeaturedProductsTool = new DynamicStructuredTool<
+  typeof getFeaturedProductsSchema,
+  GetFeaturedProductsInput
+>({
+  name: 'get_featured_products',
+  description:
+    'Devuelve los productos destacados del negocio (menu_item.is_featured = true), con precio activo cuando exista.',
+  schema: getFeaturedProductsSchema,
+  func: async ({ businessId, currencyCode, limit }: GetFeaturedProductsInput) => {
+    const items = await MenuService.getFeaturedMenuItems({
+      businessId,
+      currencyCode: currencyCode ?? null,
+      limit,
+    });
+    return toJson({
+      count: items.length,
+      items: items.map((item) => ({
+        id: item.id,
+        name: item.name,
+        description: item.description,
+        ingredients: item.ingredients,
+        serves_people: item.serves_people,
+        is_available: item.is_available,
+        prices: item.menu_item_price.map((p) => ({
+          amount: p.amount.toString(),
+          currency: p.currency_code,
+        })),
+      })),
+    });
+  },
+});
+
 export const allReactTools = [
   searchProductsTool,
+  getFeaturedProductsTool,
   getCategoriesTool,
   getMenuByCategoryTool,
   getCartTool,

@@ -23,6 +23,7 @@ import { CancelRemoveActionHandler } from './cancelRemoveActionHandler';
 import { OrderFoodHandler } from './orderFoodHandler';
 import { RemoveItemHandler } from './removeItemHandler';
 import { ProductQueryHandler } from './productQueryHandler';
+import { RecommendationRequestHandler } from './recommendationRequestHandler';
 import { ProductAttributeQuestionHandler } from './productAttributeQuestionHandler';
 import { SmallTalkHandler } from './smallTalkHandler';
 import { EditAddressHandler } from './editAddressHandler';
@@ -81,6 +82,7 @@ export const handlers = [
   new ReservationHandler(),
   new RemoveItemHandler(),
   new ProductQueryHandler(),
+  new RecommendationRequestHandler(),
   new ProductAttributeQuestionHandler(),
   
   // === FALLBACK (siempre último) ===

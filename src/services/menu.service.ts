@@ -363,4 +363,43 @@ export class MenuService {
       }
     });
   }
+
+  static async getFeaturedMenuItems(params: {
+    businessId: string;
+    currencyCode?: string | null;
+    limit?: number;
+  }): Promise<MenuItemSearchResult[]> {
+    const { businessId, currencyCode = null, limit = 8 } = params;
+    const now = new Date();
+    const priceWhere = buildPriceWhere(currencyCode, now);
+    return prisma.menu_item.findMany({
+      where: {
+        business_id: businessId,
+        is_available: true,
+        is_featured: true,
+        menu_item_price: {
+          some: priceWhere
+        }
+      },
+      orderBy: [{ created_at: 'desc' }],
+      take: Math.max(1, Math.min(limit, 20)),
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        ingredients: true,
+        serves_people: true,
+        is_available: true,
+        menu_item_price: {
+          where: priceWhere,
+          orderBy: { valid_from: 'desc' },
+          take: 1,
+          select: {
+            amount: true,
+            currency_code: true
+          }
+        }
+      }
+    });
+  }
 }

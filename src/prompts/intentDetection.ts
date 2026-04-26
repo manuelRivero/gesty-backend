@@ -18,6 +18,7 @@ Available intents:
 - REMOVE_ITEM: wants to remove/delete something from order (e.g., "sacá la pizza", "quitame la coca")
 - MODIFY_QUANTITY: wants to change quantity (e.g., "cambiá a 3", "son 4 en total")
 - PRODUCT_QUERY: user searches for food — any ingredient, dish type, or generic food word (e.g. "tienen ceviche?", "pollo para 3 personas", "algo con carne", "hay postres", "qué tienen de pescado"). Always set detectedProductName to the food keyword (pollo, carne, pescado, etc.) when the user names food, even if generic or no exact menu match exists.
+- RECOMMENDATION_REQUEST: user asks for suggestions or featured dishes without naming a specific food (e.g., "qué me recomendás?", "qué sugieren?", "recomendame algo rico", "cuáles son los destacados?").
 - PRODUCT_ATTRIBUTE_QUESTION: asking about product details (e.g., "cuánto cuesta?", "es picante?")
 - VIEW_MENU: ONLY when the user wants to browse the full catalog WITHOUT naming a specific food or ingredient. Examples: "ver menú", "mostrar el menú", "mostrar categorías", a very short standalone "qué tienen?" with no dish/ingredient. Do NOT use VIEW_MENU if the user mentions any food, ingredient, or dish — use PRODUCT_QUERY with detectedProductName instead. Headcount alone (e.g. "para 3 personas") with a food word is PRODUCT_QUERY + quantity, not VIEW_MENU.
 - VIEW_CART: wants to see current cart (e.g., "cuánto llevo?", "ver mi pedido")
@@ -33,6 +34,7 @@ Available intents:
 
 Rules:
 - Priority: if the user mentions any food or ingredient, prefer PRODUCT_QUERY over VIEW_MENU (never classify food-seeking messages as VIEW_MENU).
+- If the user asks for recommendations/suggestions and does not mention a concrete dish/ingredient, prefer RECOMMENDATION_REQUEST over SMALL_TALK or VIEW_MENU.
 - Extract product name when mentioned
 - Extract quantity when specified (number or words like "dos", "tres"). For "pedido/orden para N personas" or "somos N", quantity is N people (party size), not item count.
 - If the user includes a delivery address, extract it in addressText even if there is a greeting
