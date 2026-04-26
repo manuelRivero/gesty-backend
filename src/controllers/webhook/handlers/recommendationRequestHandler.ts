@@ -3,6 +3,7 @@ import { listResponse, textResponse } from '../utils';
 import { ConversationIntent } from '../../../types/conversationIntent';
 import { MenuService } from '../../../services/menu.service';
 import { buildListMessageFromButtons, truncateDescription, truncateTitle } from '../../../whatsappBuilders';
+import { formatBotUserMessage } from '../../../services/productQuery/utils';
 
 const FEATURED_PAGE_SIZE = 8;
 
@@ -52,7 +53,11 @@ const buildFeaturedListMessage = async (
   });
 
   return buildListMessageFromButtons(
-    `🤖\n\nTe comparto nuestros productos destacados (página ${featuredPage.page}/${featuredPage.totalPages}). Elegí uno para ver foto, info y opciones para agregar al carrito 👇`,
+    formatBotUserMessage(
+      'Recomendaciones para vos',
+      '🍽️',
+      `Te comparto nuestros productos destacados (página ${featuredPage.page}/${featuredPage.totalPages}). Elegí uno para ver foto, info y opciones para agregar al carrito 👇`
+    ),
     rows,
     'Ver destacados',
     '',
@@ -71,7 +76,11 @@ export class RecommendationRequestHandler implements IntentHandler {
     const listMessage = await buildFeaturedListMessage(ctx, 1);
     if (!listMessage) {
       return textResponse(
-        'Todavía no tenemos destacados cargados. Si querés, te muestro el menú y te ayudo a elegir según lo que te guste.'
+        formatBotUserMessage(
+          'Recomendaciones',
+          '🍽️',
+          'Todavía no tenemos destacados cargados. Si querés, te muestro el menú y te ayudo a elegir según lo que te guste.'
+        )
       );
     }
     return listResponse(listMessage);

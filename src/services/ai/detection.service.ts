@@ -23,15 +23,55 @@ export interface IntentDetectionResult {
   quantity: number | null;
   addressText?: string | null;
   addressConfidence?: number | null;
+  /**
+   * Lista bruta de candidatos que devolvió el LLM (normalizada y ordenada).
+   * Puede o no incluir al `intent` final. Se mantiene tal cual para
+   * telemetría y debugging — NO usar para tomar decisiones de ambigüedad.
+   * Para eso usar `alternatives` + `resolutionSource`.
+   */
   candidates: Array<{
     intent: ConversationIntent;
     confidence: number;
   }>;
-  resolutionSource?: 'direct' | 'rescued' | 'unknown';
+  /**
+   * Resto del ranking efectivo del sistema, ordenado por `confidence` desc,
+   * SIEMPRE excluyendo al `intent` final. Vacío cuando no hay opciones
+   * razonables. Esta es la fuente de verdad cuando se necesita ofrecer una
+   * disambiguación al usuario.
+   */
+  alternatives: Array<{
+    intent: ConversationIntent;
+    confidence: number;
+  }>;
+  /**
+   * Cómo se llegó al `intent` final:
+   *  - `direct`: la confianza del LLM superó el umbral o una regla
+   *    determinística forzó el intent (alta certeza, no preguntar).
+   *  - `rescued`: el LLM respondió UNKNOWN pero un candidato pudo rescatarse
+   *    con margen suficiente (alta certeza, no preguntar).
+   *  - `uncertain`: hay un intent pero su confianza está por debajo del
+   *    umbral directo. Único caso en el que conviene desambiguar con el
+   *    usuario.
+   *  - `unknown`: no hubo intent ni candidato rescatable.
+   */
+  resolutionSource?: 'direct' | 'rescued' | 'uncertain' | 'unknown';
+  /**
+   * Representa la DECISIÓN final del sistema, no el top-1 del ranking del
+   * LLM. Invariante (Opción D): cuando `resolutionSource` es `direct`,
+   * `rescued` o `uncertain`, este campo es exactamente
+   * `{ intent, confidence }` finales. Sólo es `null` cuando el resultado se
+   * construye en caminos donde no aplica (errores de parseo, payloads
+   * interactivos sin clasificación, etc.).
+   */
   topCandidate?: {
     intent: ConversationIntent;
     confidence: number;
   } | null;
+  /**
+   * `confidence` del intent final − `alternatives[0].confidence`. `null` si
+   * no hay alternativas. Sólo se evalúa cuando
+   * `resolutionSource === 'uncertain'`.
+   */
   rescueMargin?: number | null;
   raw: string | null;
 }
@@ -175,6 +215,36 @@ Rules:
         finalIntent = ConversationIntent.RESERVATION;
       }
 
+      // Normalización post-overrides (Opción D):
+      //  - Si una regla determinística cambió el intent, la decisión es firme ⇒ 'direct'.
+      //  - Si la confianza efectiva supera el threshold directo, también ⇒ 'direct'.
+      //  - 'rescued' se preserva (el rescate sigue siendo una decisión segura).
+      let finalSource: 'direct' | 'rescued' | 'uncertain' | 'unknown' =
+        resolved.source;
+      if (finalIntent === ConversationIntent.UNKNOWN) {
+        finalSource = 'unknown';
+      } else if (finalSource !== 'rescued') {
+        if (finalIntent !== resolved.intent) {
+          finalSource = 'direct';
+        } else if (outConfidence >= DIRECT_THRESHOLD) {
+          finalSource = 'direct';
+        }
+      }
+
+      const alternatives = normalizedCandidates
+        .filter((c) => c.intent !== finalIntent)
+        .sort((a, b) => b.confidence - a.confidence);
+
+      const rescueMargin =
+        alternatives.length > 0
+          ? outConfidence - alternatives[0].confidence
+          : null;
+
+      const finalTopCandidate =
+        finalIntent === ConversationIntent.UNKNOWN
+          ? null
+          : { intent: finalIntent, confidence: outConfidence };
+
       return {
         intent: finalIntent,
         confidence: outConfidence,
@@ -185,9 +255,10 @@ Rules:
         addressConfidence:
           typeof parsed.addressConfidence === 'number' ? parsed.addressConfidence : null,
         candidates: normalizedCandidates,
-        resolutionSource: resolved.source,
-        topCandidate: resolved.topCandidate,
-        rescueMargin: resolved.margin,
+        alternatives,
+        resolutionSource: finalSource,
+        topCandidate: finalTopCandidate,
+        rescueMargin,
         raw: content
       };
 
@@ -201,6 +272,10 @@ Rules:
         addressText: null,
         addressConfidence: null,
         candidates: [],
+        alternatives: [],
+        resolutionSource: 'unknown',
+        topCandidate: null,
+        rescueMargin: null,
         raw: content
       };
     }
@@ -215,6 +290,10 @@ Rules:
       addressText: null,
       addressConfidence: null,
       candidates: [],
+      alternatives: [],
+      resolutionSource: 'unknown',
+      topCandidate: null,
+      rescueMargin: null,
       raw: String(error)
     };
   }
@@ -284,13 +363,25 @@ const RESCUE_THRESHOLD = 0.45;
 export const MIN_MARGIN = 0.15;
 
 /**
- * Hay al menos dos candidatos y el margen entre el primero y el segundo es menor que {@link MIN_MARGIN}:
- * conviene pedir confirmación explícita al usuario.
+ * Opción D: la ambigüedad sólo se evalúa cuando la decisión del sistema fue
+ * explícitamente etiquetada como `uncertain`. Eso evita el bug histórico en el
+ * que un intent `direct` con confianza alta (ej. RECOMMENDATION_REQUEST 0.85)
+ * gatillaba una confirmación con candidatos irrelevantes.
+ *
+ * Reglas:
+ *  - Si `resolutionSource` es `direct` / `rescued` / `unknown` ⇒ no preguntar.
+ *  - Si es `uncertain` y existe `alternatives[0]`, se pregunta sólo cuando
+ *    `confidence(final) − confidence(alternatives[0])` es menor a {@link MIN_MARGIN}.
+ *  - Si no hay `alternatives`, no hay nada que ofrecer en los botones ⇒ no preguntar.
  */
 export function shouldAskIntentConfirmation(
   detection: IntentDetectionResult
 ): boolean {
-  if (!detection.candidates || detection.candidates.length < 2) {
+  if (detection.resolutionSource !== 'uncertain') {
+    return false;
+  }
+  const alts = detection.alternatives ?? [];
+  if (alts.length === 0) {
     return false;
   }
   const margin = detection.rescueMargin;
@@ -300,57 +391,52 @@ export function shouldAskIntentConfirmation(
   return margin < MIN_MARGIN;
 }
 
+/**
+ * Decide el intent final + cómo se llegó a él, sin combinar con la noción de
+ * "topCandidate" o "alternatives" (eso lo arma el caller post-overrides).
+ *
+ *  - `direct`: el LLM dio un intent != UNKNOWN con confianza ≥ DIRECT_THRESHOLD.
+ *  - `rescued`: el LLM dio UNKNOWN pero un candidato supera RESCUE_THRESHOLD
+ *    con margen ≥ MIN_MARGIN sobre el segundo.
+ *  - `uncertain`: el LLM dio un intent != UNKNOWN pero confidence < DIRECT_THRESHOLD.
+ *    Es el único caso donde la ambigüedad es real y conviene preguntar.
+ *  - `unknown`: nada se pudo resolver.
+ */
 const resolveFinalIntent = (
   intent: ConversationIntent,
   confidence: number,
   candidates: Array<{ intent: ConversationIntent; confidence: number }>
 ): {
   intent: ConversationIntent;
-  source: 'direct' | 'rescued' | 'unknown';
-  topCandidate: { intent: ConversationIntent; confidence: number } | null;
-  margin: number | null;
+  source: 'direct' | 'rescued' | 'uncertain' | 'unknown';
 } => {
   if (intent !== ConversationIntent.UNKNOWN && confidence >= DIRECT_THRESHOLD) {
-    return {
-      intent,
-      source: 'direct',
-      topCandidate: candidates[0] || null,
-      margin:
-        candidates.length >= 2
-          ? candidates[0].confidence - candidates[1].confidence
-          : null
-    };
+    return { intent, source: 'direct' };
   }
 
   const topCandidate = candidates[0];
   const secondCandidate = candidates[1];
-  const margin =
+  const candidateMargin =
     topCandidate && secondCandidate
       ? topCandidate.confidence - secondCandidate.confidence
       : topCandidate
         ? topCandidate.confidence
-        : null;
+        : 0;
 
   if (
     intent === ConversationIntent.UNKNOWN &&
     topCandidate &&
     topCandidate.confidence >= RESCUE_THRESHOLD &&
-    (margin ?? 0) >= MIN_MARGIN
+    candidateMargin >= MIN_MARGIN
   ) {
-    return {
-      intent: topCandidate.intent,
-      source: 'rescued',
-      topCandidate,
-      margin
-    };
+    return { intent: topCandidate.intent, source: 'rescued' };
   }
 
-  return {
-    intent: intent === ConversationIntent.UNKNOWN ? ConversationIntent.UNKNOWN : intent,
-    source: intent === ConversationIntent.UNKNOWN ? 'unknown' : 'direct',
-    topCandidate: topCandidate || null,
-    margin
-  };
+  if (intent !== ConversationIntent.UNKNOWN) {
+    return { intent, source: 'uncertain' };
+  }
+
+  return { intent: ConversationIntent.UNKNOWN, source: 'unknown' };
 };
 
 const extractQuantityFromText = (text: string): number | null => {

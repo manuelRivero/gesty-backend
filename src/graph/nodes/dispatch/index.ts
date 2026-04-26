@@ -223,7 +223,14 @@ export const nlpSubgraphNode = async (
   });
 
   if (shouldAskIntentConfirmation(detection)) {
-    const top2 = detection.candidates.slice(0, 2);
+    // Opción D: la confirmación se construye con la decisión del sistema
+    // (`detection.intent`) como primera opción y la mejor alternativa como
+    // segunda. Esto garantiza que el usuario nunca vea botones desalineados
+    // del intent final que el sistema ya eligió.
+    const top2 = [
+      { intent: detection.intent, confidence: detection.confidence },
+      detection.alternatives[0],
+    ];
     await patchConversationMetadata(conversation.id, {
       awaitingIntentConfirmation: true,
       intentCandidates: top2,

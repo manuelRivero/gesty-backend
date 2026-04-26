@@ -7,6 +7,7 @@ import {
   truncateDescription,
   truncateTitle,
 } from '../../../whatsappBuilders';
+import { formatBotUserMessage } from '../../../services/productQuery/utils';
 
 const FEATURED_PAGE_SIZE = 8;
 
@@ -30,7 +31,11 @@ export class FeaturedPageHandler implements IntentHandler {
 
     if (featuredPage.totalCount === 0) {
       return textResponse(
-        'Por ahora no hay destacados disponibles. Si querés, te muestro el menú completo.'
+        formatBotUserMessage(
+          'Recomendaciones',
+          '🍽️',
+          'Por ahora no hay destacados disponibles. Si querés, te muestro el menú completo.'
+        )
       );
     }
 
@@ -65,7 +70,11 @@ export class FeaturedPageHandler implements IntentHandler {
     });
 
     const listMessage = buildListMessageFromButtons(
-      `🤖\n\nProductos destacados (página ${featuredPage.page}/${featuredPage.totalPages}). Elegí uno para ver foto, detalles y poder agregarlo al carrito 👇`,
+      formatBotUserMessage(
+        'Recomendaciones para vos',
+        '🍽️',
+        `Productos destacados (página ${featuredPage.page}/${featuredPage.totalPages}). Elegí uno para ver foto, detalles y poder agregarlo al carrito 👇`
+      ),
       rows,
       'Ver destacados',
       '',

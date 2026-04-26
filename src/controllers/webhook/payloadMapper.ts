@@ -197,8 +197,9 @@ const buildInteractiveResult = (
   addressText: null,
   addressConfidence: null,
   candidates: [],
+  alternatives: [],
   resolutionSource: 'direct',
-  topCandidate: null,
+  topCandidate: { intent, confidence: 1 },
   rescueMargin: null,
   raw,
   productId

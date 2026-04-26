@@ -1,5 +1,6 @@
 import type { WhatsAppInteractiveMessage } from '../domain/intent/whatsappTemplates';
 import { ConversationIntent } from '../types/conversationIntent';
+import { formatBotUserMessage } from './productQuery/utils';
 
 const BTN_MAX = 20;
 
@@ -60,7 +61,11 @@ export function buildIntentAmbiguityInteractiveMessage(
   const [a, b] = candidates;
   const labelA = intentConfirmationShortLabel(a.intent);
   const labelB = intentConfirmationShortLabel(b.intent);
-  const body = `¿Querías *${labelA}* o *${labelB}*? 👇`;
+  const body = formatBotUserMessage(
+    'Necesito confirmar',
+    '🤔',
+    `¿Querías *${labelA}* o *${labelB}*? 👇`
+  );
 
   return {
     type: 'interactive',

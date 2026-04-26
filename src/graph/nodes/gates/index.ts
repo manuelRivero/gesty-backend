@@ -190,6 +190,10 @@ const runOnboardingAddressCapture = async (
       detectedProductName: null,
       quantity: null,
       candidates: [],
+      alternatives: [],
+      resolutionSource: 'direct',
+      topCandidate: { intent: ConversationIntent.ONBOARDING_START, confidence: 1 },
+      rescueMargin: null,
       raw: null,
     },
   };
