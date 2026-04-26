@@ -44,7 +44,13 @@ export const CtaPlannerRawSchema = z.object({
   shouldShowCta: z.boolean(),
   /** Nombre del producto mencionado en la respuesta del bot (sin UUID). */
   productHint: z.string().nullable(),
-  primaryKind: z.enum(['ADD_ITEM', 'VIEW_MENU', 'VIEW_FEATURED']),
+  /**
+   * Nombres de los productos mencionados en la respuesta del bot cuando son ≥2.
+   * Sólo aplica para `primaryKind = 'SELECT_FROM_LIST'`. Ignorado en los demás casos.
+   * Entre 2 y 5 nombres recomendado.
+   */
+  productHints: z.array(z.string()).nullable().optional(),
+  primaryKind: z.enum(['ADD_ITEM', 'VIEW_MENU', 'VIEW_FEATURED', 'SELECT_FROM_LIST']),
   /** Etiqueta del botón primario — máximo 20 caracteres. */
   primaryLabel: z.string(),
   secondaryKind: z.enum(['VIEW_MENU', 'VIEW_FEATURED']).nullable(),

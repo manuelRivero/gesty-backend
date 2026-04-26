@@ -250,6 +250,119 @@ describe('resolveCta — señal léxica (Fase 2)', () => {
 // resolveCta — quantity desde detectionQuantity (Fase 2)
 // ---------------------------------------------------------------------------
 
+describe('resolveCta — SELECT_FROM_LIST declarado por el planner', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('busca cada productHint y arma candidates con la mejor coincidencia de cada uno', async () => {
+    vi.mocked(MenuService.searchMenuItemsByKeyword).mockImplementation(
+      async ({ keyword }: { keyword: string }) => {
+        const norm = keyword.toLowerCase();
+        if (norm.includes('clásico')) {
+          return [{ id: 'p1', name: 'Ceviche Clásico', description: 'Con limón', ingredients: null, serves_people: 1, is_available: true, menu_item_price: [] }];
+        }
+        if (norm.includes('mixto')) {
+          return [{ id: 'p2', name: 'Ceviche Mixto', description: 'Con mariscos', ingredients: null, serves_people: 1, is_available: true, menu_item_price: [] }];
+        }
+        return [];
+      }
+    );
+
+    const input = baseInput({
+      plannerRaw: basePlannerRaw({
+        primaryKind: 'SELECT_FROM_LIST',
+        primaryLabel: 'Elegir uno 👇',
+        productHint: null,
+        productHints: ['Ceviche Clásico', 'Ceviche Mixto'],
+      }),
+    });
+
+    const plan = await resolveCta(input);
+
+    expect(plan.primary.kind).toBe('SELECT_FROM_LIST');
+    if (plan.primary.kind === 'SELECT_FROM_LIST') {
+      const ids = plan.primary.candidates.map((c) => c.productId);
+      expect(ids).toContain('p1');
+      expect(ids).toContain('p2');
+      expect(plan.primary.candidates.length).toBe(2);
+    }
+  });
+
+  it('deduplica si dos productHints resuelven al mismo producto', async () => {
+    vi.mocked(MenuService.searchMenuItemsByKeyword).mockResolvedValue([
+      { id: 'same-prod', name: 'Ceviche', description: null, ingredients: null, serves_people: 1, is_available: true, menu_item_price: [] },
+    ]);
+
+    const input = baseInput({
+      plannerRaw: basePlannerRaw({
+        primaryKind: 'SELECT_FROM_LIST',
+        primaryLabel: 'Elegir uno',
+        productHints: ['Ceviche A', 'Ceviche B', 'Ceviche C'],
+      }),
+    });
+
+    const plan = await resolveCta(input);
+
+    // Sólo 1 producto único resuelto → no llega al mínimo de 2 → fallback VIEW_FEATURED
+    expect(plan.primary.kind).toBe('VIEW_FEATURED');
+  });
+
+  it('fallback a VIEW_FEATURED si productHints está vacío o ningún hint resuelve', async () => {
+    vi.mocked(MenuService.searchMenuItemsByKeyword).mockResolvedValue([]);
+
+    const input = baseInput({
+      plannerRaw: basePlannerRaw({
+        primaryKind: 'SELECT_FROM_LIST',
+        primaryLabel: 'Elegir uno',
+        productHints: ['no-existe-1', 'no-existe-2'],
+      }),
+    });
+
+    const plan = await resolveCta(input);
+
+    expect(plan.primary.kind).toBe('VIEW_FEATURED');
+  });
+
+  it('fallback a VIEW_FEATURED si productHints viene null/undefined', async () => {
+    const input = baseInput({
+      plannerRaw: basePlannerRaw({
+        primaryKind: 'SELECT_FROM_LIST',
+        primaryLabel: 'Elegir uno',
+        productHints: null,
+      }),
+    });
+
+    const plan = await resolveCta(input);
+
+    expect(plan.primary.kind).toBe('VIEW_FEATURED');
+    expect(MenuService.searchMenuItemsByKeyword).not.toHaveBeenCalled();
+  });
+
+  it('limita a 5 candidates aunque hayan más productHints', async () => {
+    vi.mocked(MenuService.searchMenuItemsByKeyword).mockImplementation(
+      async ({ keyword }: { keyword: string }) => [
+        { id: `id-${keyword}`, name: keyword, description: null, ingredients: null, serves_people: 1, is_available: true, menu_item_price: [] },
+      ]
+    );
+
+    const input = baseInput({
+      plannerRaw: basePlannerRaw({
+        primaryKind: 'SELECT_FROM_LIST',
+        primaryLabel: 'Elegir uno',
+        productHints: ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7'],
+      }),
+    });
+
+    const plan = await resolveCta(input);
+
+    expect(plan.primary.kind).toBe('SELECT_FROM_LIST');
+    if (plan.primary.kind === 'SELECT_FROM_LIST') {
+      expect(plan.primary.candidates.length).toBeLessThanOrEqual(5);
+    }
+  });
+});
+
 describe('resolveCta — quantity', () => {
   beforeEach(() => {
     vi.clearAllMocks();

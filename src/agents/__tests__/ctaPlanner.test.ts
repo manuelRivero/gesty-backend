@@ -150,4 +150,47 @@ describe('planCta', () => {
     expect(result).not.toBeNull();
     expect(result!.primaryKind).toBe('ADD_ITEM');
   });
+
+  it('acepta primaryKind=SELECT_FROM_LIST con productHints', async () => {
+    mockLlm(
+      JSON.stringify({
+        shouldShowCta: true,
+        productHint: null,
+        productHints: ['Ceviche Clásico', 'Ceviche Mixto', 'Ceviche de Camarones'],
+        primaryKind: 'SELECT_FROM_LIST',
+        primaryLabel: 'Elegir uno 👇',
+        secondaryKind: 'VIEW_MENU',
+        secondaryLabel: 'Ver menú',
+      })
+    );
+
+    const result = await planCta(baseInput());
+
+    expect(result).not.toBeNull();
+    expect(result!.primaryKind).toBe('SELECT_FROM_LIST');
+    expect(result!.productHints).toEqual([
+      'Ceviche Clásico',
+      'Ceviche Mixto',
+      'Ceviche de Camarones',
+    ]);
+  });
+
+  it('SELECT_FROM_LIST sin productHints sigue siendo válido (resolver hace fallback)', async () => {
+    mockLlm(
+      JSON.stringify({
+        shouldShowCta: true,
+        productHint: null,
+        primaryKind: 'SELECT_FROM_LIST',
+        primaryLabel: 'Elegir uno',
+        secondaryKind: null,
+        secondaryLabel: null,
+      })
+    );
+
+    const result = await planCta(baseInput());
+
+    expect(result).not.toBeNull();
+    expect(result!.primaryKind).toBe('SELECT_FROM_LIST');
+    expect(result!.productHints ?? null).toBeNull();
+  });
 });

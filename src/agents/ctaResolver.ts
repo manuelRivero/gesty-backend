@@ -9,6 +9,11 @@
  *  4. Degrade a SELECT_FROM_LIST si hay 2-5 candidatos.
  *  5. Degrade a VIEW_MENU si nada resuelve.
  *
+ * Para SELECT_FROM_LIST recibido del planner (multi-producto): se busca cada
+ * nombre de `productHints` por separado y se arman los candidates con la mejor
+ * coincidencia de cada uno; si no se resuelven ≥2 productos, fallback a
+ * VIEW_FEATURED.
+ *
  * Fase 2: señales léxicas ("uno", "ese", "ese mismo") con lastReferencedProductId.
  */
 
@@ -161,6 +166,48 @@ const resolveByKeyword = async (params: {
   return buildSelectFromList(results.slice(0, 5), botResponseText, plannerRaw.secondaryLabel);
 };
 
+/**
+ * Resuelve un `SELECT_FROM_LIST` declarado por el planner: busca cada nombre
+ * de `productHints` por separado y arma los candidates con la mejor coincidencia
+ * de cada uno. Devuelve `null` si no se logran resolver al menos 2 productos
+ * (el caller cae a VIEW_FEATURED).
+ */
+const resolveSelectFromList = async (params: {
+  productHints: string[];
+  businessId: string;
+  botResponseText: string;
+  plannerRaw: CtaPlannerRaw;
+}): Promise<CtaPlan | null> => {
+  const { productHints, businessId, botResponseText, plannerRaw } = params;
+
+  const seenIds = new Set<string>();
+  const matched: MenuItemSearchResult[] = [];
+
+  for (const hint of productHints) {
+    if (!hint || !hint.trim()) continue;
+    let results: MenuItemSearchResult[];
+    try {
+      results = await MenuService.searchMenuItemsByKeyword({
+        businessId,
+        keyword: hint,
+      });
+    } catch (err) {
+      console.error('[hybrid-cta] searchMenuItemsByKeyword failed (multi):', err);
+      continue;
+    }
+    const best = results.find((r) => !seenIds.has(r.id));
+    if (best) {
+      seenIds.add(best.id);
+      matched.push(best);
+    }
+    if (matched.length >= 5) break;
+  }
+
+  if (matched.length < 2) return null;
+
+  return buildSelectFromList(matched, botResponseText, plannerRaw.secondaryLabel);
+};
+
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
@@ -200,6 +247,30 @@ export const resolveCta = async (input: CtaResolverInput): Promise<CtaPlan> => {
         secondary: plannerRaw.secondaryKind === 'VIEW_MENU'
           ? viewMenuAction(plannerRaw.secondaryLabel ?? undefined)
           : undefined,
+      };
+    }
+
+    // primaryKind === 'SELECT_FROM_LIST': resolver cada productHint por separado
+    if (plannerRaw.primaryKind === 'SELECT_FROM_LIST') {
+      const hints = (plannerRaw.productHints ?? []).filter(
+        (h) => typeof h === 'string' && h.trim().length > 0
+      );
+
+      if (hints.length >= 2) {
+        const resolved = await resolveSelectFromList({
+          productHints: hints,
+          businessId,
+          botResponseText,
+          plannerRaw,
+        });
+        if (resolved) return resolved;
+      }
+
+      // Fallback: si el planner pidió SELECT_FROM_LIST pero no logramos resolver
+      // ≥2 productos, mostramos destacados (mejor que un menú genérico).
+      return {
+        primary: viewFeaturedAction(plannerRaw.primaryLabel || 'Ver destacados'),
+        secondary: viewMenuAction(plannerRaw.secondaryLabel ?? undefined),
       };
     }
 

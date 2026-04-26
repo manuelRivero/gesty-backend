@@ -46,15 +46,17 @@ import type { AgentState, AgentStateUpdate } from '../../state';
  * lugar del handler determinístico. Son los intents "abiertos" donde el
  * razonamiento con tools agrega más valor que un dispatch fijo.
  *
- * Fase 2: RECOMMENDATION_REQUEST se suma para que el ReAct pueda añadir CTA
- * post-respuesta; el handler determinístico sigue siendo el fallback si el
- * agente no produce texto.
+ * Nota: `RECOMMENDATION_REQUEST` queda fuera a propósito. Es un flujo cerrado
+ * (siempre N platos del catálogo → el usuario debe poder elegir uno para
+ * entrar en `PRODUCT_FOCUS`) cuya UX óptima es la WhatsApp List Message ya
+ * implementada en `RecommendationRequestHandler`. El razonamiento abierto del
+ * ReAct no aporta valor en ese caso y agrega riesgo de alucinación de
+ * productos + bypass de la lista interactiva.
  */
 const HYBRID_INTENTS = new Set([
   'ORDER_FOOD',
   'PRODUCT_QUERY',
   'PRODUCT_ATTRIBUTE_QUESTION',
-  'RECOMMENDATION_REQUEST',
   'UNKNOWN',
 ]);
 
