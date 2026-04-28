@@ -18,10 +18,16 @@
 
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
+import type { Prisma } from '@prisma/client';
 import { MenuService } from '../services/menu.service';
 import { getBusinessOpenInfo } from '../services/businessHours.service';
 import { findRecentMessagesForDetectionContext } from '../repositories';
 import { prisma } from '../lib/prisma';
+import {
+  fetchComplementaryMenuItems,
+  getMenuItemCategoryTag,
+  MENU_SUGGESTION_ORDER,
+} from '../helpers/complementaryMenu.helper';
 
 const toJson = (data: unknown): string => {
   try {
@@ -287,6 +293,437 @@ export const getFeaturedProductsTool = new DynamicStructuredTool<
   },
 });
 
+// ---------------------------------------------------------------------------
+// find_products_by_filter
+// ---------------------------------------------------------------------------
+
+const MENU_CATEGORY_TAGS = ['STARTER', 'MAIN', 'SIDE', 'DRINK', 'DESSERT', 'OTHER'] as const;
+
+const findProductsByFilterSchema = z.object({
+  businessId: z.string().describe('ID del negocio (UUID)'),
+  categoryTag: z
+    .enum(MENU_CATEGORY_TAGS)
+    .nullable()
+    .optional()
+    .describe('Rol de la categoría (STARTER, MAIN, SIDE, DRINK, DESSERT, OTHER).'),
+  categoryId: z
+    .string()
+    .nullable()
+    .optional()
+    .describe('UUID de una categoría específica del menú (opcional).'),
+  containsIngredient: z
+    .string()
+    .nullable()
+    .optional()
+    .describe('Substring que DEBE aparecer en el nombre o ingredientes (case-insensitive).'),
+  excludesIngredient: z
+    .string()
+    .nullable()
+    .optional()
+    .describe('Substring que NO debe aparecer en el nombre ni en los ingredientes (case-insensitive). Útil para alergias o "sin X".'),
+  minServesPeople: z
+    .number()
+    .int()
+    .positive()
+    .nullable()
+    .optional()
+    .describe('Mínimo de personas que sirve el plato (serves_people >= N).'),
+  minPrice: z
+    .number()
+    .nonnegative()
+    .nullable()
+    .optional()
+    .describe('Precio mínimo (en la moneda solicitada o la del negocio).'),
+  maxPrice: z
+    .number()
+    .nonnegative()
+    .nullable()
+    .optional()
+    .describe('Precio máximo (en la moneda solicitada o la del negocio).'),
+  currencyCode: z
+    .string()
+    .nullable()
+    .optional()
+    .describe('Código de moneda ISO (ej. "ARS"). Si no se pasa, usa la del negocio.'),
+  featuredOnly: z
+    .boolean()
+    .nullable()
+    .optional()
+    .describe('Si true, solo devuelve productos destacados (is_featured = true).'),
+  limit: z.number().int().positive().max(20).default(10),
+});
+type FindProductsByFilterInput = z.infer<typeof findProductsByFilterSchema>;
+
+export const findProductsByFilterTool = new DynamicStructuredTool<
+  typeof findProductsByFilterSchema,
+  FindProductsByFilterInput
+>({
+  name: 'find_products_by_filter',
+  description:
+    'Busca productos del menú aplicando filtros estructurados (categoría, rol de categoría, ingredientes, porciones, rango de precio, destacados). Útil cuando el cliente describe un criterio en vez de un nombre. Devuelve solo productos disponibles.',
+  schema: findProductsByFilterSchema,
+  func: async ({
+    businessId,
+    categoryTag,
+    categoryId,
+    containsIngredient,
+    excludesIngredient,
+    minServesPeople,
+    minPrice,
+    maxPrice,
+    currencyCode,
+    featuredOnly,
+    limit,
+  }: FindProductsByFilterInput) => {
+    const business = await prisma.business.findUnique({
+      where: { id: businessId },
+      select: { currency_code: true },
+    });
+    const currency = currencyCode ?? business?.currency_code ?? null;
+    const now = new Date();
+
+    const priceWhere: Prisma.menu_item_priceWhereInput = {
+      is_active: true,
+      valid_from: { lte: now },
+      OR: [{ valid_to: null }, { valid_to: { gte: now } }],
+      ...(currency ? { currency_code: currency } : {}),
+      ...(minPrice != null || maxPrice != null
+        ? {
+            amount: {
+              ...(minPrice != null ? { gte: minPrice } : {}),
+              ...(maxPrice != null ? { lte: maxPrice } : {}),
+            },
+          }
+        : {}),
+    };
+
+    const ingredientContains = containsIngredient?.trim();
+    const ingredientExcludes = excludesIngredient?.trim();
+
+    const where: Prisma.menu_itemWhereInput = {
+      business_id: businessId,
+      is_available: true,
+      ...(featuredOnly ? { is_featured: true } : {}),
+      ...(minServesPeople ? { serves_people: { gte: minServesPeople } } : {}),
+      menu_category: {
+        is_active: true,
+        ...(categoryTag ? { category_tag: categoryTag } : {}),
+      },
+      ...(categoryId ? { category_id: categoryId } : {}),
+      menu_item_price: { some: priceWhere },
+      ...(ingredientContains
+        ? {
+            OR: [
+              { name: { contains: ingredientContains, mode: 'insensitive' } },
+              { ingredients: { contains: ingredientContains, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+      ...(ingredientExcludes
+        ? {
+            NOT: {
+              OR: [
+                { name: { contains: ingredientExcludes, mode: 'insensitive' } },
+                { ingredients: { contains: ingredientExcludes, mode: 'insensitive' } },
+              ],
+            },
+          }
+        : {}),
+    };
+
+    const items = await prisma.menu_item.findMany({
+      where,
+      orderBy: [{ is_featured: 'desc' }, { name: 'asc' }],
+      take: Math.max(1, Math.min(limit, 20)),
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        ingredients: true,
+        serves_people: true,
+        is_available: true,
+        is_featured: true,
+        menu_category: { select: { id: true, name: true, category_tag: true } },
+        menu_item_price: {
+          where: priceWhere,
+          orderBy: { valid_from: 'desc' },
+          take: 1,
+          select: { amount: true, currency_code: true },
+        },
+      },
+    });
+
+    return toJson({
+      count: items.length,
+      currencyApplied: currency,
+      items: items.map((item) => ({
+        id: item.id,
+        name: item.name,
+        description: item.description,
+        ingredients: item.ingredients,
+        serves_people: item.serves_people,
+        is_available: item.is_available,
+        is_featured: item.is_featured,
+        category: {
+          id: item.menu_category.id,
+          name: item.menu_category.name,
+          tag: item.menu_category.category_tag,
+        },
+        prices: item.menu_item_price.map((p) => ({
+          amount: p.amount.toString(),
+          currency: p.currency_code,
+        })),
+      })),
+    });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// check_product_availability
+// ---------------------------------------------------------------------------
+
+const checkProductAvailabilitySchema = z
+  .object({
+    businessId: z.string().describe('ID del negocio (UUID)'),
+    productId: z
+      .string()
+      .nullable()
+      .optional()
+      .describe('UUID exacto del producto (preferido si está disponible).'),
+    productName: z
+      .string()
+      .nullable()
+      .optional()
+      .describe('Nombre del producto (búsqueda exacta o por substring case-insensitive).'),
+  })
+  .refine(
+    (data) => Boolean(data.productId?.trim() || data.productName?.trim()),
+    { message: 'Debe pasarse productId o productName.' }
+  );
+type CheckProductAvailabilityInput = z.infer<typeof checkProductAvailabilitySchema>;
+
+export const checkProductAvailabilityTool = new DynamicStructuredTool<
+  typeof checkProductAvailabilitySchema,
+  CheckProductAvailabilityInput
+>({
+  name: 'check_product_availability',
+  description:
+    'Verifica si un producto del menú está disponible AHORA. Acepta productId o productName. Si pasa nombre y matchea con varios, devuelve hasta 5 candidatos para que el agente elija. Usar antes de prometer un plato al cliente.',
+  schema: checkProductAvailabilitySchema,
+  func: async ({ businessId, productId, productName }: CheckProductAvailabilityInput) => {
+    const id = productId?.trim();
+    const name = productName?.trim();
+
+    const select = {
+      id: true,
+      name: true,
+      is_available: true,
+      menu_category: {
+        select: { id: true, name: true, category_tag: true, is_active: true },
+      },
+    } satisfies Prisma.menu_itemSelect;
+
+    if (id) {
+      const item = await prisma.menu_item.findFirst({
+        where: { id, business_id: businessId },
+        select,
+      });
+      if (!item) {
+        return toJson({ found: false, candidates: [] });
+      }
+      return toJson({
+        found: true,
+        candidates: [
+          {
+            id: item.id,
+            name: item.name,
+            isAvailable: item.is_available && item.menu_category.is_active,
+            category: {
+              id: item.menu_category.id,
+              name: item.menu_category.name,
+              tag: item.menu_category.category_tag,
+            },
+          },
+        ],
+      });
+    }
+
+    if (!name) {
+      return toJson({ found: false, candidates: [] });
+    }
+
+    const candidates = await prisma.menu_item.findMany({
+      where: {
+        business_id: businessId,
+        OR: [
+          { name: { equals: name, mode: 'insensitive' } },
+          { name: { contains: name, mode: 'insensitive' } },
+        ],
+      },
+      orderBy: [{ is_available: 'desc' }, { is_featured: 'desc' }, { name: 'asc' }],
+      take: 5,
+      select,
+    });
+
+    return toJson({
+      found: candidates.length > 0,
+      candidates: candidates.map((item) => ({
+        id: item.id,
+        name: item.name,
+        isAvailable: item.is_available && item.menu_category.is_active,
+        category: {
+          id: item.menu_category.id,
+          name: item.menu_category.name,
+          tag: item.menu_category.category_tag,
+        },
+      })),
+    });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// get_complementary_suggestions
+// ---------------------------------------------------------------------------
+
+const getComplementarySuggestionsSchema = z.object({
+  businessId: z.string().describe('ID del negocio (UUID)'),
+  productId: z
+    .string()
+    .nullable()
+    .optional()
+    .describe('UUID del producto base. Las sugerencias serán de las OTRAS categorías del menú.'),
+  categoryTag: z
+    .enum(['STARTER', 'MAIN', 'SIDE', 'DRINK', 'DESSERT'])
+    .nullable()
+    .optional()
+    .describe('Tag base si no se pasa productId. Las sugerencias serán de los otros tags.'),
+  limit: z.number().int().positive().max(15).default(6),
+});
+type GetComplementarySuggestionsInput = z.infer<typeof getComplementarySuggestionsSchema>;
+
+export const getComplementarySuggestionsTool = new DynamicStructuredTool<
+  typeof getComplementarySuggestionsSchema,
+  GetComplementarySuggestionsInput
+>({
+  name: 'get_complementary_suggestions',
+  description:
+    'Devuelve productos que complementan a un plato dado: si el cliente pidió un MAIN, sugiere STARTER/SIDE/DRINK/DESSERT, etc. Útil para "¿qué le va bien a X?". Acepta productId (preferido) o categoryTag base.',
+  schema: getComplementarySuggestionsSchema,
+  func: async ({
+    businessId,
+    productId,
+    categoryTag,
+    limit,
+  }: GetComplementarySuggestionsInput) => {
+    let baseTag: typeof MENU_SUGGESTION_ORDER[number] | null = null;
+    let excludeProductId: string | null = null;
+
+    if (productId) {
+      const tag = await getMenuItemCategoryTag(productId, businessId);
+      if (tag && MENU_SUGGESTION_ORDER.includes(tag)) {
+        baseTag = tag;
+      }
+      excludeProductId = productId;
+    }
+    if (!baseTag && categoryTag) {
+      baseTag = categoryTag;
+    }
+
+    const suggestionTags = baseTag
+      ? MENU_SUGGESTION_ORDER.filter((t) => t !== baseTag)
+      : [...MENU_SUGGESTION_ORDER];
+
+    const items = await fetchComplementaryMenuItems({
+      businessId,
+      tags: suggestionTags,
+      excludeProductIds: excludeProductId ? [excludeProductId] : [],
+      limit: Math.max(1, Math.min(limit, 15)),
+    });
+
+    return toJson({
+      baseTag,
+      suggestedTags: suggestionTags,
+      count: items.length,
+      items: items.map((item) => ({
+        id: item.id,
+        name: item.name,
+        category: {
+          name: item.categoryName,
+          tag: item.categoryTag,
+        },
+      })),
+    });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// get_business_info
+// ---------------------------------------------------------------------------
+
+const getBusinessInfoSchema = z.object({
+  businessId: z.string().describe('ID del negocio (UUID)'),
+});
+type GetBusinessInfoInput = z.infer<typeof getBusinessInfoSchema>;
+
+export const getBusinessInfoTool = new DynamicStructuredTool<
+  typeof getBusinessInfoSchema,
+  GetBusinessInfoInput
+>({
+  name: 'get_business_info',
+  description:
+    'Devuelve datos públicos del negocio para responder preguntas básicas del cliente: nombre, descripción, zona horaria, ubicación (lat/lng), moneda y teléfono de WhatsApp. NO devuelve datos administrativos, contables ni credenciales.',
+  schema: getBusinessInfoSchema,
+  func: async ({ businessId }: GetBusinessInfoInput) => {
+    const business = await prisma.business.findUnique({
+      where: { id: businessId },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        timezone: true,
+        slug: true,
+        latitude: true,
+        longitude: true,
+        whatsapp_phone_number: true,
+        currency: {
+          select: { code: true, name: true, symbol: true },
+        },
+      },
+    });
+
+    if (!business) {
+      return toJson({ found: false });
+    }
+
+    const hasLocation =
+      typeof business.latitude === 'number' && typeof business.longitude === 'number';
+
+    return toJson({
+      found: true,
+      id: business.id,
+      name: business.name,
+      description: business.description,
+      slug: business.slug,
+      timezone: business.timezone,
+      whatsappPhoneNumber: business.whatsapp_phone_number,
+      currency: business.currency
+        ? {
+            code: business.currency.code,
+            name: business.currency.name,
+            symbol: business.currency.symbol,
+          }
+        : null,
+      location: hasLocation
+        ? {
+            latitude: business.latitude,
+            longitude: business.longitude,
+            mapsUrl: `https://www.google.com/maps?q=${business.latitude},${business.longitude}`,
+          }
+        : null,
+    });
+  },
+});
+
 export const allReactTools = [
   searchProductsTool,
   getFeaturedProductsTool,
@@ -295,4 +732,8 @@ export const allReactTools = [
   getCartTool,
   getBusinessHoursTool,
   getRecentMessagesTool,
+  findProductsByFilterTool,
+  checkProductAvailabilityTool,
+  getComplementarySuggestionsTool,
+  getBusinessInfoTool,
 ];

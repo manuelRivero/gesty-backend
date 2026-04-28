@@ -35,6 +35,7 @@ import { extractStrictNumericPeopleCount } from '../../../helpers/peopleCountExt
 import { buildIntentAmbiguityInteractiveMessage } from '../../../services/intentAmbiguityConfirmation.service';
 import { isHybridAgentMode } from '../../../config/env';
 import { runHybridReactAgent } from '../../../agents/reactAgent';
+import { ConversationIntent } from '../../../types/conversationIntent';
 import type {
   EnrichedContext,
   HandlerResult,
@@ -42,31 +43,46 @@ import type {
 import type { AgentState, AgentStateUpdate } from '../../state';
 
 /**
- * Intents que en modo `AGENT_MODE=hybrid` se enrutan por el ReAct agent en
- * lugar del handler determinístico. Son los intents "abiertos" donde el
- * razonamiento con tools agrega más valor que un dispatch fijo.
+ * Intents de flujo cerrado/transaccional que SIEMPRE deben quedarse en
+ * el dispatcher determinístico, aun en `AGENT_MODE=hybrid`.
  *
- * Nota: `RECOMMENDATION_REQUEST` queda fuera a propósito. Es un flujo cerrado
- * (siempre N platos del catálogo → el usuario debe poder elegir uno para
- * entrar en `PRODUCT_FOCUS`) cuya UX óptima es la WhatsApp List Message ya
- * implementada en `RecommendationRequestHandler`. El razonamiento abierto del
- * ReAct no aporta valor en ese caso y agrega riesgo de alucinación de
- * productos + bypass de la lista interactiva.
+ * Política por defecto: agent-first para intents abiertos de lenguaje natural.
+ * Sólo se bloquea el paso al ReAct cuando el intent pertenece a un flujo donde
+ * la UX depende de handlers con estado/payloads específicos.
  */
-const HYBRID_INTENTS = new Set([
-  'ORDER_FOOD',
-  'PRODUCT_QUERY',
-  'PRODUCT_ATTRIBUTE_QUESTION',
-  'UNKNOWN',
+const CLOSED_INTENTS = new Set<ConversationIntent>([
+  ConversationIntent.RECOMMENDATION_REQUEST,
+  ConversationIntent.RESERVATION,
+  ConversationIntent.CHECKOUT,
+  ConversationIntent.CANCEL_ORDER,
+  ConversationIntent.ADD_PRODUCT,
+  ConversationIntent.ADD_ITEM,
+  ConversationIntent.REMOVE_ITEM,
+  ConversationIntent.MODIFY_QUANTITY,
+  ConversationIntent.CONFIRM_ADD,
+  ConversationIntent.CONFIRM_REMOVE,
+  ConversationIntent.CANCEL_REMOVE,
+  ConversationIntent.INCREASE_ITEM,
+  ConversationIntent.DECREASE_ITEM,
+  ConversationIntent.INCREASE_ITEM_QUANTITY,
+  ConversationIntent.DECREASE_ITEM_QUANTITY,
+  ConversationIntent.VIEW_CART,
+  ConversationIntent.VIEW_CART_FOR_EDITION,
+  ConversationIntent.VIEW_ORDER,
+  ConversationIntent.EDIT_ADDRESS,
+  ConversationIntent.ONBOARDING_START,
+  ConversationIntent.ONBOARDING_SUBMIT_ADDRESS_TEXT,
+  ConversationIntent.ONBOARDING_SUBMIT_LOCATION,
+  ConversationIntent.ONBOARDING_CONFIRM_ADDRESS,
+  ConversationIntent.ONBOARDING_EDIT_ADDRESS,
+  ConversationIntent.ONBOARDING_RETRY_ADDRESS,
+  ConversationIntent.ONBOARDING_COMPLETE,
 ]);
 
 const dispatchOrHybrid = async (
   enrichedCtx: EnrichedContext
 ): Promise<HandlerResult | null> => {
-  if (
-    isHybridAgentMode() &&
-    HYBRID_INTENTS.has(enrichedCtx.detection.intent)
-  ) {
+  if (isHybridAgentMode() && !CLOSED_INTENTS.has(enrichedCtx.detection.intent)) {
     try {
       const hybrid = await runHybridReactAgent(enrichedCtx);
       if (hybrid) return hybrid;

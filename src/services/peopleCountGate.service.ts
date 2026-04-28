@@ -8,7 +8,7 @@ import { ConversationIntent } from '../types/conversationIntent';
 
 /** Formato estándar del bot: 🤖, título en negrita, cuerpo con guía clara. */
 export const PEOPLE_COUNT_PROMPT_MESSAGE = formatBotUserMessage(
-  '¿Para cuántas personas',
+  '¿Para cuántas personas?',
   '👥',
   'Así ajustamos recomendaciones y porciones.\n\n' +
     'Escribí *solo el número* con dígitos, sin letras ni texto extra (del *1* al *99*). Ejemplos: *3* o *12*.'
