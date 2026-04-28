@@ -5,12 +5,63 @@ import { normalizeWhatsAppButtonInteractiveMessage } from './whatsappInteractive
 export class WhatsAppSenderService {
   private readonly baseUrl = 'https://graph.facebook.com/v18.0';
   private readonly buttonLabelMaxLength = 20;
+  private readonly whatsappTextMaxLength = 4096;
+  private readonly truncationClosure =
+    '\n\nSi queres, seguimos con opciones puntuales. Responde "si, adelante" o elegi una opcion.';
 
   private truncateLabel(value: string, maxLength = this.buttonLabelMaxLength): string {
     if (value.length <= maxLength) {
       return value;
     }
     return value.slice(0, maxLength);
+  }
+
+  private normalizeTextBodyForWhatsApp(message: string): {
+    body: string;
+    wasTruncated: boolean;
+    originalLength: number;
+  } {
+    const trimmed = message.trim();
+    const originalLength = trimmed.length;
+    if (trimmed.length <= this.whatsappTextMaxLength) {
+      return { body: trimmed, wasTruncated: false, originalLength };
+    }
+
+    const suffix = `\n\n...${this.truncationClosure}`;
+    const max = this.whatsappTextMaxLength - suffix.length;
+    return {
+      body: `${trimmed.slice(0, max)}${suffix}`,
+      wasTruncated: true,
+      originalLength,
+    };
+  }
+
+  private buildTruncationRecoveryInteractiveMessage(): WhatsAppInteractiveMessage {
+    return {
+      type: 'interactive',
+      interactive: {
+        type: 'button',
+        header: { type: 'text', text: '' },
+        body: { text: 'Como queres seguir?' },
+        footer: { text: '' },
+        action: {
+          buttons: [
+            {
+              type: 'reply',
+              reply: { id: 'VIEW_MENU', title: 'Ver menu' },
+            },
+            {
+              type: 'reply',
+              reply: { id: 'BUSINESS_HOURS', title: 'Horarios' },
+            },
+            {
+              type: 'reply',
+              reply: { id: 'VIEW_ORDER', title: 'Mi pedido' },
+            },
+          ],
+        },
+      },
+    };
   }
 
   private normalizeRecipient(to: string): string {
@@ -47,6 +98,14 @@ export class WhatsAppSenderService {
   }): Promise<void> {
     const { phoneNumberId, to, message } = params;
     const normalizedTo = this.normalizeRecipient(to);
+    const normalizedText = this.normalizeTextBodyForWhatsApp(message);
+    const normalizedBody = normalizedText.body;
+
+    if (normalizedText.wasTruncated) {
+      console.warn(
+        `[WhatsAppSender] Texto truncado para cumplir límite (${normalizedText.originalLength} -> ${normalizedBody.length})`
+      );
+    }
 
     try {
       await axios.post(
@@ -56,7 +115,7 @@ export class WhatsAppSenderService {
           to: normalizedTo,
           type: 'text',
           text: {
-            body: message
+            body: normalizedBody
           }
         },
         {
@@ -65,6 +124,14 @@ export class WhatsAppSenderService {
           }
         }
       );
+
+      if (normalizedText.wasTruncated) {
+        await this.sendButtonMessage({
+          phoneNumberId,
+          to,
+          interactiveMessage: this.buildTruncationRecoveryInteractiveMessage(),
+        });
+      }
     } catch (error) {
       const axiosError = error as AxiosError;
       const status = axiosError.response?.status;

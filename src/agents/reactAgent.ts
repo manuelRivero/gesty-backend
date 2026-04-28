@@ -190,8 +190,30 @@ const unwrapJsonTextEnvelope = (text: string): string => {
   return trimmed;
 };
 
+const stripConsecutiveDuplicateLargeBlocks = (text: string): string => {
+  const normalized = text.trim();
+  if (!normalized) return normalized;
+
+  const lines = normalized.split('\n');
+  const deduped: string[] = [];
+
+  for (const line of lines) {
+    const current = line.trim();
+    const prev = deduped.length > 0 ? deduped[deduped.length - 1].trim() : '';
+    // Evita duplicados consecutivos de líneas "grandes" (caso típico: JSON repetido).
+    if (current.length >= 120 && current === prev) {
+      continue;
+    }
+    deduped.push(line);
+  }
+
+  return deduped.join('\n').trim();
+};
+
 const ensureWhatsAppBotFormat = (text: string): string => {
-  const normalized = unwrapJsonTextEnvelope(text).trim();
+  const normalized = stripConsecutiveDuplicateLargeBlocks(
+    unwrapJsonTextEnvelope(text)
+  ).trim();
   if (!normalized) return normalized;
   if (normalized.startsWith('🤖')) {
     return normalized;
