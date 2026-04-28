@@ -34,10 +34,13 @@ import {
   extractPrimaryPayload,
   extractPrimaryProductId,
 } from '../whatsappBuilders/hybridCta';
+import { buildListMessageFromButtons, truncateDescription, truncateTitle } from '../whatsappBuilders';
 import { normalizeMetadata } from '../services/productQuery/utils';
 import { patchConversationMetadata, findOrCreateConversationState } from '../repositories';
 import { MenuService } from '../services/menu.service';
 import type { CtaPlannerInput } from './types';
+import { AgentOutputSchema, type AgentOutput } from './outputContract';
+import { getSmallChatLlm } from '../config/llm';
 
 // ---------------------------------------------------------------------------
 // Constantes
@@ -54,6 +57,8 @@ const MAX_TEXT_FOR_CTA = 600;
 
 /** Número de productos del menú a precargar como contexto para el planner. */
 const TOP_MENU_PRODUCTS_FOR_PLANNER = 5;
+const MAX_LIST_TITLE_LENGTH = 24;
+const MAX_LIST_DESCRIPTION_LENGTH = 60;
 
 let cachedAgent: ReturnType<typeof createReactAgent> | null = null;
 
@@ -221,6 +226,87 @@ const ensureWhatsAppBotFormat = (text: string): string => {
   return formatBotUserMessage('Respuesta', '💬', normalized);
 };
 
+const STRUCTURED_OUTPUT_PROMPT = `Converti la respuesta del asistente a un JSON valido con UNO de estos modos:
+- {"mode":"TEXT","text":"..."}
+- {"mode":"LIST_CANDIDATES","introText":"...","items":[{"id":"...","title":"...","description":"..."}]}
+
+Reglas:
+- Devolve SOLO JSON valido, sin markdown ni texto extra.
+- Usa LIST_CANDIDATES cuando haya multiples opciones de productos para elegir.
+- En LIST_CANDIDATES, "id" debe ser el productId real (uuid) si esta disponible.
+- Si no hay items accionables, usa TEXT.
+- No repitas bloques JSON crudos en el texto.
+- Mantene el idioma en espanol rioplatense.`;
+
+const formatAgentOutput = async (params: {
+  rawText: string;
+  userMessage: string;
+}): Promise<AgentOutput | null> => {
+  const formatter = getSmallChatLlm().withStructuredOutput(AgentOutputSchema);
+
+  try {
+    return await formatter.invoke([
+      new SystemMessage(STRUCTURED_OUTPUT_PROMPT),
+      new HumanMessage(
+        `Mensaje del usuario:\n${params.userMessage}\n\nRespuesta cruda del asistente:\n${params.rawText}`
+      ),
+    ]);
+  } catch (error) {
+    console.warn('[hybrid-agent] structured output formatting failed', error);
+    return null;
+  }
+};
+
+const mapStructuredOutputToHandlerResult = (
+  output: AgentOutput
+): HandlerResult | null => {
+  if (output.mode === 'TEXT') {
+    return {
+      content: ensureWhatsAppBotFormat(output.text),
+      isInteractive: false,
+    };
+  }
+
+  const rows = output.items
+    .map((item) => {
+      const itemId = item.id.trim();
+      const title = truncateTitle(item.title.trim(), MAX_LIST_TITLE_LENGTH);
+      if (!itemId || !title) return null;
+      return {
+        title,
+        payload: `SELECT_PRODUCT:${itemId}`,
+        description: truncateDescription(
+          (item.description ?? 'Selecciona esta opcion').trim(),
+          MAX_LIST_DESCRIPTION_LENGTH
+        ),
+        sectionTitle: 'Opciones disponibles',
+      };
+    })
+    .filter((row): row is NonNullable<typeof row> => Boolean(row));
+
+  if (!rows.length) {
+    return null;
+  }
+
+  rows.push({
+    title: 'Ver menu completo',
+    payload: 'VIEW_MENU',
+    description: 'Explorar todas las categorias',
+    sectionTitle: 'Navegacion',
+  });
+
+  return {
+    content: buildListMessageFromButtons(
+      ensureWhatsAppBotFormat(output.introText),
+      rows,
+      'Ver opciones',
+      '',
+      'Selecciona un producto'
+    ),
+    isInteractive: true,
+  };
+};
+
 // ---------------------------------------------------------------------------
 // Cooldown helpers
 // ---------------------------------------------------------------------------
@@ -306,8 +392,24 @@ export const runHybridReactAgent = async (
   const out = await agent.invoke(inputs);
   const rawText = extractFinalText(out);
   if (!rawText) return null;
+  const userMessage = ctx.message?.text?.body ?? '';
 
-  const formattedText = ensureWhatsAppBotFormat(rawText);
+  const structuredOutput = await formatAgentOutput({
+    rawText,
+    userMessage,
+  });
+
+  const structuredResult = structuredOutput
+    ? mapStructuredOutputToHandlerResult(structuredOutput)
+    : null;
+  if (structuredResult?.isInteractive) {
+    return structuredResult;
+  }
+
+  const formattedText =
+    structuredOutput?.mode === 'TEXT'
+      ? ensureWhatsAppBotFormat(structuredOutput.text)
+      : ensureWhatsAppBotFormat(rawText);
 
   // --- CTA pipeline ---
   const businessId =
@@ -317,7 +419,6 @@ export const runHybridReactAgent = async (
   const conversationId = ctx.conversationId;
   const intent = ctx.detection.intent as string;
   const confidence = ctx.detection.confidence;
-  const userMessage = ctx.message?.text?.body ?? '';
   const detectedProductName = ctx.detection.detectedProductName;
   const lastReferencedProductId =
     (ctx.conversation as { lastReferencedProductId?: string | null })
