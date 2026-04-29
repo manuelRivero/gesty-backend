@@ -39,6 +39,38 @@ const toJson = (data: unknown): string => {
   }
 };
 
+const PRODUCT_SHORTLIST_MAX_LIMIT = 12;
+
+const toShortlistItem = (item: {
+  id: string;
+  name: string;
+  serves_people: number | null;
+  is_featured?: boolean;
+  menu_category?: { id: string; name: string; category_tag: string | null } | null;
+  menu_item_price?: Array<{ amount: Prisma.Decimal; currency_code: string }> | null;
+}) => {
+  const firstPrice = item.menu_item_price?.[0];
+  return {
+    id: item.id,
+    name: item.name,
+    serves_people: item.serves_people,
+    is_featured: item.is_featured ?? false,
+    category: item.menu_category
+      ? {
+          id: item.menu_category.id,
+          name: item.menu_category.name,
+          tag: item.menu_category.category_tag,
+        }
+      : null,
+    price: firstPrice
+      ? {
+          amount: firstPrice.amount.toString(),
+          currency: firstPrice.currency_code,
+        }
+      : null,
+  };
+};
+
 const searchProductsSchema = z.object({
   businessId: z.string().describe('ID del negocio (UUID)'),
   keyword: z.string().min(1).describe('Palabra clave o nombre a buscar'),
@@ -51,26 +83,20 @@ export const searchProductsTool = new DynamicStructuredTool<
 >({
   name: 'search_products',
   description:
-    'Busca productos del menú por palabra clave (nombre o ingrediente). Devuelve hasta 10 resultados con id, nombre, descripción, ingredientes, porciones y precios.',
+    'Busca productos del menú por palabra clave (nombre o ingrediente). Devuelve shortlist liviano (id, nombre, categoría, porciones y precio principal). Si necesitás más detalle por producto, usá get_products_details_by_ids.',
   schema: searchProductsSchema,
   func: async ({ businessId, keyword }: SearchProductsInput) => {
     const items = await MenuService.searchMenuItemsByKeyword({
       businessId,
       keyword,
     });
-    const trimmed = items.slice(0, 10).map((item) => ({
-      id: item.id,
-      name: item.name,
-      description: item.description,
-      ingredients: item.ingredients,
-      serves_people: item.serves_people,
-      is_available: item.is_available,
-      prices: item.menu_item_price.map((p) => ({
-        amount: p.amount.toString(),
-        currency: p.currency_code,
-      })),
-    }));
-    return toJson({ count: trimmed.length, items: trimmed });
+    const shortlisted = items.slice(0, PRODUCT_SHORTLIST_MAX_LIMIT);
+    return toJson({
+      count: shortlisted.length,
+      totalMatches: items.length,
+      hasMore: items.length > shortlisted.length,
+      items: shortlisted.map((item) => toShortlistItem(item)),
+    });
   },
 });
 
@@ -350,7 +376,7 @@ const findProductsByFilterSchema = z.object({
     .nullable()
     .optional()
     .describe('Si true, solo devuelve productos destacados (is_featured = true).'),
-  limit: z.number().int().positive().max(20).default(10),
+  limit: z.number().int().positive().max(PRODUCT_SHORTLIST_MAX_LIMIT).default(10),
 });
 type FindProductsByFilterInput = z.infer<typeof findProductsByFilterSchema>;
 
@@ -360,7 +386,7 @@ export const findProductsByFilterTool = new DynamicStructuredTool<
 >({
   name: 'find_products_by_filter',
   description:
-    'Busca productos del menú aplicando filtros estructurados (categoría, rol de categoría, ingredientes, porciones, rango de precio, destacados). Útil cuando el cliente describe un criterio en vez de un nombre. Devuelve solo productos disponibles.',
+    'Busca productos del menú aplicando filtros estructurados (categoría, rol de categoría, ingredientes, porciones, rango de precio, destacados). Devuelve shortlist liviano para decidir rápido. Si necesitás descripción/ingredientes detallados, usá get_products_details_by_ids con los IDs elegidos.',
   schema: findProductsByFilterSchema,
   func: async ({
     businessId,
@@ -431,10 +457,88 @@ export const findProductsByFilterTool = new DynamicStructuredTool<
         : {}),
     };
 
-    const items = await prisma.menu_item.findMany({
+    const safeLimit = Math.max(1, Math.min(limit, PRODUCT_SHORTLIST_MAX_LIMIT));
+    const [totalMatches, items] = await Promise.all([
+      prisma.menu_item.count({ where }),
+      prisma.menu_item.findMany({
       where,
       orderBy: [{ is_featured: 'desc' }, { name: 'asc' }],
-      take: Math.max(1, Math.min(limit, 20)),
+      take: safeLimit,
+      select: {
+        id: true,
+        name: true,
+        serves_people: true,
+        is_featured: true,
+        menu_category: { select: { id: true, name: true, category_tag: true } },
+        menu_item_price: {
+          where: priceWhere,
+          orderBy: { valid_from: 'desc' },
+          take: 1,
+          select: { amount: true, currency_code: true },
+        },
+      },
+    }),
+    ]);
+
+    return toJson({
+      count: items.length,
+      totalMatches,
+      hasMore: totalMatches > items.length,
+      currencyApplied: currency,
+      items: items.map((item) => toShortlistItem(item)),
+    });
+  },
+});
+
+const getProductsDetailsByIdsSchema = z.object({
+  businessId: z.string().describe('ID del negocio (UUID)'),
+  productIds: z
+    .array(z.string().min(1))
+    .min(1)
+    .max(5)
+    .describe('IDs de productos previamente seleccionados (max 5).'),
+  currencyCode: z
+    .string()
+    .nullable()
+    .optional()
+    .describe('Código de moneda ISO (ej. "ARS"). Si no se pasa, usa la del negocio.'),
+});
+type GetProductsDetailsByIdsInput = z.infer<typeof getProductsDetailsByIdsSchema>;
+
+export const getProductsDetailsByIdsTool = new DynamicStructuredTool<
+  typeof getProductsDetailsByIdsSchema,
+  GetProductsDetailsByIdsInput
+>({
+  name: 'get_products_details_by_ids',
+  description:
+    'Hidrata detalle completo SOLO para productos ya shortlistados (descripcion, ingredientes, porciones y precio activo). Usar despues de search_products/find_products_by_filter para evitar contexto excesivo.',
+  schema: getProductsDetailsByIdsSchema,
+  func: async ({ businessId, productIds, currencyCode }: GetProductsDetailsByIdsInput) => {
+    const uniqueIds = Array.from(new Set(productIds.map((id) => id.trim()).filter(Boolean)));
+    if (!uniqueIds.length) {
+      return toJson({ count: 0, items: [] });
+    }
+
+    const business = await prisma.business.findUnique({
+      where: { id: businessId },
+      select: { currency_code: true },
+    });
+    const currency = currencyCode ?? business?.currency_code ?? null;
+    const now = new Date();
+    const priceWhere: Prisma.menu_item_priceWhereInput = {
+      is_active: true,
+      valid_from: { lte: now },
+      OR: [{ valid_to: null }, { valid_to: { gte: now } }],
+      ...(currency ? { currency_code: currency } : {}),
+    };
+
+    const items = await prisma.menu_item.findMany({
+      where: {
+        business_id: businessId,
+        id: { in: uniqueIds.slice(0, 5) },
+        is_available: true,
+      },
+      orderBy: { name: 'asc' },
       select: {
         id: true,
         name: true,
@@ -726,6 +830,7 @@ export const getBusinessInfoTool = new DynamicStructuredTool<
 
 export const allReactTools = [
   searchProductsTool,
+  getProductsDetailsByIdsTool,
   getFeaturedProductsTool,
   getCategoriesTool,
   getMenuByCategoryTool,
