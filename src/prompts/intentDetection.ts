@@ -17,8 +17,8 @@ Available intents:
 - ORDER_FOOD: wants to order/add something (e.g., "quiero una hamburguesa", "dame 2 pizzas")
 - REMOVE_ITEM: wants to remove/delete something from order (e.g., "sacá la pizza", "quitame la coca")
 - MODIFY_QUANTITY: wants to change quantity (e.g., "cambiá a 3", "son 4 en total")
-- PRODUCT_QUERY: user searches for food — any ingredient, dish type, or generic food word (e.g. "tienen ceviche?", "pollo para 3 personas", "algo con carne", "hay postres", "qué tienen de pescado"). Always set detectedProductName to the food keyword (pollo, carne, pescado, etc.) when the user names food, even if generic or no exact menu match exists.
-- RECOMMENDATION_REQUEST: user asks for suggestions or featured dishes without naming a specific food (e.g., "qué me recomendás?", "qué sugieren?", "recomendame algo rico", "cuáles son los destacados?").
+- PRODUCT_QUERY: ANY open product discovery request belongs here: user searches for food, ingredient, dish type, generic food topic, or applies constraints like budget/price (e.g. "tienen ceviche?", "pollo para 3 personas", "algo con carne", "hay postres", "qué tienen de pescado", "algo de menos de 10k", "hasta 15 mil", "por 8k qué hay?", "qué opciones baratas tienen?"). Always set detectedProductName to the most useful food/product keyword when present. If there is no explicit dish/ingredient but the query is still about products (especially price/budget), keep intent as PRODUCT_QUERY and set detectedProductName to null.
+- RECOMMENDATION_REQUEST: ONLY when the user EXPLICITLY asks for recommendations/suggestions/featured items (e.g., "qué me recomendás?", "qué sugieren?", "recomendame algo rico", "cuáles son los destacados?"). Do not use this intent for generic product search or price-filter queries.
 - PRODUCT_ATTRIBUTE_QUESTION: asking about product details (e.g., "cuánto cuesta?", "es picante?")
 - VIEW_MENU: ONLY when the user wants to browse the full catalog WITHOUT naming a specific food or ingredient. Examples: "ver menú", "mostrar el menú", "mostrar categorías", a very short standalone "qué tienen?" with no dish/ingredient. Do NOT use VIEW_MENU if the user mentions any food, ingredient, or dish — use PRODUCT_QUERY with detectedProductName instead. Headcount alone (e.g. "para 3 personas") with a food word is PRODUCT_QUERY + quantity, not VIEW_MENU.
 - VIEW_CART: wants to see current cart (e.g., "cuánto llevo?", "ver mi pedido")
@@ -33,8 +33,8 @@ Available intents:
 - UNKNOWN: cannot classify
 
 Rules:
-- Priority: if the user mentions any food or ingredient, prefer PRODUCT_QUERY over VIEW_MENU (never classify food-seeking messages as VIEW_MENU).
-- If the user asks for recommendations/suggestions and does not mention a concrete dish/ingredient, prefer RECOMMENDATION_REQUEST over SMALL_TALK or VIEW_MENU.
+- Priority: any open product consultation must be PRODUCT_QUERY (food/ingredient, generic product exploration, or constraints like "menos de", "hasta", "por X", "10k", "15 mil", "barato/económico"). Never classify these as VIEW_MENU or SMALL_TALK.
+- Use RECOMMENDATION_REQUEST only when recommendation intent is explicit (keywords like "recomendá", "sugerí", "destacados"). If not explicit, default to PRODUCT_QUERY for product-related requests.
 - Extract product name when mentioned
 - Extract quantity when specified (number or words like "dos", "tres"). For "pedido/orden para N personas" or "somos N", quantity is N people (party size), not item count.
 - If the user includes a delivery address, extract it in addressText even if there is a greeting
