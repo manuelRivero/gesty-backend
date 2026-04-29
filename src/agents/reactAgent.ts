@@ -238,6 +238,46 @@ type DeterministicAgentOutput =
       items: Array<{ id: string; title: string; description?: string }>;
     };
 
+const toListCandidatesFromUnknown = (
+  value: unknown
+): { introText: string; items: Array<{ id: string; title: string; description?: string }> } | null => {
+  if (!value || typeof value !== 'object') return null;
+  const obj = value as Record<string, unknown>;
+  if (!Array.isArray(obj.items) || obj.items.length === 0) return null;
+
+  const items = obj.items
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const row = item as Record<string, unknown>;
+      const id = typeof row.id === 'string' ? row.id.trim() : '';
+      const titleRaw =
+        typeof row.title === 'string'
+          ? row.title
+          : typeof row.name === 'string'
+            ? row.name
+            : '';
+      const title = titleRaw.trim();
+      const descriptionRaw =
+        typeof row.description === 'string'
+          ? row.description
+          : typeof row.ingredients === 'string'
+            ? row.ingredients
+            : undefined;
+      if (!id || !title) return null;
+      return { id, title, description: descriptionRaw?.trim() };
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+
+  if (!items.length) return null;
+
+  const introText =
+    typeof obj.introText === 'string' && obj.introText.trim()
+      ? obj.introText.trim()
+      : 'Te comparto algunas opciones disponibles:';
+
+  return { introText, items };
+};
+
 const parseJsonCandidates = (rawText: string): unknown[] => {
   const trimmed = rawText.trim();
   const candidates: unknown[] = [];
@@ -295,35 +335,30 @@ const normalizeDeterministicAgentOutput = (
       }
     }
 
-    if (Array.isArray(obj.items) && obj.items.length > 0) {
-      const items = obj.items
-        .map((item) => {
-          if (!item || typeof item !== 'object') return null;
-          const row = item as Record<string, unknown>;
-          const id = typeof row.id === 'string' ? row.id.trim() : '';
-          const titleRaw =
-            typeof row.title === 'string'
-              ? row.title
-              : typeof row.name === 'string'
-                ? row.name
-                : '';
-          const title = titleRaw.trim();
-          const descriptionRaw =
-            typeof row.description === 'string'
-              ? row.description
-              : typeof row.ingredients === 'string'
-                ? row.ingredients
-                : undefined;
-          if (!id || !title) return null;
-          return { id, title, description: descriptionRaw?.trim() };
-        })
-        .filter((item): item is NonNullable<typeof item> => Boolean(item));
-      if (items.length > 0) {
-        const introText =
-          typeof obj.introText === 'string' && obj.introText.trim()
-            ? obj.introText.trim()
-            : 'Te comparto algunas opciones disponibles:';
-        return { mode: 'LIST_CANDIDATES', introText, items };
+    const directList = toListCandidatesFromUnknown(obj);
+    if (directList) {
+      return {
+        mode: 'LIST_CANDIDATES',
+        introText: directList.introText,
+        items: directList.items,
+      };
+    }
+
+    const nestedTextCandidates = [obj.text, obj.content]
+      .filter((candidate): candidate is string => typeof candidate === 'string')
+      .map((candidate) => candidate.trim())
+      .filter(Boolean);
+
+    for (const nestedText of nestedTextCandidates) {
+      for (const nestedParsed of parseJsonCandidates(nestedText)) {
+        const nestedList = toListCandidatesFromUnknown(nestedParsed);
+        if (nestedList) {
+          return {
+            mode: 'LIST_CANDIDATES',
+            introText: nestedList.introText,
+            items: nestedList.items,
+          };
+        }
       }
     }
 
