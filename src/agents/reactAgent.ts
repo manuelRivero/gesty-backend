@@ -299,6 +299,57 @@ const parseJsonCandidates = (rawText: string): unknown[] => {
   if (firstBrace >= 0 && lastBrace > firstBrace) {
     addCandidate(trimmed.slice(firstBrace, lastBrace + 1));
   }
+
+  // Extrae objetos JSON balanceados embebidos dentro de texto libre
+  // (ej: "🤖 ... { ... }"), para no depender de first/last brace.
+  const pushBalancedObjects = (input: string) => {
+    let start = -1;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = 0; i < input.length; i += 1) {
+      const ch = input[i];
+
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (ch === '\\') {
+          escaped = true;
+          continue;
+        }
+        if (ch === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+
+      if (ch === '{') {
+        if (depth === 0) {
+          start = i;
+        }
+        depth += 1;
+        continue;
+      }
+
+      if (ch === '}' && depth > 0) {
+        depth -= 1;
+        if (depth === 0 && start >= 0) {
+          addCandidate(input.slice(start, i + 1));
+          start = -1;
+        }
+      }
+    }
+  };
+
+  pushBalancedObjects(trimmed);
   return candidates;
 };
 
