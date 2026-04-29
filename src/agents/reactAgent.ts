@@ -477,6 +477,25 @@ const mapDeterministicOutputToHandlerResult = (
   };
 };
 
+const extractSelectableProductIds = (result: HandlerResult): string[] => {
+  if (!result.isInteractive || !result.content || typeof result.content !== 'object') {
+    return [];
+  }
+  const message = result.content as {
+    type?: unknown;
+    action?: { sections?: Array<{ rows?: Array<{ id?: string }> }> };
+  };
+  if (message.type !== 'list') return [];
+  const sections = Array.isArray(message.action?.sections) ? message.action!.sections : [];
+  const ids = sections
+    .flatMap((section) => (Array.isArray(section.rows) ? section.rows : []))
+    .map((row) => (typeof row.id === 'string' ? row.id : ''))
+    .filter((rowId) => rowId.startsWith('SELECT_PRODUCT:'))
+    .map((rowId) => rowId.slice('SELECT_PRODUCT:'.length).split(':')[0].trim())
+    .filter(Boolean);
+  return Array.from(new Set(ids));
+};
+
 // ---------------------------------------------------------------------------
 // Cooldown helpers
 // ---------------------------------------------------------------------------
@@ -570,6 +589,21 @@ export const runHybridReactAgent = async (
     ? mapDeterministicOutputToHandlerResult(normalizedOutput)
     : null;
   if (structuredResult?.isInteractive) {
+    const candidateProductIds = extractSelectableProductIds(structuredResult);
+    if (candidateProductIds.length > 0) {
+      try {
+        await patchConversationMetadata(ctx.conversationId, {
+          pendingProductSelection: true,
+          pendingQuestion: userMessage,
+          candidateProductIds,
+        });
+      } catch (err) {
+        console.error(
+          '[hybrid-agent] patchConversationMetadata failed for list candidates:',
+          err
+        );
+      }
+    }
     return structuredResult;
   }
 
