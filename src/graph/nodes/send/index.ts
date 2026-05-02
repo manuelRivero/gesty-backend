@@ -50,7 +50,7 @@ export const persistAIMessageNode = async (
 
   const conversationId =
     state.conversationId ??
-    (state.conversation as { id: string } | null)?.id ??
+    state.conversation?.id ??
     null;
 
   if (!conversationId) {

@@ -56,6 +56,20 @@ export type ConversationMetadata = {
   lastCtaProductId?: string | null;
   /** Payload exacto del botón primario del último CTA (para correlacionar clicks). */
   lastCtaPayload?: string | null;
+
+  // --- Detección / contexto de sesión ---
+
+  /** Último nombre de producto referenciado (para planner y contexto de detección). */
+  lastReferencedProductName?: string | null;
+
+  // --- Wizards ---
+
+  /** Paso activo del wizard de reservas. Presente solo mientras el wizard está activo. */
+  reservation?: { step?: string; [key: string]: unknown };
+  /** Paso activo del wizard de onboarding. Presente solo mientras el wizard está activo. */
+  onboarding_step?: string;
+  /** Dirección temporal capturada durante onboarding (antes de confirmar). */
+  temp_address?: Record<string, unknown>;
 };
 
 export type ConversationMode = 'GLOBAL' | 'FILTER_SET' | 'PRODUCT_FOCUS';

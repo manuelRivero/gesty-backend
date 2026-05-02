@@ -1,14 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
-
-// `detection.service.ts` instancia el cliente de OpenAI al cargarse el módulo.
-// En este test sólo ejercitamos lógica determinística (`shouldAskIntentConfirmation`)
-// pero el import del módulo dispara igual el constructor — por eso seteamos un
-// dummy key con `vi.hoisted` antes de los imports.
-vi.hoisted(() => {
-  if (!process.env.OPENAI_API_KEY) {
-    process.env.OPENAI_API_KEY = 'test-key';
-  }
-});
+import { describe, expect, it } from 'vitest';
 
 import {
   shouldAskIntentConfirmation,

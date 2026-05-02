@@ -57,7 +57,7 @@ vi.mock('../../services/menu.service', () => ({
 }));
 
 vi.mock('../../config/llm', () => ({
-  getReasonerLlm: vi.fn(() => ({})),
+  getReactReasonerLlm: vi.fn(() => ({})),
 }));
 
 // ---- Imports bajo test ----

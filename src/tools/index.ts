@@ -12,12 +12,16 @@
  *   hoy alimenta `productQuery/service.ts`).
  * - `getRecentMessages` devuelve contexto conversacional para que el agente
  *   tenga memoria sobre el turno anterior.
+ * - Los identificadores de negocio/cliente/conversación se inyectan server-side
+ *   via `configurable` — nunca pasan por el schema del LLM (elimina riesgo
+ *   cross-tenant).
  *
  * Uso: ver `src/agents/reactAgent.ts`.
  */
 
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
+import type { RunnableConfig } from '@langchain/core/runnables';
 import type { Prisma } from '@prisma/client';
 import { MenuService } from '../services/menu.service';
 import { getBusinessOpenInfo } from '../services/businessHours.service';
@@ -28,6 +32,7 @@ import {
   getMenuItemCategoryTag,
   MENU_SUGGESTION_ORDER,
 } from '../helpers/complementaryMenu.helper';
+import { getReactContext } from './_context';
 
 const toJson = (data: unknown): string => {
   try {
@@ -71,8 +76,11 @@ const toShortlistItem = (item: {
   };
 };
 
+// ---------------------------------------------------------------------------
+// search_products
+// ---------------------------------------------------------------------------
+
 const searchProductsSchema = z.object({
-  businessId: z.string().describe('ID del negocio (UUID)'),
   keyword: z.string().min(1).describe('Palabra clave o nombre a buscar'),
 });
 type SearchProductsInput = z.infer<typeof searchProductsSchema>;
@@ -85,11 +93,9 @@ export const searchProductsTool = new DynamicStructuredTool<
   description:
     'Busca productos del menú por palabra clave (nombre o ingrediente). Devuelve shortlist liviano (id, nombre, categoría, porciones y precio principal). Si necesitás más detalle por producto, usá get_products_details_by_ids.',
   schema: searchProductsSchema,
-  func: async ({ businessId, keyword }: SearchProductsInput) => {
-    const items = await MenuService.searchMenuItemsByKeyword({
-      businessId,
-      keyword,
-    });
+  func: async ({ keyword }: SearchProductsInput, _runManager, config?: RunnableConfig) => {
+    const { businessId } = getReactContext(config);
+    const items = await MenuService.searchMenuItemsByKeyword({ businessId, keyword });
     const shortlisted = items.slice(0, PRODUCT_SHORTLIST_MAX_LIMIT);
     return toJson({
       count: shortlisted.length,
@@ -100,10 +106,11 @@ export const searchProductsTool = new DynamicStructuredTool<
   },
 });
 
-const getCategoriesSchema = z.object({
-  businessId: z.string(),
-  customerId: z.string(),
-});
+// ---------------------------------------------------------------------------
+// get_categories
+// ---------------------------------------------------------------------------
+
+const getCategoriesSchema = z.object({});
 type GetCategoriesInput = z.infer<typeof getCategoriesSchema>;
 
 export const getCategoriesTool = new DynamicStructuredTool<
@@ -111,28 +118,24 @@ export const getCategoriesTool = new DynamicStructuredTool<
   GetCategoriesInput
 >({
   name: 'get_categories',
-  description:
-    'Devuelve la lista de categorías de menú visibles para el cliente.',
+  description: 'Devuelve la lista de categorías de menú visibles para el cliente.',
   schema: getCategoriesSchema,
-  func: async ({ businessId, customerId }: GetCategoriesInput) => {
-    const res = await MenuService.getCategoryListForCustomer({
-      businessId,
-      customerId,
-    });
+  func: async (_input: GetCategoriesInput, _runManager, config?: RunnableConfig) => {
+    const { businessId, customerId } = getReactContext(config);
+    const res = await MenuService.getCategoryListForCustomer({ businessId, customerId });
     return toJson({
       text: res.text,
-      categories: res.buttons.map((b) => ({
-        title: b.title,
-        payload: b.payload,
-      })),
+      categories: res.buttons.map((b) => ({ title: b.title, payload: b.payload })),
     });
   },
 });
 
+// ---------------------------------------------------------------------------
+// get_menu_by_category
+// ---------------------------------------------------------------------------
+
 const getMenuByCategorySchema = z.object({
-  businessId: z.string(),
-  customerId: z.string(),
-  categoryId: z.string(),
+  categoryId: z.string().describe('UUID de la categoría'),
 });
 type GetMenuByCategoryInput = z.infer<typeof getMenuByCategorySchema>;
 
@@ -141,15 +144,11 @@ export const getMenuByCategoryTool = new DynamicStructuredTool<
   GetMenuByCategoryInput
 >({
   name: 'get_menu_by_category',
-  description:
-    'Devuelve los items del menú de una categoría específica (lectura).',
+  description: 'Devuelve los items del menú de una categoría específica (lectura).',
   schema: getMenuByCategorySchema,
-  func: async ({ businessId, customerId, categoryId }: GetMenuByCategoryInput) => {
-    const res = await MenuService.getItemsByCategory({
-      businessId,
-      customerId,
-      categoryId,
-    });
+  func: async ({ categoryId }: GetMenuByCategoryInput, _runManager, config?: RunnableConfig) => {
+    const { businessId, customerId } = getReactContext(config);
+    const res = await MenuService.getItemsByCategory({ businessId, customerId, categoryId });
     return toJson({
       text: res.text,
       items: res.buttons.map((b) => ({ title: b.title, payload: b.payload })),
@@ -157,15 +156,13 @@ export const getMenuByCategoryTool = new DynamicStructuredTool<
   },
 });
 
-const getCartSchema = z.object({
-  businessId: z.string(),
-  customerPhone: z.string(),
-});
+// ---------------------------------------------------------------------------
+// get_cart
+// ---------------------------------------------------------------------------
+
+const getCartSchema = z.object({});
 type GetCartInput = z.infer<typeof getCartSchema>;
 
-/**
- * Carrito actual (`draft_order` activo) — snapshot read-only.
- */
 export const getCartTool = new DynamicStructuredTool<
   typeof getCartSchema,
   GetCartInput
@@ -174,18 +171,13 @@ export const getCartTool = new DynamicStructuredTool<
   description:
     'Devuelve el contenido del carrito activo (draft order) del cliente, sin modificarlo.',
   schema: getCartSchema,
-  func: async ({ businessId, customerPhone }: GetCartInput) => {
+  func: async (_input: GetCartInput, _runManager, config?: RunnableConfig) => {
+    const { businessId, customerPhone } = getReactContext(config);
     const draft = await prisma.draft_order.findFirst({
-      where: {
-        business_id: businessId,
-        customer_phone: customerPhone,
-        status: 'active',
-      },
+      where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
       include: {
         draft_order_item: {
-          include: {
-            menu_item: { select: { id: true, name: true } },
-          },
+          include: { menu_item: { select: { id: true, name: true } } },
         },
       },
     });
@@ -210,9 +202,11 @@ export const getCartTool = new DynamicStructuredTool<
   },
 });
 
-const getBusinessHoursSchema = z.object({
-  businessId: z.string(),
-});
+// ---------------------------------------------------------------------------
+// get_business_hours
+// ---------------------------------------------------------------------------
+
+const getBusinessHoursSchema = z.object({});
 type GetBusinessHoursInput = z.infer<typeof getBusinessHoursSchema>;
 
 export const getBusinessHoursTool = new DynamicStructuredTool<
@@ -220,10 +214,10 @@ export const getBusinessHoursTool = new DynamicStructuredTool<
   GetBusinessHoursInput
 >({
   name: 'get_business_hours',
-  description:
-    'Devuelve si el negocio está abierto ahora y los horarios del día actual / próximo.',
+  description: 'Devuelve si el negocio está abierto ahora y los horarios del día actual / próximo.',
   schema: getBusinessHoursSchema,
-  func: async ({ businessId }: GetBusinessHoursInput) => {
+  func: async (_input: GetBusinessHoursInput, _runManager, config?: RunnableConfig) => {
+    const { businessId } = getReactContext(config);
     const business = await prisma.business.findUnique({
       where: { id: businessId },
       select: { id: true, timezone: true },
@@ -231,20 +225,16 @@ export const getBusinessHoursTool = new DynamicStructuredTool<
     if (!business?.timezone) {
       return toJson({ error: 'business_timezone_missing' });
     }
-
-    const info = await getBusinessOpenInfo({
-      businessId: business.id,
-      timezone: business.timezone,
-    });
+    const info = await getBusinessOpenInfo({ businessId: business.id, timezone: business.timezone });
     return toJson(info);
   },
 });
 
+// ---------------------------------------------------------------------------
+// get_recent_messages
+// ---------------------------------------------------------------------------
+
 const getRecentMessagesSchema = z.object({
-  conversationId: z.string(),
-  sinceStartedAt: z
-    .string()
-    .describe('ISO-8601: límite inferior de created_at'),
   take: z.number().int().positive().max(50).default(10),
 });
 type GetRecentMessagesInput = z.infer<typeof getRecentMessagesSchema>;
@@ -255,19 +245,12 @@ export const getRecentMessagesTool = new DynamicStructuredTool<
 >({
   name: 'get_recent_messages',
   description:
-    'Devuelve los últimos N mensajes de la conversación desde una fecha de inicio (más recientes primero).',
+    'Devuelve los últimos N mensajes de la conversación (más recientes primero).',
   schema: getRecentMessagesSchema,
-  func: async ({
-    conversationId,
-    sinceStartedAt,
-    take,
-  }: GetRecentMessagesInput) => {
-    const since = new Date(sinceStartedAt);
-    const messages = await findRecentMessagesForDetectionContext(
-      conversationId,
-      since,
-      take
-    );
+  func: async ({ take }: GetRecentMessagesInput, _runManager, config?: RunnableConfig) => {
+    const { conversationId, conversationStartedAt } = getReactContext(config);
+    const since = new Date(conversationStartedAt);
+    const messages = await findRecentMessagesForDetectionContext(conversationId, since, take);
     return toJson(
       messages.map((m) => ({
         id: m.id,
@@ -280,8 +263,11 @@ export const getRecentMessagesTool = new DynamicStructuredTool<
   },
 });
 
+// ---------------------------------------------------------------------------
+// get_featured_products
+// ---------------------------------------------------------------------------
+
 const getFeaturedProductsSchema = z.object({
-  businessId: z.string().describe('ID del negocio (UUID)'),
   currencyCode: z.string().nullable().optional(),
   limit: z.number().int().positive().max(20).default(8),
 });
@@ -295,7 +281,12 @@ export const getFeaturedProductsTool = new DynamicStructuredTool<
   description:
     'Devuelve los productos destacados del negocio (menu_item.is_featured = true), con precio activo cuando exista.',
   schema: getFeaturedProductsSchema,
-  func: async ({ businessId, currencyCode, limit }: GetFeaturedProductsInput) => {
+  func: async (
+    { currencyCode, limit }: GetFeaturedProductsInput,
+    _runManager,
+    config?: RunnableConfig
+  ) => {
+    const { businessId } = getReactContext(config);
     const items = await MenuService.getFeaturedMenuItems({
       businessId,
       currencyCode: currencyCode ?? null,
@@ -326,7 +317,6 @@ export const getFeaturedProductsTool = new DynamicStructuredTool<
 const MENU_CATEGORY_TAGS = ['STARTER', 'MAIN', 'SIDE', 'DRINK', 'DESSERT', 'OTHER'] as const;
 
 const findProductsByFilterSchema = z.object({
-  businessId: z.string().describe('ID del negocio (UUID)'),
   categoryTag: z
     .enum(MENU_CATEGORY_TAGS)
     .nullable()
@@ -346,7 +336,9 @@ const findProductsByFilterSchema = z.object({
     .string()
     .nullable()
     .optional()
-    .describe('Substring que NO debe aparecer en el nombre ni en los ingredientes (case-insensitive). Útil para alergias o "sin X".'),
+    .describe(
+      'Substring que NO debe aparecer en el nombre ni en los ingredientes (case-insensitive). Útil para alergias o "sin X".'
+    ),
   minServesPeople: z
     .number()
     .int()
@@ -388,19 +380,23 @@ export const findProductsByFilterTool = new DynamicStructuredTool<
   description:
     'Busca productos del menú aplicando filtros estructurados (categoría, rol de categoría, ingredientes, porciones, rango de precio, destacados). Devuelve shortlist liviano para decidir rápido. Si necesitás descripción/ingredientes detallados, usá get_products_details_by_ids con los IDs elegidos.',
   schema: findProductsByFilterSchema,
-  func: async ({
-    businessId,
-    categoryTag,
-    categoryId,
-    containsIngredient,
-    excludesIngredient,
-    minServesPeople,
-    minPrice,
-    maxPrice,
-    currencyCode,
-    featuredOnly,
-    limit,
-  }: FindProductsByFilterInput) => {
+  func: async (
+    {
+      categoryTag,
+      categoryId,
+      containsIngredient,
+      excludesIngredient,
+      minServesPeople,
+      minPrice,
+      maxPrice,
+      currencyCode,
+      featuredOnly,
+      limit,
+    }: FindProductsByFilterInput,
+    _runManager,
+    config?: RunnableConfig
+  ) => {
+    const { businessId } = getReactContext(config);
     const business = await prisma.business.findUnique({
       where: { id: businessId },
       select: { currency_code: true },
@@ -461,23 +457,23 @@ export const findProductsByFilterTool = new DynamicStructuredTool<
     const [totalMatches, items] = await Promise.all([
       prisma.menu_item.count({ where }),
       prisma.menu_item.findMany({
-      where,
-      orderBy: [{ is_featured: 'desc' }, { name: 'asc' }],
-      take: safeLimit,
-      select: {
-        id: true,
-        name: true,
-        serves_people: true,
-        is_featured: true,
-        menu_category: { select: { id: true, name: true, category_tag: true } },
-        menu_item_price: {
-          where: priceWhere,
-          orderBy: { valid_from: 'desc' },
-          take: 1,
-          select: { amount: true, currency_code: true },
+        where,
+        orderBy: [{ is_featured: 'desc' }, { name: 'asc' }],
+        take: safeLimit,
+        select: {
+          id: true,
+          name: true,
+          serves_people: true,
+          is_featured: true,
+          menu_category: { select: { id: true, name: true, category_tag: true } },
+          menu_item_price: {
+            where: priceWhere,
+            orderBy: { valid_from: 'desc' },
+            take: 1,
+            select: { amount: true, currency_code: true },
+          },
         },
-      },
-    }),
+      }),
     ]);
 
     return toJson({
@@ -490,8 +486,11 @@ export const findProductsByFilterTool = new DynamicStructuredTool<
   },
 });
 
+// ---------------------------------------------------------------------------
+// get_products_details_by_ids
+// ---------------------------------------------------------------------------
+
 const getProductsDetailsByIdsSchema = z.object({
-  businessId: z.string().describe('ID del negocio (UUID)'),
   productIds: z
     .array(z.string().min(1))
     .min(1)
@@ -513,8 +512,15 @@ export const getProductsDetailsByIdsTool = new DynamicStructuredTool<
   description:
     'Hidrata detalle completo SOLO para productos ya shortlistados (descripcion, ingredientes, porciones y precio activo). Usar despues de search_products/find_products_by_filter para evitar contexto excesivo.',
   schema: getProductsDetailsByIdsSchema,
-  func: async ({ businessId, productIds, currencyCode }: GetProductsDetailsByIdsInput) => {
-    const uniqueIds = Array.from(new Set(productIds.map((id) => id.trim()).filter(Boolean)));
+  func: async (
+    { productIds, currencyCode }: GetProductsDetailsByIdsInput,
+    _runManager,
+    config?: RunnableConfig
+  ) => {
+    const { businessId } = getReactContext(config);
+    const uniqueIds = Array.from(
+      new Set(productIds.map((id) => id.trim()).filter(Boolean))
+    );
     if (!uniqueIds.length) {
       return toJson({ count: 0, items: [] });
     }
@@ -588,7 +594,6 @@ export const getProductsDetailsByIdsTool = new DynamicStructuredTool<
 
 const checkProductAvailabilitySchema = z
   .object({
-    businessId: z.string().describe('ID del negocio (UUID)'),
     productId: z
       .string()
       .nullable()
@@ -614,7 +619,12 @@ export const checkProductAvailabilityTool = new DynamicStructuredTool<
   description:
     'Verifica si un producto del menú está disponible AHORA. Acepta productId o productName. Si pasa nombre y matchea con varios, devuelve hasta 5 candidatos para que el agente elija. Usar antes de prometer un plato al cliente.',
   schema: checkProductAvailabilitySchema,
-  func: async ({ businessId, productId, productName }: CheckProductAvailabilityInput) => {
+  func: async (
+    { productId, productName }: CheckProductAvailabilityInput,
+    _runManager,
+    config?: RunnableConfig
+  ) => {
+    const { businessId } = getReactContext(config);
     const id = productId?.trim();
     const name = productName?.trim();
 
@@ -690,7 +700,6 @@ export const checkProductAvailabilityTool = new DynamicStructuredTool<
 // ---------------------------------------------------------------------------
 
 const getComplementarySuggestionsSchema = z.object({
-  businessId: z.string().describe('ID del negocio (UUID)'),
   productId: z
     .string()
     .nullable()
@@ -713,13 +722,13 @@ export const getComplementarySuggestionsTool = new DynamicStructuredTool<
   description:
     'Devuelve productos que complementan a un plato dado: si el cliente pidió un MAIN, sugiere STARTER/SIDE/DRINK/DESSERT, etc. Útil para "¿qué le va bien a X?". Acepta productId (preferido) o categoryTag base.',
   schema: getComplementarySuggestionsSchema,
-  func: async ({
-    businessId,
-    productId,
-    categoryTag,
-    limit,
-  }: GetComplementarySuggestionsInput) => {
-    let baseTag: typeof MENU_SUGGESTION_ORDER[number] | null = null;
+  func: async (
+    { productId, categoryTag, limit }: GetComplementarySuggestionsInput,
+    _runManager,
+    config?: RunnableConfig
+  ) => {
+    const { businessId } = getReactContext(config);
+    let baseTag: (typeof MENU_SUGGESTION_ORDER)[number] | null = null;
     let excludeProductId: string | null = null;
 
     if (productId) {
@@ -751,10 +760,7 @@ export const getComplementarySuggestionsTool = new DynamicStructuredTool<
       items: items.map((item) => ({
         id: item.id,
         name: item.name,
-        category: {
-          name: item.categoryName,
-          tag: item.categoryTag,
-        },
+        category: { name: item.categoryName, tag: item.categoryTag },
       })),
     });
   },
@@ -764,9 +770,7 @@ export const getComplementarySuggestionsTool = new DynamicStructuredTool<
 // get_business_info
 // ---------------------------------------------------------------------------
 
-const getBusinessInfoSchema = z.object({
-  businessId: z.string().describe('ID del negocio (UUID)'),
-});
+const getBusinessInfoSchema = z.object({});
 type GetBusinessInfoInput = z.infer<typeof getBusinessInfoSchema>;
 
 export const getBusinessInfoTool = new DynamicStructuredTool<
@@ -777,7 +781,8 @@ export const getBusinessInfoTool = new DynamicStructuredTool<
   description:
     'Devuelve datos públicos del negocio para responder preguntas básicas del cliente: nombre, descripción, zona horaria, ubicación (lat/lng), moneda y teléfono de WhatsApp. NO devuelve datos administrativos, contables ni credenciales.',
   schema: getBusinessInfoSchema,
-  func: async ({ businessId }: GetBusinessInfoInput) => {
+  func: async (_input: GetBusinessInfoInput, _runManager, config?: RunnableConfig) => {
+    const { businessId } = getReactContext(config);
     const business = await prisma.business.findUnique({
       where: { id: businessId },
       select: {

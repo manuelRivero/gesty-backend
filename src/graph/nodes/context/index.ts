@@ -25,8 +25,10 @@ import {
 import { getBusinessConfig } from '../../../services/businessConfig.service';
 import { getBusinessOpenInfo } from '../../../services/businessHours.service';
 import { formatInboundMessageForLog } from '../../../controllers/webhook/utils/messageLog';
+import { normalizeMetadata } from '../../../services/productQuery/utils';
 import type { AgentState, AgentStateUpdate } from '../../state';
 import type { DetectionContext } from '../../../services/ai/detection.service';
+import type { EnrichedContext } from '../../../controllers/webhook/types';
 
 /** Nodo 1: extrae `WebhookContext` del payload o marca early-exit. */
 export const extractContextNode = async (
@@ -53,7 +55,7 @@ export const extractContextNode = async (
     }
     console.error('[Orchestrator] Invalid payload structure');
     console.error('[Orchestrator] Failed processing:', {
-      payloadId: (payload as any)?.payloadId,
+      payloadId: (payload as unknown as Record<string, unknown>)?.payloadId,
       payload,
       reason: 'invalid_payload',
       timestamp: new Date().toISOString(),
@@ -84,7 +86,7 @@ export const resolveBusinessNode = async (
 export const resolveBusinessConfigNode = async (
   state: AgentState
 ): Promise<AgentStateUpdate> => {
-  const business = state.business as { id: string };
+  const business = state.business!;
   const businessConfig = await getBusinessConfig(business.id);
   return { businessConfig };
 };
@@ -94,7 +96,7 @@ export const resolveCustomerNode = async (
   state: AgentState
 ): Promise<AgentStateUpdate> => {
   const ctx = state.webhookContext!;
-  const business = state.business as { id: string };
+  const business = state.business!;
   const customer = await findOrCreateCustomer(business.id, ctx.to);
   return { customer };
 };
@@ -103,7 +105,7 @@ export const resolveCustomerNode = async (
 export const businessOpenInfoNode = async (
   state: AgentState
 ): Promise<AgentStateUpdate> => {
-  const business = state.business as { id: string; timezone: string };
+  const business = state.business!;
   const businessStatus = await getBusinessOpenInfo({
     businessId: business.id,
     timezone: business.timezone,
@@ -126,19 +128,9 @@ export const persistUserMessageNode = async (
 ): Promise<AgentStateUpdate> => {
   const ctx = state.webhookContext!;
   try {
-    const { phoneNumberId, to, message } = ctx;
-    if (!phoneNumberId || !to) {
-      console.error('[Persist] Missing phoneNumberId or to');
-      return { earlyExit: 'persist_failed' };
-    }
-
-    const business = await findBusinessByPhoneNumberId(phoneNumberId);
-    if (!business) {
-      console.error('[Persist] Business not found:', phoneNumberId);
-      return { earlyExit: 'persist_failed' };
-    }
-
-    const customer = await findOrCreateCustomer(business.id, to);
+    const { message } = ctx;
+    const business = state.business!;
+    const customer = state.customer!;
     const conversation = await createOrGetOpenConversation(business.id, customer.id);
 
     const messageContent = formatInboundMessageForLog(message);
@@ -154,7 +146,6 @@ export const persistUserMessageNode = async (
     );
 
     await clearConversationIdleTimestamps(conversation.id);
-
     await updateConversationLastMessageAt(conversation.id);
 
     console.log('[Persist] Message saved:', {
@@ -163,7 +154,7 @@ export const persistUserMessageNode = async (
       contentPreview: messageContent.substring(0, 50),
     });
 
-    return { conversationId: conversation.id };
+    return { conversationId: conversation.id, conversation };
   } catch (error) {
     console.error('[Persist] Error:', error);
     return { earlyExit: 'persist_failed' };
@@ -181,18 +172,15 @@ export const buildDetectionContextNode = async (
 ): Promise<AgentStateUpdate> => {
   const ctx = state.webhookContext!;
   const businessConfig = state.businessConfig!;
-  const conversationId = state.conversationId!;
+  const business = state.business!;
+  const customer = state.customer!;
+  const conversation = state.conversation!;
 
   try {
-    const business = await findBusinessByPhoneNumberId(ctx.phoneNumberId);
-    if (!business) return { earlyExit: 'business_not_found' };
-
-    const customer = await findOrCreateCustomer(business.id, ctx.to);
-    const conversation = await createOrGetOpenConversation(business.id, customer.id);
     const conversationState = await findOrCreateConversationState(conversation.id);
 
     const recentMessages = await findRecentMessagesForDetectionContext(
-      conversationId,
+      conversation.id,
       conversation.started_at,
       5
     );
@@ -201,14 +189,14 @@ export const buildDetectionContextNode = async (
 
     if (
       !businessConfig.bot_enabled ||
-      (workingConversationState as any).is_human_handled
+      workingConversationState.is_human_handled
     ) {
       console.log(
         '[Orchestrator] Bot deshabilitado (config negocio o modo humano), no se responde automáticamente',
         {
           conversationId: conversation.id,
           botEnabled: businessConfig.bot_enabled,
-          isHumanHandled: (workingConversationState as any).is_human_handled,
+          isHumanHandled: workingConversationState.is_human_handled,
         }
       );
       return { earlyExit: 'bot_disabled_or_human_handled' };
@@ -223,21 +211,20 @@ export const buildDetectionContextNode = async (
       conversationId: conversation.id,
     };
 
+    const csMeta = normalizeMetadata(conversationState.metadata);
     const detectionContext: DetectionContext = {
-      conversationMode: (conversationState as any).mode || 'GLOBAL',
-      lastReferencedProductId: (conversation as any).lastReferencedProductId,
-      candidateProductIds:
-        ((conversationState as any).metadata as any)?.candidateProductIds || null,
+      conversationMode: conversationState.mode || 'GLOBAL',
+      lastReferencedProductId: conversation.lastReferencedProductId,
+      candidateProductIds: csMeta.candidateProductIds ?? null,
       recentMessages: recentMessages.map((m) => m.message),
-      lastReferencedProductName:
-        ((conversationState as any).metadata as any)?.lastReferencedProductName || null,
+      lastReferencedProductName: csMeta.lastReferencedProductName ?? null,
     };
 
     // Onboarding por estado (metadata.onboarding_step) tiene prioridad sobre
     // todo lo demás cuando el usuario no tiene dirección o está en wizard.
-    const reservationStep = (workingConversationState as any)?.metadata?.reservation
-      ?.step;
-    const onboardingStep = (workingConversationState as any)?.metadata?.onboarding_step;
+    const wsMeta = normalizeMetadata(workingConversationState.metadata);
+    const reservationStep = wsMeta.reservation?.step;
+    const onboardingStep = wsMeta.onboarding_step;
 
     let contextRoute: AgentStateUpdate['contextRoute'];
 
@@ -268,7 +255,7 @@ export const buildDetectionContextNode = async (
       workingConversationState,
       recentMessages,
       detectionContext,
-      enrichedCtx: enrichedBase as any,
+      enrichedCtx: enrichedBase as unknown as EnrichedContext,
       hasAddress: contextRoute !== 'address_capture',
       contextRoute,
     };

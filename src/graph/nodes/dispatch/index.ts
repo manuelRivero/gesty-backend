@@ -119,7 +119,7 @@ export const interactiveSubgraphNode = async (
 ): Promise<AgentStateUpdate> => {
   const ctx = state.webhookContext!;
   const enrichedBase = state.enrichedCtx as unknown as EnrichedContext;
-  const conversation = state.conversation as { id: string };
+  const conversation = state.conversation!;
 
   if (ctx.payloadId?.startsWith('CONFIRM_INTENT:')) {
     await omitConversationMetadataKeys(conversation.id, [
@@ -161,9 +161,9 @@ export const nlpSubgraphNode = async (
 ): Promise<AgentStateUpdate> => {
   const ctx = state.webhookContext!;
   const enrichedBase = state.enrichedCtx as unknown as EnrichedContext;
-  const conversation = state.conversation as { id: string };
+  const conversation = state.conversation!;
   const detectionContext = state.detectionContext!;
-  let workingConversationState = state.workingConversationState as any;
+  let workingConversationState = state.workingConversationState;
 
   const userMessage = ctx.message?.text?.body || '';
 
@@ -183,7 +183,7 @@ export const nlpSubgraphNode = async (
   }
 
   if (
-    normalizeMetadata(workingConversationState.metadata)
+    normalizeMetadata(workingConversationState?.metadata)
       .awaitingIntentConfirmation &&
     userMessage.trim()
   ) {
@@ -196,7 +196,7 @@ export const nlpSubgraphNode = async (
     );
   }
 
-  const metaPre = normalizeMetadata(workingConversationState.metadata);
+  const metaPre = normalizeMetadata(workingConversationState?.metadata);
 
   if (metaPre.awaitingPeopleCount) {
     const resume = parsePeopleCountResume(metaPre);
@@ -276,7 +276,7 @@ export const nlpSubgraphNode = async (
     };
   }
 
-  const metaForGate = normalizeMetadata(workingConversationState.metadata);
+  const metaForGate = normalizeMetadata(workingConversationState?.metadata);
 
   if (
     shouldBlockForMissingPeopleCount({

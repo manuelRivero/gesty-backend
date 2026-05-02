@@ -19,6 +19,7 @@ import { env } from './env';
 
 let cachedDetector: ChatOpenAI | undefined;
 let cachedReasoner: ChatOpenAI | undefined;
+let cachedReactReasoner: ChatOpenAI | undefined;
 let cachedSmallModel: ChatOpenAI | undefined;
 let cachedEmbeddings: OpenAIEmbeddings | undefined;
 
@@ -33,6 +34,18 @@ export const getIntentDetectorLlm = (): ChatOpenAI => {
     });
   }
   return cachedDetector;
+};
+
+/** `gpt-4o` `temperature: 0` — ReAct agent reasoner sin response_format JSON (texto libre). */
+export const getReactReasonerLlm = (): ChatOpenAI => {
+  if (!cachedReactReasoner) {
+    cachedReactReasoner = new ChatOpenAI({
+      model: 'gpt-4o',
+      temperature: 0,
+      apiKey: env.OPENAI_API_KEY,
+    });
+  }
+  return cachedReactReasoner;
 };
 
 /** `gpt-4o` `temperature: 0` — razonamiento más caro: `generateOrderResolution`, `generateOrderActionAnalysis`, `generateOrderExtraction`. */

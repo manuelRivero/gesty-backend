@@ -13,6 +13,7 @@
  */
 
 import { Annotation } from '@langchain/langgraph';
+import type { business, customer, conversation, conversation_state } from '@prisma/client';
 import type {
   EnrichedContext,
   HandlerResult,
@@ -77,7 +78,7 @@ export const AgentStateAnnotation = Annotation.Root({
   }),
 
   // ─── Contexto resuelto ────────────────────────────────────────────────────
-  business: Annotation<unknown>({
+  business: Annotation<business | null>({
     reducer: (_prev, next) => next,
     default: () => null,
   }),
@@ -85,19 +86,19 @@ export const AgentStateAnnotation = Annotation.Root({
     reducer: (_prev, next) => next,
     default: () => null,
   }),
-  customer: Annotation<unknown>({
+  customer: Annotation<customer | null>({
     reducer: (_prev, next) => next,
     default: () => null,
   }),
-  conversation: Annotation<unknown>({
+  conversation: Annotation<conversation | null>({
     reducer: (_prev, next) => next,
     default: () => null,
   }),
-  conversationState: Annotation<unknown>({
+  conversationState: Annotation<conversation_state | null>({
     reducer: (_prev, next) => next,
     default: () => null,
   }),
-  workingConversationState: Annotation<unknown>({
+  workingConversationState: Annotation<conversation_state | null>({
     reducer: (_prev, next) => next,
     default: () => null,
   }),

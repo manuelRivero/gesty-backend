@@ -97,18 +97,18 @@ const parsePlannerOutput = (raw: string): CtaPlannerRaw | null => {
  * Llama al LLM planner y devuelve el plan crudo o `null` si:
  * - shouldShowCta es false
  * - el LLM falló / devolvió JSON inválido
- * - el timeout de 1.5s se cumplió
+ * - el timeout de 1.5s se cumplió (AbortSignal cancela la llamada real)
  */
 export const planCta = async (input: CtaPlannerInput): Promise<CtaPlannerRaw | null> => {
   const llm = getIntentDetectorLlm();
 
-  const plannerCall = async (): Promise<CtaPlannerRaw | null> => {
-    const messages = [
-      new SystemMessage(PLANNER_SYSTEM_PROMPT),
-      new HumanMessage(buildPlannerUserMessage(input)),
-    ];
+  const messages = [
+    new SystemMessage(PLANNER_SYSTEM_PROMPT),
+    new HumanMessage(buildPlannerUserMessage(input)),
+  ];
 
-    const response = await llm.invoke(messages);
+  try {
+    const response = await llm.invoke(messages, { signal: AbortSignal.timeout(1500) });
     const content =
       typeof response.content === 'string'
         ? response.content
@@ -129,13 +129,6 @@ export const planCta = async (input: CtaPlannerInput): Promise<CtaPlannerRaw | n
     }
 
     return result;
-  };
-
-  // Timeout de 1.5s: si el planner es lento, se sale solo con texto
-  const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500));
-
-  try {
-    return await Promise.race([plannerCall(), timeout]);
   } catch (err) {
     console.error('[hybrid-cta] planner_failed:', err);
     return null;

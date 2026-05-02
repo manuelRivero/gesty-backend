@@ -1,11 +1,23 @@
 // src/services/intent/detectionService.ts
 
-import OpenAI from 'openai';
+import { z } from 'zod';
+import { SystemMessage, HumanMessage } from '@langchain/core/messages';
+import { getIntentDetectorLlm } from '../../config/llm';
+import {
+  INTENT_DETECTION_SYSTEM_PROMPT,
+  buildIntentDetectionUserPrompt,
+} from '../../prompts/intentDetection';
 import { ConversationIntent } from '../../types/conversationIntent';
 import { wantsReservationManagement } from '../reservations/reservationIntentText';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
+const IntentDetectionRawSchema = z.object({
+  intent: z.string(),
+  confidence: z.number().min(0).max(1),
+  detectedProductName: z.string().nullable(),
+  quantity: z.number().nullable(),
+  addressText: z.string().nullable(),
+  addressConfidence: z.number().nullable(),
+  candidates: z.array(z.object({ intent: z.string(), confidence: z.number() })),
 });
 
 export interface DetectionContext {
@@ -77,255 +89,144 @@ export interface IntentDetectionResult {
 }
 
 
+const UNKNOWN_RESULT: IntentDetectionResult = {
+  intent: ConversationIntent.UNKNOWN,
+  confidence: 0,
+  detectedProductName: null,
+  quantity: null,
+  addressText: null,
+  addressConfidence: null,
+  candidates: [],
+  alternatives: [],
+  resolutionSource: 'unknown',
+  topCandidate: null,
+  rescueMargin: null,
+  raw: null,
+};
+
 export const detectIntentWithConfidence = async (
   message: string,
   context: DetectionContext
 ): Promise<IntentDetectionResult> => {
-
-  const prompt = buildDetectionPrompt(message, context);
-
   try {
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      temperature: 0,
-      response_format: { type: 'json_object' },
-      messages: [
-        {
-          role: 'system',
-          content: `You are an intent classifier for a restaurant WhatsApp bot.
-Analyze the user's message and return structured intent information.
+    const llm = getIntentDetectorLlm().withStructuredOutput(IntentDetectionRawSchema);
+    const parsed = await llm.invoke([
+      new SystemMessage(INTENT_DETECTION_SYSTEM_PROMPT),
+      new HumanMessage(buildIntentDetectionUserPrompt(message, context)),
+    ]);
 
-Available intents:
-- ORDER_FOOD: wants to order/add something (e.g., "quiero una hamburguesa", "dame 2 pizzas")
-- REMOVE_ITEM: wants to remove/delete something from order (e.g., "sacá la pizza", "quitame la coca")
-- MODIFY_QUANTITY: wants to change quantity (e.g., "cambiá a 3", "son 4 en total")
-- PRODUCT_QUERY: ANY open product discovery request belongs here: user searches for food, ingredient, dish type, generic food topic, or applies constraints like budget/price (e.g. "tienen ceviche?", "pollo para 3 personas", "algo con carne", "hay postres", "qué tienen de pescado", "algo de menos de 10k", "hasta 15 mil", "por 8k qué hay?", "qué opciones baratas tienen?"). Always set detectedProductName to the most useful food/product keyword when present. If there is no explicit dish/ingredient but the query is still about products (especially price/budget), keep intent as PRODUCT_QUERY and set detectedProductName to null.
-- RECOMMENDATION_REQUEST: ONLY when the user EXPLICITLY asks for recommendations/suggestions/featured items (e.g., "qué me recomendás?", "qué sugieren?", "recomendame algo rico", "cuáles son los destacados?"). Do not use this intent for generic product search or price-filter queries.
-- PRODUCT_ATTRIBUTE_QUESTION: asking about product details (e.g., "cuánto cuesta?", "es picante?")
-- VIEW_MENU: ONLY when the user wants to browse the full catalog WITHOUT naming a specific food or ingredient. Examples: "ver menú", "mostrar el menú", "mostrar categorías", a very short standalone "qué tienen?" with no dish/ingredient. Do NOT use VIEW_MENU if the user mentions any food, ingredient, or dish — use PRODUCT_QUERY with detectedProductName instead. Headcount alone (e.g. "para 3 personas") with a food word is PRODUCT_QUERY + quantity, not VIEW_MENU.
-- VIEW_CART: wants to see current cart (e.g., "cuánto llevo?", "ver mi pedido")
-- VIEW_CART_FOR_EDITION: wants to see current cart for edition (e.g., "modificar mi pedido")
-- SMALL_TALK: greeting or casual (e.g., "hola", "buenas")
-- ASK_QUESTION: general question (e.g., "dónde están?", "cuál es el horario?")
-- BUSINESS_HOURS: asks for business hours (e.g., "horarios", "a qué hora abren?")
-- EDIT_ADDRESS: wants to change or update the delivery address (e.g., "quiero cambiar mi dirección")
-- RESERVATION: wants to reserve a table OR manage an existing reservation (e.g., "reservar mesa", "gestionar reserva", "modificar reserva", "cancelar reserva", "mesa para 4"). Use RESERVATION for any change/cancel/manage intent about a booking, not only new bookings.
-- VIEW_RESERVATION: wants to only see reservation details without managing (e.g., "ver mi reserva", "mostrar mi reserva", "consultar datos de mi reserva", "mi reserva" when asking to display info). Do NOT use VIEW_RESERVATION for "gestionar", "modificar", "cancelar", "editar" reserva — those are RESERVATION.
-- VIEW_QR: wants to view reservation QR code (e.g., "ver qr", "mostrar codigo qr", "pasame el qr")
-- UNKNOWN: cannot classify
+    let detectedProductName: string | null =
+      typeof parsed.detectedProductName === 'string'
+        ? parsed.detectedProductName.trim() || null
+        : null;
 
-Rules:
-- Priority: any open product consultation must be PRODUCT_QUERY (food/ingredient, generic product exploration, or constraints like "menos de", "hasta", "por X", "10k", "15 mil", "barato/económico"). Never classify these as VIEW_MENU or SMALL_TALK.
-- Use RECOMMENDATION_REQUEST only when recommendation intent is explicit (keywords like "recomendá", "sugerí", "destacados"). If not explicit, default to PRODUCT_QUERY for product-related requests.
-- Extract product name when mentioned
-- Extract quantity when specified (number or words like "dos", "tres"). For "pedido/orden para N personas" or "somos N", quantity is N people (party size), not item count.
-- If the user includes a delivery address, extract it in addressText even if there is a greeting
-- If there is a clear address, still return intent but always include addressText
-- Provide confidence 0-1
-- If uncertain, provide top 2-3 candidates`
-        },
-        {
-          role: 'user',
-          content: prompt
-        }
-      ]
-    });
+    const parsedConfidence = parsed.confidence;
+    const initialIntent = normalizeIntent(parsed.intent);
+    const normalizedCandidates = normalizeCandidates(parsed.candidates);
+    const resolved = resolveFinalIntent(initialIntent, parsedConfidence, normalizedCandidates);
+    let finalIntent = resolved.intent;
 
-    const content = response.choices[0]?.message?.content || '{}';
-
-    try {
-      const parsed = JSON.parse(content);
-
-      let detectedProductName: string | null =
-        typeof parsed.detectedProductName === 'string'
-          ? parsed.detectedProductName.trim() || null
-          : null;
-
-      // Normalizar intent principal y candidatos para resolver un intent final estable
-      const parsedConfidence =
-        typeof parsed.confidence === 'number' ? parsed.confidence : 0;
-      const initialIntent = normalizeIntent(parsed.intent || '');
-      const normalizedCandidates = normalizeCandidates(parsed.candidates);
-      const resolved = resolveFinalIntent(
-        initialIntent,
-        parsedConfidence,
-        normalizedCandidates
-      );
-      let finalIntent = resolved.intent;
-
-      // Context override: PRODUCT_FOCUS domina PRODUCT_QUERY
-      if (context.conversationMode === 'PRODUCT_FOCUS') {
-
-        const lower = message.toLowerCase().trim();
-      
-        const isLikelyAttribute =
-          lower.startsWith('lleva') ||
-          lower.startsWith('tiene') ||
-          lower.startsWith('es ') ||
-          lower.startsWith('trae') ||
-          (lower.endsWith('?') && lower.split(' ').length <= 4);
-      
-        const explicitlySearchingNewDish =
-          lower.includes('tienen') ||
-          lower.includes('hay') ||
-          lower.includes('algo con') ||
-          lower.includes('platos con');
-      
-        if (
-          finalIntent === ConversationIntent.PRODUCT_QUERY &&
-          isLikelyAttribute &&
-          !explicitlySearchingNewDish
-        ) {
-          console.log('[Detection] Forced ATTRIBUTE in PRODUCT_FOCUS');
-          finalIntent = ConversationIntent.PRODUCT_ATTRIBUTE_QUESTION;
-        }
-      }
-
-      // Extraer cantidad de texto si no viene en JSON
-      let quantity = parsed.quantity ?? extractQuantityFromText(message);
-
-      const coerced = applyViewMenuPartyIntentOverride({
-        message,
-        intent: finalIntent,
-        quantity,
-        parsedConfidence,
-        detectedProductName
-      });
-      finalIntent = coerced.intent;
-      quantity = coerced.quantity;
-      const outConfidence = coerced.confidence;
-
-      const productQueryPriority = applyProductQueryPriorityRules({
-        message,
-        intent: finalIntent,
-        detectedProductName
-      });
-      finalIntent = productQueryPriority.intent;
-      detectedProductName = productQueryPriority.detectedProductName;
-      finalIntent = applyRecommendationPriorityRule({
-        message,
-        intent: finalIntent,
-        detectedProductName,
-      });
-
+    // Context override: PRODUCT_FOCUS domina PRODUCT_QUERY
+    if (context.conversationMode === 'PRODUCT_FOCUS') {
+      const lower = message.toLowerCase().trim();
+      const isLikelyAttribute =
+        lower.startsWith('lleva') ||
+        lower.startsWith('tiene') ||
+        lower.startsWith('es ') ||
+        lower.startsWith('trae') ||
+        (lower.endsWith('?') && lower.split(' ').length <= 4);
+      const explicitlySearchingNewDish =
+        lower.includes('tienen') ||
+        lower.includes('hay') ||
+        lower.includes('algo con') ||
+        lower.includes('platos con');
       if (
-        finalIntent === ConversationIntent.VIEW_RESERVATION &&
-        wantsReservationManagement(message)
+        finalIntent === ConversationIntent.PRODUCT_QUERY &&
+        isLikelyAttribute &&
+        !explicitlySearchingNewDish
       ) {
-        finalIntent = ConversationIntent.RESERVATION;
+        console.log('[Detection] Forced ATTRIBUTE in PRODUCT_FOCUS');
+        finalIntent = ConversationIntent.PRODUCT_ATTRIBUTE_QUESTION;
       }
-
-      // Normalización post-overrides (Opción D):
-      //  - Si una regla determinística cambió el intent, la decisión es firme ⇒ 'direct'.
-      //  - Si la confianza efectiva supera el threshold directo, también ⇒ 'direct'.
-      //  - 'rescued' se preserva (el rescate sigue siendo una decisión segura).
-      let finalSource: 'direct' | 'rescued' | 'uncertain' | 'unknown' =
-        resolved.source;
-      if (finalIntent === ConversationIntent.UNKNOWN) {
-        finalSource = 'unknown';
-      } else if (finalSource !== 'rescued') {
-        if (finalIntent !== resolved.intent) {
-          finalSource = 'direct';
-        } else if (outConfidence >= DIRECT_THRESHOLD) {
-          finalSource = 'direct';
-        }
-      }
-
-      const alternatives = normalizedCandidates
-        .filter((c) => c.intent !== finalIntent)
-        .sort((a, b) => b.confidence - a.confidence);
-
-      const rescueMargin =
-        alternatives.length > 0
-          ? outConfidence - alternatives[0].confidence
-          : null;
-
-      const finalTopCandidate =
-        finalIntent === ConversationIntent.UNKNOWN
-          ? null
-          : { intent: finalIntent, confidence: outConfidence };
-
-      return {
-        intent: finalIntent,
-        confidence: outConfidence,
-        detectedProductName,
-        quantity,
-        addressText:
-          typeof parsed.addressText === 'string' ? parsed.addressText.trim() : null,
-        addressConfidence:
-          typeof parsed.addressConfidence === 'number' ? parsed.addressConfidence : null,
-        candidates: normalizedCandidates,
-        alternatives,
-        resolutionSource: finalSource,
-        topCandidate: finalTopCandidate,
-        rescueMargin,
-        raw: content
-      };
-
-    } catch (parseError) {
-      console.error('[Detection] JSON parse error:', parseError);
-      return {
-        intent: ConversationIntent.UNKNOWN,
-        confidence: 0,
-        detectedProductName: null,
-        quantity: null,
-        addressText: null,
-        addressConfidence: null,
-        candidates: [],
-        alternatives: [],
-        resolutionSource: 'unknown',
-        topCandidate: null,
-        rescueMargin: null,
-        raw: content
-      };
     }
 
-  } catch (error) {
-    console.error('[Detection] OpenAI error:', error);
+    let quantity = parsed.quantity ?? extractQuantityFromText(message);
+
+    const coerced = applyViewMenuPartyIntentOverride({
+      message,
+      intent: finalIntent,
+      quantity,
+      parsedConfidence,
+      detectedProductName,
+    });
+    finalIntent = coerced.intent;
+    quantity = coerced.quantity;
+    const outConfidence = coerced.confidence;
+
+    const productQueryPriority = applyProductQueryPriorityRules({
+      message,
+      intent: finalIntent,
+      detectedProductName,
+    });
+    finalIntent = productQueryPriority.intent;
+    detectedProductName = productQueryPriority.detectedProductName;
+    finalIntent = applyRecommendationPriorityRule({
+      message,
+      intent: finalIntent,
+      detectedProductName,
+    });
+
+    if (
+      finalIntent === ConversationIntent.VIEW_RESERVATION &&
+      wantsReservationManagement(message)
+    ) {
+      finalIntent = ConversationIntent.RESERVATION;
+    }
+
+    // Normalización post-overrides (Opción D)
+    let finalSource: 'direct' | 'rescued' | 'uncertain' | 'unknown' = resolved.source;
+    if (finalIntent === ConversationIntent.UNKNOWN) {
+      finalSource = 'unknown';
+    } else if (finalSource !== 'rescued') {
+      if (finalIntent !== resolved.intent) {
+        finalSource = 'direct';
+      } else if (outConfidence >= DIRECT_THRESHOLD) {
+        finalSource = 'direct';
+      }
+    }
+
+    const alternatives = normalizedCandidates
+      .filter((c) => c.intent !== finalIntent)
+      .sort((a, b) => b.confidence - a.confidence);
+
+    const rescueMargin =
+      alternatives.length > 0 ? outConfidence - alternatives[0].confidence : null;
+
+    const finalTopCandidate =
+      finalIntent === ConversationIntent.UNKNOWN
+        ? null
+        : { intent: finalIntent, confidence: outConfidence };
+
     return {
-      intent: ConversationIntent.UNKNOWN,
-      confidence: 0,
-      detectedProductName: null,
-      quantity: null,
-      addressText: null,
-      addressConfidence: null,
-      candidates: [],
-      alternatives: [],
-      resolutionSource: 'unknown',
-      topCandidate: null,
-      rescueMargin: null,
-      raw: String(error)
+      intent: finalIntent,
+      confidence: outConfidence,
+      detectedProductName,
+      quantity,
+      addressText: parsed.addressText?.trim() ?? null,
+      addressConfidence: parsed.addressConfidence ?? null,
+      candidates: normalizedCandidates,
+      alternatives,
+      resolutionSource: finalSource,
+      topCandidate: finalTopCandidate,
+      rescueMargin,
+      raw: null,
     };
+  } catch (error) {
+    console.error('[Detection] LLM error:', error);
+    return { ...UNKNOWN_RESULT, raw: String(error) };
   }
 };
 
-
-const buildDetectionPrompt = (
-  message: string,
-  context: DetectionContext
-): string => {
-  return `
-USER MESSAGE: "${message}"
-
-CONVERSATION CONTEXT:
-- Mode: ${context.conversationMode}
-- Last referenced product: ${context.lastReferencedProductId || 'none'}
-- Candidate products available: ${context.candidateProductIds?.length || 0}
-- Recent conversation: ${context.recentMessages.slice(-3).join(' | ')}
-
-Respond with JSON:
-{
-  "intent": "INTENT_NAME",
-  "confidence": 0.0-1.0,
-  "detectedProductName": "product name mentioned or null",
-  "quantity": number or null,
-  "addressText": "full address or null",
-  "addressConfidence": 0.0-1.0,
-  "candidates": [
-    {"intent": "INTENT_NAME", "confidence": 0.0-1.0}
-  ]
-}`;
-};
 
 const normalizeIntent = (raw: string): ConversationIntent => {
   const normalized = (raw || '').trim().toUpperCase();

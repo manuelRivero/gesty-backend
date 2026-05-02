@@ -37,7 +37,6 @@ import type {
   EnrichedContext,
   HandlerResult,
 } from '../../../controllers/webhook/types';
-import type { business as Business } from '@prisma/client';
 import type { AgentState, AgentStateUpdate } from '../../state';
 
 const ONBOARDING_REMINDER =
@@ -48,8 +47,8 @@ export const closedBusinessNode = async (
   state: AgentState
 ): Promise<AgentStateUpdate> => {
   const ctx = state.webhookContext!;
-  const business = state.business as { id: string; timezone: string | null };
-  const customer = state.customer as { id: string };
+  const business = state.business!;
+  const customer = state.customer!;
   const businessStatus = state.businessStatus!;
 
   const closedConversation = await findLatestClosedConversationByCustomer(
@@ -104,7 +103,7 @@ export const closedBusinessNode = async (
 export const subscriptionAccessGateNode = async (
   state: AgentState
 ): Promise<AgentStateUpdate> => {
-  const business = state.business as Business;
+  const business = state.business!;
   const subscriptionAccess = await evaluateSubscriptionForBotAi(business);
   if (subscriptionAccess.ok) {
     return { business: subscriptionAccess.business };
@@ -147,11 +146,11 @@ export const onboardingByStateNode = async (
 ): Promise<AgentStateUpdate> => {
   const enrichedBase = state.enrichedCtx as unknown as EnrichedContext;
   const onboardingStep =
-    (enrichedBase.conversationState as any)?.metadata?.onboarding_step;
+    enrichedBase.conversationState?.metadata?.onboarding_step;
   console.log('[Orchestrator] Onboarding active → bypass NLP', {
     step: onboardingStep,
     hasTempAddress: Boolean(
-      (enrichedBase.conversationState as any)?.metadata?.temp_address
+      enrichedBase.conversationState?.metadata?.temp_address
     ),
     messageType: state.webhookContext?.message?.type,
     payloadId: state.webhookContext?.payloadId,

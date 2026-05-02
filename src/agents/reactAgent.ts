@@ -7,7 +7,7 @@
  * `RECOMMENDATION_REQUEST` queda fuera a propósito (ver nota en `dispatch/index.ts`).
  *
  * El agente recibe el `EnrichedContext` (business + customer + conversation +
- * mensaje) en su SystemMessage, y un set de tools de **lectura** (`tools/index.ts`)
+ * mensaje) en su HumanMessage, y un set de tools de **lectura** (`tools/index.ts`)
  * para inspeccionar menú, carrito y horarios. La respuesta final del agente
  * (último `AIMessage`) se traduce a un `HandlerResult` plano (texto), igual a
  * lo que produciría `FallbackHandler` en modo determinístico.
@@ -17,11 +17,11 @@
  */
 
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
-import { HumanMessage, SystemMessage } from '@langchain/core/messages';
-import { getReasonerLlm } from '../config/llm';
+import { HumanMessage } from '@langchain/core/messages';
+import { getReactReasonerLlm } from '../config/llm';
 import { allReactTools } from '../tools';
 import type { EnrichedContext, HandlerResult } from '../controllers/webhook/types';
-import { formatBotUserMessage } from '../services/productQuery/utils';
+import { formatBotUserMessage, normalizeMetadata } from '../services/productQuery/utils';
 import {
   isHybridCtaEnabled,
   getHybridCtaTargetIntents,
@@ -34,9 +34,7 @@ import {
   extractPrimaryPayload,
   extractPrimaryProductId,
 } from '../whatsappBuilders/hybridCta';
-import { buildListMessageFromButtons, truncateDescription, truncateTitle } from '../whatsappBuilders';
-import { normalizeMetadata } from '../services/productQuery/utils';
-import { patchConversationMetadata, findOrCreateConversationState } from '../repositories';
+import { patchConversationMetadata } from '../repositories';
 import { MenuService } from '../services/menu.service';
 import type { CtaPlannerInput } from './types';
 
@@ -55,15 +53,13 @@ const MAX_TEXT_FOR_CTA = 600;
 
 /** Número de productos del menú a precargar como contexto para el planner. */
 const TOP_MENU_PRODUCTS_FOR_PLANNER = 5;
-const MAX_LIST_TITLE_LENGTH = 24;
-const MAX_LIST_DESCRIPTION_LENGTH = 60;
 
 let cachedAgent: ReturnType<typeof createReactAgent> | null = null;
 
 const buildAgent = () => {
   if (!cachedAgent) {
     cachedAgent = createReactAgent({
-      llm: getReasonerLlm(),
+      llm: getReactReasonerLlm(),
       tools: allReactTools,
       prompt: HYBRID_AGENT_SYSTEM_PROMPT,
     });
@@ -88,27 +84,23 @@ REGLAS DURAS:
 - NO MENCIONES BOTONES NI UI: nunca digas "tocá el botón", "elegí de la lista de abajo", "usá los botones del bot" ni similares. Otro componente del sistema agrega la UI cuando corresponde — vos sólo escribís el texto. Si no podés ejecutar una acción transaccional (agregar al carrito, pagar, reservar), describí cuál sería el próximo paso de forma neutral ("para sumarlo al pedido seguís desde acá") sin prometer botones específicos.
 
 TOOLS DISPONIBLES:
-- search_products(businessId, keyword): busca productos en el menú por similitud semántica (nombre o ingrediente). Devuelve shortlist liviano.
-- find_products_by_filter(businessId, categoryTag?, categoryId?, containsIngredient?, excludesIngredient?, minServesPeople?, minPrice?, maxPrice?, currencyCode?, featuredOnly?, limit?): busca productos con filtros estructurados. Usar cuando el cliente describe un criterio en vez de un nombre (ej. "algo vegetariano", "para 4 personas", "menos de $5000", "sin tacc"). Devuelve shortlist liviano.
-- get_products_details_by_ids(businessId, productIds, currencyCode?): trae detalle completo SOLO para productos ya shortlistados (descripcion, ingredientes, porciones y precio activo).
-- check_product_availability(businessId, productId? | productName?): confirma si un producto puntual está disponible AHORA. Llamar SIEMPRE antes de prometer un plato concreto al cliente.
-- get_featured_products(businessId, currencyCode, limit): lista productos destacados (recomendaciones).
-- get_complementary_suggestions(businessId, productId? | categoryTag?, limit?): productos que combinan con un plato base. Usar para "¿qué le va bien a X?".
-- get_categories(businessId, customerId): lista categorías.
-- get_menu_by_category(businessId, customerId, categoryId): items por categoría.
-- get_cart(businessId, customerPhone): carrito activo (snapshot, no modifica nada).
-- get_business_hours(businessId): si está abierto y horarios.
-- get_business_info(businessId): nombre, descripción, ubicación (lat/lng + mapsUrl), zona horaria, moneda y teléfono. Usar para "¿dónde están?", "¿cómo se llaman?", "¿en qué moneda cobran?".
-- get_recent_messages(conversationId, sinceStartedAt, take): últimos mensajes de la conversación.
+- search_products(keyword): busca productos en el menú por similitud semántica (nombre o ingrediente). Devuelve shortlist liviano.
+- find_products_by_filter(categoryTag?, categoryId?, containsIngredient?, excludesIngredient?, minServesPeople?, minPrice?, maxPrice?, currencyCode?, featuredOnly?, limit?): busca productos con filtros estructurados. Usar cuando el cliente describe un criterio en vez de un nombre (ej. "algo vegetariano", "para 4 personas", "menos de $5000", "sin tacc"). Devuelve shortlist liviano.
+- get_products_details_by_ids(productIds, currencyCode?): trae detalle completo SOLO para productos ya shortlistados (descripcion, ingredientes, porciones y precio activo).
+- check_product_availability(productId? | productName?): confirma si un producto puntual está disponible AHORA. Llamar SIEMPRE antes de prometer un plato concreto al cliente.
+- get_featured_products(currencyCode?, limit?): lista productos destacados (recomendaciones).
+- get_complementary_suggestions(productId? | categoryTag?, limit?): productos que combinan con un plato base. Usar para "¿qué le va bien a X?".
+- get_categories(): lista categorías.
+- get_menu_by_category(categoryId): items por categoría.
+- get_cart(): carrito activo (snapshot, no modifica nada).
+- get_business_hours(): si está abierto y horarios.
+- get_business_info(): nombre, descripción, ubicación (lat/lng + mapsUrl), zona horaria, moneda y teléfono. Usar para "¿dónde están?", "¿cómo se llaman?", "¿en qué moneda cobran?".
+- get_recent_messages(take?): últimos mensajes de la conversación.
 
 POLITICA DE CONTEXTO (IMPORTANTE):
 - Cuando busques productos, primero pedi shortlist (search_products/find_products_by_filter) y NO enumeres demasiados items en el texto.
 - Si necesitás más detalle, hidratá solo 1-3 ids con get_products_details_by_ids.
 - Evitá pedir grandes volúmenes en una sola llamada.
-
-CONTEXTO:
-- El bloque [CONTEXT] del mensaje del usuario contiene el JSON con businessId, customerId, customerPhone, conversationId, conversationStartedAt y el texto que escribió el cliente.
-- Usá esos identificadores en las tools que los necesiten.
 
 FORMATO DE SALIDA:
 - Devolvé EXCLUSIVAMENTE texto para WhatsApp. Nunca JSON ni objetos (ej.: nunca {"text":"..."}).
@@ -121,42 +113,7 @@ FORMATO DE SALIDA:
 - Máximo ~600 caracteres salvo que el usuario pida un detalle largo.`;
 
 const buildContextMessage = (ctx: EnrichedContext): string => {
-  const businessId =
-    typeof ctx.business === 'object' && ctx.business
-      ? (ctx.business as { id: string }).id
-      : '';
-  const customerId =
-    typeof ctx.customer === 'object' && ctx.customer
-      ? (ctx.customer as { id: string }).id
-      : '';
-  const customerPhone =
-    typeof ctx.customer === 'object' && ctx.customer
-      ? (ctx.customer as { phone_number?: string }).phone_number ?? ctx.to
-      : ctx.to;
-  const conversationId = ctx.conversationId;
-  const conversationStartedAt =
-    typeof ctx.conversation === 'object' && ctx.conversation
-      ? (ctx.conversation as { started_at?: Date }).started_at?.toISOString() ?? ''
-      : '';
-  const text = ctx.message?.text?.body ?? '';
-
-  return [
-    '[CONTEXT]',
-    JSON.stringify(
-      {
-        businessId,
-        customerId,
-        customerPhone,
-        conversationId,
-        conversationStartedAt,
-      },
-      null,
-      0
-    ),
-    '',
-    '[USER_MESSAGE]',
-    text,
-  ].join('\n');
+  return ctx.message?.text?.body ?? '';
 };
 
 const extractFinalText = (result: unknown): string | null => {
@@ -166,334 +123,45 @@ const extractFinalText = (result: unknown): string | null => {
   const last = messages[messages.length - 1] as { content?: unknown };
   if (typeof last.content === 'string') return last.content;
   if (Array.isArray(last.content)) {
-    return last.content
-      .map((part) => {
-        if (typeof part === 'string') return part;
-        if (typeof part === 'object' && part && 'text' in part) {
-          return String((part as { text: unknown }).text ?? '');
-        }
-        return '';
-      })
-      .join('')
-      .trim() || null;
+    return (
+      last.content
+        .map((part) => {
+          if (typeof part === 'string') return part;
+          if (typeof part === 'object' && part && 'text' in part) {
+            return String((part as { text: unknown }).text ?? '');
+          }
+          return '';
+        })
+        .join('')
+        .trim() || null
+    );
   }
   return null;
-};
-
-const unwrapJsonTextEnvelope = (text: string): string => {
-  const trimmed = text.trim().replace(/^'+|'+$/g, '');
-  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
-    return trimmed;
-  }
-  try {
-    const parsed = JSON.parse(trimmed) as { text?: unknown; content?: unknown };
-    if (typeof parsed.text === 'string' && parsed.text.trim()) {
-      return parsed.text.trim();
-    }
-    if (typeof parsed.content === 'string' && parsed.content.trim()) {
-      return parsed.content.trim();
-    }
-  } catch {
-    // Si no es JSON válido, se devuelve el texto original.
-  }
-  return trimmed;
-};
-
-const stripConsecutiveDuplicateLargeBlocks = (text: string): string => {
-  const normalized = text.trim();
-  if (!normalized) return normalized;
-
-  const lines = normalized.split('\n');
-  const deduped: string[] = [];
-
-  for (const line of lines) {
-    const current = line.trim();
-    const prev = deduped.length > 0 ? deduped[deduped.length - 1].trim() : '';
-    // Evita duplicados consecutivos de líneas "grandes" (caso típico: JSON repetido).
-    if (current.length >= 120 && current === prev) {
-      continue;
-    }
-    deduped.push(line);
-  }
-
-  return deduped.join('\n').trim();
 };
 
 const ensureWhatsAppBotFormat = (text: string): string => {
-  const normalized = stripConsecutiveDuplicateLargeBlocks(
-    unwrapJsonTextEnvelope(text)
-  ).trim();
+  const normalized = text.trim();
   if (!normalized) return normalized;
-  if (normalized.startsWith('🤖')) {
-    return normalized;
-  }
+  if (normalized.startsWith('🤖')) return normalized;
   return formatBotUserMessage('Respuesta', '💬', normalized);
 };
 
-type DeterministicAgentOutput =
-  | { mode: 'TEXT'; text: string }
-  | {
-      mode: 'LIST_CANDIDATES';
-      introText: string;
-      items: Array<{ id: string; title: string; description?: string }>;
-    };
-
-const toListCandidatesFromUnknown = (
-  value: unknown
-): { introText: string; items: Array<{ id: string; title: string; description?: string }> } | null => {
-  if (!value || typeof value !== 'object') return null;
-  const obj = value as Record<string, unknown>;
-  if (!Array.isArray(obj.items) || obj.items.length === 0) return null;
-
-  const items = obj.items
-    .map((item) => {
-      if (!item || typeof item !== 'object') return null;
-      const row = item as Record<string, unknown>;
-      const id = typeof row.id === 'string' ? row.id.trim() : '';
-      const titleRaw =
-        typeof row.title === 'string'
-          ? row.title
-          : typeof row.name === 'string'
-            ? row.name
-            : '';
-      const title = titleRaw.trim();
-      const descriptionRaw =
-        typeof row.description === 'string'
-          ? row.description
-          : typeof row.ingredients === 'string'
-            ? row.ingredients
-            : undefined;
-      if (!id || !title) return null;
-      return { id, title, description: descriptionRaw?.trim() };
-    })
-    .filter((item): item is NonNullable<typeof item> => Boolean(item));
-
-  if (!items.length) return null;
-
-  const introText =
-    typeof obj.introText === 'string' && obj.introText.trim()
-      ? obj.introText.trim()
-      : 'Te comparto algunas opciones disponibles:';
-
-  return { introText, items };
-};
-
-const parseJsonCandidates = (rawText: string): unknown[] => {
+/** Guard transitorio: alerta si el LLM devuelve JSON pese al prompt de texto plano. Borrar tras 0 ocurrencias en producción por 1 semana. */
+const guardJsonRegression = (rawText: string, conversationId: string): void => {
   const trimmed = rawText.trim();
-  const candidates: unknown[] = [];
-  const seen = new Set<string>();
-  const addCandidate = (candidateText: string) => {
-    const text = candidateText.trim();
-    if (!text || seen.has(text)) return;
-    seen.add(text);
-    try {
-      candidates.push(JSON.parse(text));
-    } catch {
-      // ignore invalid JSON candidates
-    }
-  };
-
-  addCandidate(trimmed);
-  const firstBrace = trimmed.indexOf('{');
-  const lastBrace = trimmed.lastIndexOf('}');
-  if (firstBrace >= 0 && lastBrace > firstBrace) {
-    addCandidate(trimmed.slice(firstBrace, lastBrace + 1));
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return;
+  try {
+    JSON.parse(trimmed);
+    console.warn(
+      JSON.stringify({
+        event: '[regression] llm_returned_json_despite_plaintext_prompt',
+        rawTextPreview: trimmed.slice(0, 200),
+        conversationId,
+      })
+    );
+  } catch {
+    /* not JSON — all good */
   }
-
-  // Extrae objetos JSON balanceados embebidos dentro de texto libre
-  // (ej: "🤖 ... { ... }"), para no depender de first/last brace.
-  const pushBalancedObjects = (input: string) => {
-    let start = -1;
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-
-    for (let i = 0; i < input.length; i += 1) {
-      const ch = input[i];
-
-      if (inString) {
-        if (escaped) {
-          escaped = false;
-          continue;
-        }
-        if (ch === '\\') {
-          escaped = true;
-          continue;
-        }
-        if (ch === '"') {
-          inString = false;
-        }
-        continue;
-      }
-
-      if (ch === '"') {
-        inString = true;
-        continue;
-      }
-
-      if (ch === '{') {
-        if (depth === 0) {
-          start = i;
-        }
-        depth += 1;
-        continue;
-      }
-
-      if (ch === '}' && depth > 0) {
-        depth -= 1;
-        if (depth === 0 && start >= 0) {
-          addCandidate(input.slice(start, i + 1));
-          start = -1;
-        }
-      }
-    }
-  };
-
-  pushBalancedObjects(trimmed);
-  return candidates;
-};
-
-const normalizeDeterministicAgentOutput = (
-  rawText: string
-): DeterministicAgentOutput | null => {
-  for (const parsed of parseJsonCandidates(rawText)) {
-    if (!parsed || typeof parsed !== 'object') continue;
-    const obj = parsed as Record<string, unknown>;
-
-    if (
-      obj.mode === 'LIST_CANDIDATES' &&
-      typeof obj.introText === 'string' &&
-      Array.isArray(obj.items)
-    ) {
-      const items = obj.items
-        .map((item) => {
-          if (!item || typeof item !== 'object') return null;
-          const row = item as Record<string, unknown>;
-          const id = typeof row.id === 'string' ? row.id.trim() : '';
-          const title = typeof row.title === 'string' ? row.title.trim() : '';
-          const description =
-            typeof row.description === 'string' ? row.description.trim() : undefined;
-          if (!id || !title) return null;
-          return { id, title, description };
-        })
-        .filter((item): item is NonNullable<typeof item> => Boolean(item));
-      if (items.length > 0) {
-        return {
-          mode: 'LIST_CANDIDATES',
-          introText: obj.introText.trim(),
-          items,
-        };
-      }
-    }
-
-    const directList = toListCandidatesFromUnknown(obj);
-    if (directList) {
-      return {
-        mode: 'LIST_CANDIDATES',
-        introText: directList.introText,
-        items: directList.items,
-      };
-    }
-
-    const nestedTextCandidates = [obj.text, obj.content]
-      .filter((candidate): candidate is string => typeof candidate === 'string')
-      .map((candidate) => candidate.trim())
-      .filter(Boolean);
-
-    for (const nestedText of nestedTextCandidates) {
-      for (const nestedParsed of parseJsonCandidates(nestedText)) {
-        const nestedList = toListCandidatesFromUnknown(nestedParsed);
-        if (nestedList) {
-          return {
-            mode: 'LIST_CANDIDATES',
-            introText: nestedList.introText,
-            items: nestedList.items,
-          };
-        }
-      }
-    }
-
-    if (obj.mode === 'TEXT' && typeof obj.text === 'string' && obj.text.trim()) {
-      return { mode: 'TEXT', text: obj.text.trim() };
-    }
-    if (typeof obj.text === 'string' && obj.text.trim()) {
-      return { mode: 'TEXT', text: obj.text.trim() };
-    }
-    if (typeof obj.content === 'string' && obj.content.trim()) {
-      return { mode: 'TEXT', text: obj.content.trim() };
-    }
-  }
-
-  return null;
-};
-
-const mapDeterministicOutputToHandlerResult = (
-  output: DeterministicAgentOutput
-): HandlerResult | null => {
-  if (output.mode === 'TEXT') {
-    return {
-      content: ensureWhatsAppBotFormat(output.text),
-      isInteractive: false,
-    };
-  }
-
-  const rows = output.items
-    .map((item) => {
-      const itemId = item.id.trim();
-      const title = truncateTitle(item.title.trim(), MAX_LIST_TITLE_LENGTH);
-      if (!itemId || !title) return null;
-      return {
-        title,
-        payload: `SELECT_PRODUCT:${itemId}`,
-        description: truncateDescription(
-          (item.description ?? 'Selecciona esta opcion').trim(),
-          MAX_LIST_DESCRIPTION_LENGTH
-        ),
-        sectionTitle: 'Opciones disponibles',
-      };
-    })
-    .filter((row): row is NonNullable<typeof row> => Boolean(row));
-
-  if (!rows.length) {
-    return null;
-  }
-
-  rows.push({
-    title: 'Ver menu completo',
-    payload: 'VIEW_MENU',
-    description: 'Explorar todas las categorias',
-    sectionTitle: 'Navegacion',
-  });
-
-  return {
-    content: buildListMessageFromButtons(
-      ensureWhatsAppBotFormat(output.introText),
-      rows,
-      'Ver opciones',
-      '',
-      'Selecciona un producto'
-    ),
-    isInteractive: true,
-  };
-};
-
-const extractSelectableProductIds = (result: HandlerResult): string[] => {
-  if (!result.isInteractive || !result.content || typeof result.content !== 'object') {
-    return [];
-  }
-  const message = result.content as {
-    type?: unknown;
-    action?: { sections?: Array<{ rows?: Array<{ id?: string }> }> };
-  };
-  if (message.type !== 'list') return [];
-  const sections = Array.isArray(message.action?.sections) ? message.action!.sections : [];
-  const ids = sections
-    .flatMap((section) => (Array.isArray(section.rows) ? section.rows : []))
-    .map((row) => (typeof row.id === 'string' ? row.id : ''))
-    .filter((rowId) => rowId.startsWith('SELECT_PRODUCT:'))
-    .map((rowId) => rowId.slice('SELECT_PRODUCT:'.length).split(':')[0].trim())
-    .filter(Boolean);
-  return Array.from(new Set(ids));
 };
 
 // ---------------------------------------------------------------------------
@@ -511,9 +179,7 @@ const isCtaCooldownActive = (metadata: ReturnType<typeof normalizeMetadata>): bo
 // CTA pipeline pre-checks
 // ---------------------------------------------------------------------------
 
-/**
- * Devuelve la razón por la que NO se debe mostrar CTA, o `null` si puede proceder.
- */
+/** Devuelve la razón por la que NO se debe mostrar CTA, o `null` si puede proceder. */
 const ctaSkipReason = (params: {
   text: string;
   intent: string;
@@ -546,9 +212,7 @@ const prefetchTopMenuProducts = async (params: {
       businessId: params.businessId,
       keyword: params.keyword,
     });
-    return results
-      .slice(0, TOP_MENU_PRODUCTS_FOR_PLANNER)
-      .map((r) => r.name);
+    return results.slice(0, TOP_MENU_PRODUCTS_FOR_PLANNER).map((r) => r.name);
   } catch {
     return [];
   }
@@ -571,93 +235,65 @@ export const runHybridReactAgent = async (
 ): Promise<HandlerResult | null> => {
   const agent = buildAgent();
 
-  const inputs = {
-    messages: [
-      new SystemMessage(HYBRID_AGENT_SYSTEM_PROMPT),
-      new HumanMessage(buildContextMessage(ctx)),
-    ],
-  };
-
-  const out = await agent.invoke(inputs);
-  const rawText = extractFinalText(out);
-  if (!rawText) return null;
-  const userMessage = ctx.message?.text?.body ?? '';
-
-  const normalizedOutput = normalizeDeterministicAgentOutput(rawText);
-
-  const structuredResult = normalizedOutput
-    ? mapDeterministicOutputToHandlerResult(normalizedOutput)
-    : null;
-  if (structuredResult?.isInteractive) {
-    const candidateProductIds = extractSelectableProductIds(structuredResult);
-    if (candidateProductIds.length > 0) {
-      try {
-        await patchConversationMetadata(ctx.conversationId, {
-          pendingProductSelection: true,
-          pendingQuestion: userMessage,
-          candidateProductIds,
-        });
-      } catch (err) {
-        console.error(
-          '[hybrid-agent] patchConversationMetadata failed for list candidates:',
-          err
-        );
-      }
-    }
-    return structuredResult;
-  }
-
-  const formattedText =
-    normalizedOutput?.mode === 'TEXT'
-      ? ensureWhatsAppBotFormat(normalizedOutput.text)
-      : ensureWhatsAppBotFormat(rawText);
-
-  // --- CTA pipeline ---
   const businessId =
     typeof ctx.business === 'object' && ctx.business
       ? (ctx.business as { id: string }).id
       : '';
+  const customerId =
+    typeof ctx.customer === 'object' && ctx.customer
+      ? (ctx.customer as { id: string }).id
+      : '';
+  const customerPhone =
+    typeof ctx.customer === 'object' && ctx.customer
+      ? (ctx.customer as { phone_number?: string }).phone_number ?? ctx.to
+      : ctx.to;
   const conversationId = ctx.conversationId;
+  const conversationStartedAt =
+    typeof ctx.conversation === 'object' && ctx.conversation
+      ? (ctx.conversation as { started_at?: Date }).started_at?.toISOString() ?? ''
+      : '';
+
+  const inputs = {
+    messages: [new HumanMessage(buildContextMessage(ctx))],
+  };
+
+  const out = await agent.invoke(inputs, {
+    recursionLimit: 8,
+    configurable: { businessId, customerId, customerPhone, conversationId, conversationStartedAt },
+  });
+  const rawText = extractFinalText(out);
+  if (!rawText) return null;
+
+  guardJsonRegression(rawText, ctx.conversationId);
+
+  const formattedText = ensureWhatsAppBotFormat(rawText);
+  const userMessage = ctx.message?.text?.body ?? '';
+
+  // --- CTA pipeline ---
   const intent = ctx.detection.intent as string;
   const confidence = ctx.detection.confidence;
   const detectedProductName = ctx.detection.detectedProductName;
   const lastReferencedProductId =
-    (ctx.conversation as { lastReferencedProductId?: string | null })
-      .lastReferencedProductId ?? null;
+    (ctx.conversation as { lastReferencedProductId?: string | null }).lastReferencedProductId ??
+    null;
 
   const metadata = normalizeMetadata(ctx.conversationState?.metadata);
 
-  const skipReason = ctaSkipReason({
-    text: formattedText,
-    intent,
-    confidence,
-    metadata,
-    businessId,
-  });
+  const skipReason = ctaSkipReason({ text: formattedText, intent, confidence, metadata, businessId });
 
   if (skipReason) {
     console.log(
-      JSON.stringify({
-        event: '[hybrid-cta] cta_skipped',
-        intent,
-        reason: skipReason,
-        conversationId,
-      })
+      JSON.stringify({ event: '[hybrid-cta] cta_skipped', intent, reason: skipReason, conversationId })
     );
     return { content: formattedText, isInteractive: false };
   }
 
-  // Pre-fetch top menu products for planner context
   const topMenuProductNames = await prefetchTopMenuProducts({
     businessId,
     keyword: detectedProductName,
   });
 
-  const lastReferencedProductName =
-    typeof metadata === 'object'
-      ? ((metadata as Record<string, unknown>).lastReferencedProductName as string | null | undefined) ??
-        null
-      : null;
+  const lastReferencedProductName = metadata.lastReferencedProductName ?? null;
 
   const plannerInput: CtaPlannerInput = {
     botResponseText: formattedText,
@@ -687,7 +323,6 @@ export const runHybridReactAgent = async (
     return { content: formattedText, isInteractive: false };
   }
 
-  // Resolve productId deterministically
   const resolvedPlan = await resolveCta({
     plannerRaw,
     businessId,
@@ -698,15 +333,12 @@ export const runHybridReactAgent = async (
     userMessage,
   });
 
-  // Build WhatsApp interactive message
   const handlerResult = buildHybridCtaInteractive(formattedText, resolvedPlan);
 
   if (!handlerResult) {
-    // Builder failed → fallback to text
     return { content: formattedText, isInteractive: false };
   }
 
-  // Persist CTA metadata for cooldown + click tracking
   const primaryPayload = extractPrimaryPayload(resolvedPlan);
   const primaryProductId = extractPrimaryProductId(resolvedPlan);
 
