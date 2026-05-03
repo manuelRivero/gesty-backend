@@ -67,8 +67,11 @@ export const buildHybridCtaInteractive = (
         sectionTitle: 'Navegación',
       });
 
+      const baseText = primary.bodyText || botResponseText;
+      const bodyWithCta = `${baseText}\n\nSi querés más información sobre alguna de estas opciones o sumarlo al pedido, seleccionala de la lista 👇`;
+
       const listMsg = buildListMessageFromButtons(
-        primary.bodyText || botResponseText,
+        bodyWithCta,
         rows,
         'Ver opciones',
         '',
