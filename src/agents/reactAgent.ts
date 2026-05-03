@@ -83,7 +83,7 @@ REGLAS DURAS:
 - Si la tool no devuelve el producto/dato que el cliente pidió, decilo de forma directa ("no lo tenemos cargado") y, si corresponde, ofrecé alternativas que SÍ existan (verificadas por tool).
 - ANTI-MULTI-PRODUCTO: cuando search_products o find_products_by_filter devuelvan count ≥ 2, el sistema enviará AUTOMÁTICAMENTE una lista interactiva con esos productos como mensaje separado. En ese caso escribí ÚNICAMENTE una introducción de 1-2 oraciones describiendo el tipo de opciones SIN nombrar ningún producto individual, SIN describirlos, SIN precios, SIN decir "para sumarlo al pedido seguís desde acá". Ejemplos correctos: "Tenemos varias opciones de ceviche disponibles 🐟" / "Hay X platos dentro de ese presupuesto — fijate en la lista." Cuando el resultado sea UN SOLO producto (count = 1), ahí sí podés nombrarlo, describir brevemente y mencionar el precio verificado por tool.
 - NO MENCIONES BOTONES NI UI: nunca digas "tocá el botón", "elegí de la lista de abajo", "usá los botones del bot", "para sumarlo al pedido seguís desde acá" ni similares. Otro componente del sistema agrega la UI cuando corresponde — vos sólo escribís el texto conversacional.
-- PORCIONES vs PEDIDO: cuando un producto tiene serves_people diferente a la cantidad que pidió el cliente, mencionalo de forma neutral ("este plato rinde para N personas"). No uses palabras como "ideal para compartir" si el usuario pidió para menos personas.
+- PORCIONES vs PEDIDO: el contexto "para N personas" indica cuántas personas van a comer, NO cuántas personas debe servir cada plato (serves_people). NUNCA uses minServesPeople como filtro por este motivo. Buscá todos los productos disponibles con search_products o find_products_by_filter SIN restricción de serves_people, y luego sugerí la cantidad de unidades necesaria. Ejemplo: si hay postre para 1 persona y el cliente pidió para 2, mostrás el postre y sugerís pedir 2 unidades. Si serves_people de un producto es mayor al pedido del cliente, mencionalo de forma neutral ("este plato rinde para N personas").
 
 TOOLS DISPONIBLES:
 - search_products(keyword): busca productos en el menú por similitud semántica (nombre o ingrediente). Devuelve shortlist liviano.
@@ -119,7 +119,9 @@ const buildContextMessage = (ctx: EnrichedContext): string => {
   const meta = normalizeMetadata(ctx.conversationState?.metadata);
   const partySize = getRequestedPartySize(meta);
   if (!partySize) return userMsg;
-  return `[Contexto: pedido para ${partySize} persona${partySize === 1 ? '' : 's'}]\n${userMsg}`;
+  // Aclaración crítica: party size es guía de CANTIDAD A PEDIR, no filtro de serves_people.
+  // Sin esta aclaración el agente filtra con minServesPeople y descarta platos individuales.
+  return `[Contexto de cantidad: el cliente quiere pedir para ${partySize} persona${partySize === 1 ? '' : 's'}. Esto es una guía de cuántas unidades sugerir, NO un filtro de minServesPeople — buscá todos los productos disponibles y luego sugerí la cantidad adecuada.]\n${userMsg}`;
 };
 
 const extractFinalText = (result: unknown): string | null => {
