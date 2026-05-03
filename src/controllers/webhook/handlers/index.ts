@@ -33,6 +33,8 @@ import { ReservationHandler } from './reservationHandler';
 import { ViewReservationHandler } from './viewReservationHandler';
 import { ViewQrHandler } from './viewQrHandler';
 
+import { ModifyQuantityHandler } from './modifyQuantityHandler';
+
 // Fallback
 import { FallbackHandler } from './fallbackHandler';
 import { ViewCartForEditionHandler } from './viewCartForEditionHandler';
@@ -86,7 +88,8 @@ export const handlers = [
   new ProductQueryHandler(),
   new RecommendationRequestHandler(),
   new ProductAttributeQuestionHandler(),
-  
+  new ModifyQuantityHandler(),
+
   // === FALLBACK (siempre último) ===
   new FallbackHandler()
 ];

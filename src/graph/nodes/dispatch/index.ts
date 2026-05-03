@@ -82,6 +82,7 @@ const CLOSED_INTENTS = new Set<ConversationIntent>([
   ConversationIntent.DECREASE_ITEM,
   ConversationIntent.INCREASE_ITEM_QUANTITY,
   ConversationIntent.DECREASE_ITEM_QUANTITY,
+  ConversationIntent.MODIFY_QUANTITY,
   ConversationIntent.VIEW_CART,
   ConversationIntent.VIEW_CART_FOR_EDITION,
   ConversationIntent.SELECT_CART_ITEM,
