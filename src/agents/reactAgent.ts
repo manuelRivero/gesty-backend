@@ -21,7 +21,7 @@ import { HumanMessage } from '@langchain/core/messages';
 import { getReactReasonerLlm } from '../config/llm';
 import { allReactTools } from '../tools';
 import type { EnrichedContext, HandlerFollowUp, HandlerResult } from '../controllers/webhook/types';
-import { buildListMessage, formatBotUserMessage, normalizeMetadata } from '../services/productQuery/utils';
+import { buildListMessage, formatBotUserMessage, getRequestedPartySize, normalizeMetadata } from '../services/productQuery/utils';
 import {
   isHybridCtaEnabled,
   getHybridCtaTargetIntents,
@@ -81,8 +81,9 @@ REGLAS DURAS:
 - Sólo respondé sobre el negocio actual (menú, horarios, carrito).
 - TOOL-FIRST OBLIGATORIO: antes de mencionar cualquier nombre de plato, ingrediente, precio, horario o estado del carrito DEBÉS haber invocado la tool correspondiente en este mismo turno y citar EXACTAMENTE lo que esa tool devolvió. Está prohibido inventar nombres, precios, descripciones o disponibilidad.
 - Si la tool no devuelve el producto/dato que el cliente pidió, decilo de forma directa ("no lo tenemos cargado") y, si corresponde, ofrecé alternativas que SÍ existan (verificadas por tool).
-- ANTI-MULTI-PRODUCTO: si vas a hablar de 2 o más platos, NO los enumeres por nombre en el texto. Escribí solamente una invitación corta (1-2 oraciones) describiendo el tipo de opciones; el sistema agrega abajo la lista interactiva con los nombres y permite elegir uno. Si vas a hablar de UN solo plato, ahí sí podés nombrarlo y describirlo.
-- NO MENCIONES BOTONES NI UI: nunca digas "tocá el botón", "elegí de la lista de abajo", "usá los botones del bot" ni similares. Otro componente del sistema agrega la UI cuando corresponde — vos sólo escribís el texto. Si no podés ejecutar una acción transaccional (agregar al carrito, pagar, reservar), describí cuál sería el próximo paso de forma neutral ("para sumarlo al pedido seguís desde acá") sin prometer botones específicos.
+- ANTI-MULTI-PRODUCTO: cuando search_products o find_products_by_filter devuelvan count ≥ 2, el sistema enviará AUTOMÁTICAMENTE una lista interactiva con esos productos como mensaje separado. En ese caso escribí ÚNICAMENTE una introducción de 1-2 oraciones describiendo el tipo de opciones SIN nombrar ningún producto individual, SIN describirlos, SIN precios, SIN decir "para sumarlo al pedido seguís desde acá". Ejemplos correctos: "Tenemos varias opciones de ceviche disponibles 🐟" / "Hay X platos dentro de ese presupuesto — fijate en la lista." Cuando el resultado sea UN SOLO producto (count = 1), ahí sí podés nombrarlo, describir brevemente y mencionar el precio verificado por tool.
+- NO MENCIONES BOTONES NI UI: nunca digas "tocá el botón", "elegí de la lista de abajo", "usá los botones del bot", "para sumarlo al pedido seguís desde acá" ni similares. Otro componente del sistema agrega la UI cuando corresponde — vos sólo escribís el texto conversacional.
+- PORCIONES vs PEDIDO: cuando un producto tiene serves_people diferente a la cantidad que pidió el cliente, mencionalo de forma neutral ("este plato rinde para N personas"). No uses palabras como "ideal para compartir" si el usuario pidió para menos personas.
 
 TOOLS DISPONIBLES:
 - search_products(keyword): busca productos en el menú por similitud semántica (nombre o ingrediente). Devuelve shortlist liviano.
@@ -114,7 +115,11 @@ FORMATO DE SALIDA:
 - Máximo ~600 caracteres salvo que el usuario pida un detalle largo.`;
 
 const buildContextMessage = (ctx: EnrichedContext): string => {
-  return ctx.message?.text?.body ?? '';
+  const userMsg = ctx.message?.text?.body ?? '';
+  const meta = normalizeMetadata(ctx.conversationState?.metadata);
+  const partySize = getRequestedPartySize(meta);
+  if (!partySize) return userMsg;
+  return `[Contexto: pedido para ${partySize} persona${partySize === 1 ? '' : 's'}]\n${userMsg}`;
 };
 
 const extractFinalText = (result: unknown): string | null => {
@@ -267,7 +272,11 @@ const buildProductListFollowUp = (products: AgentShortlistItem[]): HandlerFollow
 
   const listMessage = buildListMessage({
     headerText: '',
-    bodyText: 'Seleccioná un producto para ver el detalle o sumarlo al pedido.',
+    bodyText: formatBotUserMessage(
+      'Opciones disponibles',
+      '📋',
+      'Seleccioná un producto para ver el detalle o sumarlo al pedido.'
+    ),
     footerText: 'Elegí una opción',
     actionButtonLabel: 'Ver opciones',
     sections: [
