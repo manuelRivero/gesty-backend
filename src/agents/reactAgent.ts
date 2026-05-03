@@ -20,8 +20,8 @@ import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { HumanMessage } from '@langchain/core/messages';
 import { getReactReasonerLlm } from '../config/llm';
 import { allReactTools } from '../tools';
-import type { EnrichedContext, HandlerResult } from '../controllers/webhook/types';
-import { formatBotUserMessage, normalizeMetadata } from '../services/productQuery/utils';
+import type { EnrichedContext, HandlerFollowUp, HandlerResult } from '../controllers/webhook/types';
+import { buildListMessage, formatBotUserMessage, normalizeMetadata } from '../services/productQuery/utils';
 import {
   isHybridCtaEnabled,
   getHybridCtaTargetIntents,
@@ -36,6 +36,7 @@ import {
 } from '../whatsappBuilders/hybridCta';
 import { patchConversationMetadata } from '../repositories';
 import { MenuService } from '../services/menu.service';
+import { truncateDescription, truncateTitle } from '../whatsappBuilders';
 import type { CtaPlannerInput } from './types';
 
 // ---------------------------------------------------------------------------
@@ -219,6 +220,77 @@ const prefetchTopMenuProducts = async (params: {
 };
 
 // ---------------------------------------------------------------------------
+// Product list extraction from agent tool results
+// ---------------------------------------------------------------------------
+
+const PRODUCT_LIST_TOOLS = new Set(['search_products', 'find_products_by_filter']);
+
+interface AgentShortlistItem {
+  id: string;
+  name: string;
+  price?: { amount: string; currency: string } | null;
+  description?: string | null;
+}
+
+/** Extrae productos encontrados por tools de búsqueda del historial de mensajes del agente. */
+const extractProductsFromAgentMessages = (messages: unknown[]): AgentShortlistItem[] => {
+  const seen = new Set<string>();
+  const result: AgentShortlistItem[] = [];
+
+  for (const msg of messages) {
+    if (typeof msg !== 'object' || msg === null) continue;
+    const m = msg as Record<string, unknown>;
+    if (typeof m.tool_call_id !== 'string') continue;
+    if (typeof m.name !== 'string' || !PRODUCT_LIST_TOOLS.has(m.name)) continue;
+
+    const rawContent = typeof m.content === 'string' ? m.content : null;
+    if (!rawContent) continue;
+
+    try {
+      const data = JSON.parse(rawContent) as { items?: AgentShortlistItem[] };
+      if (!Array.isArray(data.items)) continue;
+      for (const item of data.items) {
+        if (typeof item.id !== 'string' || !item.id) continue;
+        if (seen.has(item.id)) continue;
+        seen.add(item.id);
+        result.push(item);
+      }
+    } catch { /* skip bad JSON */ }
+  }
+
+  return result;
+};
+
+/** Construye un followUp de lista WhatsApp cuando el agente encontró ≥ 2 productos. */
+const buildProductListFollowUp = (products: AgentShortlistItem[]): HandlerFollowUp | null => {
+  if (products.length < 2) return null;
+
+  const listMessage = buildListMessage({
+    headerText: '',
+    bodyText: 'Seleccioná un producto para ver el detalle o sumarlo al pedido.',
+    footerText: 'Elegí una opción',
+    actionButtonLabel: 'Ver opciones',
+    sections: [
+      {
+        title: 'Disponibles',
+        rows: products.slice(0, 10).map((p) => {
+          const priceStr = p.price?.amount
+            ? `$${Number(p.price.amount).toLocaleString('es-AR')}`
+            : null;
+          return {
+            id: `SELECT_PRODUCT:${p.id}`,
+            title: truncateTitle((p.name || 'Producto').trim()),
+            description: truncateDescription(priceStr ?? p.description ?? 'Ver detalle'),
+          };
+        }),
+      },
+    ],
+  });
+
+  return { type: 'list', listMessage };
+};
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -269,6 +341,21 @@ export const runHybridReactAgent = async (
   const formattedText = ensureWhatsAppBotFormat(rawText);
   const userMessage = ctx.message?.text?.body ?? '';
 
+  // Extraer productos encontrados por tools de búsqueda para mostrarlo como lista interactiva.
+  const agentMessages = (out as { messages?: unknown[] }).messages ?? [];
+  const foundProducts = extractProductsFromAgentMessages(agentMessages);
+  const productFollowUp = buildProductListFollowUp(foundProducts);
+
+  if (productFollowUp) {
+    console.log(
+      JSON.stringify({
+        event: '[hybrid-agent] product_list_followup',
+        productCount: foundProducts.length,
+        conversationId,
+      })
+    );
+  }
+
   // --- CTA pipeline ---
   const intent = ctx.detection.intent as string;
   const confidence = ctx.detection.confidence;
@@ -285,7 +372,11 @@ export const runHybridReactAgent = async (
     console.log(
       JSON.stringify({ event: '[hybrid-cta] cta_skipped', intent, reason: skipReason, conversationId })
     );
-    return { content: formattedText, isInteractive: false };
+    return {
+      content: formattedText,
+      isInteractive: false,
+      ...(productFollowUp ? { followUps: [productFollowUp] } : {}),
+    };
   }
 
   const topMenuProductNames = await prefetchTopMenuProducts({
@@ -320,7 +411,11 @@ export const runHybridReactAgent = async (
   );
 
   if (!plannerRaw) {
-    return { content: formattedText, isInteractive: false };
+    return {
+      content: formattedText,
+      isInteractive: false,
+      ...(productFollowUp ? { followUps: [productFollowUp] } : {}),
+    };
   }
 
   const resolvedPlan = await resolveCta({
@@ -336,7 +431,11 @@ export const runHybridReactAgent = async (
   const handlerResult = buildHybridCtaInteractive(formattedText, resolvedPlan);
 
   if (!handlerResult) {
-    return { content: formattedText, isInteractive: false };
+    return {
+      content: formattedText,
+      isInteractive: false,
+      ...(productFollowUp ? { followUps: [productFollowUp] } : {}),
+    };
   }
 
   const primaryPayload = extractPrimaryPayload(resolvedPlan);
@@ -363,5 +462,6 @@ export const runHybridReactAgent = async (
     })
   );
 
+  // CTA ya maneja la selección de producto; no duplicar la lista.
   return handlerResult;
 };
