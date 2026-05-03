@@ -356,6 +356,17 @@ export const runHybridReactAgent = async (
   const productFollowUp = buildProductListFollowUp(foundProducts);
 
   if (productFollowUp) {
+    // Guardar los candidatos en el conversation state para que SELECT_PRODUCT handler
+    // pueda validar la selección del usuario cuando clickea en la lista.
+    try {
+      await patchConversationMetadata(conversationId, {
+        pendingProductSelection: true,
+        pendingQuestion: userMessage || ctx.message?.text?.body || '',
+        candidateProductIds: foundProducts.map((p) => p.id),
+      });
+    } catch (err) {
+      console.error('[hybrid-agent] failed to patch candidateProductIds:', err);
+    }
     console.log(
       JSON.stringify({
         event: '[hybrid-agent] product_list_followup',

@@ -42,6 +42,7 @@ import { prisma } from '../lib/prisma';
 import { emitAdminOrderCreated } from '../socket/adminSocket';
 import {
   clearProductFilterMetadata,
+  formatBotUserMessage,
   getRequestedPartySize,
   parseSelectProductListRowId,
   partySizeMetadataFields,
@@ -441,9 +442,15 @@ export const handleProductSelectionFromWebhook = async (
       type: 'interactive',
       interactive: {
         type: 'button',
-        header: { type: 'text', text: 'Opción no disponible' },
-        body: { text: 'Esa opción ya no está disponible. Por favor realiza una nueva consulta.' },
-        footer: { text: 'Elige una opción' },
+        header: { type: 'text', text: '' },
+        body: {
+          text: formatBotUserMessage(
+            'Opción expirada',
+            '⚠️',
+            'Esta opción ya no está disponible. Hacé una nueva consulta o explorá el menú.'
+          ),
+        },
+        footer: { text: 'Elegí una opción' },
         action: {
           buttons: [
             {
@@ -451,11 +458,11 @@ export const handleProductSelectionFromWebhook = async (
               reply: {
                 id: 'VIEW_MENU',
                 title: 'Ver menú',
-              }
-            }
-          ]
-        }
-      }
+              },
+            },
+          ],
+        },
+      },
     };
 
   }
@@ -465,9 +472,15 @@ export const handleProductSelectionFromWebhook = async (
       type: 'interactive',
       interactive: {
         type: 'button',
-        header: { type: 'text', text: 'Opción no disponible' },
-        body: { text: 'Esa opción ya no está disponible. Por favor realiza una nueva consulta.' },
-        footer: { text: 'Elige una opción' },
+        header: { type: 'text', text: '' },
+        body: {
+          text: formatBotUserMessage(
+            'Opción expirada',
+            '⚠️',
+            'Esta opción ya no está disponible. Hacé una nueva consulta o explorá el menú.'
+          ),
+        },
+        footer: { text: 'Elegí una opción' },
         action: {
           buttons: [
             {
@@ -475,11 +488,11 @@ export const handleProductSelectionFromWebhook = async (
               reply: {
                 id: 'VIEW_MENU',
                 title: 'Ver menú',
-              }
-            }
-          ]
-        }
-      }
+              },
+            },
+          ],
+        },
+      },
     };
   }
 
