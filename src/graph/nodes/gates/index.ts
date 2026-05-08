@@ -214,6 +214,7 @@ const runOnboardingAddressCapture = async (
       }
       return {
         handlerResult: normalizeToHandlerResult(serviceResult),
+        detection,
         earlyExit: exitReason,
       };
     }
@@ -231,7 +232,7 @@ const runOnboardingAddressCapture = async (
       if (typeof augmented.content === 'string') {
         augmented.content = `${augmented.content}\n\n${ONBOARDING_REMINDER}`;
       }
-      return { handlerResult: augmented, earlyExit: exitReason };
+      return { handlerResult: augmented, detection, earlyExit: exitReason };
     }
 
     const askResult = normalizeToHandlerResult(
