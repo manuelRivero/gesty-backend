@@ -306,9 +306,17 @@ export class AddressService {
   }
 
   private async clearState(ctx: EnrichedContext) {
-    await updateConversationState(ctx.conversationId, {
-      metadata: {},
-    });
+    const {
+      onboarding_step,
+      onboarding_started_at,
+      temp_address,
+      temp_lat,
+      temp_lng,
+      temp_zone_id,
+      awaiting_address,
+      ...rest
+    } = ctx.conversationState.metadata ?? {};
+    await updateConversationState(ctx.conversationId, { metadata: rest });
   }
 
   private retry(message: string): string {
