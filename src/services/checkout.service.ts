@@ -24,12 +24,16 @@ export const buildCheckoutMessage = async (
         return { message: null, errorMessage: 'No se encontró el negocio' };
     }
 
-    const cart = await prisma.orders.findFirst({
-        where: { conversation_id: conversation.id },
-        include: { order_item: { include: { menu_item: true } } }
+    const draft = await prisma.draft_order.findFirst({
+        where: {
+            business_id: business.id,
+            customer_phone: customer.phone_number,
+            status: 'active',
+        },
+        include: { draft_order_item: { include: { menu_item: true } } },
     });
 
-    if (!cart || cart.order_item.length === 0) {
+    if (!draft || draft.draft_order_item.length === 0) {
         const errorText = '🤖\n\n*Tu pedido está vacío 🛒*\n\nPodés explorar el menú para empezar tu pedido.';
         return { message: null, errorMessage: errorText };
     }
@@ -41,12 +45,12 @@ export const buildCheckoutMessage = async (
             conversation_id: conversation.id,
             status: OrderStatus.placed,
             payment_status: OrderPaymentStatus.unpaid,
-            total_amount: cart.order_item.reduce((sum, item) => sum + (item.quantity * item.unit_price.toNumber()), 0),
+            total_amount: draft.draft_order_item.reduce((sum, item) => sum + (item.quantity * item.unit_price.toNumber()), 0),
             order_item: {
-                create: cart.order_item.map(item => ({
-                    menu_item_id: item.menu_item_id,
+                create: draft.draft_order_item.map(item => ({
+                    menu_item_id: item.product_id!,
                     quantity: item.quantity,
-                    unit_price: item.unit_price
+                    unit_price: item.unit_price,
                 }))
             },
             currency_code: business.currency_code ?? 'ARS',

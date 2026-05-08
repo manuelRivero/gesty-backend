@@ -68,6 +68,13 @@ export const persistAIMessageNode = async (
     typeof result.content === 'string' ? result.content : '[interactive]';
 
   await createConversationMessage(conversationId, 'ai', aiContent, true);
+
+  for (const followUp of result.followUps ?? []) {
+    if (followUp.type === 'text' && followUp.message) {
+      await createConversationMessage(conversationId, 'ai', followUp.message, false);
+    }
+  }
+
   await updateConversationLastMessageAt(conversationId);
 
   return {};
