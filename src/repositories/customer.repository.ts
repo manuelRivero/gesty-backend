@@ -30,6 +30,16 @@ export const findOrCreateCustomer = async (
   });
 };
 
+export const updateCustomerName = async (
+  customerId: string,
+  name: string
+): Promise<customer> => {
+  return prisma.customer.update({
+    where: { id: customerId },
+    data: { name }
+  });
+};
+
 export const findCustomerById = async (customerId: string): Promise<customer | null> => {
   return prisma.customer.findUnique({
     where: { id: customerId }

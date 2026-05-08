@@ -227,19 +227,27 @@ export const buildDetectionContextNode = async (
     const onboardingStep = wsMeta.onboarding_step;
 
     let contextRoute: AgentStateUpdate['contextRoute'];
+    let hasAddress = false;
 
     if (reservationStep) {
       contextRoute = 'reservation_wizard';
     } else if (onboardingStep) {
       contextRoute = 'onboarding_by_state';
     } else {
-      const hasAddress = await findDefaultCustomerAddress(customer.id);
-      if (!hasAddress) {
-        console.log('[Orchestrator] No address → start onboarding');
-        contextRoute = 'address_capture';
+      const defaultAddress = await findDefaultCustomerAddress(customer.id);
+      hasAddress = !!defaultAddress;
+      if (!defaultAddress) {
+        // Si ya pedimos la dirección y el usuario responde con texto, intentar capturarla
+        if (wsMeta.awaiting_address && ctx.message?.type === 'text') {
+          console.log('[Orchestrator] Awaiting address → capture from text');
+          contextRoute = 'address_capture';
+        } else {
+          // Ruta normal: addressCollectionNode maneja la solicitud no bloqueante o bloqueante
+          contextRoute = ctx.message?.type === 'interactive' ? 'interactive' : 'nlp';
+          console.log(`[Orchestrator] Route: ${contextRoute} (no address, non-blocking)`);
+        }
       } else {
-        contextRoute =
-          ctx.message?.type === 'interactive' ? 'interactive' : 'nlp';
+        contextRoute = ctx.message?.type === 'interactive' ? 'interactive' : 'nlp';
         if (contextRoute === 'interactive') {
           console.log('[Orchestrator] Route: Interactive');
         } else {
@@ -256,7 +264,7 @@ export const buildDetectionContextNode = async (
       recentMessages,
       detectionContext,
       enrichedCtx: enrichedBase as unknown as EnrichedContext,
-      hasAddress: contextRoute !== 'address_capture',
+      hasAddress,
       contextRoute,
     };
   } catch (error) {

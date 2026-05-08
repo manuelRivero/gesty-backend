@@ -24,6 +24,7 @@ Available intents:
 - VIEW_CART: wants to see current cart (e.g., "cuánto llevo?", "ver mi pedido")
 - VIEW_CART_FOR_EDITION: wants to see current cart for edition (e.g., "modificar mi pedido")
 - SMALL_TALK: greeting or casual (e.g., "hola", "buenas")
+- PROVIDE_NAME: user is providing their personal name as the main subject, typically as a standalone response when asked (e.g., "Juan", "me llamo Juan", "soy Ana", "mi nombre es Pedro Pérez")
 - ASK_QUESTION: general question (e.g., "dónde están?", "cuál es el horario?")
 - BUSINESS_HOURS: asks for business hours (e.g., "horarios", "a qué hora abren?")
 - EDIT_ADDRESS: wants to change or update the delivery address (e.g., "quiero cambiar mi dirección")
@@ -40,7 +41,9 @@ Rules:
 - If the user includes a delivery address, extract it in addressText even if there is a greeting
 - If there is a clear address, still return intent but always include addressText
 - Provide confidence 0-1
-- If uncertain, provide top 2-3 candidates`;
+- If uncertain, provide top 2-3 candidates
+- If the user mentions their personal name anywhere in the message, extract it in \`customerName\`, even when the primary intent is something else (same pattern as addressText)
+- Use PROVIDE_NAME only when giving the name is the whole point of the message; if the user names themselves while also asking or doing something else, classify by the other action and still set customerName`;
 
 export const buildIntentDetectionUserPrompt = (
   message: string,
@@ -63,6 +66,7 @@ Respond with JSON:
   "quantity": number or null,
   "addressText": "full address or null",
   "addressConfidence": 0.0-1.0,
+  "customerName": "person name or null",
   "candidates": [
     {"intent": "INTENT_NAME", "confidence": 0.0-1.0}
   ]

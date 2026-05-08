@@ -34,6 +34,7 @@ import { ViewReservationHandler } from './viewReservationHandler';
 import { ViewQrHandler } from './viewQrHandler';
 
 import { ModifyQuantityHandler } from './modifyQuantityHandler';
+import { ProvideNameHandler } from './provideNameHandler';
 
 // Fallback
 import { FallbackHandler } from './fallbackHandler';
@@ -89,6 +90,7 @@ export const handlers = [
   new RecommendationRequestHandler(),
   new ProductAttributeQuestionHandler(),
   new ModifyQuantityHandler(),
+  new ProvideNameHandler(),
 
   // === FALLBACK (siempre último) ===
   new FallbackHandler()

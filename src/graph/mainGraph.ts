@@ -29,6 +29,8 @@ import {
   onboardingByStateNode,
   addressCaptureNode,
 } from './nodes/gates';
+import { addressCollectionNode } from './nodes/gates/addressCollection';
+import { nameCollectionNode } from './nodes/gates/nameCollection';
 import {
   interactiveSubgraphNode,
   nlpSubgraphNode,
@@ -40,6 +42,8 @@ import {
   routeAfterDetectionContext,
   routeAfterExtract,
   routeAfterHandlerOrSubflow,
+  routeAfterAddressCollection,
+  routeAfterNameCollection,
   routeAfterPersistUser,
   routeAfterResolveBusiness,
   routeAfterSend,
@@ -61,6 +65,8 @@ const builder = new StateGraph(AgentStateAnnotation)
   .addNode(NODE.ADDRESS_CAPTURE, addressCaptureNode)
   .addNode(NODE.INTERACTIVE, interactiveSubgraphNode)
   .addNode(NODE.NLP, nlpSubgraphNode)
+  .addNode(NODE.ADDRESS_COLLECTION, addressCollectionNode)
+  .addNode(NODE.NAME_COLLECTION, nameCollectionNode)
   .addNode(NODE.SEND, sendResponseNode)
   .addNode(NODE.PERSIST_AI, persistAIMessageNode);
 
@@ -86,7 +92,7 @@ builder.addConditionalEdges(NODE.BIZ_OPEN, routeAfterBusinessOpen, {
 });
 
 builder.addConditionalEdges(NODE.CLOSED_BIZ, routeAfterHandlerOrSubflow, {
-  [NODE.SEND]: NODE.SEND,
+  [NODE.ADDRESS_COLLECTION]: NODE.ADDRESS_COLLECTION,
   [END]: END,
 });
 
@@ -122,10 +128,20 @@ for (const node of [
   NODE.NLP,
 ] as const) {
   builder.addConditionalEdges(node, routeAfterHandlerOrSubflow, {
-    [NODE.SEND]: NODE.SEND,
+    [NODE.ADDRESS_COLLECTION]: NODE.ADDRESS_COLLECTION,
     [END]: END,
   });
 }
+
+builder.addConditionalEdges(NODE.ADDRESS_COLLECTION, routeAfterAddressCollection, {
+  [NODE.NAME_COLLECTION]: NODE.NAME_COLLECTION,
+  [END]: END,
+});
+
+builder.addConditionalEdges(NODE.NAME_COLLECTION, routeAfterNameCollection, {
+  [NODE.SEND]: NODE.SEND,
+  [END]: END,
+});
 
 builder.addConditionalEdges(NODE.SEND, routeAfterSend, {
   [NODE.PERSIST_AI]: NODE.PERSIST_AI,

@@ -70,6 +70,10 @@ export type ConversationMetadata = {
   onboarding_step?: string;
   /** Dirección temporal capturada durante onboarding (antes de confirmar). */
   temp_address?: Record<string, unknown>;
+  /** `true` mientras esperamos que el cliente nos diga su nombre. */
+  awaiting_name?: boolean;
+  /** `true` mientras esperamos que el cliente nos diga su dirección de entrega. */
+  awaiting_address?: boolean;
 };
 
 export type ConversationMode = 'GLOBAL' | 'FILTER_SET' | 'PRODUCT_FOCUS';

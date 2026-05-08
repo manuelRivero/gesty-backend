@@ -17,6 +17,7 @@ const IntentDetectionRawSchema = z.object({
   quantity: z.number().nullable(),
   addressText: z.string().nullable(),
   addressConfidence: z.number().nullable(),
+  customerName: z.string().nullable().optional(),
   candidates: z.array(z.object({ intent: z.string(), confidence: z.number() })),
 });
 
@@ -35,6 +36,7 @@ export interface IntentDetectionResult {
   quantity: number | null;
   addressText?: string | null;
   addressConfidence?: number | null;
+  customerName?: string | null;
   /**
    * Lista bruta de candidatos que devolvió el LLM (normalizada y ordenada).
    * Puede o no incluir al `intent` final. Se mantiene tal cual para
@@ -96,6 +98,7 @@ const UNKNOWN_RESULT: IntentDetectionResult = {
   quantity: null,
   addressText: null,
   addressConfidence: null,
+  customerName: null,
   candidates: [],
   alternatives: [],
   resolutionSource: 'unknown',
@@ -214,6 +217,7 @@ export const detectIntentWithConfidence = async (
       quantity,
       addressText: parsed.addressText?.trim() ?? null,
       addressConfidence: parsed.addressConfidence ?? null,
+      customerName: parsed.customerName?.trim() ?? null,
       candidates: normalizedCandidates,
       alternatives,
       resolutionSource: finalSource,

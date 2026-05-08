@@ -24,6 +24,8 @@ export const NODE = {
   ADDRESS_CAPTURE: 'addressCapture',
   INTERACTIVE: 'interactiveSubgraph',
   NLP: 'nlpSubgraph',
+  ADDRESS_COLLECTION: 'addressCollection',
+  NAME_COLLECTION: 'nameCollection',
   SEND: 'sendResponse',
   PERSIST_AI: 'persistAIMessage',
 } as const;
@@ -98,10 +100,31 @@ export const routeAfterDetectionContext = (
 };
 
 /**
- * Tras cualquier nodo que produce `handlerResult`: si hay resultado, envía;
- * si no, termina.
+ * Tras cualquier nodo que produce `handlerResult`: si hay resultado, pasa por
+ * el nodo de captura de dirección (y luego nombre) antes de enviar; si no, termina.
  */
 export const routeAfterHandlerOrSubflow = (
+  state: AgentState
+): NodeName | typeof END => {
+  if (state.handlerResult) return NODE.ADDRESS_COLLECTION;
+  return END;
+};
+
+/**
+ * Tras `addressCollection`: siempre pasa a `nameCollection` si hay resultado.
+ */
+export const routeAfterAddressCollection = (
+  state: AgentState
+): NodeName | typeof END => {
+  if (state.handlerResult) return NODE.NAME_COLLECTION;
+  return END;
+};
+
+/**
+ * Tras `nameCollection`: si hay `handlerResult` (puede haber sido creado o
+ * modificado por el nodo), envía; si no, termina.
+ */
+export const routeAfterNameCollection = (
   state: AgentState
 ): NodeName | typeof END => {
   if (state.handlerResult) return NODE.SEND;
