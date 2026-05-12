@@ -307,6 +307,7 @@ model business_coverage_zone {
   created_at                 DateTime?                @default(now()) @db.Timestamptz(6)
   updated_at                 DateTime?                @default(now()) @db.Timestamptz(6)
   business                   business                 @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  customer_addresses         customer_address[]
 
   @@index([business_id], map: "idx_coverage_zone_active", where: raw("(is_active = true)"))
   @@index([business_id], map: "idx_coverage_zone_business")
@@ -336,12 +337,15 @@ model customer_address {
   is_active             Boolean?                  @default(true)
   created_at            DateTime?                 @default(now()) @db.Timestamptz(6)
   updated_at            DateTime?                 @default(now()) @db.Timestamptz(6)
+  delivery_zone_id      String?                   @db.Uuid
   customer              customer                  @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  delivery_zone         business_coverage_zone?   @relation(fields: [delivery_zone_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
   orders                orders[]
 
   @@index([customer_id], map: "idx_customer_address_active", where: raw("(is_active = true)"))
   @@index([customer_id], map: "idx_customer_address_customer_id")
   @@index([customer_id, is_default], map: "idx_customer_address_default", where: raw("(is_default = true)"))
+  @@index([delivery_zone_id], map: "idx_customer_address_delivery_zone")
   @@index([location], map: "idx_customer_address_location", type: Gist)
 }
 

@@ -21,7 +21,9 @@ import {
   clearConversationIdleTimestamps,
   findRecentMessagesForDetectionContext,
   findDefaultCustomerAddress,
+  findCoverageZoneForAddress,
 } from '../../../repositories';
+import { prisma } from '../../../lib/prisma';
 import { getBusinessConfig } from '../../../services/businessConfig.service';
 import { getBusinessOpenInfo } from '../../../services/businessHours.service';
 import { formatInboundMessageForLog } from '../../../controllers/webhook/utils/messageLog';
@@ -228,6 +230,7 @@ export const buildDetectionContextNode = async (
 
     let contextRoute: AgentStateUpdate['contextRoute'];
     let hasAddress = false;
+    let isInCoverage = false;
 
     if (reservationStep) {
       contextRoute = 'reservation_wizard';
@@ -237,16 +240,36 @@ export const buildDetectionContextNode = async (
       const defaultAddress = await findDefaultCustomerAddress(customer.id);
       hasAddress = !!defaultAddress;
       if (!defaultAddress) {
-        // Si ya pedimos la dirección y el usuario responde con texto, intentar capturarla
         if (wsMeta.awaiting_address && ctx.message?.type === 'text') {
           console.log('[Orchestrator] Awaiting address → capture from text');
           contextRoute = 'address_capture';
         } else {
-          // Ruta normal: addressCollectionNode maneja la solicitud no bloqueante o bloqueante
           contextRoute = ctx.message?.type === 'interactive' ? 'interactive' : 'nlp';
           console.log(`[Orchestrator] Route: ${contextRoute} (no address, non-blocking)`);
         }
       } else {
+        // Re-validar cobertura en tiempo real: las zonas pueden haber cambiado
+        const zone = await findCoverageZoneForAddress(defaultAddress.id, business.id);
+        if (zone !== null) {
+          isInCoverage = true;
+          // Actualizar delivery_zone_id si cambió (zona reorganizada o promovida)
+          if (defaultAddress.delivery_zone_id !== zone.id) {
+            await prisma.customer_address.update({
+              where: { id: defaultAddress.id },
+              data: { delivery_zone_id: zone.id },
+            });
+          }
+        } else if (defaultAddress.delivery_zone_id !== null) {
+          // La dirección tenía zona pero ya no hay intersección → marcar sin cobertura
+          await prisma.customer_address.update({
+            where: { id: defaultAddress.id },
+            data: { delivery_zone_id: null },
+          });
+          isInCoverage = false;
+        } else {
+          // Sin location almacenada ni zone_id → asumir válida por compatibilidad con registros previos
+          isInCoverage = true;
+        }
         contextRoute = ctx.message?.type === 'interactive' ? 'interactive' : 'nlp';
         if (contextRoute === 'interactive') {
           console.log('[Orchestrator] Route: Interactive');
@@ -265,6 +288,7 @@ export const buildDetectionContextNode = async (
       detectionContext,
       enrichedCtx: enrichedBase as unknown as EnrichedContext,
       hasAddress,
+      isInCoverage,
       contextRoute,
     };
   } catch (error) {

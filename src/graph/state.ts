@@ -37,6 +37,7 @@ export type EarlyExitReason =
   | 'business_closed'
   | 'persist_failed'
   | 'subscription_blocked'
+  | 'unsupported_message_type'
   | 'bot_disabled_or_human_handled'
   | 'reservation_handled'
   | 'onboarding_handled'
@@ -111,6 +112,10 @@ export const AgentStateAnnotation = Annotation.Root({
     default: () => null,
   }),
   hasAddress: Annotation<boolean>({
+    reducer: (_prev, next) => next,
+    default: () => false,
+  }),
+  isInCoverage: Annotation<boolean>({
     reducer: (_prev, next) => next,
     default: () => false,
   }),

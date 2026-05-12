@@ -35,6 +35,7 @@ import { ViewQrHandler } from './viewQrHandler';
 
 import { ModifyQuantityHandler } from './modifyQuantityHandler';
 import { ProvideNameHandler } from './provideNameHandler';
+import { SupportHandler } from './supportHandler';
 
 // Fallback
 import { FallbackHandler } from './fallbackHandler';
@@ -91,6 +92,7 @@ export const handlers = [
   new ProductAttributeQuestionHandler(),
   new ModifyQuantityHandler(),
   new ProvideNameHandler(),
+  new SupportHandler(),
 
   // === FALLBACK (siempre último) ===
   new FallbackHandler()

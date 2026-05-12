@@ -4,3 +4,4 @@ export * from './conversation.repository';
 export * from './conversationState.repository';
 export * from './conversationMessage.repository';
 export * from './reservation.repository';
+export * from './coverageZone.repository';

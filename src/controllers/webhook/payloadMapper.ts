@@ -166,7 +166,7 @@ export const detectIntentFromPayload = (
     VIEW_CART_FOR_EDITION: ConversationIntent.VIEW_CART_FOR_EDITION,
     VIEW_ORDER: ConversationIntent.VIEW_ORDER,
     VIEW_CART: ConversationIntent.VIEW_CART,
-      EDIT_ADDRESS: ConversationIntent.EDIT_ADDRESS,
+    EDIT_ADDRESS: ConversationIntent.EDIT_ADDRESS,
     BUSINESS_HOURS: ConversationIntent.BUSINESS_HOURS,
     VIEW_RESERVATION: ConversationIntent.VIEW_RESERVATION,
     VIEW_QR: ConversationIntent.VIEW_QR,
@@ -175,6 +175,8 @@ export const detectIntentFromPayload = (
     RESERVATION_CANCEL: ConversationIntent.RESERVATION,
     RESERVATION_RESET: ConversationIntent.RESERVATION,
     RESERVATION_ENV_NONE: ConversationIntent.RESERVATION,
+    SUPPORT: ConversationIntent.SUPPORT,
+    ASK_QUESTION: ConversationIntent.ASK_QUESTION,
   };
 
   if (staticMap[payloadId]) {

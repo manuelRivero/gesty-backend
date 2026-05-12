@@ -26,6 +26,7 @@ Available intents:
 - SMALL_TALK: greeting or casual (e.g., "hola", "buenas")
 - PROVIDE_NAME: user is providing their personal name as the main subject, typically as a standalone response when asked (e.g., "Juan", "me llamo Juan", "soy Ana", "mi nombre es Pedro Pérez")
 - ASK_QUESTION: general question (e.g., "dónde están?", "cuál es el horario?")
+- SUPPORT: user explicitly asks to talk to a person, agent, or human support (e.g., "necesito hablar con alguien", "quiero atención personalizada", "háblenme", "necesito soporte", "me comunican con un asesor?")
 - BUSINESS_HOURS: asks for business hours (e.g., "horarios", "a qué hora abren?")
 - EDIT_ADDRESS: wants to change or update the delivery address (e.g., "quiero cambiar mi dirección")
 - RESERVATION: wants to reserve a table OR manage an existing reservation (e.g., "reservar mesa", "gestionar reserva", "modificar reserva", "cancelar reserva", "mesa para 4"). Use RESERVATION for any change/cancel/manage intent about a booking, not only new bookings.

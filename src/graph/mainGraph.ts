@@ -6,9 +6,14 @@
  *
  * extract → resolveBusiness → businessConfig → resolveCustomer →
  * businessOpenInfo (→ closedBusiness → send) → persistUserMessage →
- * subscriptionAccessGate (→ send) → buildDetectionContext →
+ * subscriptionAccessGate (→ send) → messageTypeGuard (→ send) →
+ * buildDetectionContext →
  * { reservationWizard | onboardingByState | addressCapture | interactive | nlp } →
  * sendResponse → persistAIMessage → END.
+ *
+ * `messageTypeGuard` filtra mensajes no procesables (imágenes, audio, video,
+ * contactos, documentos, ubicación fuera de un flujo de captura de dirección,
+ * etc.) y responde con un aviso amable + reply button "Pedir ayuda".
  */
 
 import { END, START, StateGraph } from '@langchain/langgraph';
@@ -31,6 +36,7 @@ import {
 } from './nodes/gates';
 import { addressCollectionNode } from './nodes/gates/addressCollection';
 import { nameCollectionNode } from './nodes/gates/nameCollection';
+import { messageTypeGuardNode } from './nodes/gates/messageTypeGuard';
 import {
   interactiveSubgraphNode,
   nlpSubgraphNode,
@@ -43,6 +49,7 @@ import {
   routeAfterExtract,
   routeAfterHandlerOrSubflow,
   routeAfterAddressCollection,
+  routeAfterMessageTypeGuard,
   routeAfterNameCollection,
   routeAfterPersistUser,
   routeAfterResolveBusiness,
@@ -59,6 +66,7 @@ const builder = new StateGraph(AgentStateAnnotation)
   .addNode(NODE.CLOSED_BIZ, closedBusinessNode)
   .addNode(NODE.PERSIST_USER, persistUserMessageNode)
   .addNode(NODE.SUBSCRIPTION_GATE, subscriptionAccessGateNode)
+  .addNode(NODE.MESSAGE_TYPE_GUARD, messageTypeGuardNode)
   .addNode(NODE.BUILD_DETECTION_CTX, buildDetectionContextNode)
   .addNode(NODE.RESERVATION, reservationWizardNode)
   .addNode(NODE.ONBOARDING_BY_STATE, onboardingByStateNode)
@@ -102,6 +110,12 @@ builder.addConditionalEdges(NODE.PERSIST_USER, routeAfterPersistUser, {
 });
 
 builder.addConditionalEdges(NODE.SUBSCRIPTION_GATE, routeAfterSubscriptionGate, {
+  [NODE.SEND]: NODE.SEND,
+  [NODE.MESSAGE_TYPE_GUARD]: NODE.MESSAGE_TYPE_GUARD,
+  [END]: END,
+});
+
+builder.addConditionalEdges(NODE.MESSAGE_TYPE_GUARD, routeAfterMessageTypeGuard, {
   [NODE.SEND]: NODE.SEND,
   [NODE.BUILD_DETECTION_CTX]: NODE.BUILD_DETECTION_CTX,
   [END]: END,

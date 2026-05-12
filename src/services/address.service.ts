@@ -1,6 +1,7 @@
 import { EnrichedContext } from '../controllers/webhook/types';
 import { prisma } from '../lib/prisma';
 import { updateConversationState } from '../repositories/conversationState.repository';
+import { findCoverageZoneForPoint } from '../repositories/coverageZone.repository';
 import { WhatsAppInteractiveMessage, WhatsAppListMessage } from '../domain/intent/whatsappTemplates';
 import { buildSmallTalkMenu } from './smallTalk.service';
 
@@ -213,19 +214,27 @@ export class AddressService {
   private async saveAddress(ctx: EnrichedContext): Promise<string | WhatsAppListMessage> {
     const meta = ctx.conversationState.metadata;
 
-    // Opcional: desmarcar otras direcciones como default
     await prisma.customer_address.updateMany({
       where: { customer_id: ctx.customer.id },
       data: { is_default: false },
     });
 
-    await prisma.customer_address.create({
+    const created = await prisma.customer_address.create({
       data: {
         customer_id: ctx.customer.id,
         street_address: meta.temp_address,
         is_default: true,
+        delivery_zone_id: meta.temp_zone_id ?? null,
       },
     });
+
+    if (meta.temp_lat != null && meta.temp_lng != null) {
+      await prisma.$executeRaw`
+        UPDATE customer_address
+        SET location = ST_SetSRID(ST_MakePoint(${meta.temp_lng}::float8, ${meta.temp_lat}::float8), 4326)::geography
+        WHERE id = ${created.id}::uuid
+      `;
+    }
 
     await this.clearState(ctx);
 
@@ -271,29 +280,9 @@ export class AddressService {
     lat: number,
     lng: number,
     businessId?: string | null
-  ): Promise<any> {
+  ) {
     if (!businessId) return null;
-
-    const result = await prisma.$queryRaw<any[]>`
-      SELECT
-        id,
-        name,
-        delivery_fee,
-        min_order_amount,
-        estimated_delivery_minutes,
-        priority
-      FROM business_coverage_zone
-      WHERE is_active = true
-        AND business_id = ${businessId}
-        AND ST_Intersects(
-          coverage_area,
-          ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography
-        )
-      ORDER BY priority DESC
-      LIMIT 1;
-    `;
-
-    return result[0] || null;
+    return findCoverageZoneForPoint(lat, lng, businessId);
   }
 
   private async updateState(ctx: EnrichedContext, data: any) {

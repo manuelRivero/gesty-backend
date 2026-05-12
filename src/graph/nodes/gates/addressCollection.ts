@@ -23,25 +23,27 @@ const CART_BLOCKING_INTENTS = new Set<string>([
 /**
  * Nodo post-handler que gestiona la captura de dirección de entrega.
  *
- * - Si el cliente ya tiene dirección registrada (`hasAddress`), pasa de largo.
+ * - Si el cliente tiene dirección y está en cobertura, pasa de largo.
  * - Si la ruta activa no es interactive/nlp (reserva, onboarding, address_capture),
  *   pasa de largo — esos flujos se manejan solos.
- * - Si el intent es de carrito/pedido: REEMPLAZA el `handlerResult` con una
- *   solicitud de dirección (bloqueante) y activa `awaiting_address`.
- * - Cualquier otro intent: agrega la solicitud como follow-up (no bloqueante),
- *   solo la primera vez.
+ * - Sin dirección o fuera de cobertura + intent de carrito/pedido: REEMPLAZA el
+ *   `handlerResult` (bloqueante).
+ * - Sin dirección + otro intent: agrega follow-up no bloqueante (solo una vez).
  */
 export const addressCollectionNode = async (
   state: AgentState
 ): Promise<AgentStateUpdate> => {
   if (state.skipAIPersistence) return {};
-  if (state.hasAddress) return {};
   if (state.contextRoute !== 'interactive' && state.contextRoute !== 'nlp') return {};
+
+  const needsAddress = !state.hasAddress;
+  const outOfCoverage = state.hasAddress && !state.isInCoverage;
+
+  if (!needsAddress && !outOfCoverage) return {};
 
   const conversation = state.conversation!;
   const meta = normalizeMetadata(state.workingConversationState?.metadata);
 
-  // Determinar el intent actual: NLP lo deja en state.detection, interactive en payloadId
   const intentFromDetection = state.detection?.intent as string | undefined;
   const intentFromPayload = state.webhookContext?.payloadId
     ? detectIntentFromPayload(state.webhookContext.payloadId)?.intent
@@ -54,16 +56,16 @@ export const addressCollectionNode = async (
     if (!meta.awaiting_address) {
       await patchConversationMetadata(conversation.id, { awaiting_address: true });
     }
-    const addressRequest: HandlerResult = {
-      content:
-        'Para continuar con tu pedido necesito tu dirección de entrega. 📍\n\nIndicame la calle y número o compartí tu ubicación.',
-      isInteractive: false,
-    };
-    return { handlerResult: addressRequest };
+
+    const content = outOfCoverage
+      ? 'Tu dirección de entrega quedó fuera de nuestra zona de cobertura. 🚫\n\nIngresá una nueva dirección o compartí tu ubicación para continuar con tu pedido.'
+      : 'Para continuar con tu pedido necesito tu dirección de entrega. 📍\n\nIndicame la calle y número o compartí tu ubicación.';
+
+    return { handlerResult: { content, isInteractive: false } };
   }
 
-  // No bloqueante: agregar follow-up solo la primera vez
-  if (!meta.awaiting_address && state.handlerResult) {
+  // No bloqueante: solo cuando no hay dirección (fuera de cobertura se informa al agregar al carrito)
+  if (needsAddress && !meta.awaiting_address && state.handlerResult) {
     await patchConversationMetadata(conversation.id, { awaiting_address: true });
     const ask: HandlerFollowUp = {
       type: 'text',

@@ -18,6 +18,7 @@ export const NODE = {
   CLOSED_BIZ: 'closedBusiness',
   PERSIST_USER: 'persistUserMessage',
   SUBSCRIPTION_GATE: 'subscriptionAccessGate',
+  MESSAGE_TYPE_GUARD: 'messageTypeGuard',
   BUILD_DETECTION_CTX: 'buildDetectionContext',
   RESERVATION: 'reservationWizard',
   ONBOARDING_BY_STATE: 'onboardingByState',
@@ -71,6 +72,19 @@ export const routeAfterSubscriptionGate = (
   state: AgentState
 ): NodeName | typeof END => {
   if (state.earlyExit === 'subscription_blocked') return NODE.SEND;
+  if (state.earlyExit) return END;
+  return NODE.MESSAGE_TYPE_GUARD;
+};
+
+/**
+ * Tras `messageTypeGuard`. Si el tipo de mensaje no es soportado, el nodo ya
+ * preparó el `HandlerResult` con el aviso amable + reply button: lo enviamos
+ * directo. En caso contrario seguimos al constructor de contexto de detección.
+ */
+export const routeAfterMessageTypeGuard = (
+  state: AgentState
+): NodeName | typeof END => {
+  if (state.earlyExit === 'unsupported_message_type') return NODE.SEND;
   if (state.earlyExit) return END;
   return NODE.BUILD_DETECTION_CTX;
 };
