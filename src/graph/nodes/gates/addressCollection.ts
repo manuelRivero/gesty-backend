@@ -39,7 +39,7 @@ export const addressCollectionNode = async (
 
   // Si el tipo de entrega ya es TAKE_AWAY no se necesita dirección
   const business = state.business;
-  const phone = state.webhookContext?.from ?? '';
+  const phone = state.webhookContext?.to ?? '';
   if (business && phone) {
     const draft = await prisma.draft_order.findFirst({
       where: { business_id: business.id, customer_phone: phone, status: 'active' },

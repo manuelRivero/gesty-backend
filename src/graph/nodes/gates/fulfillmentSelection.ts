@@ -78,7 +78,7 @@ export const fulfillmentSelectionNode = async (
   if (!currentIntent || !CART_FULFILLMENT_INTENTS.has(currentIntent)) return {};
 
   const business = state.business!;
-  const phone = state.webhookContext?.from ?? '';
+  const phone = state.webhookContext?.to ?? '';
 
   const draft = await prisma.draft_order.findFirst({
     where: { business_id: business.id, customer_phone: phone, status: 'active' },

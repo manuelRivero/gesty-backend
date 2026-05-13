@@ -39,6 +39,7 @@ function withAllOrderStatuses(rows: GroupRow[]): Record<OrderStatus, number> {
     draft: 0,
     placed: 0,
     preparing: 0,
+    ready_for_pickup: 0,
     shipped: 0,
     delivered: 0,
     cancelled: 0

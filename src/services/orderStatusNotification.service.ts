@@ -28,6 +28,12 @@ export function buildOrderStatusCustomerMessage(
         `Pedido *#${ref}*\n\nTu pedido está *${label.toLowerCase()}*. ` +
         `En breve te avisamos el siguiente paso.`
       );
+    case OrderStatus.ready_for_pickup:
+      return (
+        `🤖\n\n*Actualización de tu pedido* 🏪\n\n` +
+        `Pedido *#${ref}*\n\nTu pedido está *listo para retirar*. ` +
+        `Podés pasar a buscarlo cuando quieras.`
+      );
     case OrderStatus.shipped:
       return (
         `🤖\n\n*Actualización de tu pedido* 🚚\n\n` +
@@ -38,6 +44,11 @@ export function buildOrderStatusCustomerMessage(
         `🤖\n\n*Actualización de tu pedido* ✅\n\n` +
         `Pedido *#${ref}*\n\nTu pedido figura como *${label.toLowerCase()}*. ` +
         `¡Gracias por elegirnos!`
+      );
+    default:
+      return (
+        `🤖\n\n*Actualización de tu pedido* 📦\n\n` +
+        `Pedido *#${ref}*\n\nEl estado de tu pedido fue actualizado.`
       );
   }
 }

@@ -74,6 +74,8 @@ export type ConversationMetadata = {
   awaiting_name?: boolean;
   /** `true` mientras esperamos que el cliente nos diga su dirección de entrega. */
   awaiting_address?: boolean;
+  /** Intent de carrito que quedó pendiente mientras el usuario elige delivery vs take-away. */
+  pending_fulfillment_action?: string | null;
 };
 
 export type ConversationMode = 'GLOBAL' | 'FILTER_SET' | 'PRODUCT_FOCUS';

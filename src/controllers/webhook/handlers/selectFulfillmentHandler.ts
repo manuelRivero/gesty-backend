@@ -7,7 +7,7 @@ import type { EnrichedContext, HandlerResult, IntentHandler } from '../types';
 
 class SelectFulfillmentHandler implements IntentHandler {
   readonly command: string;
-  private readonly fulfillmentType: 'DELIVERY' | 'TAKE_AWAY';
+  readonly fulfillmentType: 'DELIVERY' | 'TAKE_AWAY';
 
   constructor(intent: ConversationIntent, fulfillmentType: 'DELIVERY' | 'TAKE_AWAY') {
     this.command = intent;
