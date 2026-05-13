@@ -149,7 +149,9 @@ export const interactiveSubgraphNode = async (
   if (!result) {
     return { earlyExit: 'interactive_no_payload' };
   }
-  return { handlerResult: result };
+
+  const isHumanHandover = ctx.payloadId === ConversationIntent.SUPPORT;
+  return { handlerResult: result, isHumanHandover };
 };
 
 /**
@@ -314,5 +316,7 @@ export const nlpSubgraphNode = async (
   if (!result) {
     return { detection, earlyExit: 'no_handler_match' };
   }
-  return { handlerResult: result, detection };
+
+  const isHumanHandover = detection.intent === ConversationIntent.SUPPORT;
+  return { handlerResult: result, detection, isHumanHandover };
 };

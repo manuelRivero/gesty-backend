@@ -175,6 +175,17 @@ export const AgentStateAnnotation = Annotation.Root({
     reducer: (_prev, next) => next,
     default: () => false,
   }),
+
+  /**
+   * Si `true`, la conversación acaba de ser derivada a un agente humano
+   * (intent SUPPORT). Los nodos `addressCollection` y `nameCollection` deben
+   * omitirse porque no tiene sentido pedirle datos al usuario cuando el bot ya
+   * se despidió y cedió el control.
+   */
+  isHumanHandover: Annotation<boolean>({
+    reducer: (_prev, next) => next,
+    default: () => false,
+  }),
 });
 
 export type AgentState = typeof AgentStateAnnotation.State;

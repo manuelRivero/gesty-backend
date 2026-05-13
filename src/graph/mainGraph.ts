@@ -143,6 +143,7 @@ for (const node of [
 ] as const) {
   builder.addConditionalEdges(node, routeAfterHandlerOrSubflow, {
     [NODE.ADDRESS_COLLECTION]: NODE.ADDRESS_COLLECTION,
+    [NODE.SEND]: NODE.SEND,
     [END]: END,
   });
 }

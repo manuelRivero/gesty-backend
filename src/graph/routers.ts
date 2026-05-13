@@ -116,11 +116,19 @@ export const routeAfterDetectionContext = (
 /**
  * Tras cualquier nodo que produce `handlerResult`: si hay resultado, pasa por
  * el nodo de captura de dirección (y luego nombre) antes de enviar; si no, termina.
+ *
+ * Excepción: cuando `isHumanHandover` es `true` (el bot acaba de derivar la
+ * conversación a un agente humano por SUPPORT) se salta directo a `SEND` para
+ * no inyectar follow-ups de captura de nombre/dirección tras el mensaje de
+ * despedida del bot.
  */
 export const routeAfterHandlerOrSubflow = (
   state: AgentState
 ): NodeName | typeof END => {
-  if (state.handlerResult) return NODE.ADDRESS_COLLECTION;
+  if (state.handlerResult) {
+    if (state.isHumanHandover) return NODE.SEND;
+    return NODE.ADDRESS_COLLECTION;
+  }
   return END;
 };
 
