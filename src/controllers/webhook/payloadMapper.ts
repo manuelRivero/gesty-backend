@@ -155,6 +155,13 @@ export const detectIntentFromPayload = (
     }
 
 
+  if (payloadId === 'FULFILLMENT_DELIVERY') {
+    return buildInteractiveResult(ConversationIntent.SELECT_DELIVERY, payloadId);
+  }
+  if (payloadId === 'FULFILLMENT_TAKE_AWAY') {
+    return buildInteractiveResult(ConversationIntent.SELECT_TAKE_AWAY, payloadId);
+  }
+
   // IDs estáticos
   const staticMap: Record<string, ConversationIntent> = {
     ORDER_SEARCH_PAGE: ConversationIntent.ORDER_SEARCH_PAGE,

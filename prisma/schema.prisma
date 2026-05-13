@@ -28,6 +28,8 @@ model business {
   currency_code          String?                  @db.Char(3)
   latitude               Float?
   longitude              Float?
+  street_address         String?
+  address_notes          String?
   billing_mode           String?                  @default("subscription")
   slug                   String?                  @unique
   features               Json?                    @default("{}")
@@ -164,6 +166,7 @@ model draft_order {
   updated_at       DateTime?          @default(now()) @db.Timestamp(6)
   expires_at       DateTime?          @db.Timestamptz(6)
   reminder_sent_at DateTime?          @db.Timestamptz(6)
+  fulfillment_type FulfillmentType?
   business         business?          @relation(fields: [business_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   draft_order_item draft_order_item[]
 
@@ -281,6 +284,7 @@ model orders {
   customer_address_id       String?            @db.Uuid
   delivery_address_snapshot Json?              @default("{}")
   payment_status            OrderPaymentStatus @default(unpaid)
+  fulfillment_type          FulfillmentType?
   order_item                order_item[]
   business                  business           @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   conversation              conversation?      @relation(fields: [conversation_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -520,6 +524,9 @@ model business_config {
   reservation_allow_same_day           Boolean  @default(true)
   orders_enabled                       Boolean  @default(true)
   checkout_enabled                     Boolean  @default(true)
+  delivery_enabled                     Boolean  @default(true)
+  takeaway_enabled                     Boolean  @default(false)
+  pickup_instructions                  String?
   created_at                           DateTime @default(now()) @db.Timestamptz(6)
   updated_at                           DateTime @default(now()) @db.Timestamptz(6)
   business                             business @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_business_config_business")
@@ -566,9 +573,17 @@ enum OrderStatus {
   /// Pedido confirmado (en cola / listo para preparar). Antes `pending_payment`.
   placed
   preparing
+  /// Pedido listo para ser retirado por el cliente (solo take-away).
+  ready_for_pickup
   shipped
   delivered
   cancelled
+}
+
+/// Tipo de entrega del pedido.
+enum FulfillmentType {
+  DELIVERY
+  TAKE_AWAY
 }
 
 /// Cobro: independiente del flujo operativo (logística). Solo dos valores: pendiente vs cobrado.

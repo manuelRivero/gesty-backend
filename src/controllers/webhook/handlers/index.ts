@@ -48,6 +48,7 @@ import { DecreaseItemHandler } from './decreaseItemHandler';
 import { SelectIncreaseItemQuantityHandler } from './selectIncreaseItemQuantityHandler';
 import { IncreaseItemHandler } from './increaseItemHandler';
 import { OnboardingStartHandler } from './onboardingStartHandler';
+import { SelectDeliveryHandler, SelectTakeAwayHandler } from './selectFulfillmentHandler';
 
 export const handlers = [
   // === BOTONES (payloadId) - orden: más específicos primero ===
@@ -78,6 +79,8 @@ export const handlers = [
   new IncreaseItemHandler(),
   new SelectIncreaseItemQuantityHandler(),
   new OnboardingStartHandler(),
+  SelectDeliveryHandler,
+  SelectTakeAwayHandler,
   // === INTENCIONES (NLP) ===
   new OrderFoodHandler(),
   new SmallTalkHandler(),

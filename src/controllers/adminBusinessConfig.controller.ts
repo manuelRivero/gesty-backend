@@ -23,8 +23,21 @@ const configPatchSchema = z.object({
   reservation_require_confirmation: z.boolean().optional(),
   reservation_allow_same_day: z.boolean().optional(),
   orders_enabled: z.boolean().optional(),
-  checkout_enabled: z.boolean().optional()
-});
+  checkout_enabled: z.boolean().optional(),
+  delivery_enabled: z.boolean().optional(),
+  takeaway_enabled: z.boolean().optional(),
+  pickup_instructions: z.string().nullable().optional()
+}).refine(
+  (data) => {
+    const disableDelivery = data.delivery_enabled === false;
+    const disableTakeaway = data.takeaway_enabled === false;
+    return !(disableDelivery && disableTakeaway);
+  },
+  {
+    message: "Al menos uno de delivery_enabled o takeaway_enabled debe ser true",
+    path: ["delivery_enabled"]
+  }
+);
 
 export async function getAdminBusinessConfig(req: Request, res: Response) {
   const businessId = req.user?.businessId;

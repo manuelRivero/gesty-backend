@@ -96,6 +96,8 @@ const CLOSED_INTENTS = new Set<ConversationIntent>([
   ConversationIntent.ONBOARDING_EDIT_ADDRESS,
   ConversationIntent.ONBOARDING_RETRY_ADDRESS,
   ConversationIntent.ONBOARDING_COMPLETE,
+  ConversationIntent.SELECT_DELIVERY,
+  ConversationIntent.SELECT_TAKE_AWAY,
 ]);
 
 const dispatchOrHybrid = async (

@@ -1,15 +1,16 @@
+import { prisma } from '../../../lib/prisma';
 import { patchConversationMetadata } from '../../../repositories/conversationState.repository';
 import { normalizeMetadata } from '../../../services/productQuery/utils';
 import { detectIntentFromPayload } from '../../../controllers/webhook/payloadMapper';
 import { ConversationIntent } from '../../../types/conversationIntent';
-import type { HandlerFollowUp, HandlerResult } from '../../../controllers/webhook/types';
+import type { HandlerFollowUp } from '../../../controllers/webhook/types';
 import type { AgentState, AgentStateUpdate } from '../../state';
 
 /**
  * Intents que requieren dirección para continuar.
  * Agregar producto al carrito, ver carrito o finalizar pedido sin dirección → bloqueante.
  */
-const CART_BLOCKING_INTENTS = new Set<string>([
+export const CART_BLOCKING_INTENTS = new Set<string>([
   ConversationIntent.ADD_ITEM,
   ConversationIntent.ADD_PRODUCT,
   ConversationIntent.CONFIRM_ADD,
@@ -35,6 +36,17 @@ export const addressCollectionNode = async (
 ): Promise<AgentStateUpdate> => {
   if (state.skipAIPersistence) return {};
   if (state.contextRoute !== 'interactive' && state.contextRoute !== 'nlp') return {};
+
+  // Si el tipo de entrega ya es TAKE_AWAY no se necesita dirección
+  const business = state.business;
+  const phone = state.webhookContext?.from ?? '';
+  if (business && phone) {
+    const draft = await prisma.draft_order.findFirst({
+      where: { business_id: business.id, customer_phone: phone, status: 'active' },
+      select: { fulfillment_type: true }
+    });
+    if (draft?.fulfillment_type === 'TAKE_AWAY') return {};
+  }
 
   const needsAddress = !state.hasAddress;
   const outOfCoverage = state.hasAddress && !state.isInCoverage;

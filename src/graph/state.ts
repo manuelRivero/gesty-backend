@@ -186,6 +186,16 @@ export const AgentStateAnnotation = Annotation.Root({
     reducer: (_prev, next) => next,
     default: () => false,
   }),
+
+  /**
+   * Si `true`, el gate `fulfillmentSelection` reemplazó el `handlerResult`
+   * con el mensaje de selección "Delivery / Retiro en local". El routing
+   * saltea `addressCollection` y `nameCollection` y va directo a `SEND`.
+   */
+  fulfillmentSelectionPending: Annotation<boolean>({
+    reducer: (_prev, next) => next,
+    default: () => false,
+  }),
 });
 
 export type AgentState = typeof AgentStateAnnotation.State;

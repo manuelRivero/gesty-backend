@@ -35,6 +35,7 @@ import {
   addressCaptureNode,
 } from './nodes/gates';
 import { addressCollectionNode } from './nodes/gates/addressCollection';
+import { fulfillmentSelectionNode } from './nodes/gates/fulfillmentSelection';
 import { nameCollectionNode } from './nodes/gates/nameCollection';
 import { messageTypeGuardNode } from './nodes/gates/messageTypeGuard';
 import {
@@ -48,6 +49,7 @@ import {
   routeAfterDetectionContext,
   routeAfterExtract,
   routeAfterHandlerOrSubflow,
+  routeAfterFulfillmentSelection,
   routeAfterAddressCollection,
   routeAfterMessageTypeGuard,
   routeAfterNameCollection,
@@ -73,6 +75,7 @@ const builder = new StateGraph(AgentStateAnnotation)
   .addNode(NODE.ADDRESS_CAPTURE, addressCaptureNode)
   .addNode(NODE.INTERACTIVE, interactiveSubgraphNode)
   .addNode(NODE.NLP, nlpSubgraphNode)
+  .addNode(NODE.FULFILLMENT_SELECTION, fulfillmentSelectionNode)
   .addNode(NODE.ADDRESS_COLLECTION, addressCollectionNode)
   .addNode(NODE.NAME_COLLECTION, nameCollectionNode)
   .addNode(NODE.SEND, sendResponseNode)
@@ -100,7 +103,8 @@ builder.addConditionalEdges(NODE.BIZ_OPEN, routeAfterBusinessOpen, {
 });
 
 builder.addConditionalEdges(NODE.CLOSED_BIZ, routeAfterHandlerOrSubflow, {
-  [NODE.ADDRESS_COLLECTION]: NODE.ADDRESS_COLLECTION,
+  [NODE.FULFILLMENT_SELECTION]: NODE.FULFILLMENT_SELECTION,
+  [NODE.SEND]: NODE.SEND,
   [END]: END,
 });
 
@@ -142,11 +146,17 @@ for (const node of [
   NODE.NLP,
 ] as const) {
   builder.addConditionalEdges(node, routeAfterHandlerOrSubflow, {
-    [NODE.ADDRESS_COLLECTION]: NODE.ADDRESS_COLLECTION,
+    [NODE.FULFILLMENT_SELECTION]: NODE.FULFILLMENT_SELECTION,
     [NODE.SEND]: NODE.SEND,
     [END]: END,
   });
 }
+
+builder.addConditionalEdges(NODE.FULFILLMENT_SELECTION, routeAfterFulfillmentSelection, {
+  [NODE.SEND]: NODE.SEND,
+  [NODE.ADDRESS_COLLECTION]: NODE.ADDRESS_COLLECTION,
+  [END]: END,
+});
 
 builder.addConditionalEdges(NODE.ADDRESS_COLLECTION, routeAfterAddressCollection, {
   [NODE.NAME_COLLECTION]: NODE.NAME_COLLECTION,

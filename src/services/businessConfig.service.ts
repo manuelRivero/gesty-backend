@@ -18,6 +18,9 @@ export type BusinessConfig = {
   reservation_allow_same_day: boolean;
   orders_enabled: boolean;
   checkout_enabled: boolean;
+  delivery_enabled: boolean;
+  takeaway_enabled: boolean;
+  pickup_instructions: string | null;
 };
 
 const DEFAULT_CONFIG: BusinessConfig = {
@@ -37,7 +40,10 @@ const DEFAULT_CONFIG: BusinessConfig = {
   reservation_require_confirmation: true,
   reservation_allow_same_day: true,
   orders_enabled: true,
-  checkout_enabled: true
+  checkout_enabled: true,
+  delivery_enabled: true,
+  takeaway_enabled: false,
+  pickup_instructions: null
 };
 
 export type BusinessConfigPatch = Partial<BusinessConfig>;
@@ -65,7 +71,10 @@ async function fetchBusinessConfigRow(
       reservation_require_confirmation,
       reservation_allow_same_day,
       orders_enabled,
-      checkout_enabled
+      checkout_enabled,
+      delivery_enabled,
+      takeaway_enabled,
+      pickup_instructions
     FROM business_config
     WHERE business_id = ${businessId}::uuid
     LIMIT 1
@@ -107,7 +116,10 @@ export async function upsertBusinessConfig(
       reservation_require_confirmation,
       reservation_allow_same_day,
       orders_enabled,
-      checkout_enabled
+      checkout_enabled,
+      delivery_enabled,
+      takeaway_enabled,
+      pickup_instructions
     ) VALUES (
       ${businessId}::uuid,
       ${next.bot_enabled},
@@ -126,7 +138,10 @@ export async function upsertBusinessConfig(
       ${next.reservation_require_confirmation},
       ${next.reservation_allow_same_day},
       ${next.orders_enabled},
-      ${next.checkout_enabled}
+      ${next.checkout_enabled},
+      ${next.delivery_enabled},
+      ${next.takeaway_enabled},
+      ${next.pickup_instructions}
     )
     ON CONFLICT (business_id)
     DO UPDATE SET
@@ -146,7 +161,10 @@ export async function upsertBusinessConfig(
       reservation_require_confirmation = EXCLUDED.reservation_require_confirmation,
       reservation_allow_same_day = EXCLUDED.reservation_allow_same_day,
       orders_enabled = EXCLUDED.orders_enabled,
-      checkout_enabled = EXCLUDED.checkout_enabled
+      checkout_enabled = EXCLUDED.checkout_enabled,
+      delivery_enabled = EXCLUDED.delivery_enabled,
+      takeaway_enabled = EXCLUDED.takeaway_enabled,
+      pickup_instructions = EXCLUDED.pickup_instructions
   `;
 
   return next;

@@ -26,6 +26,7 @@ export const NODE = {
   INTERACTIVE: 'interactiveSubgraph',
   NLP: 'nlpSubgraph',
   ADDRESS_COLLECTION: 'addressCollection',
+  FULFILLMENT_SELECTION: 'fulfillmentSelection',
   NAME_COLLECTION: 'nameCollection',
   SEND: 'sendResponse',
   PERSIST_AI: 'persistAIMessage',
@@ -115,7 +116,7 @@ export const routeAfterDetectionContext = (
 
 /**
  * Tras cualquier nodo que produce `handlerResult`: si hay resultado, pasa por
- * el nodo de captura de dirección (y luego nombre) antes de enviar; si no, termina.
+ * el gate de selección de tipo de entrega antes de validar la dirección.
  *
  * Excepción: cuando `isHumanHandover` es `true` (el bot acaba de derivar la
  * conversación a un agente humano por SUPPORT) se salta directo a `SEND` para
@@ -127,8 +128,23 @@ export const routeAfterHandlerOrSubflow = (
 ): NodeName | typeof END => {
   if (state.handlerResult) {
     if (state.isHumanHandover) return NODE.SEND;
-    return NODE.ADDRESS_COLLECTION;
+    return NODE.FULFILLMENT_SELECTION;
   }
+  return END;
+};
+
+/**
+ * Tras `fulfillmentSelection`:
+ * - Si `fulfillmentSelectionPending` es `true`, el gate reemplazó el
+ *   handlerResult con la pregunta de selección → ir directo a SEND.
+ * - Si sigue habiendo `handlerResult` (el gate pasó de largo) → ADDRESS_COLLECTION.
+ * - Si no hay handlerResult → END.
+ */
+export const routeAfterFulfillmentSelection = (
+  state: AgentState
+): NodeName | typeof END => {
+  if (state.fulfillmentSelectionPending) return NODE.SEND;
+  if (state.handlerResult) return NODE.ADDRESS_COLLECTION;
   return END;
 };
 

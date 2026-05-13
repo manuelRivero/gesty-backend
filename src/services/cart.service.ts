@@ -300,18 +300,37 @@ export const buildAddItemMessage = async (
   const orderSectionsBlock =
     formatDraftOrderSectionsForWhatsApp(draftLinesForSections);
 
-  const defaultAddress = await prisma.customer_address.findFirst({
-    where: {
-      customer_id: customer.id,
-      is_default: true
-    },
-    select: { street_address: true }
+  // Obtener fulfillment_type del draft (puede ser null si aún no eligió)
+  const draftWithType = await prisma.draft_order.findUnique({
+    where: { id: cart.id },
+    select: { fulfillment_type: true }
   });
+  const fulfillmentType = draftWithType?.fulfillment_type ?? null;
 
-  const hasDeliveryAddress = Boolean(defaultAddress?.street_address);
-  const addressLine = hasDeliveryAddress
-    ? `\n\n📍 Dirección de entrega: ${defaultAddress!.street_address}`
-    : '';
+  let addressLine = '';
+  let hasDeliveryAddress = false;
+
+  if (fulfillmentType === 'TAKE_AWAY') {
+    const localAddress = business.street_address;
+    if (localAddress) {
+      addressLine = `\n\n🏪 Retiro en local: ${localAddress}`;
+      if (business.address_notes) {
+        addressLine += ` — ${business.address_notes}`;
+      }
+      addressLine += '\n📦 Modalidad: *Take Away*';
+    } else {
+      addressLine = '\n\n📦 Modalidad: *Take Away* (retiro en local)';
+    }
+  } else if (fulfillmentType === 'DELIVERY') {
+    const defaultAddress = await prisma.customer_address.findFirst({
+      where: { customer_id: customer.id, is_default: true },
+      select: { street_address: true }
+    });
+    hasDeliveryAddress = Boolean(defaultAddress?.street_address);
+    if (hasDeliveryAddress) {
+      addressLine = `\n\n📍 Dirección de entrega: ${defaultAddress!.street_address}`;
+    }
+  }
 
   const coverage = await syncOrderCoverageToConversationState(
     conversation.id,
@@ -337,13 +356,13 @@ export const buildAddItemMessage = async (
     'Elegí una opción para gestionar tu pedido:\n\n' +
     '• Ver el *menú completo* o solo una *zona* (entradas, principales, bebidas o postres).\n' +
     '• *Modificar* cantidades o ítems, o *finalizar* la compra cuando quieras.';
-  if (hasDeliveryAddress) {
+  if (fulfillmentType === 'DELIVERY' && hasDeliveryAddress) {
     followUpBody +=
       '\n\nTambién podés *actualizar la dirección de entrega* si la necesitás.';
   }
 
   const mainFollowUpList = buildAddItemShortcutsFollowUpList(followUpBody, {
-    includeEditAddressRow: hasDeliveryAddress,
+    includeEditAddressRow: fulfillmentType === 'DELIVERY' && hasDeliveryAddress,
   });
   await createConversationMessage(conversation.id, 'ai', followUpBody, false);
   await updateConversationLastMessageAt(conversation.id);
@@ -856,6 +875,24 @@ export const handleViewCartFromWebhook = async (
     0
   );
 
+  // Línea de entrega según tipo
+  let deliveryLine = '';
+  const fulfillmentType = cartItems.fulfillment_type;
+  if (fulfillmentType === 'TAKE_AWAY') {
+    const localAddress = business.street_address;
+    deliveryLine = localAddress
+      ? `\n🏪 *Retiro en local:* ${localAddress}`
+      : '\n📦 *Modalidad:* Take Away';
+  } else if (fulfillmentType === 'DELIVERY') {
+    const defaultAddress = await prisma.customer_address.findFirst({
+      where: { customer_id: customer.id, is_default: true },
+      select: { street_address: true }
+    });
+    if (defaultAddress?.street_address) {
+      deliveryLine = `\n📍 *Entrega a:* ${defaultAddress.street_address}`;
+    }
+  }
+
   return {
     type: 'list',
     header: {
@@ -863,7 +900,7 @@ export const handleViewCartFromWebhook = async (
       text: ''
     },
     body: {
-      text: `${orderSectionsBlock}${guidanceMid}Total: ${total}${business.currency_code ?? 'ARS'}\n\n¿Qué deseas hacer ahora?`
+      text: `${orderSectionsBlock}${guidanceMid}Total: ${total}${business.currency_code ?? 'ARS'}${deliveryLine}\n\n¿Qué deseas hacer ahora?`
     },
     footer: {
       text: 'Selecciona una opción'

@@ -39,6 +39,26 @@ export const buildCheckoutMessage = async (
         return { message: null, errorMessage: errorText };
     }
 
+    // Snapshot de dirección solo si es DELIVERY
+    let customerAddressId: string | undefined;
+    let deliveryAddressSnapshot: object = {};
+    if (draft.fulfillment_type === 'DELIVERY') {
+        const defaultAddress = await prisma.customer_address.findFirst({
+            where: { customer_id: customer.id, is_default: true }
+        });
+        if (defaultAddress) {
+            customerAddressId = defaultAddress.id;
+            deliveryAddressSnapshot = {
+                street_address: defaultAddress.street_address,
+                apartment: defaultAddress.apartment,
+                neighborhood: defaultAddress.neighborhood,
+                city: defaultAddress.city,
+                postal_code: defaultAddress.postal_code,
+                country: defaultAddress.country
+            };
+        }
+    }
+
     const order = await prisma.orders.create({
         data: {
             business_id: business.id,
@@ -55,6 +75,9 @@ export const buildCheckoutMessage = async (
                 }))
             },
             currency_code: business.currency_code ?? 'ARS',
+            fulfillment_type: draft.fulfillment_type ?? undefined,
+            customer_address_id: customerAddressId,
+            delivery_address_snapshot: deliveryAddressSnapshot
         }
     });
 

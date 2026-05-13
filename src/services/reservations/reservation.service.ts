@@ -1,6 +1,7 @@
 import type { EnrichedContext, HandlerResult } from '../../controllers/webhook/types';
 import type { WhatsAppInteractiveMessage, WhatsAppListMessage } from '../../domain/intent/whatsappTemplates';
 import { closeConversationAfterReservation } from '../../repositories/conversation.repository';
+import { updateCustomerName } from '../../repositories/customer.repository';
 import {
   createReservationWithTables,
   fetchActiveReservationSlotById,
@@ -62,6 +63,28 @@ function reservationAskDateInstructions(nextDateExample: string): string {
 
 function reservationAskPartyInstructions(): string {
   return `*¿Para cuántas personas?*\n\nEjemplo: *4*`;
+}
+
+function buildReservationAskNameMessage(): WhatsAppInteractiveMessage {
+  return {
+    type: 'interactive',
+    interactive: {
+      type: 'button',
+      header: { type: 'text', text: '' },
+      body: {
+        text: '🤖\n\n*Antes de continuar* 📋\n\nPara iniciar la verificación de disponibilidad necesitamos tu *nombre completo*.\n\n¿Cuál es tu nombre?'
+      },
+      footer: { text: 'Respondé con tu nombre completo' },
+      action: {
+        buttons: [
+          {
+            type: 'reply',
+            reply: { id: 'RESERVATION_CANCEL', title: '❌ Cancelar' }
+          }
+        ]
+      }
+    }
+  };
 }
 
 /** Misma UI que cuando hay reserva activa y el usuario entra a "reservar" de nuevo. */
@@ -373,6 +396,15 @@ export const handleReservationIntent = async (
         return buildActiveReservationManagementMessage();
       }
     }
+
+    if (!ctx.customer?.name?.trim()) {
+      const nextState: ReservationState = { step: 'ASK_NAME' };
+      await updateConversationState(ctx.conversationId, {
+        metadata: { ...metadata, reservation: nextState }
+      });
+      return buildReservationAskNameMessage();
+    }
+
     const nextState: ReservationState = { step: 'ASK_DATE' };
     await updateConversationState(ctx.conversationId, {
       metadata: { ...metadata, reservation: nextState }
@@ -381,6 +413,29 @@ export const handleReservationIntent = async (
   }
 
   switch (reservation.step) {
+    case 'ASK_NAME': {
+      if (!messageText) {
+        return buildReservationAskNameMessage();
+      }
+
+      const trimmedName = messageText.trim();
+      if (trimmedName.length < 2) {
+        return buildReservationErrorMessage(
+          '🤖\n\n*Nombre inválido* ❌\n\nIngresá tu nombre completo para poder continuar con la reserva.'
+        );
+      }
+
+      if (ctx.customer?.id) {
+        await updateCustomerName(ctx.customer.id, trimmedName);
+      }
+
+      const nextState: ReservationState = { step: 'ASK_DATE' };
+      await updateConversationState(ctx.conversationId, {
+        metadata: { ...metadata, reservation: nextState }
+      });
+
+      return `🤖\n\n*¡Gracias, ${trimmedName}!* ✅\n\nYa registramos tu nombre.\n\n*Coordinemos tu reserva* 📅\n\n${reservationAskDateInstructions(nextDateExample)}\n\nTe pedimos reservar con anticipación mínima de un turno para poder prepararte una mejor experiencia.`;
+    }
     case 'ASK_DATE': {
       if (!messageText) {
         return `🤖\n\n*Fecha de reserva* 📅\n\n${reservationAskDateInstructions(nextDateExample)}\n\nRecordá que las reservas deben hacerse con anticipación mínima de un turno.`;

@@ -1,4 +1,5 @@
 export type ReservationStep =
+  | 'ASK_NAME'
   | 'ASK_DATE'
   | 'ASK_SLOT'
   | 'ASK_PARTY_SIZE'

@@ -1618,6 +1618,26 @@ export const handleCheckout = async (
       new Prisma.Decimal(0)
     );
 
+    // Snapshot de dirección solo si es DELIVERY
+    let customerAddressId: string | undefined;
+    let deliveryAddressSnapshot: object = {};
+    if (draftOrder.fulfillment_type === 'DELIVERY') {
+      const defaultAddress = await tx.customer_address.findFirst({
+        where: { customer_id: customer.id, is_default: true }
+      });
+      if (defaultAddress) {
+        customerAddressId = defaultAddress.id;
+        deliveryAddressSnapshot = {
+          street_address: defaultAddress.street_address,
+          apartment: defaultAddress.apartment,
+          neighborhood: defaultAddress.neighborhood,
+          city: defaultAddress.city,
+          postal_code: defaultAddress.postal_code,
+          country: defaultAddress.country
+        };
+      }
+    }
+
     const order = await tx.orders.create({
       data: {
         status: OrderStatus.placed,
@@ -1626,7 +1646,10 @@ export const handleCheckout = async (
         total_amount: totalAmount,
         conversation_id: conversation.id,
         customer_id: customer.id,
-        business_id: business.id
+        business_id: business.id,
+        fulfillment_type: draftOrder.fulfillment_type ?? undefined,
+        customer_address_id: customerAddressId,
+        delivery_address_snapshot: deliveryAddressSnapshot
       }
     });
 

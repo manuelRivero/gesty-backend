@@ -53,6 +53,9 @@ export enum ConversationIntent {
   VIEW_RESERVATION = 'VIEW_RESERVATION',
   VIEW_QR = 'VIEW_QR',
   UNKNOWN = 'UNKNOWN',
+  // === Selección de tipo de entrega ===
+  SELECT_DELIVERY = 'SELECT_DELIVERY',     // Botón "Enviar a domicilio"
+  SELECT_TAKE_AWAY = 'SELECT_TAKE_AWAY',   // Botón "Retirar en local"
   // adress intents
   ONBOARDING_START = 'ONBOARDING_START',
   ONBOARDING_SUBMIT_ADDRESS_TEXT = 'ONBOARDING_SUBMIT_ADDRESS_TEXT',

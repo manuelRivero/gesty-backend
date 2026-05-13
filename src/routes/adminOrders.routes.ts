@@ -57,6 +57,10 @@ import {
   patchWhatsappConversationBotStatus
 } from "../controllers/adminWhatsappBotControl.controller";
 import { postAdminWhatsappReply } from "../controllers/adminWhatsappReply.controller";
+import {
+  getAdminBusiness,
+  patchAdminBusiness
+} from "../controllers/adminBusiness.controller";
 import { authenticateJwt, requireRoles } from "../middleware/auth.middleware";
 
 const router = Router();
@@ -71,6 +75,8 @@ router.get("/dashboard/summary", getDashboardSummary);
 router.get("/analytics/order-volume", getOrderVolumeHandler);
 router.get("/analytics/client-ranking", getClientRankingHandler);
 router.get("/analytics/top-dishes", getTopDishesHandler);
+router.get("/business", requireRoles("OWNER", "ADMIN"), getAdminBusiness);
+router.patch("/business", requireRoles("OWNER", "ADMIN"), patchAdminBusiness);
 router.get("/config", requireRoles("OWNER", "ADMIN"), getAdminBusinessConfig);
 router.post("/config", requireRoles("OWNER", "ADMIN"), createAdminBusinessConfig);
 router.patch("/config", requireRoles("OWNER", "ADMIN"), patchAdminBusinessConfig);
