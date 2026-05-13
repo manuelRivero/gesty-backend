@@ -6,6 +6,7 @@ import QRCode from 'qrcode';
 import { prisma } from '../lib/prisma';
 import { closeConversation, createOrGetOpenConversation, findBusinessByPhoneNumberId, findOrCreateConversationState, findOrCreateCustomer } from '../repositories';
 import { HandlerFollowUp, WhatsAppWebhookPayload } from '../controllers/webhook/types';
+import { emitAdminOrderCreated } from '../socket/adminSocket';
 
 
 interface CheckoutResult {
@@ -55,6 +56,12 @@ export const buildCheckoutMessage = async (
             },
             currency_code: business.currency_code ?? 'ARS',
         }
+    });
+
+    emitAdminOrderCreated(business.id, {
+        orderId: order.id,
+        total: String(order.total_amount?.toNumber() ?? 0),
+        currency: business.currency_code ?? 'ARS'
     });
 
     /**

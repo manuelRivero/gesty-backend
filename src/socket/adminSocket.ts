@@ -357,17 +357,28 @@ export function emitAdminOrderPaymentStatusChanged(
   );
 }
 
-/** Payload del evento Socket `admin:whatsapp` para nuevos mensajes de conversación. */
-export type AdminWhatsappRealtimePayload = {
-  type: "whatsapp.message_created";
-  businessId: string;
-  conversationId: string;
-  messageId: string;
-  sender: string;
-  message: string;
-  isAiGenerated: boolean;
-  createdAt: string;
-};
+/** Payloads del canal Socket `admin:whatsapp` (mensajes y señales de inbox). */
+export type AdminWhatsappRealtimePayload =
+  | {
+      type: "whatsapp.message_created";
+      businessId: string;
+      conversationId: string;
+      messageId: string;
+      sender: string;
+      message: string;
+      isAiGenerated: boolean;
+      createdAt: string;
+    }
+  | {
+      type: "whatsapp.support_requested";
+      businessId: string;
+      /** Misma clave que en `GET /api/admin/whatsapp/messages` → `conversation.id` (UUID). */
+      conversationId: string;
+      customerId: string | null;
+      customerPhone: string | null;
+      customerName: string | null;
+      at: string;
+    };
 
 function emitAdminWhatsappChannel(
   businessId: string,
@@ -408,5 +419,29 @@ export function emitAdminWhatsappMessageCreated(
     message: payload.message,
     isAiGenerated: payload.isAiGenerated,
     createdAt: payload.createdAt
+  });
+}
+
+/**
+ * Cliente pidió soporte humano: el panel puede abrir el chat con `conversationId`
+ * (mismo identificador que en rutas `/whatsapp/conversations/:conversationId/...`).
+ */
+export function emitAdminWhatsappSupportRequested(
+  businessId: string,
+  payload: {
+    conversationId: string;
+    customerId: string | null;
+    customerPhone: string | null;
+    customerName: string | null;
+  }
+): void {
+  emitAdminWhatsappChannel(businessId, {
+    type: "whatsapp.support_requested",
+    businessId,
+    conversationId: payload.conversationId,
+    customerId: payload.customerId,
+    customerPhone: payload.customerPhone,
+    customerName: payload.customerName,
+    at: new Date().toISOString()
   });
 }

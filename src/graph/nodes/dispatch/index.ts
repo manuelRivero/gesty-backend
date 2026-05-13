@@ -71,6 +71,7 @@ const CLOSED_INTENTS = new Set<ConversationIntent>([
   ConversationIntent.END_CONVERSATION,
   ConversationIntent.TRACK_ORDER,
   ConversationIntent.PAYMENT_REQUEST,
+  ConversationIntent.SUPPORT,
   ConversationIntent.ADD_PRODUCT,
   ConversationIntent.ADD_ITEM,
   ConversationIntent.REMOVE_ITEM,

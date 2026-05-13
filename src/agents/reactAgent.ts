@@ -2,8 +2,10 @@
  * Hybrid ReAct agent (fase 2).
  *
  * Sólo se invoca cuando `AGENT_MODE=hybrid` y el intent detectado por
- * `detectIntentWithConfidence` es uno de los abiertos:
- * `ORDER_FOOD`, `PRODUCT_QUERY`, `PRODUCT_ATTRIBUTE_QUESTION` o `UNKNOWN`.
+ * `detectIntentWithConfidence` no está en `CLOSED_INTENTS` del dispatch
+ * (flujos transaccionales / handover humano como `SUPPORT`, menú, carrito, etc.).
+ * Los intents abiertos típicos son `ORDER_FOOD`, `PRODUCT_QUERY`,
+ * `PRODUCT_ATTRIBUTE_QUESTION` o `UNKNOWN`.
  * `RECOMMENDATION_REQUEST` queda fuera a propósito (ver nota en `dispatch/index.ts`).
  *
  * El agente recibe el `EnrichedContext` (business + customer + conversation +
