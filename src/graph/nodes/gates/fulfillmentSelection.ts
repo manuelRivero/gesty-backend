@@ -7,8 +7,9 @@ import type { WhatsAppInteractiveMessage } from '../../../domain/intent/whatsapp
 import type { AgentState, AgentStateUpdate } from '../../state';
 
 /**
- * Intents de carrito que requieren elegir el tipo de entrega antes de
- * continuar. Mismo set que CART_BLOCKING_INTENTS en addressCollection.
+ * Intents de carrito que requieren elegir el tipo de entrega ANTES de
+ * que el handler se ejecute. CHECKOUT se excluye porque el handler
+ * ya convierte el draft — cuando el gate corra no habrá draft activo.
  */
 export const CART_FULFILLMENT_INTENTS = new Set<string>([
   ConversationIntent.ADD_ITEM,
@@ -18,7 +19,6 @@ export const CART_FULFILLMENT_INTENTS = new Set<string>([
   ConversationIntent.SELECT_ORDER_PRODUCT,
   ConversationIntent.VIEW_CART,
   ConversationIntent.VIEW_CART_FOR_EDITION,
-  ConversationIntent.CHECKOUT,
 ]);
 
 function buildFulfillmentSelectionMessage(): WhatsAppInteractiveMessage {
@@ -28,13 +28,13 @@ function buildFulfillmentSelectionMessage(): WhatsAppInteractiveMessage {
       type: 'button',
       header: { type: 'text', text: '' },
       body: {
-        text: '¿Cómo querés recibir tu pedido? 🛍️\n\nElegí una opción para continuar con tu pedido.'
+        text: '🤖\n\n*¿Cómo querés recibir tu pedido?* 🛍️\n\nElegí una opción para continuar:'
       },
-      footer: { text: 'Elegí una opción 👇' },
+      footer: { text: 'Seleccioná una opción' },
       action: {
         buttons: [
-          { type: 'reply', reply: { id: 'FULFILLMENT_DELIVERY', title: '🚚 Envío a domicilio' } },
-          { type: 'reply', reply: { id: 'FULFILLMENT_TAKE_AWAY', title: '🏪 Retirar en local' } }
+          { type: 'reply', reply: { id: 'FULFILLMENT_DELIVERY', title: 'Envío a domicilio' } },
+          { type: 'reply', reply: { id: 'FULFILLMENT_TAKE_AWAY', title: 'Retirar en local' } }
         ]
       }
     }
@@ -85,9 +85,12 @@ export const fulfillmentSelectionNode = async (
     select: { id: true, fulfillment_type: true }
   });
 
+  // Sin draft activo (carrito vacío o ya convertido) → nada que configurar
+  if (!draft) return {};
+
   // Si solo take-away habilitado: setear silenciosamente
   if (!deliveryEnabled && takeawayEnabled) {
-    if (draft && !draft.fulfillment_type) {
+    if (!draft.fulfillment_type) {
       await prisma.$executeRaw`
         UPDATE draft_order
         SET fulfillment_type = 'TAKE_AWAY'::"FulfillmentType"
@@ -98,7 +101,7 @@ export const fulfillmentSelectionNode = async (
   }
 
   // Ambos habilitados: verificar si ya eligió
-  if (draft?.fulfillment_type) return {};
+  if (draft.fulfillment_type) return {};
 
   // Mostrar selección
   const conversation = state.conversation!;

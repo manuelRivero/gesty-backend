@@ -900,7 +900,7 @@ export const handleViewCartFromWebhook = async (
       text: ''
     },
     body: {
-      text: `${orderSectionsBlock}${guidanceMid}Total: ${total}${business.currency_code ?? 'ARS'}${deliveryLine}\n\n¿Qué deseas hacer ahora?`
+      text: `🤖\n\n*Tu pedido actual* 🛒\n\n${orderSectionsBlock}${guidanceMid}Total: $${total} ${business.currency_code ?? 'ARS'}${deliveryLine}\n\n¿Qué querés hacer ahora?`
     },
     footer: {
       text: 'Selecciona una opción'
