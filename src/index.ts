@@ -1,24 +1,26 @@
 /**
  * Entrypoint HTTP del agente WhatsApp basado en LangGraph.
  *
- * Mantiene paridad con el backend original
- * ([food-service-backend/src/index.ts]) para los únicos endpoints que el bot
- * usa: `GET /api/whatsapp/webhook` (verify) y `POST /api/whatsapp/webhook`
- * (intake). El resto del proyecto (auth, admin, super-admin, checkin, socket)
- * NO se incluye en este servicio.
+ * Incluye paridad completa con food-service-backend:
+ *   - GET/POST /api/whatsapp/webhook
+ *   - /api/auth, /api/admin, /api/super-admin, /checkin, /api/public
+ *   - Socket.IO panel admin (attachAdminSocket)
  *
- * Flujo del POST:
- *   1. Responder 200 inmediatamente (Meta exige ack rápido).
- *   2. Disparar `mainGraph.invoke(payload)` de forma asíncrona "fire-and-forget".
- *
- * Worker `processDraftOrderTimeouts` se sigue ejecutando cada 60s, idéntico
- * a [food-service-backend/src/index.ts].
+ * Worker `processDraftOrderTimeouts` se ejecuta cada 60s.
  */
 
 import 'dotenv/config';
+import './types/express';
+import { createServer } from 'http';
 import path from 'node:path';
 import cors from 'cors';
 import express, { type Request, type Response } from 'express';
+import { attachAdminSocket } from './socket/adminSocket';
+import authRoutes from './routes/auth.routes';
+import adminOrdersRoutes from './routes/adminOrders.routes';
+import superAdminRoutes from './routes/superAdmin.routes';
+import checkinRoutes from './routes/checkin.routes';
+import publicRoutes from './routes/public.routes';
 
 import { env } from './config/env';
 import { mainGraph } from './graph/mainGraph';
@@ -56,6 +58,12 @@ app.use(
 
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+app.use('/api/auth', authRoutes);
+app.use('/api/admin', adminOrdersRoutes);
+app.use('/api/super-admin', superAdminRoutes);
+app.use('/checkin', checkinRoutes);
+app.use('/api/public', publicRoutes);
 
 app.get('/', (_req: Request, res: Response) => {
   res.json({
@@ -128,7 +136,10 @@ app.use((err: unknown, _req: Request, res: Response, _next: unknown) => {
 });
 
 const PORT = env.PORT;
-app.listen(PORT, () => {
+const httpServer = createServer(app);
+attachAdminSocket(httpServer);
+
+httpServer.listen(PORT, () => {
   console.log(
     `[food-service-agent] listening on http://localhost:${PORT} (mode=${env.AGENT_MODE})`
   );
