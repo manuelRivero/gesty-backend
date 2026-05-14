@@ -24,6 +24,13 @@ import {
   removeTable
 } from "../controllers/adminTables.controller";
 import {
+  getEnvironmentById,
+  getEnvironments,
+  patchEnvironment,
+  postEnvironment,
+  removeEnvironment
+} from "../controllers/adminEnvironments.controller";
+import {
   getBusinessHourById,
   getBusinessHours,
   patchBusinessHour,
@@ -123,6 +130,12 @@ router.delete(
   requireRoles("OWNER", "ADMIN"),
   removeDeliveryZone
 );
+
+router.get("/environments", requireRoles("OWNER", "ADMIN"), getEnvironments);
+router.get("/environments/:id", requireRoles("OWNER", "ADMIN"), getEnvironmentById);
+router.post("/environments", requireRoles("OWNER", "ADMIN"), postEnvironment);
+router.patch("/environments/:id", requireRoles("OWNER", "ADMIN"), patchEnvironment);
+router.delete("/environments/:id", requireRoles("OWNER", "ADMIN"), removeEnvironment);
 
 router.get("/tables", requireRoles("OWNER", "ADMIN"), getTables);
 router.get("/tables/:id", requireRoles("OWNER", "ADMIN"), getTableById);
