@@ -1,4 +1,11 @@
 import { MenuCategoryTag, type Prisma } from "@prisma/client";
+import {
+  activePriceSelect,
+  getBusinessCurrencyCode,
+  toMenuItemPriceDto,
+  upsertMenuItemPrice,
+  type MenuItemPriceInput
+} from "../helpers/menuItemPrice.helper";
 import { prisma } from "../lib/prisma";
 
 export type ListAdminMenuItemsParams = {
@@ -33,6 +40,8 @@ export async function listAdminMenuItems(params: ListAdminMenuItemsParams) {
     ];
   }
 
+  const currencyCode = await getBusinessCurrencyCode(params.businessId);
+
   const [total, rows] = await prisma.$transaction([
     prisma.menu_item.count({ where }),
     prisma.menu_item.findMany({
@@ -47,7 +56,8 @@ export async function listAdminMenuItems(params: ListAdminMenuItemsParams) {
             name: true,
             category_tag: true
           }
-        }
+        },
+        menu_item_price: activePriceSelect(currencyCode)
       }
     })
   ]);
@@ -63,11 +73,7 @@ export async function listAdminMenuItems(params: ListAdminMenuItemsParams) {
       : Math.ceil(total / params.pageSize);
 
   return {
-    items: rows.map((row) => ({
-      ...row,
-      categoryName: row.menu_category?.name ?? null,
-      categoryTag: row.menu_category?.category_tag ?? null
-    })),
+    items: rows.map((row) => formatAdminMenuItem(row)),
     total,
     page: effectivePage,
     pageSize: effectivePageSize,
@@ -137,6 +143,7 @@ export async function createAdminMenuItem(params: {
   isFeatured?: boolean;
   image?: string | null;
   isAvailable?: boolean;
+  price?: MenuItemPriceInput;
 }) {
   const resolvedCategoryId = await resolveCategoryId(params.businessId, {
     categoryId: params.categoryId,
@@ -146,7 +153,7 @@ export async function createAdminMenuItem(params: {
     throw new Error("CATEGORY_NOT_FOUND");
   }
 
-  return prisma.menu_item.create({
+  const created = await prisma.menu_item.create({
     data: {
       business_id: params.businessId,
       category_id: resolvedCategoryId,
@@ -160,12 +167,27 @@ export async function createAdminMenuItem(params: {
       is_available: params.isAvailable ?? true
     }
   });
+
+  if (params.price) {
+    await upsertMenuItemPrice({
+      businessId: params.businessId,
+      menuItemId: created.id,
+      price: params.price
+    });
+  }
+
+  return getAdminMenuItemById({
+    businessId: params.businessId,
+    id: created.id
+  });
 }
 
 export async function getAdminMenuItemById(params: {
   businessId: string;
   id: string;
 }) {
+  const currencyCode = await getBusinessCurrencyCode(params.businessId);
+
   const row = await prisma.menu_item.findFirst({
     where: {
       id: params.id,
@@ -178,7 +200,8 @@ export async function getAdminMenuItemById(params: {
           name: true,
           category_tag: true
         }
-      }
+      },
+      menu_item_price: activePriceSelect(currencyCode)
     }
   });
 
@@ -186,11 +209,7 @@ export async function getAdminMenuItemById(params: {
     return null;
   }
 
-  return {
-    ...row,
-    categoryName: row.menu_category?.name ?? null,
-    categoryTag: row.menu_category?.category_tag ?? null
-  };
+  return formatAdminMenuItem(row);
 }
 
 export async function updateAdminMenuItem(params: {
@@ -206,6 +225,7 @@ export async function updateAdminMenuItem(params: {
   isFeatured?: boolean;
   image?: string | null;
   isAvailable?: boolean;
+  price?: MenuItemPriceInput;
 }) {
   const existing = await prisma.menu_item.findFirst({
     where: {
@@ -230,7 +250,7 @@ export async function updateAdminMenuItem(params: {
     resolvedCategoryId = maybeCategoryId;
   }
 
-  return prisma.menu_item.update({
+  await prisma.menu_item.update({
     where: { id: params.id },
     data: {
       ...(resolvedCategoryId !== undefined ? { category_id: resolvedCategoryId } : {}),
@@ -243,6 +263,19 @@ export async function updateAdminMenuItem(params: {
       ...(params.image !== undefined ? { image: params.image } : {}),
       ...(params.isAvailable !== undefined ? { is_available: params.isAvailable } : {})
     }
+  });
+
+  if (params.price) {
+    await upsertMenuItemPrice({
+      businessId: params.businessId,
+      menuItemId: params.id,
+      price: params.price
+    });
+  }
+
+  return getAdminMenuItemById({
+    businessId: params.businessId,
+    id: params.id
   });
 }
 
@@ -266,6 +299,37 @@ export async function deleteAdminMenuItem(params: {
     where: { id: params.id },
     data: { is_available: false }
   });
+}
+
+type AdminMenuItemRow = Prisma.menu_itemGetPayload<{
+  include: {
+    menu_category: {
+      select: {
+        id: true;
+        name: true;
+        category_tag: true;
+      };
+    };
+    menu_item_price: {
+      select: {
+        id: true;
+        currency_code: true;
+        amount: true;
+      };
+    };
+  };
+}>;
+
+function formatAdminMenuItem(row: AdminMenuItemRow) {
+  const activePrice = row.menu_item_price[0];
+
+  return {
+    ...row,
+    menu_item_price: undefined,
+    categoryName: row.menu_category?.name ?? null,
+    categoryTag: row.menu_category?.category_tag ?? null,
+    price: activePrice ? toMenuItemPriceDto(activePrice) : null
+  };
 }
 
 async function resolveCategoryId(

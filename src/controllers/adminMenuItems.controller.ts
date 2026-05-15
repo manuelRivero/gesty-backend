@@ -20,6 +20,11 @@ const listQuerySchema = z.object({
   all: z.coerce.boolean().optional().default(false)
 });
 
+const menuItemPriceSchema = z.object({
+  amount: z.coerce.number().positive(),
+  currencyCode: z.string().trim().length(3).optional()
+});
+
 const createSchema = z.object({
   categoryId: z.string().uuid().optional(),
   categoryTag: z.nativeEnum(MenuCategoryTag).optional(),
@@ -31,7 +36,8 @@ const createSchema = z.object({
   servesPeople: z.coerce.number().int().min(1).max(100).optional().nullable(),
   isFeatured: z.boolean().optional(),
   image: z.string().url().optional().nullable(),
-  isAvailable: z.boolean().optional()
+  isAvailable: z.boolean().optional(),
+  price: menuItemPriceSchema.optional()
 }).refine((data) => Boolean(data.categoryId || data.categoryTag || data.sectionId), {
   message: "Debe enviar categoryId o categoryTag/sectionId",
   path: ["categoryId"]
@@ -52,7 +58,8 @@ const updateSchema = z.object({
   servesPeople: z.coerce.number().int().min(1).max(100).optional().nullable(),
   isFeatured: z.boolean().optional(),
   image: z.string().url().optional().nullable(),
-  isAvailable: z.boolean().optional()
+  isAvailable: z.boolean().optional(),
+  price: menuItemPriceSchema.optional()
 });
 
 export async function getMenuItems(req: Request, res: Response) {
@@ -143,12 +150,21 @@ export async function postMenuItem(req: Request, res: Response) {
     const row = await createAdminMenuItem({
       businessId,
       ...parsed.data,
-      categoryTag: parsed.data.categoryTag ?? parsed.data.sectionId
+      categoryTag: parsed.data.categoryTag ?? parsed.data.sectionId,
+      price: parsed.data.price
     });
+    if (!row) {
+      return res.status(500).json({ error: "No se pudo recuperar el producto creado" });
+    }
     return res.status(201).json(row);
   } catch (error) {
     if ((error as Error).message === "CATEGORY_NOT_FOUND") {
       return res.status(404).json({ error: "Categoría no encontrada" });
+    }
+    if ((error as Error).message === "BUSINESS_CURRENCY_NOT_SET") {
+      return res.status(400).json({
+        error: "El negocio no tiene moneda configurada. Indique currencyCode en price."
+      });
     }
     throw error;
   }
@@ -178,7 +194,8 @@ export async function patchMenuItem(req: Request, res: Response) {
       businessId,
       id: parsedParams.data.id,
       ...parsedBody.data,
-      categoryTag: parsedBody.data.categoryTag ?? parsedBody.data.sectionId
+      categoryTag: parsedBody.data.categoryTag ?? parsedBody.data.sectionId,
+      price: parsedBody.data.price
     });
 
     if (!row) {
@@ -188,6 +205,11 @@ export async function patchMenuItem(req: Request, res: Response) {
   } catch (error) {
     if ((error as Error).message === "CATEGORY_NOT_FOUND") {
       return res.status(404).json({ error: "Categoría no encontrada" });
+    }
+    if ((error as Error).message === "BUSINESS_CURRENCY_NOT_SET") {
+      return res.status(400).json({
+        error: "El negocio no tiene moneda configurada. Indique currencyCode en price."
+      });
     }
     throw error;
   }

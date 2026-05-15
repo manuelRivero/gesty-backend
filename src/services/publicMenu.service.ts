@@ -1,3 +1,8 @@
+import {
+  activePriceSelect,
+  getBusinessCurrencyCode,
+  toMenuItemPriceDto
+} from "../helpers/menuItemPrice.helper";
 import { prisma } from "../lib/prisma";
 
 export async function getPublicBusinessInfo(params: { businessId: string }) {
@@ -50,10 +55,55 @@ export async function getPublicBusinessInfo(params: { businessId: string }) {
   };
 }
 
+function mapPublicMenuItem(row: {
+  id: string;
+  name: string;
+  description: string | null;
+  ingredients: string | null;
+  preparation: string | null;
+  image: string | null;
+  serves_people: number | null;
+  is_featured: boolean;
+  menu_category: {
+    id: string;
+    name: string;
+    category_tag: string;
+  } | null;
+  menu_item_price: Array<{
+    id: string;
+    currency_code: string;
+    amount: import("@prisma/client").Prisma.Decimal;
+  }>;
+}) {
+  const activePrice = row.menu_item_price[0];
+
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description ?? null,
+    ingredients: row.ingredients ?? null,
+    preparation: row.preparation ?? null,
+    image: row.image ?? null,
+    servesPeople: row.serves_people ?? null,
+    isFeatured: row.is_featured,
+    category: row.menu_category
+      ? {
+          id: row.menu_category.id,
+          name: row.menu_category.name,
+          tag: row.menu_category.category_tag
+        }
+      : null,
+    price: activePrice ? toMenuItemPriceDto(activePrice) : null,
+    prices: activePrice ? [toMenuItemPriceDto(activePrice)] : []
+  };
+}
+
 export async function listFeaturedMenuItems(params: {
   businessId: string;
   limit: number;
 }) {
+  const currencyCode = await getBusinessCurrencyCode(params.businessId);
+
   const rows = await prisma.menu_item.findMany({
     where: {
       business_id: params.businessId,
@@ -66,8 +116,11 @@ export async function listFeaturedMenuItems(params: {
       id: true,
       name: true,
       description: true,
+      ingredients: true,
+      preparation: true,
       image: true,
       serves_people: true,
+      is_featured: true,
       menu_category: {
         select: {
           id: true,
@@ -75,35 +128,48 @@ export async function listFeaturedMenuItems(params: {
           category_tag: true
         }
       },
-      menu_item_price: {
-        where: { is_active: true, valid_to: null },
-        select: {
-          id: true,
-          currency_code: true,
-          amount: true
-        },
-        orderBy: { amount: "asc" }
-      }
+      menu_item_price: activePriceSelect(currencyCode)
     }
   });
 
-  return rows.map((row) => ({
-    id: row.id,
-    name: row.name,
-    description: row.description ?? null,
-    image: row.image ?? null,
-    servesPeople: row.serves_people ?? null,
-    category: row.menu_category
-      ? {
-          id: row.menu_category.id,
-          name: row.menu_category.name,
-          tag: row.menu_category.category_tag
+  return rows.map(mapPublicMenuItem);
+}
+
+export async function getPublicMenuItemById(params: {
+  businessId: string;
+  itemId: string;
+}) {
+  const currencyCode = await getBusinessCurrencyCode(params.businessId);
+
+  const row = await prisma.menu_item.findFirst({
+    where: {
+      id: params.itemId,
+      business_id: params.businessId,
+      is_available: true
+    },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      ingredients: true,
+      preparation: true,
+      image: true,
+      serves_people: true,
+      is_featured: true,
+      menu_category: {
+        select: {
+          id: true,
+          name: true,
+          category_tag: true
         }
-      : null,
-    prices: row.menu_item_price.map((p) => ({
-      id: p.id,
-      currencyCode: p.currency_code,
-      amount: p.amount
-    }))
-  }));
+      },
+      menu_item_price: activePriceSelect(currencyCode)
+    }
+  });
+
+  if (!row) {
+    return null;
+  }
+
+  return mapPublicMenuItem(row);
 }
