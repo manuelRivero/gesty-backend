@@ -16,6 +16,8 @@ export async function getPublicBusinessInfo(params: { businessId: string }) {
       timezone: true,
       currency_code: true,
       whatsapp_phone_number: true,
+      street_address: true,
+      address_notes: true,
       latitude: true,
       longitude: true,
       business_hours: {
@@ -41,6 +43,8 @@ export async function getPublicBusinessInfo(params: { businessId: string }) {
     timezone: row.timezone,
     currencyCode: row.currency_code ?? null,
     whatsappPhoneNumber: row.whatsapp_phone_number ?? null,
+    streetAddress: row.street_address ?? null,
+    addressNotes: row.address_notes ?? null,
     location:
       row.latitude !== null && row.longitude !== null
         ? { latitude: row.latitude, longitude: row.longitude }
