@@ -7,6 +7,29 @@ import {
   type MenuItemPriceInput
 } from "../helpers/menuItemPrice.helper";
 import { prisma } from "../lib/prisma";
+import { refreshMenuItemEmbedding } from "./ai/menuItemEmbedding.service";
+
+/**
+ * Campos que componen el texto embebido en `menu_item.embedding`. Si el admin
+ * toca alguno hay que regenerar el vector para que la búsqueda semántica
+ * (`searchMenuItemsByKeyword`) siga devolviendo resultados coherentes.
+ */
+const EMBEDDING_AFFECTING_FIELDS = [
+  "name",
+  "description",
+  "ingredients",
+  "servesPeople",
+  "isAvailable",
+  "categoryId",
+  "categoryTag"
+] as const;
+type EmbeddingAffectingField = (typeof EMBEDDING_AFFECTING_FIELDS)[number];
+
+function hasEmbeddingRelevantChange(
+  patch: Partial<Record<EmbeddingAffectingField, unknown>>
+): boolean {
+  return EMBEDDING_AFFECTING_FIELDS.some((field) => patch[field] !== undefined);
+}
 
 export type ListAdminMenuItemsParams = {
   businessId: string;
@@ -169,11 +192,15 @@ export async function createAdminMenuItem(params: {
   });
 
   if (params.price) {
+    // upsertMenuItemPrice genera el embedding al crear el primer precio.
     await upsertMenuItemPrice({
       businessId: params.businessId,
       menuItemId: created.id,
       price: params.price
     });
+  } else {
+    // Sin precio no hay otro disparador: embebemos acá.
+    await refreshMenuItemEmbedding(created.id);
   }
 
   return getAdminMenuItemById({
@@ -265,12 +292,20 @@ export async function updateAdminMenuItem(params: {
     }
   });
 
+  let priceChanged = false;
   if (params.price) {
-    await upsertMenuItemPrice({
+    const priceResult = await upsertMenuItemPrice({
       businessId: params.businessId,
       menuItemId: params.id,
       price: params.price
     });
+    priceChanged = priceResult.changed;
+  }
+
+  // upsertMenuItemPrice ya embebe cuando el precio cambia; acá cubrimos
+  // ediciones de los otros campos relevantes sin duplicar la llamada.
+  if (!priceChanged && hasEmbeddingRelevantChange(params)) {
+    await refreshMenuItemEmbedding(params.id);
   }
 
   return getAdminMenuItemById({

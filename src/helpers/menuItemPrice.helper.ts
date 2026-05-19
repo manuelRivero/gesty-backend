@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
+import { refreshMenuItemEmbedding } from "../services/ai/menuItemEmbedding.service";
 
 export type MenuItemPriceInput = {
   amount: number | Prisma.Decimal;
@@ -70,11 +71,17 @@ export async function getBusinessCurrencyCode(
   return business?.currency_code ?? null;
 }
 
+export type UpsertMenuItemPriceResult = {
+  price: { id: string; menu_item_id: string; currency_code: string; amount: Prisma.Decimal };
+  /** `true` si el precio activo se creó o si el monto difiere del anterior. */
+  changed: boolean;
+};
+
 export async function upsertMenuItemPrice(params: {
   menuItemId: string;
   businessId: string;
   price: MenuItemPriceInput;
-}) {
+}): Promise<UpsertMenuItemPriceResult> {
   const businessCurrency = await getBusinessCurrencyCode(params.businessId);
   const currencyCode = params.price.currencyCode ?? businessCurrency;
 
@@ -99,17 +106,30 @@ export async function upsertMenuItemPrice(params: {
   });
 
   if (existing) {
-    return prisma.menu_item_price.update({
-      where: { id: existing.id },
-      data: { amount }
-    });
+    const changed = !existing.amount.equals(amount);
+    const price = changed
+      ? await prisma.menu_item_price.update({
+          where: { id: existing.id },
+          data: { amount }
+        })
+      : existing;
+
+    if (changed) {
+      await refreshMenuItemEmbedding(params.menuItemId);
+    }
+
+    return { price, changed };
   }
 
-  return prisma.menu_item_price.create({
+  const price = await prisma.menu_item_price.create({
     data: {
       menu_item_id: params.menuItemId,
       currency_code: currencyCode,
       amount
     }
   });
+
+  await refreshMenuItemEmbedding(params.menuItemId);
+
+  return { price, changed: true };
 }
