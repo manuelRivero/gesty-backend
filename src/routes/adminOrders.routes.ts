@@ -38,6 +38,13 @@ import {
   removeBusinessHour
 } from "../controllers/adminBusinessHours.controller";
 import {
+  getReservationSlotById,
+  getReservationSlots,
+  patchReservationSlot,
+  postReservationSlot,
+  removeReservationSlot
+} from "../controllers/adminReservationSlots.controller";
+import {
   getMenuCategoriesOptions,
   getMenuCategoryTagsOptions,
   getMenuItemById,
@@ -158,6 +165,32 @@ router.delete(
   "/business-hours/:id",
   requireRoles("OWNER", "ADMIN"),
   removeBusinessHour
+);
+
+router.get(
+  "/reservation-slots",
+  requireRoles("OWNER", "ADMIN"),
+  getReservationSlots
+);
+router.get(
+  "/reservation-slots/:id",
+  requireRoles("OWNER", "ADMIN"),
+  getReservationSlotById
+);
+router.post(
+  "/reservation-slots",
+  requireRoles("OWNER", "ADMIN"),
+  postReservationSlot
+);
+router.patch(
+  "/reservation-slots/:id",
+  requireRoles("OWNER", "ADMIN"),
+  patchReservationSlot
+);
+router.delete(
+  "/reservation-slots/:id",
+  requireRoles("OWNER", "ADMIN"),
+  removeReservationSlot
 );
 
 router.get("/reservations", getReservations);

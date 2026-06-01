@@ -11,6 +11,7 @@
     "prisma:sync": "cp ../food-service-backend/prisma/schema.prisma ./prisma/schema.prisma",
     "parity:run": "ts-node --project scripts/parity/tsconfig.json -r dotenv/config scripts/parity/runner.ts",
     "embed:seed": "ts-node -r dotenv/config scripts/embedding/create-menu_item-vector.ts",
+    "seed:reservation-slots": "ts-node -r dotenv/config scripts/reservation/seed-reservation-slots.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
