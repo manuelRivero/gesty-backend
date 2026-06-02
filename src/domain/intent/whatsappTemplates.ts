@@ -4,7 +4,7 @@ export interface WhatsAppListSection {
   rows: Array<{
     id: string;
     title: string;
-    description: string;
+    description?: string;
   }>;
 }
 

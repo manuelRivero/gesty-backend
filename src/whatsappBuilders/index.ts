@@ -5,7 +5,7 @@ const buildListMessage = (params: {
     bodyText: string;
     footerText: string;
     actionButtonLabel: string;
-    sections: Array<{ title: string; rows: Array<{ id: string; title: string; description: string }> }>;
+    sections: Array<{ title: string; rows: Array<{ id: string; title: string; description?: string }> }>;
   }): WhatsAppListMessage => ({
     type: 'list',
     header: { type: 'text', text: params.headerText },
@@ -24,14 +24,14 @@ const buildListMessage = (params: {
     headerText = 'Opciones',
     footerText = 'Toca el botón de abajo para ver las opciones'
   ): WhatsAppListMessage => {
-    const sections = new Map<string, Array<{ id: string; title: string; description: string }>>();
+    const sections = new Map<string, Array<{ id: string; title: string; description?: string }>>();
     for (const button of buttons) {
       const sectionTitle = button.sectionTitle ?? 'Opciones';
       const rows = sections.get(sectionTitle) ?? [];
       rows.push({
         id: button.payload,
         title: button.title,
-        description: button.description ?? 'Selecciona esta opción'
+        ...(button.description ? { description: button.description } : {})
       });
       sections.set(sectionTitle, rows);
     }

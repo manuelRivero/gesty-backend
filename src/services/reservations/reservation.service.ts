@@ -638,13 +638,11 @@ export const handleReservationIntent = async (
       const buttons = environments.map((env) => ({
         title: env.name,
         payload: `RESERVATION_ENV:${env.id}`,
-        description: env.description ?? 'Seleccioná este ambiente',
         sectionTitle: 'Ambientes'
       }));
       buttons.push({
         title: 'Sin preferencia',
         payload: 'RESERVATION_ENV_NONE',
-        description: 'Cualquier ambiente',
         sectionTitle: 'Ambientes'
       });
 
