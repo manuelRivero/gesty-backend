@@ -4,6 +4,7 @@ import {
   toMenuItemPriceDto
 } from "../helpers/menuItemPrice.helper";
 import { prisma } from "../lib/prisma";
+import { buildGoogleMapsUrl } from "../utils/googleMapsUrl";
 
 export async function getPublicBusinessInfo(params: { businessId: string }) {
   const row = await prisma.business.findFirst({
@@ -35,6 +36,13 @@ export async function getPublicBusinessInfo(params: { businessId: string }) {
 
   if (!row) return null;
 
+  const mapsUrl = buildGoogleMapsUrl({
+    name: row.name,
+    streetAddress: row.street_address,
+    latitude: row.latitude,
+    longitude: row.longitude
+  });
+
   return {
     id: row.id,
     name: row.name,
@@ -45,9 +53,14 @@ export async function getPublicBusinessInfo(params: { businessId: string }) {
     whatsappPhoneNumber: row.whatsapp_phone_number ?? null,
     streetAddress: row.street_address ?? null,
     addressNotes: row.address_notes ?? null,
+    mapsUrl,
     location:
       row.latitude !== null && row.longitude !== null
-        ? { latitude: row.latitude, longitude: row.longitude }
+        ? {
+            latitude: row.latitude,
+            longitude: row.longitude,
+            mapsUrl
+          }
         : null,
     businessHours: row.business_hours.map((h) => ({
       id: h.id,

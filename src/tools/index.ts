@@ -27,6 +27,7 @@ import { MenuService } from '../services/menu.service';
 import { getBusinessOpenInfo } from '../services/businessHours.service';
 import { findRecentMessagesForDetectionContext } from '../repositories';
 import { prisma } from '../lib/prisma';
+import { buildGoogleMapsUrl } from '../utils/googleMapsUrl';
 import {
   fetchComplementaryMenuItems,
   getMenuItemCategoryTag,
@@ -791,6 +792,7 @@ export const getBusinessInfoTool = new DynamicStructuredTool<
         description: true,
         timezone: true,
         slug: true,
+        street_address: true,
         latitude: true,
         longitude: true,
         whatsapp_phone_number: true,
@@ -806,6 +808,12 @@ export const getBusinessInfoTool = new DynamicStructuredTool<
 
     const hasLocation =
       typeof business.latitude === 'number' && typeof business.longitude === 'number';
+    const mapsUrl = buildGoogleMapsUrl({
+      name: business.name,
+      streetAddress: business.street_address,
+      latitude: business.latitude,
+      longitude: business.longitude,
+    });
 
     return toJson({
       found: true,
@@ -826,9 +834,11 @@ export const getBusinessInfoTool = new DynamicStructuredTool<
         ? {
             latitude: business.latitude,
             longitude: business.longitude,
-            mapsUrl: `https://www.google.com/maps?q=${business.latitude},${business.longitude}`,
+            mapsUrl,
           }
-        : null,
+        : mapsUrl
+          ? { mapsUrl }
+          : null,
     });
   },
 });
