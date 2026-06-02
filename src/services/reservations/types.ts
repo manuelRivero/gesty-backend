@@ -1,9 +1,10 @@
 export type ReservationStep =
-  | 'ASK_NAME'
+  | 'ASK_NAME'        // @deprecated — solo para shim de migración (estados viejos en DB)
   | 'ASK_DATE'
   | 'ASK_SLOT'
   | 'ASK_PARTY_SIZE'
   | 'ASK_ENVIRONMENT'
+  | 'ASK_NAME_FINAL'  // nombre al final si !customer.name
   | 'CONFIRM';
 
 export type ReservationState = {
@@ -14,6 +15,7 @@ export type ReservationState = {
   endTime?: string;
   partySize?: number;
   environmentId?: string;
+  paused?: boolean;
 };
 
 export type FindTableInput = {

@@ -196,6 +196,23 @@ export const AgentStateAnnotation = Annotation.Root({
     reducer: (_prev, next) => next,
     default: () => false,
   }),
+
+  /**
+   * Ruta de delegación del wizard de reservas cuando el usuario se va off-topic
+   * y la reserva queda pausada. Encadena `interactive` o `nlp` en el mismo invoke.
+   */
+  reservationDelegateRoute: Annotation<'nlp' | 'interactive' | null>({
+    reducer: (_prev, next) => next,
+    default: () => null,
+  }),
+
+  /**
+   * `true` cuando el wizard reanudó una reserva pausada en este invoke.
+   */
+  reservationResumed: Annotation<boolean>({
+    reducer: (_prev, next) => next,
+    default: () => false,
+  }),
 });
 
 export type AgentState = typeof AgentStateAnnotation.State;

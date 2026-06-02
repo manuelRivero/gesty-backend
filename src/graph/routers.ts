@@ -169,6 +169,23 @@ export const routeAfterNameCollection = (
   return END;
 };
 
+/**
+ * Tras `reservationWizard`:
+ * - DELEGATE: el wizard pausó la reserva → encadenar INTERACTIVE/NLP en el mismo invoke.
+ * - FULFILL_STEP: hay handlerResult → mismo comportamiento que routeAfterHandlerOrSubflow.
+ */
+export const routeAfterReservation = (
+  state: AgentState
+): NodeName | typeof END => {
+  if (state.reservationDelegateRoute === 'interactive') return NODE.INTERACTIVE;
+  if (state.reservationDelegateRoute === 'nlp') return NODE.NLP;
+  if (state.handlerResult) {
+    if (state.isHumanHandover) return NODE.SEND;
+    return NODE.FULFILLMENT_SELECTION;
+  }
+  return END;
+};
+
 /** Tras `sendResponse`: persistir el mensaje AI salvo que se haya pedido saltarlo. */
 export const routeAfterSend = (state: AgentState): NodeName | typeof END => {
   if (state.skipAIPersistence) return END;

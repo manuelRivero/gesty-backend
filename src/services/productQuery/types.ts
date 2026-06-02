@@ -65,7 +65,7 @@ export type ConversationMetadata = {
   // --- Wizards ---
 
   /** Paso activo del wizard de reservas. Presente solo mientras el wizard está activo. */
-  reservation?: { step?: string; [key: string]: unknown };
+  reservation?: { step?: string; paused?: boolean; [key: string]: unknown };
   /** Paso activo del wizard de onboarding. Presente solo mientras el wizard está activo. */
   onboarding_step?: string;
   /** Dirección temporal capturada durante onboarding (antes de confirmar). */

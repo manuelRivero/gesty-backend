@@ -55,6 +55,7 @@ import {
   routeAfterNameCollection,
   routeAfterPersistUser,
   routeAfterResolveBusiness,
+  routeAfterReservation,
   routeAfterSend,
   routeAfterSubscriptionGate,
 } from './routers';
@@ -139,7 +140,6 @@ builder.addConditionalEdges(
 );
 
 for (const node of [
-  NODE.RESERVATION,
   NODE.ONBOARDING_BY_STATE,
   NODE.ADDRESS_CAPTURE,
   NODE.INTERACTIVE,
@@ -151,6 +151,14 @@ for (const node of [
     [END]: END,
   });
 }
+
+builder.addConditionalEdges(NODE.RESERVATION, routeAfterReservation, {
+  [NODE.INTERACTIVE]: NODE.INTERACTIVE,
+  [NODE.NLP]: NODE.NLP,
+  [NODE.FULFILLMENT_SELECTION]: NODE.FULFILLMENT_SELECTION,
+  [NODE.SEND]: NODE.SEND,
+  [END]: END,
+});
 
 builder.addConditionalEdges(NODE.FULFILLMENT_SELECTION, routeAfterFulfillmentSelection, {
   [NODE.SEND]: NODE.SEND,

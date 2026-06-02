@@ -1,5 +1,6 @@
 import { updateCustomerName } from '../../../repositories';
 import { patchConversationMetadata } from '../../../repositories/conversationState.repository';
+import { NAME_COLLECTION_PROMPT_MESSAGE } from '../../../services/nameCollectionGate.service';
 import { normalizeMetadata } from '../../../services/productQuery/utils';
 import type { HandlerFollowUp } from '../../../controllers/webhook/types';
 import type { AgentState, AgentStateUpdate } from '../../state';
@@ -22,9 +23,14 @@ export const nameCollectionNode = async (
   if (state.skipAIPersistence) return {};
   if (customer.name) return {};
 
+  const meta = normalizeMetadata(state.workingConversationState?.metadata);
+  if (meta.reservation?.step || meta.reservation?.paused) {
+    // El nombre en el flujo de reserva lo gestiona el wizard al final (ASK_NAME_FINAL).
+    return {};
+  }
+
   const detection = state.detection;
   const conversation = state.conversation!;
-  const meta = normalizeMetadata(state.workingConversationState?.metadata);
 
   // 1) Persistir nombre si el detector lo extrajo (con o sin intent PROVIDE_NAME)
   const extractedName = detection?.customerName?.trim();
@@ -41,7 +47,7 @@ export const nameCollectionNode = async (
     await patchConversationMetadata(conversation.id, { awaiting_name: true });
     const ask: HandlerFollowUp = {
       type: 'text',
-      message: 'Por cierto, ¿me podrías decir tu nombre para registrarte? 😊',
+      message: NAME_COLLECTION_PROMPT_MESSAGE,
     };
     return {
       handlerResult: {

@@ -18,6 +18,7 @@ import {
   updateReservationStatus,
 } from '../../repositories/reservation.repository';
 import { updateConversationState } from '../../repositories/conversationState.repository';
+import { formatBotUserMessage } from '../productQuery/utils';
 import { buildListMessageFromButtons } from '../../whatsappBuilders';
 import { emitAdminReservationEditStarted } from '../../socket/adminSocket';
 import { generateReservationQR } from '../../utils/reservationQr';
@@ -63,6 +64,50 @@ function reservationAskDateInstructions(nextDateExample: string): string {
 
 function reservationAskPartyInstructions(): string {
   return `*¿Para cuántas personas?*\n\nEjemplo: *4*`;
+}
+
+export function reservationStepQuestion(step: ReservationState['step']): string {
+  switch (step) {
+    case 'ASK_DATE':        return '¿Para qué fecha querés reservar?';
+    case 'ASK_SLOT':        return 'Elegí un horario de la lista.';
+    case 'ASK_PARTY_SIZE':  return '¿Para cuántas personas?';
+    case 'ASK_ENVIRONMENT': return '¿En qué ambiente preferís reservar?';
+    case 'ASK_NAME_FINAL':  return '¿Cuál es tu nombre para terminar la reserva?';
+    case 'CONFIRM':         return 'Confirmá los datos de tu reserva.';
+    default:                return '';
+  }
+}
+
+function stepAfterEnvironment(hasName: boolean): ReservationState['step'] {
+  return hasName ? 'CONFIRM' : 'ASK_NAME_FINAL';
+}
+
+function buildAskFinalNameMessage(): string {
+  return formatBotUserMessage(
+    '¡Casi lista tu reserva!',
+    '📝',
+    'Para confirmar necesito tu *nombre completo*.\n\n¿A nombre de quién hago la reserva?'
+  );
+}
+
+function buildReservationResumeMessage(
+  r: ReservationState,
+  nextDateExample: string
+): string {
+  const lines: string[] = [];
+  if (r.date) lines.push(`📅 Fecha: ${r.date}`);
+  if (r.time) lines.push(`⏰ Hora: ${formatDisplayTime(r.time)}`);
+  if (r.partySize) lines.push(`👥 Personas: ${r.partySize}`);
+  const resumen = lines.length ? `\n\nLo que ya tenemos:\n${lines.join('\n')}` : '';
+  const reprompt =
+    r.step === 'ASK_DATE'        ? reservationAskDateInstructions(nextDateExample)
+    : r.step === 'ASK_PARTY_SIZE'? reservationAskPartyInstructions()
+    : reservationStepQuestion(r.step);
+  return formatBotUserMessage(
+    'Seguimos con tu reserva',
+    '📋',
+    `${resumen}\n\n${reprompt}`.trim()
+  );
 }
 
 function buildReservationAskNameMessage(): WhatsAppInteractiveMessage {
@@ -339,12 +384,28 @@ export const handleReservationIntent = async (
     businessConfig?.reservation_min_lead_minutes ?? 60;
 
   const metadata = ctx.conversationState?.metadata ?? {};
-  const reservation: ReservationState | undefined = metadata.reservation;
+  let reservation: ReservationState | undefined = metadata.reservation;
   const messageText = ctx.message?.text?.body?.trim() ?? '';
   const dateRegex = /^\d{1,2}\/\d{1,2}(\/\d{4})?$/;
   const nextDateExample = ctx.business?.id
     ? await getNextDateExample(ctx.business.id)
     : '05/04';
+
+  // Shim de migración: estados viejos con ASK_NAME → arrancar en ASK_DATE.
+  if (reservation?.step === 'ASK_NAME') {
+    console.log('[Reservation][migration] ASK_NAME→ASK_DATE', { conversationId: ctx.conversationId });
+    reservation = { ...reservation, step: 'ASK_DATE' };
+  }
+
+  // RESUME: reserva pausada + el intent que llegó es RESERVATION → reanudar.
+  // NO se parsean datos del messageText del turno de resume.
+  if (reservation?.paused) {
+    const resumed: ReservationState = { ...reservation, paused: false };
+    await updateConversationState(ctx.conversationId, {
+      metadata: { ...metadata, reservation: resumed },
+    });
+    return buildReservationResumeMessage(resumed, nextDateExample);
+  }
 
   if (ctx.payloadId === 'RESERVATION_CANCEL') {
     if (!reservation && ctx.customer?.id) {
@@ -396,15 +457,6 @@ export const handleReservationIntent = async (
         return buildActiveReservationManagementMessage();
       }
     }
-
-    if (!ctx.customer?.name?.trim()) {
-      const nextState: ReservationState = { step: 'ASK_NAME' };
-      await updateConversationState(ctx.conversationId, {
-        metadata: { ...metadata, reservation: nextState }
-      });
-      return buildReservationAskNameMessage();
-    }
-
     const nextState: ReservationState = { step: 'ASK_DATE' };
     await updateConversationState(ctx.conversationId, {
       metadata: { ...metadata, reservation: nextState }
@@ -413,29 +465,6 @@ export const handleReservationIntent = async (
   }
 
   switch (reservation.step) {
-    case 'ASK_NAME': {
-      if (!messageText) {
-        return buildReservationAskNameMessage();
-      }
-
-      const trimmedName = messageText.trim();
-      if (trimmedName.length < 2) {
-        return buildReservationErrorMessage(
-          '🤖\n\n*Nombre inválido* ❌\n\nIngresá tu nombre completo para poder continuar con la reserva.'
-        );
-      }
-
-      if (ctx.customer?.id) {
-        await updateCustomerName(ctx.customer.id, trimmedName);
-      }
-
-      const nextState: ReservationState = { step: 'ASK_DATE' };
-      await updateConversationState(ctx.conversationId, {
-        metadata: { ...metadata, reservation: nextState }
-      });
-
-      return `🤖\n\n*¡Gracias, ${trimmedName}!* ✅\n\nYa registramos tu nombre.\n\n*Coordinemos tu reserva* 📅\n\n${reservationAskDateInstructions(nextDateExample)}\n\nTe pedimos reservar con anticipación mínima de un turno para poder prepararte una mejor experiencia.`;
-    }
     case 'ASK_DATE': {
       if (!messageText) {
         return `🤖\n\n*Fecha de reserva* 📅\n\n${reservationAskDateInstructions(nextDateExample)}\n\nRecordá que las reservas deben hacerse con anticipación mínima de un turno.`;
@@ -598,12 +627,17 @@ export const handleReservationIntent = async (
         : [];
 
       if (!environments.length) {
+        const hasName = !!ctx.customer?.name?.trim();
+        const noEnvStep = stepAfterEnvironment(hasName);
         await updateConversationState(ctx.conversationId, {
           metadata: {
             ...metadata,
-            reservation: { ...nextState, environmentId: undefined, step: 'CONFIRM' }
+            reservation: { ...nextState, environmentId: undefined, step: noEnvStep }
           }
         });
+        if (noEnvStep === 'ASK_NAME_FINAL') {
+          return buildAskFinalNameMessage();
+        }
         const summary = [
           `Fecha: ${nextState.date ?? '-'}`,
           `Hora: ${formatDisplayTime(nextState.time)}`,
@@ -662,14 +696,20 @@ export const handleReservationIntent = async (
             ? undefined
             : mapEnvironmentToId(messageText, ctx.business?.environments ?? []);
 
+      const hasName = !!ctx.customer?.name?.trim();
+      const envStep = stepAfterEnvironment(hasName);
       const nextState: ReservationState = {
         ...reservation,
         environmentId: envId ?? undefined,
-        step: 'CONFIRM'
+        step: envStep
       };
       await updateConversationState(ctx.conversationId, {
         metadata: { ...metadata, reservation: nextState }
       });
+
+      if (envStep === 'ASK_NAME_FINAL') {
+        return buildAskFinalNameMessage();
+      }
 
       const environmentName = envId
         ? (await findEnvironmentNameById(envId)) ?? undefined
@@ -704,6 +744,43 @@ export const handleReservationIntent = async (
             ]
           }
         }
+      };
+    }
+    case 'ASK_NAME_FINAL': {
+      const trimmedName = messageText.trim();
+      if (trimmedName.length < 2) {
+        return buildAskFinalNameMessage();
+      }
+      if (ctx.customer?.id) {
+        await updateCustomerName(ctx.customer.id, trimmedName);
+      }
+      const nextState: ReservationState = { ...reservation, step: 'CONFIRM' };
+      await updateConversationState(ctx.conversationId, {
+        metadata: { ...metadata, reservation: nextState },
+      });
+      const environmentName = nextState.environmentId
+        ? (await findEnvironmentNameById(nextState.environmentId)) ?? undefined
+        : undefined;
+      const summary = [
+        `Fecha: ${nextState.date ?? '-'}`,
+        `Hora: ${formatDisplayTime(nextState.time)}`,
+        `Personas: ${nextState.partySize ?? '-'}`,
+        `Ambiente: ${environmentName ?? 'sin preferencia'}`,
+      ].join('\n');
+      return {
+        type: 'interactive',
+        interactive: {
+          type: 'button',
+          header: { type: 'text', text: '' },
+          body: { text: `🤖\n\n*¡Gracias, ${trimmedName}!* ✅\n\n*Confirmar reserva* ✅\n\nRevisá los datos:\n${summary}` },
+          footer: { text: 'Seleccioná una opción' },
+          action: {
+            buttons: [
+              { type: 'reply', reply: { id: 'RESERVATION_CONFIRM', title: '✅ Confirmar' } },
+              { type: 'reply', reply: { id: 'RESERVATION_CANCEL', title: '❌ Cancelar' } },
+            ],
+          },
+        },
       };
     }
     case 'CONFIRM': {

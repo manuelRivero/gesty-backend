@@ -225,14 +225,16 @@ export const buildDetectionContextNode = async (
     // Onboarding por estado (metadata.onboarding_step) tiene prioridad sobre
     // todo lo demás cuando el usuario no tiene dirección o está en wizard.
     const wsMeta = normalizeMetadata(workingConversationState.metadata);
-    const reservationStep = wsMeta.reservation?.step;
+    const reservation = wsMeta.reservation;
+    const reservationStep = reservation?.step;
+    const reservationPaused = reservation?.paused === true;
     const onboardingStep = wsMeta.onboarding_step;
 
     let contextRoute: AgentStateUpdate['contextRoute'];
     let hasAddress = false;
     let isInCoverage = false;
 
-    if (reservationStep) {
+    if (reservationStep && !reservationPaused) {
       contextRoute = 'reservation_wizard';
     } else if (onboardingStep) {
       contextRoute = 'onboarding_by_state';

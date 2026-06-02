@@ -27,17 +27,22 @@ import {
   formatClosedBusinessCustomerNotice,
 } from '../../../services/businessHours.service';
 import { handleReservationIntent } from '../../../services/reservations';
+import { reservationStepQuestion } from '../../../services/reservations/reservation.service';
+import { classifyReservationTurn } from '../../../services/reservations/turnClassifier.service';
 import { AddressService } from '../../../services/address.service';
 import { detectIntentWithConfidence } from '../../../services/ai/detection.service';
 import { dispatchIntent } from '../../../controllers/webhook/dispachers';
 import { ConversationIntent } from '../../../types/conversationIntent';
 import { normalizeToHandlerResult } from '../../../controllers/webhook/utils';
+import { normalizeMetadata } from '../../../services/productQuery/utils';
+import { patchConversationMetadata } from '../../../repositories/conversationState.repository';
 import { formatInboundMessageForLog } from '../../../controllers/webhook/utils/messageLog';
 import type {
   EnrichedContext,
   HandlerResult,
 } from '../../../controllers/webhook/types';
 import type { AgentState, AgentStateUpdate } from '../../state';
+import type { ReservationState } from '../../../services/reservations/types';
 
 const ONBOARDING_REMINDER =
   'Para continuar con un pedido necesito tu dirección.';
@@ -119,21 +124,52 @@ export const subscriptionAccessGateNode = async (
 
 /**
  * Nodo del wizard de reservas: si `conversationState.metadata.reservation.step`
- * está activo, ejecuta el handler y devuelve el `HandlerResult` para enviarlo.
+ * está activo, clasifica el turno y decide si ejecutar el handler (FULFILL_STEP)
+ * o pausar la reserva y encadenar al flujo normal (DELEGATE).
  */
 export const reservationWizardNode = async (
   state: AgentState
 ): Promise<AgentStateUpdate> => {
   const enrichedBase = state.enrichedCtx as unknown as EnrichedContext;
+  const ctx = state.webhookContext!;
+  const conversation = state.conversation!;
+  const meta = normalizeMetadata(state.workingConversationState?.metadata);
+  const reservation = meta.reservation as ReservationState | undefined;
+
+  if (reservation?.step) {
+    const userMessage = ctx.message?.text?.body ?? '';
+    const classification = await classifyReservationTurn({
+      step: reservation.step,
+      botQuestion: reservationStepQuestion(reservation.step),
+      userMessage,
+      payloadId: ctx.payloadId,
+    });
+
+    console.log('[reservation-turn]', {
+      step: reservation.step,
+      action: classification.action,
+      source: classification.source,
+      confidence: classification.confidence,
+      conversationId: conversation.id,
+    });
+
+    if (classification.action === 'DELEGATE') {
+      await patchConversationMetadata(conversation.id, {
+        reservation: { ...reservation, paused: true },
+      });
+      const route: 'nlp' | 'interactive' =
+        ctx.message?.type === 'interactive' ? 'interactive' : 'nlp';
+      return { reservationDelegateRoute: route };
+    }
+  }
+
+  // FULFILL_STEP → handler normal.
   const reservationResult = await handleReservationIntent(enrichedBase);
   if (!reservationResult) {
     return { earlyExit: 'reservation_handled' };
   }
   const handlerResult = normalizeToHandlerResult(reservationResult);
-  return {
-    handlerResult,
-    earlyExit: 'reservation_handled',
-  };
+  return { handlerResult, earlyExit: 'reservation_handled' };
 };
 
 /**
