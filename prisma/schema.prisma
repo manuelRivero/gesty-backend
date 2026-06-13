@@ -8,51 +8,51 @@ datasource db {
 }
 
 model business {
-  id                     String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name                   String
-  description            String?
-  timezone               String                   @default("America/Argentina/Buenos_Aires")
-  is_active              Boolean                  @default(true)
-  created_at             DateTime                 @default(now()) @db.Timestamptz(6)
-  openai_api_key         String?
-  openai_model           String?                  @default("gpt-3.5-turbo")
-  openai_active          Boolean?                 @default(true)
-  whatsapp_phone_number  String?
-  whatsapp_phone_id      String?
-  whatsapp_access_token  String?
-  ai_monthly_tokens_used Int                      @default(0)
-  ai_monthly_token_limit Int                      @default(100000)
-  ai_plan                String                   @default("basic")
-  ai_reset_at            DateTime                 @default(now()) @db.Timestamptz(6)
-  ai_blocked             Boolean                  @default(false)
-  currency_code          String?                  @db.Char(3)
-  latitude               Float?
-  longitude              Float?
-  street_address         String?
-  address_notes          String?
-  billing_mode           String?                  @default("subscription")
-  slug                   String?                  @unique
-  features               Json?                    @default("{}")
-  currency               currency?                @relation(fields: [currency_code], references: [code], onDelete: NoAction, onUpdate: NoAction)
-  business_config        business_config?
-  business_coverage_zone business_coverage_zone[]
-  business_hours         business_hours[]
-  business_user          business_user[]
-  conversation           conversation[]
-  customer               customer[]
-  draft_order            draft_order[]
-  environment            environment[]
-  menu_category          menu_category[]
-  menu_item              menu_item[]
-  orders                 orders[]
-  reservation            reservation[]
-  reservation_block      reservation_block[]
-  reservation_config     reservation_config?
-  reservation_slot       reservation_slot[]
-  subscription            subscription?
-  table                   table[]
+  id                        String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                      String
+  description               String?
+  timezone                  String                      @default("America/Argentina/Buenos_Aires")
+  is_active                 Boolean                     @default(true)
+  created_at                DateTime                    @default(now()) @db.Timestamptz(6)
+  openai_api_key            String?
+  openai_model              String?                     @default("gpt-3.5-turbo")
+  openai_active             Boolean?                    @default(true)
+  whatsapp_phone_number     String?
+  whatsapp_phone_id         String?
+  whatsapp_access_token     String?
+  ai_monthly_tokens_used    Int                         @default(0)
+  ai_monthly_token_limit    Int                         @default(100000)
+  ai_plan                   String                      @default("basic")
+  ai_reset_at               DateTime                    @default(now()) @db.Timestamptz(6)
+  ai_blocked                Boolean                     @default(false)
+  currency_code             String?                     @db.Char(3)
+  latitude                  Float?
+  longitude                 Float?
+  billing_mode              String?                     @default("subscription")
+  slug                      String?                     @unique
+  features                  Json?                       @default("{}")
+  street_address            String?
+  address_notes             String?
+  currency                  currency?                   @relation(fields: [currency_code], references: [code], onDelete: NoAction, onUpdate: NoAction)
+  business_config           business_config?
+  business_coverage_zone    business_coverage_zone[]
+  business_hours            business_hours[]
   business_payment_provider business_payment_provider[]
-  payment_intent          payment_intent[]
+  business_user             business_user[]
+  conversation              conversation[]
+  customer                  customer[]
+  draft_order               draft_order[]
+  environment               environment[]
+  menu_category             menu_category[]
+  menu_item                 menu_item[]
+  orders                    orders[]
+  payment_intent            payment_intent[]
+  reservation               reservation[]
+  reservation_block         reservation_block[]
+  reservation_config        reservation_config?
+  reservation_slot          reservation_slot[]
+  subscription              subscription?
+  table                     table[]
 }
 
 model business_user {
@@ -288,15 +288,15 @@ model orders {
   customer_address_id       String?            @db.Uuid
   delivery_address_snapshot Json?              @default("{}")
   payment_status            OrderPaymentStatus @default(unpaid)
-  payment_method            String?
   fulfillment_type          FulfillmentType?
+  payment_method            String?
   order_item                order_item[]
-  payment_intent            payment_intent[]
   business                  business           @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   conversation              conversation?      @relation(fields: [conversation_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   currency                  currency           @relation(fields: [currency_code], references: [code], onDelete: NoAction, onUpdate: NoAction)
   customer_address          customer_address?  @relation(fields: [customer_address_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   customer                  customer           @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  payment_intent            payment_intent[]
 
   @@index([customer_address_id], map: "idx_orders_customer_address")
 }
@@ -349,7 +349,7 @@ model customer_address {
   updated_at            DateTime?                 @default(now()) @db.Timestamptz(6)
   delivery_zone_id      String?                   @db.Uuid
   customer              customer                  @relation(fields: [customer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  delivery_zone         business_coverage_zone?   @relation(fields: [delivery_zone_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  delivery_zone         business_coverage_zone?   @relation(fields: [delivery_zone_id], references: [id], onUpdate: NoAction)
   orders                orders[]
 
   @@index([customer_id], map: "idx_customer_address_active", where: raw("(is_active = true)"))
@@ -530,11 +530,14 @@ model business_config {
   reservation_allow_same_day           Boolean  @default(true)
   orders_enabled                       Boolean  @default(true)
   checkout_enabled                     Boolean  @default(true)
+  created_at                           DateTime @default(now()) @db.Timestamptz(6)
+  updated_at                           DateTime @default(now()) @db.Timestamptz(6)
   delivery_enabled                     Boolean  @default(true)
   takeaway_enabled                     Boolean  @default(false)
   pickup_instructions                  String?
-  created_at                           DateTime @default(now()) @db.Timestamptz(6)
-  updated_at                           DateTime @default(now()) @db.Timestamptz(6)
+  humanize_messages                    Boolean  @default(false)
+  operate_when_closed                  Boolean  @default(false)
+  orders_when_closed                   Boolean  @default(false)
   business                             business @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_business_config_business")
 
   @@index([business_id], map: "idx_business_config_business_id")
@@ -574,40 +577,40 @@ model subscription {
 }
 
 model business_payment_provider {
-  id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  business_id              String   @db.Uuid
-  provider                 String
-  access_token_encrypted   String
-  public_key               String?
-  webhook_secret           String?
-  is_sandbox               Boolean  @default(false)
-  is_active                Boolean  @default(true)
-  created_at               DateTime @default(now()) @db.Timestamptz(6)
-  updated_at               DateTime @default(now()) @db.Timestamptz(6)
-  business                 business @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  id                     String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id            String   @db.Uuid
+  provider               String
+  access_token_encrypted String
+  public_key             String?
+  webhook_secret         String?
+  is_sandbox             Boolean  @default(false)
+  is_active              Boolean  @default(true)
+  created_at             DateTime @default(now()) @db.Timestamptz(6)
+  updated_at             DateTime @default(now()) @db.Timestamptz(6)
+  business               business @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([business_id, provider])
   @@index([business_id], map: "idx_bpp_business")
 }
 
 model payment_intent {
-  id                   String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  business_id          String      @db.Uuid
-  draft_order_id       String      @db.Uuid
-  order_id             String?     @db.Uuid
-  provider             String      @default("mercado_pago")
-  external_id          String?
-  preference_id        String?
-  init_point           String?
-  status               String      @default("pending")
-  amount               Decimal     @db.Decimal(12, 2)
-  currency             String      @db.Char(3)
-  raw_webhook_payload  Json?
-  created_at           DateTime    @default(now()) @db.Timestamptz(6)
-  updated_at           DateTime    @default(now()) @db.Timestamptz(6)
-  business             business    @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  draft_order          draft_order @relation(fields: [draft_order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  orders               orders?     @relation(fields: [order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                  String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id         String      @db.Uuid
+  draft_order_id      String      @db.Uuid
+  order_id            String?     @db.Uuid
+  provider            String      @default("mercado_pago")
+  external_id         String?
+  preference_id       String?
+  init_point          String?
+  status              String      @default("pending")
+  amount              Decimal     @db.Decimal(12, 2)
+  currency            String      @db.Char(3)
+  raw_webhook_payload Json?
+  created_at          DateTime    @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime    @default(now()) @db.Timestamptz(6)
+  business            business    @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  draft_order         draft_order @relation(fields: [draft_order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  orders              orders?     @relation(fields: [order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([draft_order_id, status], map: "idx_pi_draft_status")
   @@index([external_id], map: "idx_pi_external_id")
@@ -619,9 +622,9 @@ enum OrderStatus {
   /// Pedido confirmado (en cola / listo para preparar). Antes `pending_payment`.
   placed
   preparing
+  shipped
   /// Pedido listo para ser retirado por el cliente (solo take-away).
   ready_for_pickup
-  shipped
   delivered
   cancelled
 }

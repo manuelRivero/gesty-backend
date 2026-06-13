@@ -108,13 +108,18 @@ export const businessOpenInfoNode = async (
   state: AgentState
 ): Promise<AgentStateUpdate> => {
   const business = state.business!;
+  const businessConfig = state.businessConfig!;
   const businessStatus = await getBusinessOpenInfo({
     businessId: business.id,
     timezone: business.timezone,
   });
 
   if (!businessStatus.isOpen) {
-    return { businessStatus, earlyExit: 'business_closed' };
+    if (!businessConfig.operate_when_closed) {
+      return { businessStatus, earlyExit: 'business_closed' };
+    }
+    // Bot opera aun estando cerrado; los handlers deciden qué acciones restringir
+    return { businessStatus, businessClosedButOperating: true };
   }
 
   return { businessStatus };

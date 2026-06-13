@@ -1,7 +1,7 @@
 import { prisma } from '../lib/prisma';
 import { EnrichedContext } from '../controllers/webhook/types';
 import { buildListMessageFromButtons } from '../whatsappBuilders';
-import type { WhatsAppListMessage } from '../domain/intent/whatsappTemplates';
+import type { WhatsAppInteractiveMessage, WhatsAppListMessage } from '../domain/intent/whatsappTemplates';
 import { buildSmallTalkButtons } from './smallTalk.service';
 
 const dayNames = [
@@ -188,4 +188,33 @@ export const formatClosedBusinessCustomerNotice = (
     : '';
 
   return `🤖\n\n*En este momento estamos cerrados.* ❌\n\n${nextOpenLine}\n\nPor favor escribinos en el horario de atención.`;
+};
+
+export const CONFIRM_CLOSED_ORDER = 'CONFIRM_CLOSED_ORDER';
+export const CANCEL_CLOSED_ORDER = 'CANCEL_CLOSED_ORDER';
+
+export const buildClosedOrderConfirmationMessage = (
+  nextOpenText: string | null
+): WhatsAppInteractiveMessage => {
+  const nextOpenLine = nextOpenText
+    ? `Tu pedido será atendido en el próximo turno: *${nextOpenText}*.`
+    : 'Tu pedido será atendido cuando abramos nuevamente.';
+
+  return {
+    type: 'interactive',
+    interactive: {
+      type: 'button',
+      header: { type: 'text', text: '¿Confirmar pedido?' },
+      body: {
+        text: `🤖\n\n*En este momento estamos cerrados.* ❌\n\n${nextOpenLine}\n\n¿Querés que registremos tu pedido de todas formas?`
+      },
+      footer: { text: 'Será procesado cuando abramos' },
+      action: {
+        buttons: [
+          { type: 'reply', reply: { id: CONFIRM_CLOSED_ORDER, title: 'Sí, confirmar' } },
+          { type: 'reply', reply: { id: CANCEL_CLOSED_ORDER, title: 'No, cancelar' } }
+        ]
+      }
+    }
+  };
 };

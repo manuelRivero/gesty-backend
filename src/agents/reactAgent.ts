@@ -38,6 +38,11 @@ import {
 } from '../whatsappBuilders/hybridCta';
 import { patchConversationMetadata } from '../repositories';
 import { MenuService } from '../services/menu.service';
+
+const markHybridResult = (result: HandlerResult): HandlerResult => ({
+  ...result,
+  skipBodyHumanization: true,
+});
 import { truncateDescription, truncateTitle } from '../whatsappBuilders';
 import type { CtaPlannerInput } from './types';
 
@@ -403,11 +408,11 @@ export const runHybridReactAgent = async (
     console.log(
       JSON.stringify({ event: '[hybrid-cta] cta_skipped', intent, reason: skipReason, conversationId })
     );
-    return {
+    return markHybridResult({
       content: formattedText,
       isInteractive: false,
       ...(productFollowUp ? { followUps: [productFollowUp] } : {}),
-    };
+    });
   }
 
   const topMenuProductNames = await prefetchTopMenuProducts({
@@ -442,11 +447,11 @@ export const runHybridReactAgent = async (
   );
 
   if (!plannerRaw) {
-    return {
+    return markHybridResult({
       content: formattedText,
       isInteractive: false,
       ...(productFollowUp ? { followUps: [productFollowUp] } : {}),
-    };
+    });
   }
 
   const resolvedPlan = await resolveCta({
@@ -462,11 +467,11 @@ export const runHybridReactAgent = async (
   const handlerResult = buildHybridCtaInteractive(formattedText, resolvedPlan);
 
   if (!handlerResult) {
-    return {
+    return markHybridResult({
       content: formattedText,
       isInteractive: false,
       ...(productFollowUp ? { followUps: [productFollowUp] } : {}),
-    };
+    });
   }
 
   const primaryPayload = extractPrimaryPayload(resolvedPlan);
@@ -494,5 +499,5 @@ export const runHybridReactAgent = async (
   );
 
   // CTA ya maneja la selección de producto; no duplicar la lista.
-  return handlerResult;
+  return markHybridResult(handlerResult);
 };

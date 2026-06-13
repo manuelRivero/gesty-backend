@@ -13,6 +13,11 @@
 
 import { dispatchIntent, dispatchInteractive } from '../../../controllers/webhook/dispachers';
 import {
+  CONFIRM_CLOSED_ORDER,
+  CANCEL_CLOSED_ORDER,
+  buildClosedOrderConfirmationMessage,
+} from '../../../services/businessHours.service';
+import {
   detectIntentWithConfidence,
   shouldAskIntentConfirmation,
 } from '../../../services/ai/detection.service';
@@ -147,6 +152,48 @@ export const interactiveSubgraphNode = async (
     }
   }
 
+  // Gate de pedidos en horario cerrado
+  if (state.businessClosedButOperating && ctx.payloadId) {
+    const businessConfig = state.businessConfig;
+    const ordersWhenClosed = businessConfig?.orders_when_closed ?? false;
+    const payloadId = ctx.payloadId;
+
+    if (payloadId.startsWith('ADD_ITEM:')) {
+      if (!ordersWhenClosed) {
+        return {
+          handlerResult: {
+            content: '🤖\n\n*Estamos cerrados.* ❌\n\nLos pedidos no están disponibles fuera del horario de atención. ¡Te esperamos pronto!',
+            isInteractive: false,
+          },
+        };
+      }
+      // orders_when_closed=true → pedir confirmación explícita
+      await patchConversationMetadata(conversation.id, { pending_closed_add_item: payloadId });
+      const confirmation = buildClosedOrderConfirmationMessage(state.businessStatus?.nextOpenText ?? null);
+      return { handlerResult: { content: confirmation, isInteractive: true } };
+    }
+
+    if (ordersWhenClosed && payloadId === CONFIRM_CLOSED_ORDER) {
+      const meta = normalizeMetadata(enrichedBase.conversationState?.metadata);
+      const pending = meta.pending_closed_add_item;
+      if (!pending) {
+        return { handlerResult: { content: '🤖\n\nNo hay pedido pendiente para confirmar.', isInteractive: false } };
+      }
+      await omitConversationMetadataKeys(conversation.id, ['pending_closed_add_item']);
+      const pendingCtx = { ...enrichedBase, payloadId: pending } as unknown as EnrichedContext;
+      const pendingResult = await dispatchInteractive(pendingCtx);
+      if (!pendingResult) {
+        return { earlyExit: 'interactive_no_payload' };
+      }
+      return { handlerResult: pendingResult };
+    }
+
+    if (ordersWhenClosed && payloadId === CANCEL_CLOSED_ORDER) {
+      await omitConversationMetadataKeys(conversation.id, ['pending_closed_add_item']);
+      return { handlerResult: { content: '🤖\n\nEntendido, cancelamos el pedido. ¡Hasta pronto! 👋', isInteractive: false } };
+    }
+  }
+
   const result = await dispatchInteractive(enrichedBase);
   if (!result) {
     return { earlyExit: 'interactive_no_payload' };
@@ -203,6 +250,27 @@ export const nlpSubgraphNode = async (
   }
 
   const metaPre = normalizeMetadata(workingConversationState?.metadata);
+
+  // Gate de confirmación de pedido cuando el negocio está cerrado pero opera (NLP)
+  if (state.businessClosedButOperating && state.businessConfig?.orders_when_closed && metaPre.pending_closed_add_item) {
+    const pending = metaPre.pending_closed_add_item;
+    const isAffirmative = /^(sí|si|s[ií]|confirmar?|dale|ok|yes|bueno|sip|vamos|correcto|claro|perfecto|obvio|quiero|confirmo|afirmo)$/i.test(userMessage.trim());
+    const isNegative = /^(no|nop|nope|cancelar?|mejor no|no gracias|not|negativo|cancelo)$/i.test(userMessage.trim());
+
+    if (isAffirmative) {
+      await omitConversationMetadataKeys(conversation.id, ['pending_closed_add_item']);
+      const pendingCtx = { ...enrichedBase, payloadId: pending } as unknown as EnrichedContext;
+      const pendingResult = await dispatchInteractive(pendingCtx);
+      if (pendingResult) return { handlerResult: pendingResult };
+    } else if (isNegative) {
+      await omitConversationMetadataKeys(conversation.id, ['pending_closed_add_item']);
+      return { handlerResult: { content: '🤖\n\nEntendido, cancelamos el pedido. ¡Hasta pronto! 👋', isInteractive: false } };
+    } else {
+      // Respuesta no clara → re-mostrar confirmación
+      const confirmation = buildClosedOrderConfirmationMessage(state.businessStatus?.nextOpenText ?? null);
+      return { handlerResult: { content: confirmation, isInteractive: true } };
+    }
+  }
 
   if (metaPre.awaitingPeopleCount) {
     const resume = parsePeopleCountResume(metaPre);

@@ -111,6 +111,15 @@ export const AgentStateAnnotation = Annotation.Root({
     reducer: (_prev, next) => next,
     default: () => null,
   }),
+
+  /**
+   * `true` cuando el negocio está cerrado pero `operate_when_closed` está habilitado
+   * en la config. El bot sigue operando pero puede restringir acciones de carrito.
+   */
+  businessClosedButOperating: Annotation<boolean>({
+    reducer: (_prev, next) => next,
+    default: () => false,
+  }),
   hasAddress: Annotation<boolean>({
     reducer: (_prev, next) => next,
     default: () => false,

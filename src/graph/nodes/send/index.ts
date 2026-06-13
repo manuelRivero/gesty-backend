@@ -15,7 +15,64 @@ import {
   updateConversationLastMessageAt,
 } from '../../../repositories';
 import { isDryRunWhatsAppSend } from '../../../config/env';
+import { humanizeHandlerResult } from '../../../services/ai/humanizeBotBody.service';
+import type { HandlerResult } from '../../../controllers/webhook/types';
 import type { AgentState, AgentStateUpdate } from '../../state';
+
+/**
+ * Elimina botones y filas de lista con payload ADD_ITEM del handlerResult.
+ * Se aplica cuando el negocio está cerrado y `orders_when_closed=false`.
+ */
+function stripCartActions(result: HandlerResult): HandlerResult {
+  const content = result.content;
+
+  const filteredContent = (() => {
+    if (typeof content !== 'object' || content === null) return content;
+    const c = content as Record<string, unknown>;
+
+    if (c['type'] === 'interactive') {
+      const interactive = c['interactive'] as Record<string, unknown> | undefined;
+      const action = interactive?.['action'] as Record<string, unknown> | undefined;
+      const buttons = action?.['buttons'] as Array<{ type: string; reply: { id: string; title: string } }> | undefined;
+      if (!buttons) return content;
+      const filtered = buttons.filter((b) => !b.reply.id.startsWith('ADD_ITEM:'));
+      if (filtered.length === buttons.length) return content;
+      if (filtered.length === 0) {
+        return (interactive?.['body'] as Record<string, unknown>)?.['text'] as string ?? content;
+      }
+      return { ...c, interactive: { ...interactive, action: { ...action, buttons: filtered } } };
+    }
+
+    if (c['type'] === 'list') {
+      const action = c['action'] as Record<string, unknown> | undefined;
+      const sections = action?.['sections'] as Array<{ title: string; rows: Array<{ id: string }> }> | undefined;
+      if (!sections) return content;
+      const filteredSections = sections
+        .map((s) => ({ ...s, rows: s.rows.filter((r) => !r.id.startsWith('ADD_ITEM:')) }))
+        .filter((s) => s.rows.length > 0);
+      if (filteredSections.length === sections.length) return content;
+      return { ...c, action: { ...action, sections: filteredSections } };
+    }
+
+    return content;
+  })();
+
+  const filteredFollowUps = result.followUps?.map((fu) => {
+    if (fu.type !== 'list') return fu;
+    const sections = fu.listMessage.action.sections
+      .map((s) => ({ ...s, rows: s.rows.filter((r) => !r.id.startsWith('ADD_ITEM:')) }))
+      .filter((s) => s.rows.length > 0);
+    return { ...fu, listMessage: { ...fu.listMessage, action: { ...fu.listMessage.action, sections } } };
+  });
+
+  const isNowText = typeof filteredContent === 'string';
+  return {
+    ...result,
+    content: filteredContent as HandlerResult['content'],
+    isInteractive: isNowText ? false : result.isInteractive,
+    followUps: filteredFollowUps,
+  };
+}
 
 export const sendResponseNode = async (
   state: AgentState
@@ -27,17 +84,27 @@ export const sendResponseNode = async (
     return {};
   }
 
+  const shouldStripCart =
+    state.businessClosedButOperating && !state.businessConfig?.orders_when_closed;
+  const baseResult = shouldStripCart ? stripCartActions(result) : result;
+
+  const humanizedResult = await humanizeHandlerResult(baseResult, {
+    enabled: state.businessConfig?.humanize_messages === true,
+    intent: state.resolvedIntent ?? state.detection?.intent ?? null,
+  });
+
   if (isDryRunWhatsAppSend()) {
     console.log('[dry-run] sendResponseNode skipped', {
       to: ctx.to,
-      isInteractive: result.isInteractive,
-      followUps: result.followUps?.length ?? 0,
+      isInteractive: humanizedResult.isInteractive,
+      followUps: humanizedResult.followUps?.length ?? 0,
+      humanizeMessages: state.businessConfig?.humanize_messages === true,
     });
-    return {};
+    return { handlerResult: humanizedResult };
   }
 
-  await sendResponse(ctx, result);
-  return {};
+  await sendResponse(ctx, humanizedResult);
+  return { handlerResult: humanizedResult };
 };
 
 export const persistAIMessageNode = async (

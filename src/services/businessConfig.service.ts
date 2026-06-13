@@ -21,6 +21,9 @@ export type BusinessConfig = {
   delivery_enabled: boolean;
   takeaway_enabled: boolean;
   pickup_instructions: string | null;
+  humanize_messages: boolean;
+  operate_when_closed: boolean;
+  orders_when_closed: boolean;
 };
 
 const DEFAULT_CONFIG: BusinessConfig = {
@@ -43,7 +46,10 @@ const DEFAULT_CONFIG: BusinessConfig = {
   checkout_enabled: true,
   delivery_enabled: true,
   takeaway_enabled: false,
-  pickup_instructions: null
+  pickup_instructions: null,
+  humanize_messages: false,
+  operate_when_closed: false,
+  orders_when_closed: false
 };
 
 export type BusinessConfigPatch = Partial<BusinessConfig>;
@@ -74,7 +80,10 @@ async function fetchBusinessConfigRow(
       checkout_enabled,
       delivery_enabled,
       takeaway_enabled,
-      pickup_instructions
+      pickup_instructions,
+      humanize_messages,
+      operate_when_closed,
+      orders_when_closed
     FROM business_config
     WHERE business_id = ${businessId}::uuid
     LIMIT 1
@@ -119,7 +128,10 @@ export async function upsertBusinessConfig(
       checkout_enabled,
       delivery_enabled,
       takeaway_enabled,
-      pickup_instructions
+      pickup_instructions,
+      humanize_messages,
+      operate_when_closed,
+      orders_when_closed
     ) VALUES (
       ${businessId}::uuid,
       ${next.bot_enabled},
@@ -141,7 +153,10 @@ export async function upsertBusinessConfig(
       ${next.checkout_enabled},
       ${next.delivery_enabled},
       ${next.takeaway_enabled},
-      ${next.pickup_instructions}
+      ${next.pickup_instructions},
+      ${next.humanize_messages},
+      ${next.operate_when_closed},
+      ${next.orders_when_closed}
     )
     ON CONFLICT (business_id)
     DO UPDATE SET
@@ -164,7 +179,10 @@ export async function upsertBusinessConfig(
       checkout_enabled = EXCLUDED.checkout_enabled,
       delivery_enabled = EXCLUDED.delivery_enabled,
       takeaway_enabled = EXCLUDED.takeaway_enabled,
-      pickup_instructions = EXCLUDED.pickup_instructions
+      pickup_instructions = EXCLUDED.pickup_instructions,
+      humanize_messages = EXCLUDED.humanize_messages,
+      operate_when_closed = EXCLUDED.operate_when_closed,
+      orders_when_closed = EXCLUDED.orders_when_closed
   `;
 
   return next;

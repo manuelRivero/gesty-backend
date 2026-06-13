@@ -26,7 +26,10 @@ const configPatchSchema = z.object({
   checkout_enabled: z.boolean().optional(),
   delivery_enabled: z.boolean().optional(),
   takeaway_enabled: z.boolean().optional(),
-  pickup_instructions: z.string().nullable().optional()
+  pickup_instructions: z.string().nullable().optional(),
+  humanize_messages: z.boolean().optional(),
+  operate_when_closed: z.boolean().optional(),
+  orders_when_closed: z.boolean().optional()
 }).refine(
   (data) => {
     const disableDelivery = data.delivery_enabled === false;

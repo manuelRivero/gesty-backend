@@ -78,6 +78,8 @@ export type ConversationMetadata = {
   pending_address_action?: string | null;
   /** Intent de carrito que quedó pendiente mientras el usuario elige delivery vs take-away. */
   pending_fulfillment_action?: string | null;
+  /** Payload ADD_ITEM pendiente de confirmación cuando el negocio está cerrado con orders_when_closed=true. */
+  pending_closed_add_item?: string | null;
 };
 
 export type ConversationMode = 'GLOBAL' | 'FILTER_SET' | 'PRODUCT_FOCUS';

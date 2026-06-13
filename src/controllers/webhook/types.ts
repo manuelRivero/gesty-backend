@@ -66,6 +66,8 @@ export interface HandlerResult {
   isInteractive: boolean;
   /** Mensajes extra tras el principal, en orden: imagen (QR), texto, lista, etc. */
   followUps?: HandlerFollowUp[];
+  /** Si true, no reescribir el body con LLM (p. ej. respuesta del agente híbrido). */
+  skipBodyHumanization?: boolean;
 }
 
 // Clasificación de intención

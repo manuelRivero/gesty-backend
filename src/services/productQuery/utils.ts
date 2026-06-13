@@ -12,6 +12,34 @@ export function formatBotUserMessage(
   return `🤖\n\n*${boldTitle}* ${emoji}\n\n${body.trim()}`;
 }
 
+export type ParsedBotUserMessage = {
+  title: string;
+  emoji: string;
+  body: string;
+};
+
+const BOT_USER_MESSAGE_RE = /^🤖\n\n\*([^*]+)\* ([^\n]+)\n\n([\s\S]*)$/;
+
+/** Extrae título, emoji y body de un mensaje con formato estándar del bot. */
+export function parseBotUserMessage(text: string): ParsedBotUserMessage | null {
+  const match = BOT_USER_MESSAGE_RE.exec(text.trim());
+  if (!match) return null;
+  return {
+    title: match[1],
+    emoji: match[2],
+    body: match[3],
+  };
+}
+
+/** Reensambla el mensaje estándar del bot sin alterar título ni emoji. */
+export function rebuildBotUserMessage(
+  title: string,
+  emoji: string,
+  body: string
+): string {
+  return formatBotUserMessage(title, emoji, body);
+}
+
 export const normalizeMetadata = (value: unknown): ConversationMetadata => {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     return value as ConversationMetadata;
