@@ -34,6 +34,7 @@ import {
   MENU_SUGGESTION_ORDER,
 } from '../helpers/complementaryMenu.helper';
 import { getReactContext } from './_context';
+import { createOnlinePaymentLink } from '../services/payment/payment.service';
 
 const toJson = (data: unknown): string => {
   try {
@@ -843,6 +844,54 @@ export const getBusinessInfoTool = new DynamicStructuredTool<
   },
 });
 
+// ---------------------------------------------------------------------------
+// create_payment_link
+// ---------------------------------------------------------------------------
+
+const createPaymentLinkSchema = z.object({
+  method: z
+    .enum(['online', 'cash'])
+    .default('online')
+    .describe('Método de pago: "online" para Mercado Pago, "cash" para efectivo.'),
+});
+type CreatePaymentLinkInput = z.infer<typeof createPaymentLinkSchema>;
+
+export const createPaymentLinkTool = new DynamicStructuredTool<
+  typeof createPaymentLinkSchema,
+  CreatePaymentLinkInput
+>({
+  name: 'create_payment_link',
+  description:
+    'Genera (o reusa) un link de pago online (Mercado Pago) para el carrito activo del cliente cuando el cliente elige pagar online en texto libre. Devuelve init_point para incluir en el mensaje al cliente. Usar solo cuando el cliente ya eligió pagar online.',
+  schema: createPaymentLinkSchema,
+  func: async ({ method }: CreatePaymentLinkInput, _runManager, config?: RunnableConfig) => {
+    const { businessId, customerPhone } = getReactContext(config);
+
+    if (method === 'cash') {
+      return toJson({
+        method: 'cash',
+        message: 'El cliente eligió pagar en efectivo. Confirmale que pagará al recibir el pedido.',
+      });
+    }
+
+    const result = await createOnlinePaymentLink(businessId, customerPhone);
+
+    if (!result) {
+      return toJson({
+        error: 'no_payment_provider_or_empty_cart',
+        message: 'No se pudo generar el link de pago. Es posible que el carrito esté vacío o el negocio no tenga Mercado Pago configurado.',
+      });
+    }
+
+    return toJson({
+      method: 'online',
+      initPoint: result.initPoint,
+      isNew: result.isNew,
+      paymentIntentId: result.paymentIntentId,
+    });
+  },
+});
+
 export const allReactTools = [
   searchProductsTool,
   getProductsDetailsByIdsTool,
@@ -856,4 +905,5 @@ export const allReactTools = [
   checkProductAvailabilityTool,
   getComplementarySuggestionsTool,
   getBusinessInfoTool,
+  createPaymentLinkTool,
 ];

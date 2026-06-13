@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma';
 import { getBusinessConfig } from '../services/businessConfig.service';
 import { workerTextMessages } from './textMessages';
 import { buildListMessageFromButtons } from '../whatsappBuilders';
+import { expireOrphanedIntents } from '../services/payment/payment.service';
 
 export const processDraftOrderTimeouts = async () => {
 
@@ -110,6 +111,12 @@ export const processDraftOrderTimeouts = async () => {
          * Expiration
          */
         if (remainingMinutes <= 0) {
+
+            // Expirar payment_intents pendientes antes de eliminar el draft
+            await prisma.payment_intent.updateMany({
+                where: { draft_order_id: order.id, status: 'pending' },
+                data: { status: 'expired', updated_at: new Date() }
+            });
 
             await prisma.draft_order_item.deleteMany({
                 where: { draft_order_id: order.id }

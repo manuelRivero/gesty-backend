@@ -56,6 +56,9 @@ export enum ConversationIntent {
   // === Selección de tipo de entrega ===
   SELECT_DELIVERY = 'SELECT_DELIVERY',     // Botón "Enviar a domicilio"
   SELECT_TAKE_AWAY = 'SELECT_TAKE_AWAY',   // Botón "Retirar en local"
+  // === Selección de método de pago ===
+  PAY_ONLINE = 'PAY_ONLINE',              // Botón "💳 Pago online"
+  PAY_CASH = 'PAY_CASH',                  // Botón "💵 Efectivo"
   // adress intents
   ONBOARDING_START = 'ONBOARDING_START',
   ONBOARDING_SUBMIT_ADDRESS_TEXT = 'ONBOARDING_SUBMIT_ADDRESS_TEXT',

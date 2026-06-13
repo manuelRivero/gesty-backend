@@ -58,6 +58,18 @@ const envSchema = z.object({
     .transform((v) => v === 'true' || v === '1'),
 
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+
+  /**
+   * Clave maestra AES-256 (32 bytes en base64) para cifrar tokens de providers de pago.
+   * Generar con: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+   */
+  PAYMENT_PROVIDER_ENCRYPTION_KEY: z.string().optional(),
+
+  /**
+   * URL base pública del servidor (para construir notification_url en Mercado Pago).
+   * Ejemplo: https://mi-servidor.example.com
+   */
+  MERCADO_PAGO_WEBHOOK_BASE_URL: z.string().optional(),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

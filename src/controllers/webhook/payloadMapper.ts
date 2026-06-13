@@ -162,6 +162,13 @@ export const detectIntentFromPayload = (
     return buildInteractiveResult(ConversationIntent.SELECT_TAKE_AWAY, payloadId);
   }
 
+  if (payloadId === 'PAY_ONLINE') {
+    return buildInteractiveResult(ConversationIntent.PAY_ONLINE, payloadId);
+  }
+  if (payloadId === 'PAY_CASH') {
+    return buildInteractiveResult(ConversationIntent.PAY_CASH, payloadId);
+  }
+
   // IDs estáticos
   const staticMap: Record<string, ConversationIntent> = {
     ORDER_SEARCH_PAGE: ConversationIntent.ORDER_SEARCH_PAGE,

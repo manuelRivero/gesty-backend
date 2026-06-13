@@ -27,6 +27,7 @@ import { mainGraph } from './graph/mainGraph';
 import { verifyWebhook as verifyWebhookService } from './services/whatsapp.service';
 import { processDraftOrderTimeouts } from './workers/draftOrders';
 import type { WhatsAppWebhookPayload } from './controllers/webhook/types';
+import { mercadoPagoWebhookHandler } from './controllers/payments/mercadoPagoWebhook.controller';
 
 const DRAFT_ORDER_TICK_MS = 60_000;
 setInterval(() => {
@@ -61,6 +62,7 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminOrdersRoutes);
+app.post('/api/payments/mercado-pago/webhook', mercadoPagoWebhookHandler);
 app.use('/api/super-admin', superAdminRoutes);
 app.use('/checkin', checkinRoutes);
 app.use('/api/public', publicRoutes);

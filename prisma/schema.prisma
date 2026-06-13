@@ -49,8 +49,10 @@ model business {
   reservation_block      reservation_block[]
   reservation_config     reservation_config?
   reservation_slot       reservation_slot[]
-  subscription           subscription?
-  table                  table[]
+  subscription            subscription?
+  table                   table[]
+  business_payment_provider business_payment_provider[]
+  payment_intent          payment_intent[]
 }
 
 model business_user {
@@ -167,8 +169,10 @@ model draft_order {
   expires_at       DateTime?          @db.Timestamptz(6)
   reminder_sent_at DateTime?          @db.Timestamptz(6)
   fulfillment_type FulfillmentType?
+  payment_method   String?
   business         business?          @relation(fields: [business_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   draft_order_item draft_order_item[]
+  payment_intent   payment_intent[]
 
   @@index([status, expires_at], map: "idx_draft_order_timeout")
 }
@@ -284,8 +288,10 @@ model orders {
   customer_address_id       String?            @db.Uuid
   delivery_address_snapshot Json?              @default("{}")
   payment_status            OrderPaymentStatus @default(unpaid)
+  payment_method            String?
   fulfillment_type          FulfillmentType?
   order_item                order_item[]
+  payment_intent            payment_intent[]
   business                  business           @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   conversation              conversation?      @relation(fields: [conversation_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   currency                  currency           @relation(fields: [currency_code], references: [code], onDelete: NoAction, onUpdate: NoAction)
@@ -565,6 +571,46 @@ model subscription {
 
   @@index([business_id], map: "idx_subscription_business_id")
   @@index([stripe_customer_id], map: "idx_subscription_customer_id")
+}
+
+model business_payment_provider {
+  id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id              String   @db.Uuid
+  provider                 String
+  access_token_encrypted   String
+  public_key               String?
+  webhook_secret           String?
+  is_sandbox               Boolean  @default(false)
+  is_active                Boolean  @default(true)
+  created_at               DateTime @default(now()) @db.Timestamptz(6)
+  updated_at               DateTime @default(now()) @db.Timestamptz(6)
+  business                 business @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([business_id, provider])
+  @@index([business_id], map: "idx_bpp_business")
+}
+
+model payment_intent {
+  id                   String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id          String      @db.Uuid
+  draft_order_id       String      @db.Uuid
+  order_id             String?     @db.Uuid
+  provider             String      @default("mercado_pago")
+  external_id          String?
+  preference_id        String?
+  init_point           String?
+  status               String      @default("pending")
+  amount               Decimal     @db.Decimal(12, 2)
+  currency             String      @db.Char(3)
+  raw_webhook_payload  Json?
+  created_at           DateTime    @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime    @default(now()) @db.Timestamptz(6)
+  business             business    @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  draft_order          draft_order @relation(fields: [draft_order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  orders               orders?     @relation(fields: [order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([draft_order_id, status], map: "idx_pi_draft_status")
+  @@index([external_id], map: "idx_pi_external_id")
 }
 
 /// Flujo operativo del pedido (logística). No indica si ya se cobró — ver `payment_status`.
