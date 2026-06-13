@@ -112,10 +112,10 @@ export const processDraftOrderTimeouts = async () => {
          */
         if (remainingMinutes <= 0) {
 
-            // Expirar payment_intents pendientes antes de eliminar el draft
-            await prisma.payment_intent.updateMany({
-                where: { draft_order_id: order.id, status: 'pending' },
-                data: { status: 'expired', updated_at: new Date() }
+            // Eliminar todos los payment_intents del draft antes de borrarlo
+            // (updateMany solo sobre 'pending' dejaba otros estados con FK activa)
+            await prisma.payment_intent.deleteMany({
+                where: { draft_order_id: order.id }
             });
 
             await prisma.draft_order_item.deleteMany({
