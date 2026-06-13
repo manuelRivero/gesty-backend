@@ -9,6 +9,7 @@ import type {
 } from '../../domain/intent/whatsappTemplates';
 import { ConversationIntent } from '../../types/conversationIntent';
 import { getSmallChatLlm } from '../../config/llm';
+import { buildHumanizeSystemPrompt } from '../../prompts/botPersonality';
 import {
   parseBotUserMessage,
   rebuildBotUserMessage,
@@ -23,14 +24,7 @@ const INTENTS_WITH_LLM_BODY = new Set<string>([
   ConversationIntent.PRODUCT_ATTRIBUTE_QUESTION,
 ]);
 
-const SYSTEM_PROMPT = `Sos un asistente de un restaurante por WhatsApp. Reescribí el cuerpo del mensaje con tono cálido, natural y breve, como un bot inteligente que conversa.
-
-Reglas estrictas:
-- Devolvé SOLO el cuerpo reescrito, sin título, sin emoji 🤖, sin markdown de encabezado.
-- Mantené el mismo significado e información factual (números, fechas, precios, nombres de productos, instrucciones obligatorias).
-- Conservá las negritas de WhatsApp con un solo asterisco a cada lado (*así*).
-- No inventes datos ni agregues preguntas nuevas salvo un cierre muy breve si encaja.
-- Español rioplatense (vos), máximo 4 oraciones cortas.`;
+const SYSTEM_PROMPT = buildHumanizeSystemPrompt();
 
 export async function humanizeBotBody(rawBody: string): Promise<string> {
   const trimmed = rawBody.trim();
