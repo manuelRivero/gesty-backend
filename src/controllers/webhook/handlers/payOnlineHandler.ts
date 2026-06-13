@@ -45,9 +45,8 @@ export class PayOnlineHandler implements IntentHandler {
         ? `*¡Tu link de pago está listo!* 💳\n\nHacé click para pagar de forma segura con Mercado Pago:\n\n${result.initPoint}\n\n_Una vez confirmado el pago, recibirás la confirmación de tu pedido._`
         : `*Tu link de pago activo* 💳\n\nUsá este link para completar tu pago:\n\n${result.initPoint}\n\n_Completá el pago para confirmar tu pedido._`;
 
-      return textResponse('🤖', [
-        { type: 'image', dataUrl: getMpBannerDataUrl() },
-        { type: 'text', message: `🤖\n\n${linkText}` },
+      return textResponse(`🤖\n\n${linkText}`, [
+        { type: 'image', dataUrl: getMpBannerDataUrl(), beforeContent: true },
       ]);
     } catch (err) {
       console.error('[PayOnlineHandler] error:', err);

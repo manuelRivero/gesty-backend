@@ -3,6 +3,7 @@ import { ConversationIntent } from '../../../types/conversationIntent';
 import { noResponse, interactiveResponse, textResponse } from '../utils';
 import { prisma } from '../../../lib/prisma';
 import type { WhatsAppInteractiveMessage } from '../../../domain/intent/whatsappTemplates';
+import { getMpBannerDataUrl } from '../../../assets/mpBanner';
 
 export class CheckoutHandler implements IntentHandler {
   readonly command = ConversationIntent.CHECKOUT;
@@ -51,7 +52,8 @@ export class CheckoutHandler implements IntentHandler {
       });
       if (existingIntent?.init_point) {
         return textResponse(
-          `🤖\n\n*Tu link de pago online* 💳\n\nYa generamos un link para tu pedido. Podés usarlo para completar el pago:\n\n${existingIntent.init_point}`
+          `🤖\n\n*Tu link de pago online* 💳\n\nYa generamos un link para tu pedido. Podés usarlo para completar el pago:\n\n${existingIntent.init_point}`,
+          [{ type: 'image', dataUrl: getMpBannerDataUrl(), beforeContent: true }]
         );
       }
     }

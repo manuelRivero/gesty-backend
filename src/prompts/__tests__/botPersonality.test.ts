@@ -26,4 +26,10 @@ describe('botPersonality', () => {
   it('desalienta frases plantilla robóticas', () => {
     expect(BOT_PERSONALITY_PROMPT).toMatch(/Tenemos varias opciones de X disponibles/i);
   });
+
+  it('incluye atributos estilo Meta Business Agent', () => {
+    expect(BOT_PERSONALITY_PROMPT).toMatch(/Meta Business Agent/i);
+    expect(BOT_PERSONALITY_PROMPT).toMatch(/Empático y presente/i);
+    expect(BOT_PERSONALITY_PROMPT).toMatch(/Proactivo pero no invasivo/i);
+  });
 });

@@ -55,7 +55,7 @@ export interface EnrichedContext extends WebhookContext {
 }
 
 export type HandlerFollowUp =
-  | { type: 'image'; dataUrl: string }
+  | { type: 'image'; dataUrl: string; beforeContent?: boolean }
   | { type: 'text'; message: string }
   | { type: 'list'; listMessage: WhatsAppListMessage }
   | { type: 'interactive'; message: WhatsAppInteractiveMessage };

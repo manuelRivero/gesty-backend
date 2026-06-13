@@ -1,6 +1,6 @@
 // src/controllers/webhook/sender.ts
 import { WhatsAppSenderService } from '../../services/whatsappSender.service';
-import { WebhookContext, HandlerResult } from './types';
+import { WebhookContext, HandlerResult, HandlerFollowUp } from './types';
 import { WhatsAppListMessage, WhatsAppInteractiveMessage } from '../../domain/intent/whatsappTemplates';
 
 const sender = new WhatsAppSenderService();
@@ -41,6 +41,23 @@ export const sendResponse = async (
 ): Promise<void> => {
   console.log('[SendResponse] Sending response:', result);
 
+  const followUps = result.followUps ?? [];
+  const beforeImages = followUps.filter(
+    (follow): follow is Extract<HandlerFollowUp, { type: 'image' }> =>
+      follow.type === 'image' && follow.beforeContent === true
+  );
+  const afterFollowUps = followUps.filter(
+    (follow) => !(follow.type === 'image' && follow.beforeContent === true)
+  );
+
+  for (const follow of beforeImages) {
+    await sender.sendImageFromDataUrl({
+      phoneNumberId: ctx.phoneNumberId,
+      to: ctx.to,
+      dataUrl: follow.dataUrl,
+    });
+  }
+
   if (!result.isInteractive) {
     await sender.sendTextMessage({
       phoneNumberId: ctx.phoneNumberId,
@@ -65,11 +82,11 @@ export const sendResponse = async (
     }
   }
 
-  if (!result.followUps?.length) {
+  if (!afterFollowUps.length) {
     return;
   }
 
-  for (const follow of result.followUps) {
+  for (const follow of afterFollowUps) {
     if (follow.type === 'image') {
       await sender.sendImageFromDataUrl({
         phoneNumberId: ctx.phoneNumberId,
