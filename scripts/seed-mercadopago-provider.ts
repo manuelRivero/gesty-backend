@@ -68,10 +68,10 @@ import { encryptToken } from '../src/services/payment/crypto';
 function parseArgs(argv: string[]): Record<string, string | boolean> {
   const result: Record<string, string | boolean> = {};
   for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
+    const arg = argv[i].trim();
     if (arg.startsWith('--')) {
-      const key = arg.slice(2);
-      const next = argv[i + 1];
+      const key = arg.slice(2).trim();
+      const next = argv[i + 1]?.trim();
       if (!next || next.startsWith('--')) {
         result[key] = true;
       } else {
