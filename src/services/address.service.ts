@@ -211,8 +211,9 @@ export class AddressService {
     return 'No pude recuperar tu dirección anterior. Empecemos de nuevo.\n\n📍 Decime tu dirección o compartí tu ubicación.';
   }
 
-  private async saveAddress(ctx: EnrichedContext): Promise<string | WhatsAppListMessage> {
+  private async saveAddress(ctx: EnrichedContext): Promise<string | WhatsAppListMessage | WhatsAppInteractiveMessage> {
     const meta = ctx.conversationState.metadata;
+    const pendingAction = meta?.pending_address_action;
 
     await prisma.customer_address.updateMany({
       where: { customer_id: ctx.customer.id },
@@ -237,6 +238,24 @@ export class AddressService {
     }
 
     await this.clearState(ctx);
+
+    if (pendingAction === 'CHECKOUT') {
+      return {
+        type: 'interactive',
+        interactive: {
+          type: 'button',
+          body: {
+            text: '🤖\n\n✅ *Dirección guardada* 📍\n\n*¿Cómo querés pagar?* 💳\n\nElegí el método de pago para confirmar tu pedido.',
+          },
+          action: {
+            buttons: [
+              { type: 'reply', reply: { id: 'PAY_ONLINE', title: '💳 Pago online' } },
+              { type: 'reply', reply: { id: 'PAY_CASH', title: '💵 Efectivo' } },
+            ],
+          },
+        },
+      } as WhatsAppInteractiveMessage;
+    }
 
     const menu = await buildSmallTalkMenu(ctx);
     if (menu && typeof menu !== 'string') {
@@ -303,6 +322,7 @@ export class AddressService {
       temp_lng,
       temp_zone_id,
       awaiting_address,
+      pending_address_action,
       ...rest
     } = ctx.conversationState.metadata ?? {};
     await updateConversationState(ctx.conversationId, { metadata: rest });

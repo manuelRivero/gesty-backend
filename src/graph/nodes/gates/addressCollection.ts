@@ -66,12 +66,15 @@ export const addressCollectionNode = async (
 
   if (isCartIntent) {
     if (!meta.awaiting_address) {
-      await patchConversationMetadata(conversation.id, { awaiting_address: true });
+      await patchConversationMetadata(conversation.id, {
+        awaiting_address: true,
+        pending_address_action: currentIntent ?? null,
+      });
     }
 
     const content = outOfCoverage
-      ? 'Tu dirección de entrega quedó fuera de nuestra zona de cobertura. 🚫\n\nIngresá una nueva dirección o compartí tu ubicación para continuar con tu pedido.'
-      : 'Para continuar con tu pedido necesito tu dirección de entrega. 📍\n\nIndicame la calle y número o compartí tu ubicación.';
+      ? '🤖\n\nTu dirección de entrega quedó fuera de nuestra zona de cobertura. 🚫\n\nIngresá una nueva dirección o compartí tu ubicación para continuar con tu pedido.'
+      : '🤖\n\nPara continuar con tu pedido necesito tu dirección de entrega. 📍\n\nIndicame la calle y número o compartí tu ubicación.';
 
     return { handlerResult: { content, isInteractive: false } };
   }
@@ -82,7 +85,7 @@ export const addressCollectionNode = async (
     const ask: HandlerFollowUp = {
       type: 'text',
       message:
-        'Por cierto, para poder procesar pedidos necesito tu dirección de entrega. ¿Me la podés indicar o compartir tu ubicación? 📍',
+        '🤖\n\nPor cierto, para poder procesar pedidos necesito tu dirección de entrega. ¿Me la podés indicar o compartir tu ubicación? 📍',
     };
     return {
       handlerResult: {
