@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import {
+  BusinessConfigValidationError,
   deleteBusinessConfig,
   getBusinessConfig,
   upsertBusinessConfig
@@ -26,21 +27,20 @@ const configPatchSchema = z.object({
   checkout_enabled: z.boolean().optional(),
   delivery_enabled: z.boolean().optional(),
   takeaway_enabled: z.boolean().optional(),
-  pickup_instructions: z.string().nullable().optional(),
+  pickup_instructions: z
+    .union([z.string(), z.null()])
+    .optional()
+    .transform((value) => {
+      if (typeof value !== "string") {
+        return value;
+      }
+      const trimmed = value.trim();
+      return trimmed === "" ? null : trimmed;
+    }),
   humanize_messages: z.boolean().optional(),
   operate_when_closed: z.boolean().optional(),
   orders_when_closed: z.boolean().optional()
-}).refine(
-  (data) => {
-    const disableDelivery = data.delivery_enabled === false;
-    const disableTakeaway = data.takeaway_enabled === false;
-    return !(disableDelivery && disableTakeaway);
-  },
-  {
-    message: "Al menos uno de delivery_enabled o takeaway_enabled debe ser true",
-    path: ["delivery_enabled"]
-  }
-);
+});
 
 export async function getAdminBusinessConfig(req: Request, res: Response) {
   const businessId = req.user?.businessId;
@@ -63,8 +63,15 @@ export async function createAdminBusinessConfig(req: Request, res: Response) {
       details: parsed.error.flatten()
     });
   }
-  const cfg = await upsertBusinessConfig(businessId, parsed.data);
-  return res.status(201).json(cfg);
+  try {
+    const cfg = await upsertBusinessConfig(businessId, parsed.data);
+    return res.status(201).json(cfg);
+  } catch (err) {
+    if (err instanceof BusinessConfigValidationError) {
+      return res.status(400).json({ error: err.message });
+    }
+    throw err;
+  }
 }
 
 export async function patchAdminBusinessConfig(req: Request, res: Response) {
@@ -79,8 +86,15 @@ export async function patchAdminBusinessConfig(req: Request, res: Response) {
       details: parsed.error.flatten()
     });
   }
-  const cfg = await upsertBusinessConfig(businessId, parsed.data);
-  return res.json(cfg);
+  try {
+    const cfg = await upsertBusinessConfig(businessId, parsed.data);
+    return res.json(cfg);
+  } catch (err) {
+    if (err instanceof BusinessConfigValidationError) {
+      return res.status(400).json({ error: err.message });
+    }
+    throw err;
+  }
 }
 
 export async function removeAdminBusinessConfig(req: Request, res: Response) {

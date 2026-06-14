@@ -54,6 +54,42 @@ const DEFAULT_CONFIG: BusinessConfig = {
 
 export type BusinessConfigPatch = Partial<BusinessConfig>;
 
+export class BusinessConfigValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BusinessConfigValidationError";
+  }
+}
+
+function normalizePickupInstructions(
+  value: string | null | undefined
+): string | null | undefined {
+  if (typeof value !== "string") {
+    return value;
+  }
+  const trimmed = value.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+function applyBusinessConfigRules(config: BusinessConfig): BusinessConfig {
+  const next: BusinessConfig = {
+    ...config,
+    pickup_instructions: normalizePickupInstructions(config.pickup_instructions) ?? null
+  };
+
+  if (!next.operate_when_closed) {
+    next.orders_when_closed = false;
+  }
+
+  if (!next.delivery_enabled && !next.takeaway_enabled) {
+    throw new BusinessConfigValidationError(
+      "Al menos uno de delivery_enabled o takeaway_enabled debe ser true"
+    );
+  }
+
+  return next;
+}
+
 async function fetchBusinessConfigRow(
   businessId: string
 ): Promise<BusinessConfig | null> {
@@ -101,10 +137,10 @@ export async function upsertBusinessConfig(
   patch: BusinessConfigPatch
 ): Promise<BusinessConfig> {
   const current = await getBusinessConfig(businessId);
-  const next: BusinessConfig = {
+  const next = applyBusinessConfigRules({
     ...current,
     ...patch
-  };
+  });
 
   await prisma.$executeRaw`
     INSERT INTO business_config (
@@ -188,9 +224,6 @@ export async function upsertBusinessConfig(
   return next;
 }
 
-export async function deleteBusinessConfig(businessId: string): Promise<void> {
-  await prisma.$executeRaw`
-    DELETE FROM business_config
-    WHERE business_id = ${businessId}::uuid
-  `;
+export async function deleteBusinessConfig(businessId: string): Promise<BusinessConfig> {
+  return upsertBusinessConfig(businessId, { ...DEFAULT_CONFIG });
 }

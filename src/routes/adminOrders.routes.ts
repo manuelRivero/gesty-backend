@@ -75,6 +75,13 @@ import {
   getAdminBusiness,
   patchAdminBusiness
 } from "../controllers/adminBusiness.controller";
+import {
+  getPaymentProviderById,
+  getPaymentProviders,
+  patchPaymentProvider,
+  postPaymentProvider,
+  removePaymentProvider
+} from "../controllers/adminPaymentProviders.controller";
 import { authenticateJwt, requireRoles } from "../middleware/auth.middleware";
 
 const router = Router();
@@ -191,6 +198,32 @@ router.delete(
   "/reservation-slots/:id",
   requireRoles("OWNER", "ADMIN"),
   removeReservationSlot
+);
+
+router.get(
+  "/payment-providers",
+  requireRoles("OWNER", "ADMIN"),
+  getPaymentProviders
+);
+router.get(
+  "/payment-providers/:id",
+  requireRoles("OWNER", "ADMIN"),
+  getPaymentProviderById
+);
+router.post(
+  "/payment-providers",
+  requireRoles("OWNER", "ADMIN"),
+  postPaymentProvider
+);
+router.patch(
+  "/payment-providers/:id",
+  requireRoles("OWNER", "ADMIN"),
+  patchPaymentProvider
+);
+router.delete(
+  "/payment-providers/:id",
+  requireRoles("OWNER", "ADMIN"),
+  removePaymentProvider
 );
 
 router.get("/reservations", getReservations);
