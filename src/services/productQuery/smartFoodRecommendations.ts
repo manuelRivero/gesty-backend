@@ -1,6 +1,8 @@
 import type { business as Business, MenuCategoryTag } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { generateAIResponse } from '../ai/openai.service';
+import { resolvePersonalityForBusiness } from '../botPersonality.service';
+import { buildFoodRecommenderSystemPrompt } from '../../prompts/botPersonality';
 import { MenuService, type MenuItemSearchResult } from '../menu.service';
 import type { RecommendationCartSummary } from './recommendationCartSummary';
 import { computeMainPortionCoverageFromDraft } from './recommendationCartSummary';
@@ -734,8 +736,8 @@ export async function getSmartRecommendations(params: {
   const suppressLlmNotes = strictCategoryTag != null;
 
   try {
-    const system =
-      'Sos el mozo virtual: respondés solo JSON (ids únicos). Elegís candidatos con el resumen interno; en "reason" no hables de porciones ni comensales (eso va aparte). No digas "ya tenés" ni "tu pedido". Campos: recommendations (reason, suggestedQuantity opcional), note y progress opcionales.';
+    const { promptText } = await resolvePersonalityForBusiness(business.id);
+    const system = buildFoodRecommenderSystemPrompt(promptText);
     const user = FOOD_RECOMMENDER_PROMPT(
       trimmedUtterance,
       candidates,

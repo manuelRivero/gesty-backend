@@ -6,6 +6,7 @@ import { createMpPreference, fetchMpPayment } from './mercadoPago.service';
 import { createOrderFromDraft } from '../checkout.service';
 import { emitAdminOrderCreated } from '../../socket/adminSocket';
 import { sendTextMessageNoCtx, sendImageMessageNoCtx } from './messageHelpers';
+import { formatBotUserMessage } from '../productQuery/utils';
 
 export interface PaymentLinkResult {
   initPoint: string;
@@ -158,17 +159,21 @@ export const handleApprovedPayment = async (
   // Notificar al cliente
   const phoneId = business.whatsapp_phone_id;
   if (phoneId) {
-    const msg =
-      `🤖\n\n✅ *¡Pago recibido!*\n\n` +
-      `Número: #${orderId}\n` +
-      `Total: $${total}\n` +
-      `Estado: Confirmado`;
+    const msg = formatBotUserMessage(
+      '¡Pago recibido!',
+      '✅',
+      `Número: #${orderId}\nTotal: $${total}\nEstado: Confirmado`
+    );
     await sendTextMessageNoCtx(phoneId, customer.phone_number, msg);
     await sendImageMessageNoCtx(phoneId, customer.phone_number, qrDataUrl);
     await sendTextMessageNoCtx(
       phoneId,
       customer.phone_number,
-      '¡Gracias por tu pedido! Te avisaremos por este medio cuando sea despachado.'
+      formatBotUserMessage(
+        '¡Gracias!',
+        '🙌',
+        'Gracias por tu pedido. Te avisaremos por este medio cuando sea despachado.'
+      )
     );
   }
 };

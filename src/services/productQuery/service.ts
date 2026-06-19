@@ -243,6 +243,7 @@ export async function executeProductQuery(
   });
 
   const aiResponse = await generateProductAwareResponse({
+    businessId: ctx.business.id,
     product: {
       name: matchedItem.name,
       description: matchedItem.description,

@@ -122,14 +122,22 @@ export async function materializeComplementSuggestionsList(
   const snapshot = parseComplementSnapshot(raw);
   if (!snapshot) {
     return textResponse(
-      '🤖\n\n*Las sugerencias ya no están disponibles.*\n\nExplorá el menú para seguir armando tu pedido.'
+      formatBotUserMessage(
+        'Sugerencias no disponibles',
+        '📋',
+        'Explorá el menú para seguir armando tu pedido.'
+      )
     );
   }
 
   if (snapshot.businessId !== ctx.business.id) {
     await clearComplementSuggestionSnapshot(ctx.conversation.id);
     return textResponse(
-      '🤖\n\n*Las sugerencias expiraron.*\n\nElegí platos desde el menú.'
+      formatBotUserMessage(
+        'Sugerencias expiradas',
+        '⏰',
+        'Elegí platos desde el menú.'
+      )
     );
   }
 
@@ -146,7 +154,11 @@ export async function materializeComplementSuggestionsList(
   if (!draft) {
     await clearComplementSuggestionSnapshot(ctx.conversation.id);
     return textResponse(
-      '🤖\n\n*Tu pedido cambió; las sugerencias ya no aplican.*\n\nSeguí comprando desde el menú.'
+      formatBotUserMessage(
+        'Pedido actualizado',
+        '🛒',
+        'Tu pedido cambió; las sugerencias ya no aplican.\n\nSeguí comprando desde el menú.'
+      )
     );
   }
 
@@ -179,7 +191,11 @@ export async function materializeComplementSuggestionsList(
   if (ordered.length === 0) {
     await clearComplementSuggestionSnapshot(ctx.conversation.id);
     return textResponse(
-      '🤖\n\n*Los productos sugeridos ya no están disponibles.*\n\nProbá otra opción desde el menú.'
+      formatBotUserMessage(
+        'Productos no disponibles',
+        '📋',
+        'Los productos sugeridos ya no están disponibles.\n\nProbá otra opción desde el menú.'
+      )
     );
   }
 

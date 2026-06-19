@@ -28,6 +28,10 @@ import {
   shouldBlockForMissingPeopleCount,
 } from '../../../services/peopleCountGate.service';
 import {
+  CLOSED_ORDER_CANCELLED_BOT_MESSAGE,
+  NO_PENDING_CLOSED_ORDER_BOT_MESSAGE,
+} from '../../../services/productQuery/botMessages';
+import {
   normalizeMetadata,
   partySizeMetadataFields,
 } from '../../../services/productQuery/utils';
@@ -177,7 +181,7 @@ export const interactiveSubgraphNode = async (
       const meta = normalizeMetadata(enrichedBase.conversationState?.metadata);
       const pending = meta.pending_closed_add_item;
       if (!pending) {
-        return { handlerResult: { content: '🤖\n\nNo hay pedido pendiente para confirmar.', isInteractive: false } };
+        return { handlerResult: { content: NO_PENDING_CLOSED_ORDER_BOT_MESSAGE, isInteractive: false } };
       }
       await omitConversationMetadataKeys(conversation.id, ['pending_closed_add_item']);
       const pendingCtx = { ...enrichedBase, payloadId: pending } as unknown as EnrichedContext;
@@ -190,7 +194,7 @@ export const interactiveSubgraphNode = async (
 
     if (ordersWhenClosed && payloadId === CANCEL_CLOSED_ORDER) {
       await omitConversationMetadataKeys(conversation.id, ['pending_closed_add_item']);
-      return { handlerResult: { content: '🤖\n\nEntendido, cancelamos el pedido. ¡Hasta pronto! 👋', isInteractive: false } };
+      return { handlerResult: { content: CLOSED_ORDER_CANCELLED_BOT_MESSAGE, isInteractive: false } };
     }
   }
 
@@ -264,7 +268,7 @@ export const nlpSubgraphNode = async (
       if (pendingResult) return { handlerResult: pendingResult };
     } else if (isNegative) {
       await omitConversationMetadataKeys(conversation.id, ['pending_closed_add_item']);
-      return { handlerResult: { content: '🤖\n\nEntendido, cancelamos el pedido. ¡Hasta pronto! 👋', isInteractive: false } };
+      return { handlerResult: { content: CLOSED_ORDER_CANCELLED_BOT_MESSAGE, isInteractive: false } };
     } else {
       // Respuesta no clara → re-mostrar confirmación
       const confirmation = buildClosedOrderConfirmationMessage(state.businessStatus?.nextOpenText ?? null);

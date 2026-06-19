@@ -2,12 +2,19 @@ import type { business } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { resetIfNeeded } from "./ai/aiUsage.service";
 import { getEffectiveAiTokenLimit } from "./ai/aiLimits";
+import { formatBotUserMessage } from "./productQuery/utils";
 
 const MESSAGES = {
-  trialDateEnded:
-    "⏳ Tu período de prueba finalizó. Contratá un plan para seguir usando el asistente automático.",
-  trialTokensExhausted:
-    "⚡ Se agotaron los tokens de tu período de prueba. Actualizá tu plan para continuar."
+  trialDateEnded: formatBotUserMessage(
+    'Período de prueba',
+    '⏳',
+    'Tu período de prueba finalizó. Contratá un plan para seguir usando el asistente automático.'
+  ),
+  trialTokensExhausted: formatBotUserMessage(
+    'Tokens agotados',
+    '⚡',
+    'Se agotaron los tokens de tu período de prueba. Actualizá tu plan para continuar.'
+  ),
 } as const;
 
 /**

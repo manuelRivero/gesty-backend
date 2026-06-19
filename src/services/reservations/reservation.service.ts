@@ -18,7 +18,7 @@ import {
   updateReservationStatus,
 } from '../../repositories/reservation.repository';
 import { updateConversationState } from '../../repositories/conversationState.repository';
-import { formatBotUserMessage } from '../productQuery/utils';
+import { formatBotUserMessage, parseBotUserMessage } from '../productQuery/utils';
 import { buildListMessageFromButtons } from '../../whatsappBuilders';
 import { emitAdminReservationEditStarted } from '../../socket/adminSocket';
 import { generateReservationQR } from '../../utils/reservationQr';
@@ -140,7 +140,11 @@ export function buildActiveReservationManagementMessage(): WhatsAppInteractiveMe
       type: 'button',
       header: { type: 'text', text: '' },
       body: {
-        text: '🤖\n\n📋 *Reserva activa* ⚠️\n\nYa tenés una reserva activa.\n\nPodés gestionarla desde estas opciones:'
+        text: formatBotUserMessage(
+          'Reserva activa',
+          '⚠️',
+          'Ya tenés una reserva activa.\n\nPodés gestionarla desde estas opciones:'
+        ),
       },
       footer: { text: 'Elegí una opción' },
       action: {
@@ -164,12 +168,20 @@ export function buildActiveReservationManagementMessage(): WhatsAppInteractiveMe
 }
 
 function buildReservationErrorMessage(text: string): WhatsAppInteractiveMessage {
+  const trimmed = text.trim();
+  const bodyText = parseBotUserMessage(trimmed)
+    ? trimmed
+    : formatBotUserMessage(
+        'Reserva',
+        '⚠️',
+        trimmed.replace(/^🤖\n\n/, '')
+      );
   return {
     type: 'interactive',
     interactive: {
       type: 'button',
       header: { type: 'text', text: '' },
-      body: { text: text.startsWith('🤖') ? text : `🤖\n\n${text}` },
+      body: { text: bodyText },
       footer: { text: 'Elegí una opción' },
       action: {
         buttons: [
@@ -281,7 +293,11 @@ export async function handleViewReservationIntent(
 ): Promise<HandlerResult> {
   if (!ctx.customer?.id) {
     return {
-      content: '🤖\n\nNo encontramos tu usuario.',
+      content: formatBotUserMessage(
+        'Usuario no encontrado',
+        'ℹ️',
+        'No encontramos tu usuario.'
+      ),
       isInteractive: false
     };
   }
@@ -292,7 +308,11 @@ export async function handleViewReservationIntent(
 
   if (!r) {
     return {
-      content: '🤖\n\nNo tenés reservas activas.',
+      content: formatBotUserMessage(
+        'Sin reservas activas',
+        '📋',
+        'No tenés reservas activas.'
+      ),
       isInteractive: false
     };
   }
@@ -320,7 +340,11 @@ export async function handleViewReservationIntent(
       { type: 'image', dataUrl: qrDataUrl },
       {
         type: 'text',
-        message: '🤖\n\n¡Gracias por reservar con nosotros! Te esperamos 🙌'
+        message: formatBotUserMessage(
+          '¡Gracias!',
+          '🙌',
+          'Gracias por reservar con nosotros. Te esperamos.'
+        ),
       }
     ]
   };
@@ -331,7 +355,11 @@ export async function handleViewQrIntent(
 ): Promise<HandlerResult> {
   if (!ctx.customer?.id) {
     return {
-      content: '🤖\n\nNo encontramos tu usuario.',
+      content: formatBotUserMessage(
+        'Usuario no encontrado',
+        'ℹ️',
+        'No encontramos tu usuario.'
+      ),
       isInteractive: false
     };
   }
@@ -351,7 +379,11 @@ export async function handleViewQrIntent(
   if (!r) {
     return {
       content:
-        '🤖\n\nNo encontré una reserva para mostrar el código.',
+        formatBotUserMessage(
+          'Reserva no encontrada',
+          'ℹ️',
+          'No encontré una reserva para mostrar el código.'
+        ),
       isInteractive: false
     };
   }
@@ -361,7 +393,11 @@ export async function handleViewQrIntent(
   );
 
   return {
-    content: '🤖\n\nAcá está tu código QR para el ingreso.',
+    content: formatBotUserMessage(
+      'Código QR',
+      '📱',
+      'Acá está tu código QR para el ingreso.'
+    ),
     isInteractive: false,
     followUps: [{ type: 'image', dataUrl: qrDataUrl }]
   };
@@ -377,7 +413,11 @@ export const handleReservationIntent = async (
     : null;
 
   if (businessConfig && !businessConfig.reservations_enabled) {
-    return '🤖\n\nLas reservas están deshabilitadas temporalmente para este negocio.';
+    return formatBotUserMessage(
+      'Reservas deshabilitadas',
+      '⏸️',
+      'Las reservas están deshabilitadas temporalmente para este negocio.'
+    );
   }
 
   const reservationMinLeadMinutes =
@@ -886,8 +926,11 @@ export const handleReservationIntent = async (
             ...(followUps ?? []),
             {
               type: 'text',
-              message:
-                '🤖\n\n¡Gracias por reservar con nosotros! Te esperamos 🙌'
+              message: formatBotUserMessage(
+                '¡Gracias!',
+                '🙌',
+                'Gracias por reservar con nosotros. Te esperamos.'
+              ),
             }
           ]
         };

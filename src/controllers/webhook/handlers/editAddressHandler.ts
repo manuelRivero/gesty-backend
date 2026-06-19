@@ -1,6 +1,7 @@
 import { EnrichedContext, HandlerResult, IntentHandler } from '../types';
 import { noResponse, textResponse } from '../utils';
 import { ConversationIntent } from '../../../types/conversationIntent';
+import { RETRY_ADDRESS_BOT_MESSAGE } from '../../../services/productQuery/botMessages';
 import { AddressService } from '../../../services/address.service';
 
 export class EditAddressHandler implements IntentHandler {
@@ -14,6 +15,6 @@ export class EditAddressHandler implements IntentHandler {
     const result = await new AddressService().startEdit(ctx);
     if (result === null) return noResponse();
     if (typeof result === 'string') return textResponse(result);
-    return textResponse('🤖\n\n*Perfecto, decime la dirección nuevamente*, calle y número o mandame tu ubicación actual 📍');
+    return textResponse(RETRY_ADDRESS_BOT_MESSAGE);
   }
 }

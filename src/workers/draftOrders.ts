@@ -89,7 +89,7 @@ export const processDraftOrderTimeouts = async () => {
                     }
                 ],
                 'Ver opciones',
-                '🤖\n\n*Recordatorio*',
+                '',
                 'Seleccioná una opción para continuar'
             );
 
@@ -143,7 +143,7 @@ export const processDraftOrderTimeouts = async () => {
                     }
                 ],
                 'Ver opciones',
-                '🤖\n\n*Pedido cancelado*',
+                '',
                 'Seleccioná una opción para continuar'
             );
 
@@ -261,7 +261,7 @@ export const processDraftOrderTimeouts = async () => {
         await sendResponseNoContext(
             conversation.business.whatsapp_phone_id,
             conversation.customer.phone_number,
-            `🤖\n\n${workerTextMessages.conversationIdleClosed}`
+            workerTextMessages.conversationIdleClosed
         );
         await prisma.conversation.update({
             where: { id: conversation.id },

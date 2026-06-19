@@ -2,6 +2,7 @@ import { prisma } from '../lib/prisma';
 import { EnrichedContext } from '../controllers/webhook/types';
 import { buildListMessageFromButtons } from '../whatsappBuilders';
 import type { WhatsAppListMessage } from '../domain/intent/whatsappTemplates';
+import { formatBotUserMessage } from './productQuery/utils';
 
 const baseButtons = [
   {
@@ -73,7 +74,11 @@ export const buildSmallTalkMenu = async (
 ): Promise<WhatsAppListMessage | string | null> => {
   const businessNameFromCtx = ctx.business?.name;
   if (!businessNameFromCtx) {
-    return '¡Hola! ¿En qué te puedo ayudar?';
+    return formatBotUserMessage(
+      'Asistente',
+      '👋',
+      '¿En qué te puedo ayudar?'
+    );
   }
 
   const business = await prisma.business.findFirst({
@@ -84,7 +89,11 @@ export const buildSmallTalkMenu = async (
   const buttons = await buildSmallTalkButtons(ctx);
 
   const headerText = ``;
-  const bodyText = `🤖\n\n*Bienvenido a ${businessName}*\n\n¡Hola! Soy el asistente de IA de *${businessName}*.\n\n ¿En que te puedo ayudar?`;
+  const bodyText = formatBotUserMessage(
+    `Bienvenido a ${businessName}`,
+    '👋',
+    `¡Hola! Soy el asistente de IA de *${businessName}*.\n\n¿En qué te puedo ayudar?`
+  );
 
   return buildListMessageFromButtons(
     bodyText,

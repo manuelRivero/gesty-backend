@@ -6,6 +6,7 @@ import {
   getBusinessConfig,
   upsertBusinessConfig
 } from "../services/businessConfig.service";
+import { getBotPersonalitySummary } from "../services/botPersonality.service";
 
 const configPatchSchema = z.object({
   bot_enabled: z.boolean().optional(),
@@ -39,7 +40,8 @@ const configPatchSchema = z.object({
     }),
   humanize_messages: z.boolean().optional(),
   operate_when_closed: z.boolean().optional(),
-  orders_when_closed: z.boolean().optional()
+  orders_when_closed: z.boolean().optional(),
+  bot_personality_id: z.string().uuid().optional()
 });
 
 export async function getAdminBusinessConfig(req: Request, res: Response) {
@@ -48,7 +50,13 @@ export async function getAdminBusinessConfig(req: Request, res: Response) {
     return res.status(401).json({ error: "No autenticado" });
   }
   const cfg = await getBusinessConfig(businessId);
-  return res.json(cfg);
+  const botPersonality = await getBotPersonalitySummary(cfg.bot_personality_id);
+  return res.json({
+    ...cfg,
+    bot_personality: botPersonality
+      ? { id: botPersonality.id, slug: botPersonality.slug, name: botPersonality.name }
+      : null,
+  });
 }
 
 export async function createAdminBusinessConfig(req: Request, res: Response) {

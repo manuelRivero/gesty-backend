@@ -22,6 +22,7 @@ import {
 } from '../../../services/ai/openai.service';
 import type { WhatsAppListMessage } from '../../../domain/intent/whatsappTemplates';
 import { truncateDescription } from '../../../whatsappBuilders';
+import { formatBotUserMessage } from '../../../services/productQuery/utils';
 import { sendResponse } from '../sender';
 import { getRequestedPartySize } from '../../../services/productQuery/utils';
 
@@ -140,6 +141,7 @@ const buildImplicitProductResponse = async (params: {
   });
 
   const aiResponse = await generateProductAwareResponse({
+    businessId: params.business?.id,
     product: {
       name: product.name,
       description: product.description,
@@ -233,27 +235,49 @@ export class ProductAttributeQuestionHandler implements IntentHandler {
       });
 
       if (products.length === 0) {
-        return textResponse('No encontré productos relacionados. ¿Querés intentar otra búsqueda?');
+        return textResponse(
+          formatBotUserMessage(
+            'Sin coincidencias',
+            '🔎',
+            'No encontré productos relacionados. ¿Querés intentar otra búsqueda?'
+          )
+        );
       }
 
       const result = await generateFilteredSetResponse({
+        businessId: ctx.business.id,
         products,
         userQuestion: userMessage
       });
 
       const recommendedIds = result.recommended_product_ids ?? [];
       const reason = result.reason ?? '';
+      const formatReason = (body: string) =>
+        formatBotUserMessage('Recomendación', '🍽️', body.trim());
 
       if (recommendedIds.length === 0) {
-        await createConversationMessage(ctx.conversation.id, 'ai', reason, false);
+        const responseText = reason.trim()
+          ? formatReason(reason)
+          : formatBotUserMessage(
+              'Sin coincidencias',
+              '🔎',
+              'No encontré una recomendación clara. ¿Querés intentar otra búsqueda?'
+            );
+        await createConversationMessage(ctx.conversation.id, 'ai', responseText, false);
         await updateConversationLastMessageAt(ctx.conversation.id);
-        return textResponse(reason);
+        return textResponse(responseText);
       }
 
       if (recommendedIds.length === 1) {
         const product = products.find((p) => p.id === recommendedIds[0]);
         if (!product) {
-          return textResponse('No encontré el producto recomendado. ¿Querés intentar de nuevo?');
+          return textResponse(
+            formatBotUserMessage(
+              'Producto no encontrado',
+              '🔍',
+              'No encontré el producto recomendado. ¿Querés intentar de nuevo?'
+            )
+          );
         }
 
         await prisma.conversation.update({
@@ -267,7 +291,9 @@ export class ProductAttributeQuestionHandler implements IntentHandler {
           metadata: buildMetadataValue(cleanedMetadata)
         } as Prisma.conversation_stateUpdateInput & { mode?: ConversationMode });
 
-        const messageText = `${reason}\n\n¿Deseas agregar ${product.name}?`;
+        const messageText = formatReason(
+          `${reason}\n\n¿Querés agregar ${product.name}?`
+        );
         await createConversationMessage(ctx.conversation.id, 'ai', messageText, false);
         await updateConversationLastMessageAt(ctx.conversation.id);
 
@@ -295,7 +321,7 @@ export class ProductAttributeQuestionHandler implements IntentHandler {
 
       const listMessage = buildListMessage({
         headerText: 'Opciones recomendadas',
-        bodyText: reason,
+        bodyText: formatReason(reason),
         footerText: 'Selecciona uno',
         actionButtonLabel: 'Ver opciones',
         sections: [
@@ -321,14 +347,17 @@ export class ProductAttributeQuestionHandler implements IntentHandler {
         })
       } as Prisma.conversation_stateUpdateInput & { mode?: ConversationMode });
 
-      await createConversationMessage(ctx.conversation.id, 'ai', reason, false);
+      await createConversationMessage(ctx.conversation.id, 'ai', formatReason(reason), false);
       await updateConversationLastMessageAt(ctx.conversation.id);
 
       return listResponse(listMessage);
     }
 
-    const clarification =
-      '¿Sobre qué platillo quieres saber eso? Puedes decirme el nombre o pedirme ver opciones.';
+    const clarification = formatBotUserMessage(
+      '¿Sobre qué plato?',
+      '🍽️',
+      '¿Sobre qué platillo querés saber eso? Podés decirme el nombre o pedirme ver opciones.'
+    );
     await createConversationMessage(ctx.conversation.id, 'ai', clarification, false);
     await updateConversationLastMessageAt(ctx.conversation.id);
     return textResponse(clarification);

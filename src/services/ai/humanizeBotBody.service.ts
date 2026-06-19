@@ -26,15 +26,22 @@ const INTENTS_WITH_LLM_BODY = new Set<string>([
 
 const SYSTEM_PROMPT = buildHumanizeSystemPrompt();
 
-export async function humanizeBotBody(rawBody: string): Promise<string> {
+export async function humanizeBotBody(
+  rawBody: string,
+  personalityPromptText?: string
+): Promise<string> {
   const trimmed = rawBody.trim();
   if (!trimmed) return trimmed;
+
+  const systemPrompt = personalityPromptText
+    ? buildHumanizeSystemPrompt(personalityPromptText)
+    : SYSTEM_PROMPT;
 
   const llm = getSmallChatLlm();
   try {
     const response = await llm.invoke(
       [
-        new SystemMessage(SYSTEM_PROMPT),
+        new SystemMessage(systemPrompt),
         new HumanMessage(
           `Reescribí este cuerpo de mensaje:\n\n${trimmed}`
         ),
@@ -63,20 +70,27 @@ export async function humanizeBotBody(rawBody: string): Promise<string> {
   }
 }
 
-async function humanizeBotFormattedText(text: string): Promise<string> {
+async function humanizeBotFormattedText(
+  text: string,
+  personalityPromptText?: string
+): Promise<string> {
   const parsed = parseBotUserMessage(text);
   if (!parsed) return text;
 
-  const humanizedBody = await humanizeBotBody(parsed.body);
+  const humanizedBody = await humanizeBotBody(parsed.body, personalityPromptText);
   if (humanizedBody === parsed.body.trim()) return text;
 
   return rebuildBotUserMessage(parsed.title, parsed.emoji, humanizedBody);
 }
 
 async function humanizeListMessage(
-  listMessage: WhatsAppListMessage
+  listMessage: WhatsAppListMessage,
+  personalityPromptText?: string
 ): Promise<WhatsAppListMessage> {
-  const humanizedBodyText = await humanizeBotFormattedText(listMessage.body.text);
+  const humanizedBodyText = await humanizeBotFormattedText(
+    listMessage.body.text,
+    personalityPromptText
+  );
   if (humanizedBodyText === listMessage.body.text) return listMessage;
 
   return {
@@ -86,10 +100,12 @@ async function humanizeListMessage(
 }
 
 async function humanizeInteractiveMessage(
-  message: WhatsAppInteractiveMessage
+  message: WhatsAppInteractiveMessage,
+  personalityPromptText?: string
 ): Promise<WhatsAppInteractiveMessage> {
   const humanizedBodyText = await humanizeBotFormattedText(
-    message.interactive.body.text
+    message.interactive.body.text,
+    personalityPromptText
   );
   if (humanizedBodyText === message.interactive.body.text) return message;
 
@@ -102,21 +118,33 @@ async function humanizeInteractiveMessage(
   };
 }
 
-async function humanizeFollowUp(followUp: HandlerFollowUp): Promise<HandlerFollowUp> {
+async function humanizeFollowUp(
+  followUp: HandlerFollowUp,
+  personalityPromptText?: string
+): Promise<HandlerFollowUp> {
   if (followUp.type === 'text') {
-    const message = await humanizeBotFormattedText(followUp.message);
+    const message = await humanizeBotFormattedText(
+      followUp.message,
+      personalityPromptText
+    );
     return message === followUp.message ? followUp : { ...followUp, message };
   }
 
   if (followUp.type === 'list') {
-    const listMessage = await humanizeListMessage(followUp.listMessage);
+    const listMessage = await humanizeListMessage(
+      followUp.listMessage,
+      personalityPromptText
+    );
     return listMessage === followUp.listMessage
       ? followUp
       : { ...followUp, listMessage };
   }
 
   if (followUp.type === 'interactive') {
-    const message = await humanizeInteractiveMessage(followUp.message);
+    const message = await humanizeInteractiveMessage(
+      followUp.message,
+      personalityPromptText
+    );
     return message === followUp.message ? followUp : { ...followUp, message };
   }
 
@@ -126,6 +154,7 @@ async function humanizeFollowUp(followUp: HandlerFollowUp): Promise<HandlerFollo
 export type HumanizeHandlerResultOptions = {
   enabled: boolean;
   intent?: string | null;
+  personalityPromptText?: string;
 };
 
 /**
@@ -145,23 +174,31 @@ export async function humanizeHandlerResult(
     return result;
   }
 
+  const personalityPromptText = options.personalityPromptText;
   let next: HandlerResult = result;
 
   if (!result.isInteractive && typeof result.content === 'string') {
-    const content = await humanizeBotFormattedText(result.content);
+    const content = await humanizeBotFormattedText(
+      result.content,
+      personalityPromptText
+    );
     if (content !== result.content) {
       next = { ...next, content };
     }
   } else if (result.isInteractive && result.content) {
     const content = result.content as WhatsAppListMessage | WhatsAppInteractiveMessage;
     if ((content as WhatsAppListMessage).type === 'list') {
-      const listMessage = await humanizeListMessage(content as WhatsAppListMessage);
+      const listMessage = await humanizeListMessage(
+        content as WhatsAppListMessage,
+        personalityPromptText
+      );
       if (listMessage !== content) {
         next = { ...next, content: listMessage };
       }
     } else {
       const interactiveMessage = await humanizeInteractiveMessage(
-        content as WhatsAppInteractiveMessage
+        content as WhatsAppInteractiveMessage,
+        personalityPromptText
       );
       if (interactiveMessage !== content) {
         next = { ...next, content: interactiveMessage };
@@ -173,7 +210,11 @@ export async function humanizeHandlerResult(
     return next;
   }
 
-  const followUps = await Promise.all(result.followUps.map(humanizeFollowUp));
+  const followUps = await Promise.all(
+    result.followUps.map((followUp) =>
+      humanizeFollowUp(followUp, personalityPromptText)
+    )
+  );
   const followUpsChanged = followUps.some(
     (followUp, index) => followUp !== result.followUps![index]
   );

@@ -1,6 +1,7 @@
 import { EnrichedContext, HandlerResult, IntentHandler } from '../types';
 import { noResponse, textResponse } from '../utils';
 import { ConversationIntent } from '../../../types/conversationIntent';
+import { formatBotUserMessage } from '../../../services/productQuery/utils';
 import {
   createConversationMessage,
   findBusinessByPhoneNumberId,
@@ -39,8 +40,11 @@ export class CancelRemoveActionHandler implements IntentHandler {
       'pendingItemName',
     ]);
 
-    const text =
-      '🤖\n\n*Listo* — no quité nada de tu pedido.\n\nPodés seguir editando o finalizar cuando quieras.';
+    const text = formatBotUserMessage(
+      'Listo',
+      '✅',
+      'No quité nada de tu pedido.\n\nPodés seguir editando o finalizar cuando quieras.'
+    );
     await createConversationMessage(conversation.id, 'ai', text, false);
     await updateConversationLastMessageAt(conversation.id);
 

@@ -7,6 +7,7 @@ import type { AdminPatchableOrderStatus } from "../constants/orderWorkflow";
 import { ORDER_STATUS_LABEL_ES } from "../constants/orderWorkflow";
 import { prisma } from "../lib/prisma";
 import { WhatsAppSenderService } from "./whatsappSender.service";
+import { formatBotUserMessage } from "./productQuery/utils";
 
 function shortOrderRef(orderId: string): string {
   return orderId.replace(/-/g, "").slice(0, 8).toUpperCase();
@@ -23,31 +24,33 @@ export function buildOrderStatusCustomerMessage(
   const ref = shortOrderRef(orderId);
   switch (status) {
     case OrderStatus.preparing:
-      return (
-        `🤖\n\n*Actualización de tu pedido* 📦\n\n` +
-        `Pedido *#${ref}*\n\nTu pedido está *${label.toLowerCase()}*. ` +
-        `En breve te avisamos el siguiente paso.`
+      return formatBotUserMessage(
+        'Actualización de tu pedido',
+        '📦',
+        `Pedido *#${ref}*\n\nTu pedido está *${label.toLowerCase()}*. En breve te avisamos el siguiente paso.`
       );
     case OrderStatus.ready_for_pickup:
-      return (
-        `🤖\n\n*Actualización de tu pedido* 🏪\n\n` +
-        `Pedido *#${ref}*\n\nTu pedido está *listo para retirar*. ` +
-        `Podés pasar a buscarlo cuando quieras.`
+      return formatBotUserMessage(
+        'Actualización de tu pedido',
+        '🏪',
+        `Pedido *#${ref}*\n\nTu pedido está *listo para retirar*. Podés pasar a buscarlo cuando quieras.`
       );
     case OrderStatus.shipped:
-      return (
-        `🤖\n\n*Actualización de tu pedido* 🚚\n\n` +
+      return formatBotUserMessage(
+        'Actualización de tu pedido',
+        '🚚',
         `Pedido *#${ref}*\n\nTu pedido está *${label.toLowerCase()}* y va en camino.`
       );
     case OrderStatus.delivered:
-      return (
-        `🤖\n\n*Actualización de tu pedido* ✅\n\n` +
-        `Pedido *#${ref}*\n\nTu pedido figura como *${label.toLowerCase()}*. ` +
-        `¡Gracias por elegirnos!`
+      return formatBotUserMessage(
+        'Actualización de tu pedido',
+        '✅',
+        `Pedido *#${ref}*\n\nTu pedido figura como *${label.toLowerCase()}*. ¡Gracias por elegirnos!`
       );
     default:
-      return (
-        `🤖\n\n*Actualización de tu pedido* 📦\n\n` +
+      return formatBotUserMessage(
+        'Actualización de tu pedido',
+        '📦',
         `Pedido *#${ref}*\n\nEl estado de tu pedido fue actualizado.`
       );
   }

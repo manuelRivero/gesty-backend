@@ -2,6 +2,7 @@ import { WebhookContext, HandlerResult, IntentHandler } from '../types';
 import { listResponse, noResponse, parseMenuByTagPayload, textResponse } from '../utils';
 import { handleMenuByTagSelectionFromWebhook } from '../../../services/category.service';
 import { ConversationIntent } from '../../../types/conversationIntent';
+import { formatBotUserMessage } from '../../../services/productQuery/utils';
 
 export class MenuByTagHandler implements IntentHandler {
   readonly command = ConversationIntent.MENU_BY_TAG;
@@ -13,7 +14,9 @@ export class MenuByTagHandler implements IntentHandler {
   async execute(ctx: WebhookContext): Promise<HandlerResult | null> {
     const parsed = parseMenuByTagPayload(ctx.payloadId ?? '');
     if (!parsed) {
-      return textResponse('Opción no válida.');
+      return textResponse(
+        formatBotUserMessage('Opción no válida', '⚠️', 'Elegí una opción del menú.')
+      );
     }
 
     const result = await handleMenuByTagSelectionFromWebhook(

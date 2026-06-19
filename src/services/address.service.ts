@@ -4,6 +4,11 @@ import { updateConversationState } from '../repositories/conversationState.repos
 import { findCoverageZoneForPoint } from '../repositories/coverageZone.repository';
 import { WhatsAppInteractiveMessage, WhatsAppListMessage } from '../domain/intent/whatsappTemplates';
 import { buildSmallTalkMenu } from './smallTalk.service';
+import {
+  ADDRESS_SAVED_PAYMENT_PROMPT_BOT_MESSAGE,
+  RETRY_ADDRESS_BOT_MESSAGE,
+} from './productQuery/botMessages';
+import { formatBotUserMessage } from './productQuery/utils';
 
 
 export class AddressService {
@@ -245,7 +250,7 @@ export class AddressService {
         interactive: {
           type: 'button',
           body: {
-            text: '🤖\n\n✅ *Dirección guardada* 📍\n\n*¿Cómo querés pagar?* 💳\n\nElegí el método de pago para confirmar tu pedido.',
+            text: ADDRESS_SAVED_PAYMENT_PROMPT_BOT_MESSAGE,
           },
           action: {
             buttons: [
@@ -262,7 +267,11 @@ export class AddressService {
       return menu;
     }
 
-    return '✅ Dirección guardada correctamente.\n\n¿En qué te ayudo ahora?';
+    return formatBotUserMessage(
+      'Dirección guardada',
+      '✅',
+      '¿En qué te ayudo ahora?'
+    );
   }
 
   private async edit(ctx: EnrichedContext): Promise<string> {
@@ -274,7 +283,7 @@ export class AddressService {
       temp_zone_id: null,
     });
 
-    return '🤖\n\n*Perfecto, decime la dirección nuevamente*, calle y número o mandame tu ubicación actual 📍';
+    return RETRY_ADDRESS_BOT_MESSAGE;
   }
 
   // =========================

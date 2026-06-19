@@ -617,6 +617,7 @@ export const handleProductSelectionFromWebhook = async (
   }
 
   const aiResponse = await generateProductAwareResponse({
+    businessId: business.id,
     product: {
       name: item.name,
       description: item.description,
@@ -2208,6 +2209,7 @@ const buildImplicitProductResponse = async ({
   );
 
   const aiResponse = await generateProductAwareResponse({
+    businessId: business.id,
     product: {
       name: product.name,
       description: product.description,
@@ -2570,6 +2572,7 @@ const buildResponse = async ({
       }
 
       const result = await generateFilteredSetResponse({
+        businessId: business.id,
         products,
         userQuestion: lastUserMessage
       });
@@ -2765,6 +2768,7 @@ const buildResponse = async ({
     const partySingleLegacy = getRequestedPartySize(rawSingleLegacy);
 
     const aiResponse = await generateProductAwareResponse({
+      businessId: business.id,
       product: {
         name: matchedItem.name,
         description: matchedItem.description,

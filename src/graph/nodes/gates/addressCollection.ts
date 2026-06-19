@@ -1,5 +1,10 @@
 import { prisma } from '../../../lib/prisma';
 import { patchConversationMetadata } from '../../../repositories/conversationState.repository';
+import {
+  ADDRESS_OUT_OF_COVERAGE_BOT_MESSAGE,
+  ADDRESS_REQUIRED_BOT_MESSAGE,
+  ADDRESS_SOFT_ASK_BOT_MESSAGE,
+} from '../../../services/productQuery/botMessages';
 import { normalizeMetadata } from '../../../services/productQuery/utils';
 import { detectIntentFromPayload } from '../../../controllers/webhook/payloadMapper';
 import { ConversationIntent } from '../../../types/conversationIntent';
@@ -73,8 +78,8 @@ export const addressCollectionNode = async (
     }
 
     const content = outOfCoverage
-      ? '🤖\n\nTu dirección de entrega quedó fuera de nuestra zona de cobertura. 🚫\n\nIngresá una nueva dirección o compartí tu ubicación para continuar con tu pedido.'
-      : '🤖\n\nPara continuar con tu pedido necesito tu dirección de entrega. 📍\n\nIndicame la calle y número o compartí tu ubicación.';
+      ? ADDRESS_OUT_OF_COVERAGE_BOT_MESSAGE
+      : ADDRESS_REQUIRED_BOT_MESSAGE;
 
     return { handlerResult: { content, isInteractive: false } };
   }
@@ -84,8 +89,7 @@ export const addressCollectionNode = async (
     await patchConversationMetadata(conversation.id, { awaiting_address: true });
     const ask: HandlerFollowUp = {
       type: 'text',
-      message:
-        '🤖\n\nPor cierto, para poder procesar pedidos necesito tu dirección de entrega. ¿Me la podés indicar o compartir tu ubicación? 📍',
+      message: ADDRESS_SOFT_ASK_BOT_MESSAGE,
     };
     return {
       handlerResult: {

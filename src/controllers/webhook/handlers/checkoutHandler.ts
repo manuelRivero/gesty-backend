@@ -4,6 +4,11 @@ import { noResponse, interactiveResponse, textResponse } from '../utils';
 import { prisma } from '../../../lib/prisma';
 import type { WhatsAppInteractiveMessage } from '../../../domain/intent/whatsappTemplates';
 import { getMpBannerDataUrl } from '../../../assets/mpBanner';
+import {
+  EMPTY_CART_BOT_MESSAGE,
+  PAYMENT_METHOD_PROMPT_BOT_MESSAGE,
+} from '../../../services/productQuery/botMessages';
+import { formatBotUserMessage } from '../../../services/productQuery/utils';
 
 export class CheckoutHandler implements IntentHandler {
   readonly command = ConversationIntent.CHECKOUT;
@@ -27,16 +32,18 @@ export class CheckoutHandler implements IntentHandler {
     });
 
     if (!draft) {
-      return textResponse(
-        '🤖\n\n*Tu pedido está vacío 🛒*\n\nPodés explorar el menú para empezar tu pedido.'
-      );
+      return textResponse(EMPTY_CART_BOT_MESSAGE);
     }
 
     // Si ya eligió método de pago, no preguntar de nuevo
     if (draft.payment_method === 'cash') {
       // Continúa el flujo cash via PAY_CASH handler (el draft ya tiene el método)
       return textResponse(
-        '🤖\n\n*¿Cómo querés pagar?* 💳\n\nYa tenés efectivo seleccionado. Si querés cambiarlo usá los botones de abajo.',
+        formatBotUserMessage(
+          '¿Cómo querés pagar?',
+          '💳',
+          'Ya tenés efectivo seleccionado. Si querés cambiarlo usá los botones de abajo.'
+        ),
         [{
           type: 'interactive',
           message: buildPaymentChoiceMessage(),
@@ -52,7 +59,11 @@ export class CheckoutHandler implements IntentHandler {
       });
       if (existingIntent?.init_point) {
         return textResponse(
-          `🤖\n\n*Tu link de pago online* 💳\n\nYa generamos un link para tu pedido. Podés usarlo para completar el pago:\n\n${existingIntent.init_point}`,
+          formatBotUserMessage(
+            'Link de pago online',
+            '💳',
+            `Ya generamos un link para tu pedido. Podés usarlo para completar el pago:\n\n${existingIntent.init_point}`
+          ),
           [{ type: 'image', dataUrl: getMpBannerDataUrl(), beforeContent: true }]
         );
       }
@@ -69,7 +80,7 @@ function buildPaymentChoiceMessage(): WhatsAppInteractiveMessage {
     interactive: {
       type: 'button',
       body: {
-        text: '🤖\n\n*¿Cómo querés pagar?* 💳\n\nElegí el método de pago para confirmar tu pedido.',
+        text: PAYMENT_METHOD_PROMPT_BOT_MESSAGE,
       },
       action: {
         buttons: [

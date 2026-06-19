@@ -2,6 +2,7 @@ import { prisma } from '../../../lib/prisma';
 import { omitConversationMetadataKeys } from '../../../repositories/conversationState.repository';
 import { handleViewCartFromWebhook } from '../../../services/cart.service';
 import { ConversationIntent } from '../../../types/conversationIntent';
+import { formatBotUserMessage } from '../../../services/productQuery/utils';
 import { interactiveResponse, noResponse, textResponse } from '../utils';
 import type { EnrichedContext, HandlerResult, IntentHandler } from '../types';
 
@@ -28,7 +29,13 @@ class SelectFulfillmentHandler implements IntentHandler {
     });
 
     if (!draft) {
-      return textResponse('No encontré un pedido activo. ¿Querés explorar el menú?');
+      return textResponse(
+        formatBotUserMessage(
+          'Sin pedido activo',
+          '🛒',
+          'No encontré un pedido activo. ¿Querés explorar el menú?'
+        )
+      );
     }
 
     await prisma.$executeRaw`

@@ -27,6 +27,12 @@ import { buildListMessageFromButtons } from '../whatsappBuilders';
 import { buildAddItemShortcutsFollowUpList } from './complementSuggestions.service';
 import { formatBotUserMessage } from './productQuery';
 import {
+  buildCartItemNotFoundMessage,
+  buildCartProductNotFoundMessage,
+  EMPTY_CART_BOT_MESSAGE,
+  NO_CART_ITEMS_TO_REMOVE_BOT_MESSAGE,
+} from './productQuery/botMessages';
+import {
   buildMetadataValue,
   normalizeMetadata,
 } from './productQuery/utils';
@@ -178,7 +184,7 @@ export const buildRemoveItemMessage = async (
   );
 
   if (!matchingItem) {
-    const errorText = `🤖\n\n*No encontré "${itemIdentifier}" en tu pedido.*\n\nPodés explorar el menú para empezar tu pedido.`;
+    const errorText = buildCartItemNotFoundMessage(itemIdentifier);
     await createConversationMessage(conversation.id, 'ai', errorText, false);
     await updateConversationLastMessageAt(conversation.id);
     return { message: null, errorMessage: errorText };
@@ -437,7 +443,7 @@ export const buildConfirmRemoveItemMessage = async (
   });
 
   if (!cartItems || cartItems.draft_order_item.length === 0) {
-    const errorText = '🤖\n\n*No tenés items en tu pedido para remover.*\n\nPodés explorar el menú para empezar tu pedido.';
+    const errorText = NO_CART_ITEMS_TO_REMOVE_BOT_MESSAGE;
     await createConversationMessage(conversation.id, 'ai', errorText, false);
     await updateConversationLastMessageAt(conversation.id);
     return { message: null, errorMessage: errorText };
@@ -449,7 +455,7 @@ export const buildConfirmRemoveItemMessage = async (
   );
 
   if (!matchingItem) {
-    const errorText = `🤖\n\n*No encontré "${itemIdentifier}" en tu pedido.*\n\nPodés explorar el menú para empezar tu pedido.`;
+    const errorText = buildCartItemNotFoundMessage(itemIdentifier);
     await createConversationMessage(conversation.id, 'ai', errorText, false);
     await updateConversationLastMessageAt(conversation.id);
     return { message: null, errorMessage: errorText };
@@ -465,7 +471,11 @@ export const buildConfirmRemoveItemMessage = async (
         text: '¿Remover ítem?'
       },
       body: {
-        text: `🤖\n\n*¿Querés remover *${matchingItem.menu_item?.name}* (cantidad: ${matchingItem.quantity}) de tu pedido?*`
+        text: formatBotUserMessage(
+          'Confirmar remoción',
+          '🗑️',
+          `¿Querés remover *${matchingItem.menu_item?.name}* (cantidad: ${matchingItem.quantity}) de tu pedido?`
+        ),
       },
       footer: {
         text: 'Esta acción no se puede deshacer'
@@ -547,7 +557,7 @@ export const executeRemoveDraftOrderItemFromWebhook = async (
 
   if (!draftOrder?.draft_order_item.length) {
     const errorText =
-      "🤖\n\n*No tenés items en tu pedido para remover.*\n\nPodés explorar el menú para empezar tu pedido.";
+      NO_CART_ITEMS_TO_REMOVE_BOT_MESSAGE;
     await createConversationMessage(conversation.id, "ai", errorText, false);
     await updateConversationLastMessageAt(conversation.id);
     return errorText;
@@ -557,7 +567,7 @@ export const executeRemoveDraftOrderItemFromWebhook = async (
     (ci) => ci.product_id === menuItemId
   );
   if (!line) {
-    const errorText = `🤖\n\n*No encontré ese producto en tu pedido.*`;
+    const errorText = buildCartProductNotFoundMessage();
     await createConversationMessage(conversation.id, "ai", errorText, false);
     await updateConversationLastMessageAt(conversation.id);
     return errorText;
@@ -736,7 +746,7 @@ export const handleShowCartForEditionFromWebhook = async (
 
   if (!cartItems?.draft_order_item.length) {
     return buildListMessageFromButtons(
-      '🤖\n\n*Tu pedido está vacío 🛒*\n\nPodés explorar el menú para empezar tu pedido.',
+      EMPTY_CART_BOT_MESSAGE,
       [
         {
           title: 'Ver menú',
@@ -836,7 +846,7 @@ export const handleViewCartFromWebhook = async (
       customer.phone_number
     );
     return buildListMessageFromButtons(
-      '🤖\n\n*Tu pedido está vacío 🛒*\n\nPodés explorar el menú para empezar tu pedido.',
+      EMPTY_CART_BOT_MESSAGE,
       [
         {
           title: 'Ver menú',
@@ -900,7 +910,11 @@ export const handleViewCartFromWebhook = async (
       text: ''
     },
     body: {
-      text: `🤖\n\n*Tu pedido actual* 🛒\n\n${orderSectionsBlock}${guidanceMid}Total: $${total} ${business.currency_code ?? 'ARS'}${deliveryLine}\n\n¿Qué querés hacer ahora?`
+      text: formatBotUserMessage(
+        'Tu pedido actual',
+        '🛒',
+        `${orderSectionsBlock}${guidanceMid}Total: $${total} ${business.currency_code ?? 'ARS'}${deliveryLine}\n\n¿Qué querés hacer ahora?`
+      )
     },
     footer: {
       text: 'Selecciona una opción'

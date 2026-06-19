@@ -2,9 +2,12 @@
 
 import { IntentHandler, IntentClassification, HandlerResult, EnrichedContext, WebhookContext } from '../types';
 import { generateAIResponse } from '../../../services/ai/openai.service';
+import { resolvePersonalityForBusiness } from '../../../services/botPersonality.service';
+import { buildFallbackSystemPrompt } from '../../../prompts/botPersonality';
 import { getRecentMessagesByConversationId } from '../../../repositories';
 import { ConversationIntent } from '../../../types/conversationIntent';
 import { textResponse } from '../utils';
+import { formatBotUserMessage } from '../../../services/productQuery/utils';
 import { ChatCompletionMessageParam } from 'openai/resources/index';
 
 export class FallbackHandler implements IntentHandler {
@@ -37,7 +40,13 @@ export class FallbackHandler implements IntentHandler {
     }
 
     if (!business || !conversation) {
-      return textResponse('Disculpá, no pude procesar tu mensaje. Intentá de nuevo.');
+      return textResponse(
+        formatBotUserMessage(
+          'Ups',
+          '😅',
+          'Disculpá, no pude procesar tu mensaje. Intentá de nuevo.'
+        )
+      );
     }
 
     const detectionCandidates =
@@ -53,7 +62,11 @@ export class FallbackHandler implements IntentHandler {
     const reservationHintRegex = /\b(reserva|reservar|mesa|qr)\b/i;
     if (hasReservationCandidate || reservationHintRegex.test(messageContent)) {
       return textResponse(
-        'Te ayudo con tu reserva. Decime si querés verla, cancelarla o crear una nueva.'
+        formatBotUserMessage(
+          'Reservas',
+          '📋',
+          'Te ayudo con tu reserva. Decime si querés verla, cancelarla o crear una nueva.'
+        )
       );
     }
 
@@ -67,8 +80,12 @@ export class FallbackHandler implements IntentHandler {
       role: m.sender === 'ai' ? 'assistant' : 'user',
       content: m.message
     }));
+
+    const { promptText } = await resolvePersonalityForBusiness(business.id);
+    const systemPrompt = buildFallbackSystemPrompt(promptText);
     
     const response = await generateAIResponse(business, [
+      { role: 'system', content: systemPrompt },
       ...messages,
       { role: 'user' as const, content: messageContent }
     ]);

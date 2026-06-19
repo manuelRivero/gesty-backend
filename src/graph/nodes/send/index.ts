@@ -16,6 +16,7 @@ import {
 } from '../../../repositories';
 import { isDryRunWhatsAppSend } from '../../../config/env';
 import { humanizeHandlerResult } from '../../../services/ai/humanizeBotBody.service';
+import { resolvePersonalityPromptText } from '../../../services/botPersonality.service';
 import type { HandlerResult } from '../../../controllers/webhook/types';
 import type { AgentState, AgentStateUpdate } from '../../state';
 
@@ -88,9 +89,16 @@ export const sendResponseNode = async (
     state.businessClosedButOperating && !state.businessConfig?.orders_when_closed;
   const baseResult = shouldStripCart ? stripCartActions(result) : result;
 
+  const businessId = state.business?.id ?? null;
+  const personalityPromptText =
+    state.businessConfig?.humanize_messages === true && businessId
+      ? await resolvePersonalityPromptText(state.businessConfig.bot_personality_id)
+      : undefined;
+
   const humanizedResult = await humanizeHandlerResult(baseResult, {
     enabled: state.businessConfig?.humanize_messages === true,
     intent: state.resolvedIntent ?? state.detection?.intent ?? null,
+    personalityPromptText,
   });
 
   if (isDryRunWhatsAppSend()) {

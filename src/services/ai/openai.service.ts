@@ -5,6 +5,13 @@ import { prisma } from '../../lib/prisma';
 import { evaluateSubscriptionForBotAi } from '../subscriptionBotAccess.service';
 import { getEffectiveAiTokenLimit } from './aiLimits';
 import { incrementUsage } from './aiUsage.service';
+import {
+  buildFilteredSetSystemPrompt,
+  buildProductAwareSystemPrompt,
+} from '../../prompts/botPersonality';
+import { resolvePersonalityPromptText } from '../botPersonality.service';
+import { getBusinessConfig } from '../businessConfig.service';
+import { buildProductAwareUserPrompt } from '../../prompts/productAware';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
@@ -94,6 +101,7 @@ export const generateAIResponse = async (
 };
 
 export const generateProductAwareResponse = async (params: {
+  businessId?: string;
   product: {
     name: string;
     description?: string | null;
@@ -109,22 +117,19 @@ export const generateProductAwareResponse = async (params: {
   /** Contexto de sesión: personas/comensales mencionados antes en el flujo (ej. "para 3"). */
   requestedPartySize?: number | null;
 }): Promise<string> => {
-  const { product, userQuestion, requestedPartySize } = params;
+  const { product, userQuestion, requestedPartySize, businessId } = params;
 
   console.log('---- LLM PRODUCT CALL ----');
   console.log('Product name:', product.name);
   console.log('User question sent to LLM:', userQuestion);
   console.log('---------------------------');
 
-  const priceText =
-    product.price?.amount != null
-      ? `${String(product.price.amount)} ${product.price.currency_code}`
-      : 'N/A';
-
-  const sessionPartyBlock =
-    requestedPartySize != null && requestedPartySize > 0
-      ? `\n\nSESSION CONTEXT (persistent for this chat):\n- The customer indicated they need food for about ${requestedPartySize} person(s). Use this to suggest how many units to order when relevant and when product data allows; do not invent portion sizes not stated in the product data.`
-      : '';
+  const personalityPrompt = businessId
+    ? await resolvePersonalityPromptText(
+        (await getBusinessConfig(businessId)).bot_personality_id
+      )
+    : undefined;
+  const systemPrompt = buildProductAwareSystemPrompt(personalityPrompt);
 
   const response = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
@@ -132,23 +137,17 @@ export const generateProductAwareResponse = async (params: {
     messages: [
       {
         role: 'system',
-        content:
-          'You answer questions about a restaurant product. Use ONLY the provided product data. Do NOT invent price, availability, or characteristics. If information is not available, say you do not have that information. Be concise and natural. A button will be displayed to the user to encourage them to add the product to their order, so in your response you should encourage them to do so.'
+        content: systemPrompt,
       },
       {
         role: 'user',
-        content: `PRODUCT DATA:
-Name: ${product.name}
-Available: ${product.is_available ? 'yes' : 'no'}
-Price: ${priceText}
-Serves people: ${product.serves_people ?? 'N/A'}
-Description: ${product.description ?? 'N/A'}
-Ingredients: ${product.ingredients ?? 'N/A'}${sessionPartyBlock}
-
-USER QUESTION:
-${userQuestion}`
-      }
-    ]
+        content: buildProductAwareUserPrompt({
+          product,
+          userQuestion,
+          requestedPartySize,
+        }),
+      },
+    ],
   });
 
   const content = response.choices[0]?.message?.content ?? '';
@@ -389,9 +388,11 @@ Rules:
 };
 
 export const generateFilteredSetResponse = async ({
+  businessId,
   products,
   userQuestion
 }: {
+  businessId?: string;
   products: {
     id: string;
     name: string;
@@ -400,28 +401,12 @@ export const generateFilteredSetResponse = async ({
   }[];
   userQuestion: string;
 }) => {
-  const systemPrompt = `
-Eres un asistente de restaurante.
-
-Recibirás una lista cerrada de productos.
-Solo puedes recomendar productos de la lista.
-
-Debes responder exclusivamente en JSON con este formato:
-
-{
-  "recommended_product_ids": string[],
-  "reason": string
-}
-
-Reglas:
-- No inventes productos.
-- Solo usa IDs existentes.
-- Si ninguno cumple la condición:
-{
-  "recommended_product_ids": [],
-  "reason": "Ninguno cumple la condición."
-}
-`;
+  const personalityPrompt = businessId
+    ? await resolvePersonalityPromptText(
+        (await getBusinessConfig(businessId)).bot_personality_id
+      )
+    : undefined;
+  const systemPrompt = buildFilteredSetSystemPrompt(personalityPrompt);
 
   const productList = products.map(p => `
 ID: ${p.id}

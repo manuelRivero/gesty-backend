@@ -5,13 +5,24 @@ import {
   buildHybridAgentSystemPrompt,
 } from '../botPersonality';
 
+const FRIENDLY_PROMPT = 'PERSONALIDAD AMIGUERA DE PRUEBA';
+
 describe('botPersonality', () => {
-  it('incluye la personalidad compartida en humanize y hybrid', () => {
+  it('incluye la personalidad compartida en humanize y hybrid por defecto', () => {
     const humanize = buildHumanizeSystemPrompt();
     const hybrid = buildHybridAgentSystemPrompt();
 
     expect(humanize).toContain(BOT_PERSONALITY_PROMPT);
     expect(hybrid).toContain(BOT_PERSONALITY_PROMPT);
+  });
+
+  it('inyecta el bloque de personalidad provisto desde BD', () => {
+    const humanize = buildHumanizeSystemPrompt(FRIENDLY_PROMPT);
+    const hybrid = buildHybridAgentSystemPrompt(FRIENDLY_PROMPT);
+
+    expect(humanize).toContain(FRIENDLY_PROMPT);
+    expect(hybrid).toContain(FRIENDLY_PROMPT);
+    expect(humanize).not.toContain(BOT_PERSONALITY_PROMPT);
   });
 
   it('humanize pide solo el cuerpo reescrito', () => {

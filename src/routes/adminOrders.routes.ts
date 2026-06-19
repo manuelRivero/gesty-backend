@@ -65,6 +65,7 @@ import {
   patchAdminBusinessConfig,
   removeAdminBusinessConfig
 } from "../controllers/adminBusinessConfig.controller";
+import { getAdminBotPersonalities } from "../controllers/adminBotPersonality.controller";
 import { getWhatsappMessages } from "../controllers/adminWhatsappMessages.controller";
 import {
   getWhatsappConversationBotStatus,
@@ -99,6 +100,11 @@ router.get("/analytics/top-dishes", getTopDishesHandler);
 router.get("/business", requireRoles("OWNER", "ADMIN"), getAdminBusiness);
 router.patch("/business", requireRoles("OWNER", "ADMIN"), patchAdminBusiness);
 router.get("/config", requireRoles("OWNER", "ADMIN"), getAdminBusinessConfig);
+router.get(
+  "/config/bot-personalities",
+  requireRoles("OWNER", "ADMIN"),
+  getAdminBotPersonalities
+);
 router.post("/config", requireRoles("OWNER", "ADMIN"), createAdminBusinessConfig);
 router.patch("/config", requireRoles("OWNER", "ADMIN"), patchAdminBusinessConfig);
 router.delete("/config", requireRoles("OWNER", "ADMIN"), removeAdminBusinessConfig);

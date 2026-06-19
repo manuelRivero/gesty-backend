@@ -1,4 +1,9 @@
 import { prisma } from "../lib/prisma";
+import {
+  assertActiveBotPersonalityId,
+  getDefaultNeutralPersonalityId,
+  NEUTRAL_PERSONALITY_ID,
+} from "./botPersonality.service";
 
 export type BusinessConfig = {
   bot_enabled: boolean;
@@ -24,6 +29,7 @@ export type BusinessConfig = {
   humanize_messages: boolean;
   operate_when_closed: boolean;
   orders_when_closed: boolean;
+  bot_personality_id: string;
 };
 
 const DEFAULT_CONFIG: BusinessConfig = {
@@ -49,7 +55,8 @@ const DEFAULT_CONFIG: BusinessConfig = {
   pickup_instructions: null,
   humanize_messages: false,
   operate_when_closed: false,
-  orders_when_closed: false
+  orders_when_closed: false,
+  bot_personality_id: NEUTRAL_PERSONALITY_ID,
 };
 
 export type BusinessConfigPatch = Partial<BusinessConfig>;
@@ -59,6 +66,22 @@ export class BusinessConfigValidationError extends Error {
     super(message);
     this.name = "BusinessConfigValidationError";
   }
+}
+
+async function normalizeBotPersonalityId(
+  value: string | null | undefined
+): Promise<string> {
+  if (value == null || value === "") {
+    return getDefaultNeutralPersonalityId();
+  }
+  try {
+    await assertActiveBotPersonalityId(value);
+  } catch {
+    throw new BusinessConfigValidationError(
+      "bot_personality_id inválido o inactivo"
+    );
+  }
+  return value;
 }
 
 function normalizePickupInstructions(
@@ -119,7 +142,8 @@ async function fetchBusinessConfigRow(
       pickup_instructions,
       humanize_messages,
       operate_when_closed,
-      orders_when_closed
+      orders_when_closed,
+      bot_personality_id
     FROM business_config
     WHERE business_id = ${businessId}::uuid
     LIMIT 1
@@ -129,7 +153,10 @@ async function fetchBusinessConfigRow(
 
 export async function getBusinessConfig(businessId: string): Promise<BusinessConfig> {
   const row = await fetchBusinessConfigRow(businessId);
-  return row ? { ...DEFAULT_CONFIG, ...row } : { ...DEFAULT_CONFIG };
+  const merged = row ? { ...DEFAULT_CONFIG, ...row } : { ...DEFAULT_CONFIG };
+  merged.bot_personality_id =
+    merged.bot_personality_id || (await getDefaultNeutralPersonalityId());
+  return merged;
 }
 
 export async function upsertBusinessConfig(
@@ -137,10 +164,16 @@ export async function upsertBusinessConfig(
   patch: BusinessConfigPatch
 ): Promise<BusinessConfig> {
   const current = await getBusinessConfig(businessId);
-  const next = applyBusinessConfigRules({
+  const nextRaw = {
     ...current,
-    ...patch
-  });
+    ...patch,
+  };
+  if (patch.bot_personality_id !== undefined) {
+    nextRaw.bot_personality_id = await normalizeBotPersonalityId(
+      patch.bot_personality_id
+    );
+  }
+  const next = applyBusinessConfigRules(nextRaw);
 
   await prisma.$executeRaw`
     INSERT INTO business_config (
@@ -167,7 +200,8 @@ export async function upsertBusinessConfig(
       pickup_instructions,
       humanize_messages,
       operate_when_closed,
-      orders_when_closed
+      orders_when_closed,
+      bot_personality_id
     ) VALUES (
       ${businessId}::uuid,
       ${next.bot_enabled},
@@ -192,7 +226,8 @@ export async function upsertBusinessConfig(
       ${next.pickup_instructions},
       ${next.humanize_messages},
       ${next.operate_when_closed},
-      ${next.orders_when_closed}
+      ${next.orders_when_closed},
+      ${next.bot_personality_id}::uuid
     )
     ON CONFLICT (business_id)
     DO UPDATE SET
@@ -218,7 +253,8 @@ export async function upsertBusinessConfig(
       pickup_instructions = EXCLUDED.pickup_instructions,
       humanize_messages = EXCLUDED.humanize_messages,
       operate_when_closed = EXCLUDED.operate_when_closed,
-      orders_when_closed = EXCLUDED.orders_when_closed
+      orders_when_closed = EXCLUDED.orders_when_closed,
+      bot_personality_id = EXCLUDED.bot_personality_id
   `;
 
   return next;

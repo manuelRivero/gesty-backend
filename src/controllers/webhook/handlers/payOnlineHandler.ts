@@ -2,6 +2,13 @@ import { WebhookContext, HandlerResult, IntentHandler } from '../types';
 import { ConversationIntent } from '../../../types/conversationIntent';
 import { textResponse } from '../utils';
 import { createOnlinePaymentLink } from '../../../services/payment/payment.service';
+import {
+  PAY_CASH_ASK_BOT_MESSAGE,
+  PAY_CASH_OPTION_BOT_MESSAGE,
+  PAY_ONLINE_RETRY_BOT_MESSAGE,
+  PAY_ONLINE_UNAVAILABLE_BOT_MESSAGE,
+} from '../../../services/productQuery/botMessages';
+import { formatBotUserMessage } from '../../../services/productQuery/utils';
 import { getMpBannerDataUrl } from '../../../assets/mpBanner';
 
 export class PayOnlineHandler implements IntentHandler {
@@ -21,15 +28,13 @@ export class PayOnlineHandler implements IntentHandler {
       const result = await createOnlinePaymentLink(business.id, customer.phone_number);
 
       if (!result) {
-        return textResponse(
-          '🤖\n\n*No podemos procesar el pago online en este momento* 😔\n\n¿Querés pagar en efectivo al recibir tu pedido?',
-          [{
+        return textResponse(PAY_ONLINE_UNAVAILABLE_BOT_MESSAGE, [{
             type: 'interactive',
             message: {
               type: 'interactive',
               interactive: {
                 type: 'button',
-                body: { text: '🤖\n\nPodés pagar en efectivo al recibir.' },
+                body: { text: PAY_CASH_OPTION_BOT_MESSAGE },
                 action: {
                   buttons: [
                     { type: 'reply', reply: { id: 'PAY_CASH', title: '💵 Efectivo' } },
@@ -42,23 +47,29 @@ export class PayOnlineHandler implements IntentHandler {
       }
 
       const linkText = result.isNew
-        ? `*¡Tu link de pago está listo!* 💳\n\nHacé click para pagar de forma segura con Mercado Pago:\n\n${result.initPoint}\n\n_Una vez confirmado el pago, recibirás la confirmación de tu pedido._`
-        : `*Tu link de pago activo* 💳\n\nUsá este link para completar tu pago:\n\n${result.initPoint}\n\n_Completá el pago para confirmar tu pedido._`;
+        ? formatBotUserMessage(
+            'Link de pago listo',
+            '💳',
+            `Hacé click para pagar de forma segura con Mercado Pago:\n\n${result.initPoint}\n\n_Una vez confirmado el pago, recibirás la confirmación de tu pedido._`
+          )
+        : formatBotUserMessage(
+            'Link de pago activo',
+            '💳',
+            `Usá este link para completar tu pago:\n\n${result.initPoint}\n\n_Completá el pago para confirmar tu pedido._`
+          );
 
-      return textResponse(`🤖\n\n${linkText}`, [
+      return textResponse(linkText, [
         { type: 'image', dataUrl: getMpBannerDataUrl(), beforeContent: true },
       ]);
     } catch (err) {
       console.error('[PayOnlineHandler] error:', err);
-      return textResponse(
-        '🤖\n\n*No podemos procesar el pago online en este momento* 😔\n\nPor favor intentá de nuevo más tarde o elegí pagar en efectivo.',
-        [{
+      return textResponse(PAY_ONLINE_RETRY_BOT_MESSAGE, [{
           type: 'interactive',
           message: {
             type: 'interactive',
             interactive: {
               type: 'button',
-              body: { text: '🤖\n\n¿Querés pagar en efectivo?' },
+              body: { text: PAY_CASH_ASK_BOT_MESSAGE },
               action: {
                 buttons: [
                   { type: 'reply', reply: { id: 'PAY_CASH', title: '💵 Efectivo' } },

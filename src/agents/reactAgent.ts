@@ -22,6 +22,7 @@ import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { HumanMessage } from '@langchain/core/messages';
 import { getReactReasonerLlm } from '../config/llm';
 import { buildHybridAgentSystemPrompt } from '../prompts/botPersonality';
+import { resolvePersonalityForBusiness } from '../services/botPersonality.service';
 import { allReactTools } from '../tools';
 import type { EnrichedContext, HandlerFollowUp, HandlerResult } from '../controllers/webhook/types';
 import { buildListMessage, formatBotUserMessage, getRequestedPartySize, normalizeMetadata } from '../services/productQuery/utils';
@@ -63,22 +64,24 @@ const MAX_TEXT_FOR_CTA = 600;
 /** Número de productos del menú a precargar como contexto para el planner. */
 const TOP_MENU_PRODUCTS_FOR_PLANNER = 5;
 
-let cachedAgent: ReturnType<typeof createReactAgent> | null = null;
+let cachedAgents = new Map<string, ReturnType<typeof createReactAgent>>();
 
-const buildAgent = () => {
-  if (!cachedAgent) {
-    cachedAgent = createReactAgent({
+const buildAgent = (personalityId: string, personalityPrompt: string) => {
+  let agent = cachedAgents.get(personalityId);
+  if (!agent) {
+    agent = createReactAgent({
       llm: getReactReasonerLlm(),
       tools: allReactTools,
-      prompt: buildHybridAgentSystemPrompt(),
+      prompt: buildHybridAgentSystemPrompt(personalityPrompt),
     });
+    cachedAgents.set(personalityId, agent);
   }
-  return cachedAgent;
+  return agent;
 };
 
-/** Solo para uso en tests: resetea el singleton del ReAct agent. */
+/** Solo para uso en tests: resetea el cache del ReAct agent. */
 export const resetAgentCacheForTesting = (): void => {
-  cachedAgent = null;
+  cachedAgents = new Map();
 };
 
 const buildContextMessage = (ctx: EnrichedContext): string => {
@@ -283,12 +286,16 @@ const buildProductListFollowUp = (products: AgentShortlistItem[]): HandlerFollow
 export const runHybridReactAgent = async (
   ctx: EnrichedContext
 ): Promise<HandlerResult | null> => {
-  const agent = buildAgent();
-
   const businessId =
     typeof ctx.business === 'object' && ctx.business
       ? (ctx.business as { id: string }).id
       : '';
+  if (!businessId) return null;
+
+  const { id: personalityId, promptText } =
+    await resolvePersonalityForBusiness(businessId);
+  const agent = buildAgent(personalityId, promptText);
+
   const customerId =
     typeof ctx.customer === 'object' && ctx.customer
       ? (ctx.customer as { id: string }).id

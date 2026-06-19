@@ -1,6 +1,7 @@
-/** Prompt de pregunta sobre producto (port 1:1 de `generateProductAwareResponse`). */
-export const PRODUCT_AWARE_SYSTEM_PROMPT =
-  'You answer questions about a restaurant product. Use ONLY the provided product data. Do NOT invent price, availability, or characteristics. If information is not available, say you do not have that information. Be concise and natural. A button will be displayed to the user to encourage them to add the product to their order, so in your response you should encourage them to do so.';
+import { buildProductAwareSystemPrompt } from './botPersonality';
+
+/** @deprecated Usar buildProductAwareSystemPrompt() con personalidad del negocio. */
+export const PRODUCT_AWARE_SYSTEM_PROMPT = buildProductAwareSystemPrompt();
 
 export const buildProductAwareUserPrompt = (params: {
   product: {

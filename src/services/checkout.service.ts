@@ -11,6 +11,12 @@ import {
 } from '../repositories';
 import { HandlerFollowUp, WhatsAppWebhookPayload } from '../controllers/webhook/types';
 import { emitAdminOrderCreated } from '../socket/adminSocket';
+import {
+  buildOrderConfirmedCashMessage,
+  buildOrderDispatchThanksMessage,
+  EMPTY_CART_BOT_MESSAGE,
+  PAYMENT_METHOD_PROMPT_BOT_MESSAGE,
+} from './productQuery/botMessages';
 
 export interface CreateOrderFromDraftParams {
   paymentStatus?: OrderPaymentStatus;
@@ -139,8 +145,7 @@ export const buildCheckoutMessage = async (
   });
 
   if (!draft || !draft.id) {
-    const errorText =
-      '🤖\n\n*Tu pedido está vacío 🛒*\n\nPodés explorar el menú para empezar tu pedido.';
+    const errorText = EMPTY_CART_BOT_MESSAGE;
     return { message: null, errorMessage: errorText };
   }
 
@@ -155,7 +160,7 @@ export const buildCheckoutMessage = async (
     interactive: {
       type: 'button',
       body: {
-        text: '🤖\n\n*¿Cómo querés pagar?* 💳\n\nElegí el método de pago para confirmar tu pedido.',
+        text: PAYMENT_METHOD_PROMPT_BOT_MESSAGE,
       },
       action: {
         buttons: [
@@ -219,17 +224,13 @@ export const buildCashCheckoutResult = async (
 
     await closeConversation(conversation.id);
 
-    const messageText =
-      `🤖\n\n✅ *Pedido confirmado*\n\n` +
-      `Número: #${orderId}\n` +
-      `Total: $${total}\n` +
-      `Pago: Efectivo al recibir`;
+    const messageText = buildOrderConfirmedCashMessage({ orderId, total });
 
     const followUps: HandlerFollowUp[] = [
       { type: 'image', dataUrl: qrDataUrl },
       {
         type: 'text',
-        message: '¡Gracias por tu pedido! Te avisaremos por este medio cuando tu pedido sea despachado.',
+        message: buildOrderDispatchThanksMessage(),
       },
     ];
 
@@ -238,7 +239,7 @@ export const buildCashCheckoutResult = async (
     if (err instanceof Error && err.message === 'empty_cart') {
       return {
         message: null,
-        errorMessage: '🤖\n\n*Tu pedido está vacío 🛒*\n\nPodés explorar el menú para empezar tu pedido.',
+        errorMessage: EMPTY_CART_BOT_MESSAGE,
       };
     }
     throw err;
