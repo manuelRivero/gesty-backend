@@ -184,6 +184,7 @@ model draft_order_item {
   quantity       Int
   unit_price     Decimal      @db.Decimal(10, 2)
   total_price    Decimal      @db.Decimal(10, 2)
+  notes          String?
   draft_order    draft_order? @relation(fields: [draft_order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   menu_item      menu_item?   @relation(fields: [product_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
@@ -271,6 +272,7 @@ model order_item {
   quantity      Int       @default(1)
   unit_price    Decimal   @db.Decimal(12, 2)
   serves_people Int?
+  notes         String?
   created_at    DateTime  @default(now()) @db.Timestamptz(6)
   menu_item     menu_item @relation(fields: [menu_item_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   orders        orders    @relation(fields: [order_id], references: [id], onDelete: Cascade, onUpdate: NoAction)

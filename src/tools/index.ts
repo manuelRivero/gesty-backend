@@ -22,7 +22,7 @@
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
 import type { RunnableConfig } from '@langchain/core/runnables';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { MenuService } from '../services/menu.service';
 import { getBusinessOpenInfo } from '../services/businessHours.service';
 import { findRecentMessagesForDetectionContext } from '../repositories';
@@ -35,6 +35,7 @@ import {
 } from '../helpers/complementaryMenu.helper';
 import { getReactContext } from './_context';
 import { createOnlinePaymentLink } from '../services/payment/payment.service';
+import { refreshDraftOrderTimeout } from '../services/draftOrderTimeout.service';
 
 const toJson = (data: unknown): string => {
   try {
@@ -199,6 +200,7 @@ export const getCartTool = new DynamicStructuredTool<
         quantity: it.quantity,
         unitPrice: it.unit_price.toString(),
         totalPrice: it.total_price.toString(),
+        notes: it.notes ?? null,
       })),
     });
   },
@@ -892,6 +894,302 @@ export const createPaymentLinkTool = new DynamicStructuredTool<
   },
 });
 
+// ---------------------------------------------------------------------------
+// add_cart_item
+// ---------------------------------------------------------------------------
+
+const addCartItemSchema = z.object({
+  productId: z
+    .string()
+    .uuid()
+    .describe('UUID del menu_item a agregar (usar el id devuelto por search_products o find_products_by_filter)'),
+  quantity: z
+    .number()
+    .int()
+    .positive()
+    .max(99)
+    .default(1)
+    .describe('Cantidad a agregar. Por defecto 1.'),
+});
+type AddCartItemInput = z.infer<typeof addCartItemSchema>;
+
+export const addCartItemTool = new DynamicStructuredTool<
+  typeof addCartItemSchema,
+  AddCartItemInput
+>({
+  name: 'add_cart_item',
+  description:
+    'Agrega (o aumenta) un producto al carrito activo del cliente. ' +
+    'Usá este tool cuando el cliente confirme que quiere agregar un plato en texto libre: ' +
+    '"sí, agregalo", "quiero uno de eso", "ponelo", "dale", "sumá 2 pizzas", etc. ' +
+    'Si el producto ya está en el carrito, suma la cantidad indicada. ' +
+    'Antes de llamar necesitás el productId: si ya lo tenés del contexto úsalo; ' +
+    'si no, llamá search_products primero. ' +
+    'Devuelve el estado actualizado del carrito para que puedas confirmarle al cliente.',
+  schema: addCartItemSchema,
+  func: async ({ productId, quantity }: AddCartItemInput, _runManager, config?: RunnableConfig) => {
+    const { businessId, customerPhone } = getReactContext(config);
+    const qty = Math.min(99, Math.max(1, Math.floor(quantity)));
+
+    // Obtener o crear draft
+    let draft = await prisma.draft_order.findFirst({
+      where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
+    });
+    if (!draft) {
+      const business = await prisma.business.findUnique({
+        where: { id: businessId },
+        select: { currency_code: true },
+      });
+      draft = await prisma.draft_order.create({
+        data: {
+          business_id: businessId,
+          customer_phone: customerPhone,
+          status: 'active',
+          currency: business?.currency_code ?? 'ARS',
+        },
+      });
+    }
+
+    // Verificar que el producto existe y está disponible
+    const item = await prisma.menu_item.findFirst({
+      where: { id: productId, business_id: businessId, is_available: true },
+      include: {
+        menu_item_price: {
+          where: {
+            is_active: true,
+            valid_from: { lte: new Date() },
+            OR: [{ valid_to: null }, { valid_to: { gte: new Date() } }],
+          },
+          orderBy: { valid_from: 'desc' },
+          take: 1,
+        },
+      },
+    });
+
+    if (!item) {
+      return toJson({ success: false, error: 'product_not_found_or_unavailable' });
+    }
+
+    const unitPrice = item.menu_item_price[0]?.amount ?? new Prisma.Decimal(0);
+
+    const existing = await prisma.draft_order_item.findFirst({
+      where: { draft_order_id: draft.id, product_id: productId },
+    });
+
+    let newQty: number;
+    if (existing) {
+      newQty = existing.quantity + qty;
+      await prisma.draft_order_item.update({
+        where: { id: existing.id },
+        data: { quantity: newQty, total_price: unitPrice.mul(newQty) },
+      });
+    } else {
+      newQty = qty;
+      await prisma.draft_order_item.create({
+        data: {
+          draft_order_id: draft.id,
+          product_id: productId,
+          quantity: newQty,
+          unit_price: unitPrice,
+          total_price: unitPrice.mul(newQty),
+        },
+      });
+    }
+
+    // Recalcular total del draft
+    const agg = await prisma.draft_order_item.aggregate({
+      where: { draft_order_id: draft.id },
+      _sum: { total_price: true },
+    });
+    const newTotal = agg._sum.total_price ?? new Prisma.Decimal(0);
+    await prisma.draft_order.update({
+      where: { id: draft.id },
+      data: { total_amount: newTotal },
+    });
+
+    await refreshDraftOrderTimeout(draft.id);
+
+    // Devolver snapshot del carrito actualizado
+    const updatedItems = await prisma.draft_order_item.findMany({
+      where: { draft_order_id: draft.id },
+      include: { menu_item: { select: { id: true, name: true } } },
+      orderBy: { id: 'asc' },
+    });
+
+    return toJson({
+      success: true,
+      added: { itemName: item.name, quantity: qty, unitPrice: unitPrice.toString() },
+      cart: {
+        total: newTotal.toString(),
+        itemCount: updatedItems.length,
+        items: updatedItems.map((it) => ({
+          productId: it.product_id,
+          name: it.menu_item?.name ?? null,
+          quantity: it.quantity,
+          notes: it.notes ?? null,
+        })),
+      },
+    });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// remove_cart_item
+// ---------------------------------------------------------------------------
+
+const removeCartItemSchema = z.object({
+  productId: z
+    .string()
+    .uuid()
+    .describe('UUID del menu_item a remover del carrito (usar productId de get_cart)'),
+});
+type RemoveCartItemInput = z.infer<typeof removeCartItemSchema>;
+
+export const removeCartItemTool = new DynamicStructuredTool<
+  typeof removeCartItemSchema,
+  RemoveCartItemInput
+>({
+  name: 'remove_cart_item',
+  description:
+    'Elimina completamente un producto del carrito activo del cliente. ' +
+    'Usá este tool cuando el cliente pida quitar un ítem en texto libre: ' +
+    '"quitá el pollo", "sacá la ensalada", "no quiero la pizza", "borralo", etc. ' +
+    'Antes de llamar necesitás el productId: si no lo tenés, llamá get_cart primero. ' +
+    'Si querés solo reducir la cantidad (no eliminar), usá add_cart_item con quantity negativo no es posible — ' +
+    'en ese caso confirmale al cliente que el ítem fue eliminado y que puede volver a agregarlo con la cantidad deseada. ' +
+    'Devuelve el estado actualizado del carrito.',
+  schema: removeCartItemSchema,
+  func: async ({ productId }: RemoveCartItemInput, _runManager, config?: RunnableConfig) => {
+    const { businessId, customerPhone } = getReactContext(config);
+
+    const draft = await prisma.draft_order.findFirst({
+      where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
+    });
+
+    if (!draft) {
+      return toJson({ success: false, error: 'no_active_cart' });
+    }
+
+    const line = await prisma.draft_order_item.findFirst({
+      where: { draft_order_id: draft.id, product_id: productId },
+      include: { menu_item: { select: { id: true, name: true } } },
+    });
+
+    if (!line) {
+      return toJson({ success: false, error: 'item_not_in_cart' });
+    }
+
+    const removedName = line.menu_item?.name ?? 'Producto';
+    const removedQty = line.quantity;
+
+    await prisma.draft_order_item.delete({ where: { id: line.id } });
+
+    // Recalcular total
+    const agg = await prisma.draft_order_item.aggregate({
+      where: { draft_order_id: draft.id },
+      _sum: { total_price: true },
+    });
+    const newTotal = agg._sum.total_price ?? new Prisma.Decimal(0);
+    await prisma.draft_order.update({
+      where: { id: draft.id },
+      data: { total_amount: newTotal },
+    });
+
+    await refreshDraftOrderTimeout(draft.id);
+
+    // Snapshot actualizado
+    const updatedItems = await prisma.draft_order_item.findMany({
+      where: { draft_order_id: draft.id },
+      include: { menu_item: { select: { id: true, name: true } } },
+      orderBy: { id: 'asc' },
+    });
+
+    return toJson({
+      success: true,
+      removed: { itemName: removedName, quantity: removedQty },
+      cart: {
+        total: newTotal.toString(),
+        itemCount: updatedItems.length,
+        items: updatedItems.map((it) => ({
+          productId: it.product_id,
+          name: it.menu_item?.name ?? null,
+          quantity: it.quantity,
+          notes: it.notes ?? null,
+        })),
+      },
+    });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// update_item_note
+// ---------------------------------------------------------------------------
+
+const updateItemNoteSchema = z.object({
+  productId: z
+    .string()
+    .uuid()
+    .describe('UUID del menu_item al que pertenece la nota (usar productId devuelto por get_cart o search_products)'),
+  note: z
+    .string()
+    .max(300)
+    .describe('Instrucción especial del cliente para ese platillo. Ej: "término medio", "sin cebolla", "poca sal". Enviar cadena vacía para borrar la nota.'),
+});
+type UpdateItemNoteInput = z.infer<typeof updateItemNoteSchema>;
+
+export const updateItemNoteTool = new DynamicStructuredTool<
+  typeof updateItemNoteSchema,
+  UpdateItemNoteInput
+>({
+  name: 'update_item_note',
+  description:
+    'Guarda (o reemplaza) la nota/instrucción especial de un ítem del carrito activo. ' +
+    'Usá este tool cuando el cliente indique preferencias de preparación para un platillo ' +
+    '(ej: término de cocción, ingredientes a omitir, cantidad de sal, etc.). ' +
+    'Antes de llamar a este tool asegurate de tener el productId del ítem: usá get_cart si no lo tenés. ' +
+    'Devuelve el nombre del ítem y la nota guardada para que puedas confirmarle al cliente.',
+  schema: updateItemNoteSchema,
+  func: async ({ productId, note }: UpdateItemNoteInput, _runManager, config?: RunnableConfig) => {
+    const { businessId, customerPhone } = getReactContext(config);
+
+    const draft = await prisma.draft_order.findFirst({
+      where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
+      include: {
+        draft_order_item: {
+          include: { menu_item: { select: { id: true, name: true } } },
+        },
+      },
+    });
+
+    if (!draft) {
+      return toJson({ success: false, error: 'no_active_cart' });
+    }
+
+    const line = draft.draft_order_item.find((it) => it.product_id === productId);
+
+    if (!line) {
+      return toJson({
+        success: false,
+        error: 'item_not_in_cart',
+        hint: 'El producto no está en el carrito activo. Verificá el productId con get_cart.',
+      });
+    }
+
+    const normalizedNote = note.trim() || null;
+
+    await prisma.draft_order_item.update({
+      where: { id: line.id },
+      data: { notes: normalizedNote },
+    });
+
+    return toJson({
+      success: true,
+      itemName: line.menu_item?.name ?? 'Producto',
+      note: normalizedNote,
+    });
+  },
+});
+
 export const allReactTools = [
   searchProductsTool,
   getProductsDetailsByIdsTool,
@@ -906,4 +1204,7 @@ export const allReactTools = [
   getComplementarySuggestionsTool,
   getBusinessInfoTool,
   createPaymentLinkTool,
+  addCartItemTool,
+  removeCartItemTool,
+  updateItemNoteTool,
 ];

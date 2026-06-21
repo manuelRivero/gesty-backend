@@ -94,6 +94,7 @@ export const createOrderFromDraft = async (
           menu_item_id: item.product_id!,
           quantity: item.quantity,
           unit_price: item.unit_price,
+          notes: item.notes ?? undefined,
         })),
       },
       currency_code: business.currency_code ?? 'ARS',

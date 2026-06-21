@@ -62,6 +62,7 @@ const ORDER_SECTION_TAGS: MenuCategoryTag[] = [
 
 type DraftLineForSection = {
   quantity: number;
+  notes?: string | null;
   menu_item: {
     name: string | null;
     menu_category: {
@@ -101,7 +102,8 @@ function formatDraftOrderSectionsForWhatsApp(
     if (!buckets.has(key)) {
       buckets.set(key, { title, lines: [] });
     }
-    buckets.get(key)!.lines.push(`${q}× ${name}`);
+    const noteSuffix = row.notes?.trim() ? ` _(${row.notes.trim()})_` : "";
+    buckets.get(key)!.lines.push(`${q}× ${name}${noteSuffix}`);
   }
 
   const parts: string[] = [heading];
@@ -792,7 +794,7 @@ export const handleShowCartForEditionFromWebhook = async (
           rows: cartItems.draft_order_item.map(item => ({
             id: `SELECT_CART_ITEM:${item.menu_item?.id ?? ''}`,
             title: `${item.quantity}x ${item.menu_item?.name ?? ''}`,
-            description: 'Modificar o remover'
+            description: item.notes?.trim() ? item.notes.trim() : 'Modificar o remover',
           }))
         }
       ]
