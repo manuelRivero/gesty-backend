@@ -27,6 +27,7 @@ import { prisma } from '../../../lib/prisma';
 import { getBusinessConfig } from '../../../services/businessConfig.service';
 import { getBusinessOpenInfo } from '../../../services/businessHours.service';
 import { formatInboundMessageForLog } from '../../../controllers/webhook/utils/messageLog';
+import { sendTypingIndicator } from '../../../services/whatsappTypingIndicator.service';
 import { normalizeMetadata } from '../../../services/productQuery/utils';
 import type { AgentState, AgentStateUpdate } from '../../state';
 import type { DetectionContext } from '../../../services/ai/detection.service';
@@ -185,13 +186,6 @@ export const buildDetectionContextNode = async (
 
   try {
     const conversationState = await findOrCreateConversationState(conversation.id);
-
-    const recentMessages = await findRecentMessagesForDetectionContext(
-      conversation.id,
-      conversation.started_at,
-      5
-    );
-
     const workingConversationState = conversationState;
 
     if (
@@ -208,6 +202,17 @@ export const buildDetectionContextNode = async (
       );
       return { earlyExit: 'bot_disabled_or_human_handled' };
     }
+
+    const inboundMessageId = ctx.message?.id;
+    if (inboundMessageId && ctx.phoneNumberId) {
+      sendTypingIndicator(ctx.phoneNumberId, inboundMessageId);
+    }
+
+    const recentMessages = await findRecentMessagesForDetectionContext(
+      conversation.id,
+      conversation.started_at,
+      5
+    );
 
     const enrichedBase = {
       ...ctx,
