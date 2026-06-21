@@ -10,6 +10,11 @@ import {
   listAdminMenuItems,
   updateAdminMenuItem
 } from "../services/adminMenuItems.service";
+import { generateMenuItemEnrichment } from "../services/ai/menuItemEnrichment.service";
+import {
+  getMenuItemAiMetadata,
+  saveMenuItemAiMetadata
+} from "../services/adminMenuItemAiMetadata.service";
 
 const listQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -240,4 +245,118 @@ export async function removeMenuItem(req: Request, res: Response) {
     id: row.id,
     isAvailable: row.is_available
   });
+}
+
+// ---------------------------------------------------------------------------
+// AI Enrichment handlers
+// ---------------------------------------------------------------------------
+
+/**
+ * POST /api/admin/menu-items/:id/generate-enrichment
+ *
+ * Genera un borrador de metadatos AI para el producto y lo devuelve al cliente
+ * para revisión. No persiste nada en la base de datos.
+ */
+export async function generateMenuItemEnrichmentHandler(req: Request, res: Response) {
+  const businessId = req.user?.businessId;
+  if (!businessId) {
+    return res.status(401).json({ error: "No autenticado" });
+  }
+
+  const parsedParams = idParamSchema.safeParse(req.params);
+  if (!parsedParams.success) {
+    return res.status(400).json({ error: "id inválido" });
+  }
+
+  try {
+    const draft = await generateMenuItemEnrichment(parsedParams.data.id);
+    return res.json({ draft });
+  } catch (error) {
+    if ((error as Error).message === "MENU_ITEM_NOT_FOUND") {
+      return res.status(404).json({ error: "Menu item no encontrado" });
+    }
+    if ((error as Error).message === "ENRICHMENT_INVALID_JSON") {
+      return res.status(502).json({ error: "El modelo no devolvió una respuesta válida. Intentá nuevamente." });
+    }
+    throw error;
+  }
+}
+
+/**
+ * GET /api/admin/menu-items/:id/ai-metadata
+ *
+ * Devuelve los metadatos AI guardados para un producto, o 404 si aún no fue
+ * enriquecido.
+ */
+export async function getMenuItemAiMetadataHandler(req: Request, res: Response) {
+  const businessId = req.user?.businessId;
+  if (!businessId) {
+    return res.status(401).json({ error: "No autenticado" });
+  }
+
+  const parsedParams = idParamSchema.safeParse(req.params);
+  if (!parsedParams.success) {
+    return res.status(400).json({ error: "id inválido" });
+  }
+
+  const metadata = await getMenuItemAiMetadata(parsedParams.data.id);
+  if (!metadata) {
+    return res.status(404).json({ error: "Este producto aún no tiene metadatos AI generados" });
+  }
+
+  return res.json(metadata);
+}
+
+const aiMetadataSchema = z.object({
+  display_name: z.string().max(24).optional().nullable(),
+  short_description: z.string().max(72).optional().nullable(),
+  search_keywords: z.array(z.string().min(1)).max(20).optional().nullable(),
+  synonyms: z.array(z.string().min(1)).max(10).optional().nullable(),
+  category_suggestion: z.string().max(80).optional().nullable(),
+  product_tags: z.array(z.string().min(1)).max(20).optional().nullable(),
+  modelVersion: z.string().max(40).optional()
+});
+
+/**
+ * PUT /api/admin/menu-items/:id/ai-metadata
+ *
+ * Persiste los metadatos AI aprobados (y opcionalmente editados) por el
+ * usuario. Regenera el embedding RAG automáticamente tras guardar.
+ */
+export async function saveMenuItemAiMetadataHandler(req: Request, res: Response) {
+  const businessId = req.user?.businessId;
+  if (!businessId) {
+    return res.status(401).json({ error: "No autenticado" });
+  }
+
+  const parsedParams = idParamSchema.safeParse(req.params);
+  if (!parsedParams.success) {
+    return res.status(400).json({ error: "id inválido" });
+  }
+
+  const parsedBody = aiMetadataSchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    return res.status(400).json({
+      error: "Body inválido",
+      details: parsedBody.error.flatten()
+    });
+  }
+
+  try {
+    const saved = await saveMenuItemAiMetadata(parsedParams.data.id, {
+      display_name: parsedBody.data.display_name ?? "",
+      short_description: parsedBody.data.short_description ?? "",
+      search_keywords: parsedBody.data.search_keywords ?? [],
+      synonyms: parsedBody.data.synonyms ?? [],
+      category_suggestion: parsedBody.data.category_suggestion ?? "",
+      product_tags: parsedBody.data.product_tags ?? [],
+      modelVersion: parsedBody.data.modelVersion
+    });
+    return res.json(saved);
+  } catch (error) {
+    if ((error as Error).message === "AI_METADATA_SAVE_FAILED") {
+      return res.status(500).json({ error: "No se pudo guardar los metadatos AI" });
+    }
+    throw error;
+  }
 }

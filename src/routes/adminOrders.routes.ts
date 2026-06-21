@@ -51,7 +51,10 @@ import {
   getMenuItems,
   patchMenuItem,
   postMenuItem,
-  removeMenuItem
+  removeMenuItem,
+  generateMenuItemEnrichmentHandler,
+  getMenuItemAiMetadataHandler,
+  saveMenuItemAiMetadataHandler
 } from "../controllers/adminMenuItems.controller";
 import { getDashboardSummary } from "../controllers/adminDashboard.controller";
 import {
@@ -133,6 +136,21 @@ router.get("/menu-items/:id", requireRoles("OWNER", "ADMIN"), getMenuItemById);
 router.post("/menu-items", requireRoles("OWNER", "ADMIN"), postMenuItem);
 router.patch("/menu-items/:id", requireRoles("OWNER", "ADMIN"), patchMenuItem);
 router.delete("/menu-items/:id", requireRoles("OWNER", "ADMIN"), removeMenuItem);
+router.post(
+  "/menu-items/:id/generate-enrichment",
+  requireRoles("OWNER", "ADMIN"),
+  generateMenuItemEnrichmentHandler
+);
+router.get(
+  "/menu-items/:id/ai-metadata",
+  requireRoles("OWNER", "ADMIN"),
+  getMenuItemAiMetadataHandler
+);
+router.put(
+  "/menu-items/:id/ai-metadata",
+  requireRoles("OWNER", "ADMIN"),
+  saveMenuItemAiMetadataHandler
+);
 router.get("/delivery-zones", requireRoles("OWNER", "ADMIN"), getDeliveryZones);
 router.get(
   "/delivery-zones/:id",

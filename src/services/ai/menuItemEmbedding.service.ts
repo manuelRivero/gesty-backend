@@ -6,10 +6,21 @@
  * los hooks de admin (create/update de productos y precio) compartan la misma
  * lógica y la columna `embedding` quede siempre consistente con el resto del
  * registro.
+ *
+ * Cuando existen metadatos AI en `menu_item_ai_metadata`, se incorporan al
+ * texto embebido para enriquecer la recuperación semántica. Los datos
+ * originales del negocio siempre preceden a los campos derivados por IA.
  */
 
 import { prisma } from '../../lib/prisma';
 import { getProductEmbedding } from './openai.service';
+
+type AiMetadataForEmbedding = {
+  display_name: string | null;
+  search_keywords: string[] | null;
+  synonyms: string[] | null;
+  product_tags: string[] | null;
+};
 
 /**
  * Construye el texto que alimenta al modelo de embeddings.
@@ -50,7 +61,8 @@ export async function buildMenuItemEmbeddingText(
     ? `${activePrice.amount.toString()} ${activePrice.currency_code}`
     : '';
 
-  return [
+  // Campos primarios — fuente de verdad del negocio.
+  const primaryLines = [
     `Nombre: ${item.name}`,
     `Descripción: ${item.description ?? ''}`,
     `Ingredientes: ${item.ingredients ?? ''}`,
@@ -59,7 +71,39 @@ export async function buildMenuItemEmbeddingText(
     `Categoría: ${item.menu_category?.name ?? ''}`,
     `Categoría descripción: ${item.menu_category?.description ?? ''}`,
     `Precio: ${priceText}`
-  ].join('\n');
+  ];
+
+  // Metadatos AI enriquecidos — opcionales, nunca sobreescriben los primarios.
+  const aiRows = await prisma.$queryRaw<AiMetadataForEmbedding[]>`
+    SELECT display_name, search_keywords, synonyms, product_tags
+    FROM menu_item_ai_metadata
+    WHERE menu_item_id = ${menuItemId}::uuid
+    LIMIT 1
+  `;
+
+  const ai = aiRows[0];
+  const aiLines: string[] = [];
+
+  if (ai) {
+    if (ai.display_name) {
+      aiLines.push(`Nombre alternativo: ${ai.display_name}`);
+    }
+    if (ai.search_keywords?.length) {
+      aiLines.push(`Palabras clave: ${ai.search_keywords.join(', ')}`);
+    }
+    if (ai.synonyms?.length) {
+      aiLines.push(`Sinónimos: ${ai.synonyms.join(', ')}`);
+    }
+    if (ai.product_tags?.length) {
+      aiLines.push(`Tags: ${ai.product_tags.join(', ')}`);
+    }
+  }
+
+  const allLines = aiLines.length
+    ? [...primaryLines, '-- AI Enhanced --', ...aiLines]
+    : primaryLines;
+
+  return allLines.join('\n');
 }
 
 /**
