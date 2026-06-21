@@ -13,10 +13,14 @@ import { sendResponse } from '../../../controllers/webhook/sender';
 import {
   createConversationMessage,
   updateConversationLastMessageAt,
+  updateConversationSentiment,
 } from '../../../repositories';
 import { isDryRunWhatsAppSend } from '../../../config/env';
 import { humanizeHandlerResult } from '../../../services/ai/humanizeBotBody.service';
 import { resolvePersonalityPromptText } from '../../../services/botPersonality.service';
+import { analyzeConversationSentiment } from '../../../services/ai/conversationSentiment.service';
+import { emitAdminConversationSentimentUpdated } from '../../../socket/adminSocket';
+import { NEGATIVE_SENTIMENTS } from '../../../types/conversationSentiment';
 import type { HandlerResult } from '../../../controllers/webhook/types';
 import type { AgentState, AgentStateUpdate } from '../../state';
 
@@ -151,6 +155,28 @@ export const persistAIMessageNode = async (
   }
 
   await updateConversationLastMessageAt(conversationId);
+
+  // Análisis de sentimiento en background: no bloquea el flujo principal.
+  // El evento Socket.IO solo se emite cuando el sentiment requiere intervención humana.
+  const conversation = state.conversation;
+  const businessId = state.business?.id;
+  if (conversation && businessId) {
+    void analyzeConversationSentiment(conversationId, conversation.started_at)
+      .then(async (result) => {
+        if (!result) return;
+        await updateConversationSentiment(conversationId, result.sentiment);
+        if (NEGATIVE_SENTIMENTS.includes(result.sentiment)) {
+          emitAdminConversationSentimentUpdated(businessId, {
+            conversationId,
+            sentiment: result.sentiment,
+            summary: result.summary,
+          });
+        }
+      })
+      .catch((err) => {
+        console.error('[Sentiment] Error analizando sentimiento:', err);
+      });
+  }
 
   return {};
 };

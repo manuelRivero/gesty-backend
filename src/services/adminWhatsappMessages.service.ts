@@ -9,6 +9,14 @@ export type ListAdminWhatsappMessagesParams = {
   customerPhone?: string;
 };
 
+export type ListAdminConversationsParams = {
+  businessId: string;
+  page: number;
+  pageSize: number;
+  sentiment?: string;
+  customerPhone?: string;
+};
+
 export async function listAdminWhatsappMessages(
   params: ListAdminWhatsappMessagesParams
 ) {
@@ -46,6 +54,8 @@ export async function listAdminWhatsappMessages(
         conversation: {
           select: {
             id: true,
+            ai_sentiment: true,
+            ai_sentiment_updated_at: true,
             conversation_state: {
               select: {
                 is_human_handled: true
@@ -84,7 +94,9 @@ export async function listAdminWhatsappMessages(
       conversation: {
         id: row.conversation.id,
         customer: row.conversation.customer,
-        botEnabled: !Boolean(row.conversation.conversation_state?.is_human_handled)
+        botEnabled: !Boolean(row.conversation.conversation_state?.is_human_handled),
+        aiSentiment: row.conversation.ai_sentiment ?? null,
+        aiSentimentUpdatedAt: row.conversation.ai_sentiment_updated_at?.toISOString() ?? null,
       }
     })),
     total,
@@ -204,4 +216,76 @@ async function humanizeInteractivePayloadId(
   }
 
   return "Opcion interactiva";
+}
+
+/**
+ * Lista conversaciones del negocio con datos de sentiment para el inbox del admin.
+ * Permite filtrar por sentiment y teléfono del cliente.
+ */
+export async function listAdminConversations(params: ListAdminConversationsParams) {
+  const { businessId, page, pageSize, sentiment, customerPhone } = params;
+
+  const where: Prisma.conversationWhereInput = { business_id: businessId };
+
+  if (sentiment) {
+    where.ai_sentiment = sentiment;
+  }
+
+  if (customerPhone?.trim()) {
+    where.customer = {
+      phone_number: { contains: customerPhone.trim() }
+    };
+  }
+
+  const skip = (page - 1) * pageSize;
+  const [total, rows] = await prisma.$transaction([
+    prisma.conversation.count({ where }),
+    prisma.conversation.findMany({
+      where,
+      orderBy: { last_message_at: "desc" },
+      skip,
+      take: pageSize,
+      select: {
+        id: true,
+        status: true,
+        started_at: true,
+        last_message_at: true,
+        ai_sentiment: true,
+        ai_sentiment_updated_at: true,
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            phone_number: true,
+          }
+        },
+        conversation_state: {
+          select: {
+            is_human_handled: true,
+            current_intent: true,
+          }
+        },
+      }
+    })
+  ]);
+
+  const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
+
+  return {
+    items: rows.map((row) => ({
+      id: row.id,
+      status: row.status,
+      startedAt: row.started_at.toISOString(),
+      lastMessageAt: row.last_message_at.toISOString(),
+      aiSentiment: row.ai_sentiment ?? null,
+      aiSentimentUpdatedAt: row.ai_sentiment_updated_at?.toISOString() ?? null,
+      customer: row.customer,
+      botEnabled: !Boolean(row.conversation_state?.is_human_handled),
+      currentIntent: row.conversation_state?.current_intent ?? null,
+    })),
+    total,
+    page,
+    pageSize,
+    totalPages,
+  };
 }

@@ -230,6 +230,19 @@ export const closeConversationAfterReservation = async (
   });
 };
 
+export const updateConversationSentiment = async (
+  conversationId: string,
+  sentiment: string,
+): Promise<conversation> => {
+  return prisma.conversation.update({
+    where: { id: conversationId },
+    data: {
+      ai_sentiment: sentiment,
+      ai_sentiment_updated_at: new Date(),
+    },
+  });
+};
+
 export const closeConversation = async (
   conversationId: string
 ): Promise<conversation> => {

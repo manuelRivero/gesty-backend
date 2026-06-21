@@ -69,7 +69,7 @@ import {
   removeAdminBusinessConfig
 } from "../controllers/adminBusinessConfig.controller";
 import { getAdminBotPersonalities } from "../controllers/adminBotPersonality.controller";
-import { getWhatsappMessages } from "../controllers/adminWhatsappMessages.controller";
+import { getWhatsappMessages, getWhatsappConversations } from "../controllers/adminWhatsappMessages.controller";
 import {
   getWhatsappConversationBotStatus,
   patchWhatsappConversationBotStatus
@@ -112,6 +112,7 @@ router.post("/config", requireRoles("OWNER", "ADMIN"), createAdminBusinessConfig
 router.patch("/config", requireRoles("OWNER", "ADMIN"), patchAdminBusinessConfig);
 router.delete("/config", requireRoles("OWNER", "ADMIN"), removeAdminBusinessConfig);
 router.get("/whatsapp/messages", getWhatsappMessages);
+router.get("/whatsapp/conversations", getWhatsappConversations);
 router.get(
   "/whatsapp/conversations/:conversationId/bot",
   getWhatsappConversationBotStatus

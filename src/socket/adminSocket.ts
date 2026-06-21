@@ -445,3 +445,42 @@ export function emitAdminWhatsappSupportRequested(
     at: new Date().toISOString()
   });
 }
+
+/** Payload del evento Socket `admin:conversation_sentiment` */
+export interface AdminConversationSentimentPayload {
+  type: "conversation.sentiment_updated";
+  businessId: string;
+  conversationId: string;
+  sentiment: string;
+  summary: string;
+  updatedAt: string;
+}
+
+export function emitAdminConversationSentimentUpdated(
+  businessId: string,
+  payload: {
+    conversationId: string;
+    sentiment: string;
+    summary: string;
+  }
+): void {
+  if (!io) {
+    console.error(
+      `${LOG} emit admin:conversation_sentiment OMITIDO: Socket.IO no inicializado businessId=${businessId}`
+    );
+    return;
+  }
+  const room = adminRoom(businessId);
+  const body: AdminConversationSentimentPayload = {
+    type: "conversation.sentiment_updated",
+    businessId,
+    conversationId: payload.conversationId,
+    sentiment: payload.sentiment,
+    summary: payload.summary,
+    updatedAt: new Date().toISOString(),
+  };
+  io.to(room).emit("admin:conversation_sentiment", body);
+  console.log(
+    `${LOG} emit admin:conversation_sentiment sentiment=${payload.sentiment} room=${room} conversationId=${payload.conversationId}`
+  );
+}
