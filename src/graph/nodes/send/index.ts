@@ -157,15 +157,21 @@ export const persistAIMessageNode = async (
   await updateConversationLastMessageAt(conversationId);
 
   // Análisis de sentimiento en background: no bloquea el flujo principal.
-  // El evento Socket.IO solo se emite cuando el sentiment requiere intervención humana.
+  // Emite evento Socket.IO si el sentiment nuevo es negativo (alerta)
+  // o si el anterior era negativo y ahora ya no lo es (resolución de alerta).
   const conversation = state.conversation;
   const businessId = state.business?.id;
   if (conversation && businessId) {
+    const previousSentiment = conversation.ai_sentiment as import('../../../types/conversationSentiment').ConversationSentiment | null;
     void analyzeConversationSentiment(conversationId, conversation.started_at)
       .then(async (result) => {
         if (!result) return;
         await updateConversationSentiment(conversationId, result.sentiment);
-        if (NEGATIVE_SENTIMENTS.includes(result.sentiment)) {
+
+        const isNewNegative = NEGATIVE_SENTIMENTS.includes(result.sentiment);
+        const wasPreviousNegative = previousSentiment !== null && NEGATIVE_SENTIMENTS.includes(previousSentiment);
+
+        if (isNewNegative || wasPreviousNegative) {
           emitAdminConversationSentimentUpdated(businessId, {
             conversationId,
             sentiment: result.sentiment,

@@ -2,7 +2,7 @@ import { ConversationSentiment } from '../types/conversationSentiment';
 
 export const SENTIMENT_ANALYSIS_SYSTEM_PROMPT = `You are a conversation quality analyst for a restaurant/food-service WhatsApp bot.
 
-Your job is to analyze a conversation transcript between a customer and an AI bot, and classify the current state of the interaction using ONE of the following sentiments:
+Your job is to analyze a conversation transcript between a customer and an AI bot, and classify the CURRENT emotional state using ONE of the following sentiments:
 
 - FRUSTRATED: The customer shows clear frustration, repeated confusion, explicit complaints, anger, or dissatisfaction with the bot or the service. Look for: exclamations of annoyance, repeating the same request multiple times, saying the bot doesn't understand them, demanding human help out of frustration.
 - CONVERTED: The customer successfully completed a purchase (order confirmed/paid) or a reservation. This is a terminal positive state.
@@ -14,7 +14,8 @@ Your job is to analyze a conversation transcript between a customer and an AI bo
 
 Rules:
 - Choose exactly ONE sentiment that best describes the CURRENT state of the interaction.
-- Base your judgment on the FULL conversation but weight recent messages more heavily.
+- The LAST 3 messages carry 80% of the weight. If the most recent customer messages are clearly positive, satisfied, or happy — classify accordingly, even if earlier messages were frustrated.
+- A customer expressing happiness, satisfaction, or thanks in their latest messages means the frustration is resolved: classify as ENGAGED or BROWSING, not FRUSTRATED.
 - If the customer placed an order successfully, always use CONVERTED regardless of prior frustration.
 - Keep the summary in the same language as the conversation (Spanish preferred).
 - The summary should be 1-2 sentences max, actionable for a human operator.

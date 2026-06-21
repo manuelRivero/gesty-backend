@@ -129,7 +129,9 @@ export const createOrGetOpenConversation = async (
           last_message_at: sessionStart,
           lastReferencedProductId: null,
           idle_reminder_sent_at: null,
-          idle_closed_at: null
+          idle_closed_at: null,
+          ai_sentiment: null,
+          ai_sentiment_updated_at: null
         }
       });
 
