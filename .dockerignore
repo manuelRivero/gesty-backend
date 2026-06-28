@@ -1,0 +1,31 @@
+node_modules
+dist
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+.npm-cache
+*.log
+.DS_Store
+
+# Tests / herramientas no necesarias en la imagen
+**/__tests__
+**/*.test.ts
+**/*.spec.ts
+vitest.config.ts
+scripts/parity
+scripts/embedding
+scripts/reservation
+
+# Docs (solo se copian explícitamente las que sirve la app)
+docs
+README.md
+REFACTOR-*.md
+PENDING-FEATURES copy*.md
+main-graph.png
+render.yaml
+
+# Infra (no debe entrar al contexto de build de la app)
+docker-compose.yml
+nginx

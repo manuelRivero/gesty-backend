@@ -7,6 +7,9 @@ import { createOrderFromDraft } from '../checkout.service';
 import { emitAdminOrderCreated } from '../../socket/adminSocket';
 import { sendTextMessageNoCtx, sendImageMessageNoCtx } from './messageHelpers';
 import { formatBotUserMessage } from '../productQuery/utils';
+import { computeOrderPricing } from '../pricing.service';
+import { resolveDeliveryContext } from '../deliveryFee.service';
+import { resolvePaymentAdjustment } from '../paymentAdjustment.service';
 
 export interface PaymentLinkResult {
   initPoint: string;
@@ -57,13 +60,37 @@ export const createOnlinePaymentLink = async (
 
   if (!draft || draft.draft_order_item.length === 0) return null;
 
-  const total = draft.draft_order_item.reduce(
-    (sum, i) => sum + i.quantity * i.unit_price.toNumber(),
-    0
-  );
+  const customer = await prisma.customer.findFirst({
+    where: { business_id: businessId, phone_number: customerPhone },
+    select: { id: true },
+  });
+
+  const deliveryCtx = customer
+    ? await resolveDeliveryContext({
+        customerId: customer.id,
+        businessId,
+        fulfillmentType: draft.fulfillment_type,
+      })
+    : { deliveryFee: 0, minOrderAmount: 0, zoneName: null, zoneId: null, estimatedMinutes: null };
+
+  // Para pago online se aplica el ajuste de 'online'
+  const pricingBase = computeOrderPricing(draft.draft_order_item, {
+    deliveryFee: deliveryCtx.deliveryFee,
+  });
+
+  const payAdjCtx = await resolvePaymentAdjustment({
+    businessId,
+    paymentMethod: 'online',
+    baseAmount: pricingBase.total,
+  });
+
+  const pricing = computeOrderPricing(draft.draft_order_item, {
+    deliveryFee: deliveryCtx.deliveryFee,
+    paymentAdjustment: payAdjCtx.adjustmentAmount,
+  });
   const currency = draft.currency ?? 'ARS';
 
-  const intent = await getOrCreateActiveIntent(draft.id, businessId, total, currency);
+  const intent = await getOrCreateActiveIntent(draft.id, businessId, pricing.total, currency);
 
   if (!intent.isNew && intent.initPoint) {
     return { initPoint: intent.initPoint, preferenceId: '', paymentIntentId: intent.id, isNew: false };
@@ -79,6 +106,32 @@ export const createOnlinePaymentLink = async (
     unit_price: i.unit_price.toNumber(),
     currency_id: currency,
   }));
+
+  // Agregar envío como línea separada en MP si aplica
+  if (deliveryCtx.deliveryFee > 0) {
+    items.push({
+      id: 'delivery_fee',
+      title: 'Envío',
+      quantity: 1,
+      unit_price: deliveryCtx.deliveryFee,
+      currency_id: currency,
+    });
+  }
+
+  // Agregar recargo/descuento por método de pago si aplica
+  if (payAdjCtx.hasAdjustment && payAdjCtx.adjustmentAmount !== 0) {
+    const adjAmount = Math.abs(payAdjCtx.adjustmentAmount);
+    const title = payAdjCtx.adjustmentAmount > 0
+      ? (payAdjCtx.label ?? 'Recargo por pago online')
+      : (payAdjCtx.label ?? 'Descuento por pago online');
+    items.push({
+      id: 'payment_adjustment',
+      title,
+      quantity: 1,
+      unit_price: payAdjCtx.adjustmentAmount > 0 ? adjAmount : -adjAmount,
+      currency_id: currency,
+    });
+  }
 
   const pref = await createMpPreference({
     accessToken: provider.accessToken,

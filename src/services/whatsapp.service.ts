@@ -30,6 +30,8 @@ import { MenuItemSearchResult, MenuService } from './menu.service';
 import { ConversationIntent } from '../types/conversationIntent';
 import { WhatsAppSenderService } from './whatsappSender.service';
 import { OrderPaymentStatus, OrderStatus, Prisma } from '@prisma/client';
+import { computeCartTotalDecimal, computeOrderPricing } from './pricing.service';
+import { resolveEffectivePrice } from '../helpers/menuItemPrice.helper';
 import type { ConfirmationState } from '../domain/intent/types';
 import type { WhatsAppInteractiveMessage, WhatsAppListMessage } from '../domain/intent/whatsappTemplates';
 import { INTENT_SELECTION_ID_PREFIX } from '../domain/intent/whatsappTemplates';
@@ -1186,40 +1188,43 @@ export const handleAddItemToDraftOrder = async (
       }
     });
 
-    let itemName = '';
+    const menuItemFull = await tx.menu_item.findUnique({
+      where: { id: menuItemId },
+      select: {
+        name: true,
+        discount_type: true,
+        discount_value: true,
+        menu_item_price: {
+          where: priceWhere,
+          orderBy: { valid_from: 'desc' as const },
+          take: 1,
+          select: { amount: true }
+        }
+      }
+    });
+
+    if (!menuItemFull) {
+      throw new Error('Producto no encontrado');
+    }
+
+    const resolved = resolveEffectivePrice(menuItemFull);
+    const unitPrice = resolved.finalPrice;
+    const itemName = menuItemFull.name ?? '';
 
     if (existingItem) {
       const newQuantity = existingItem.quantity + 1;
-      const totalPrice = existingItem.unit_price.mul(newQuantity);
       await tx.draft_order_item.update({
         where: { id: existingItem.id },
         data: {
           quantity: newQuantity,
-          total_price: totalPrice
+          unit_price: unitPrice,
+          total_price: unitPrice.mul(newQuantity),
+          list_price: resolved.hasDiscount ? resolved.listPrice : null,
+          discount_amount: resolved.hasDiscount ? resolved.discountAmount : null,
         }
       });
-
-      const menuItem = await tx.menu_item.findUnique({
-        where: { id: menuItemId },
-        select: { name: true }
-      });
-      itemName = menuItem?.name ?? '';
     } else {
-      const menuItem = await tx.menu_item.findUnique({
-        where: { id: menuItemId },
-        select: { name: true }
-      });
-      itemName = menuItem?.name ?? '';
-
-      const price = await tx.menu_item_price.findFirst({
-        where: {
-          menu_item_id: menuItemId,
-          ...priceWhere
-        },
-        orderBy: { valid_from: 'desc' }
-      });
-
-      if (!price) {
+      if (!menuItemFull.menu_item_price[0]) {
         throw new Error('Precio no encontrado para el producto');
       }
 
@@ -1228,8 +1233,10 @@ export const handleAddItemToDraftOrder = async (
           draft_order_id: draftOrder.id,
           product_id: menuItemId,
           quantity: 1,
-          unit_price: price.amount,
-          total_price: price.amount
+          unit_price: unitPrice,
+          total_price: unitPrice,
+          list_price: resolved.hasDiscount ? resolved.listPrice : null,
+          discount_amount: resolved.hasDiscount ? resolved.discountAmount : null,
         }
       });
     }
@@ -1238,10 +1245,7 @@ export const handleAddItemToDraftOrder = async (
       where: { draft_order_id: draftOrder.id }
     });
 
-    const totalAmount = items.reduce(
-      (acc, item) => acc.add(item.total_price),
-      new Prisma.Decimal(0)
-    );
+    const totalAmount = computeCartTotalDecimal(items);
 
     const updatedOrder = await tx.draft_order.update({
       where: { id: draftOrder.id },
@@ -1317,36 +1321,49 @@ const addProductToOrder = async (params: {
       }
     });
 
+    const menuItemFull = await tx.menu_item.findUnique({
+      where: { id: params.productId },
+      select: {
+        discount_type: true,
+        discount_value: true,
+        menu_item_price: {
+          where: priceWhere,
+          orderBy: { valid_from: 'desc' as const },
+          take: 1,
+          select: { amount: true }
+        }
+      }
+    });
+
+    if (!menuItemFull?.menu_item_price[0]) {
+      throw new Error('Precio no encontrado para el producto');
+    }
+
+    const resolved = resolveEffectivePrice(menuItemFull);
+    const unitPrice = resolved.finalPrice;
+
     if (existingItem) {
       const newQuantity = existingItem.quantity + params.quantity;
-      const totalPrice = existingItem.unit_price.mul(newQuantity);
       await tx.draft_order_item.update({
         where: { id: existingItem.id },
         data: {
           quantity: newQuantity,
-          total_price: totalPrice
+          unit_price: unitPrice,
+          total_price: unitPrice.mul(newQuantity),
+          list_price: resolved.hasDiscount ? resolved.listPrice : null,
+          discount_amount: resolved.hasDiscount ? resolved.discountAmount : null,
         }
       });
     } else {
-      const price = await tx.menu_item_price.findFirst({
-        where: {
-          menu_item_id: params.productId,
-          ...priceWhere
-        },
-        orderBy: { valid_from: 'desc' }
-      });
-
-      if (!price) {
-        throw new Error('Precio no encontrado para el producto');
-      }
-
       await tx.draft_order_item.create({
         data: {
           draft_order_id: draftOrder.id,
           product_id: params.productId,
           quantity: params.quantity,
-          unit_price: price.amount,
-          total_price: price.amount.mul(params.quantity)
+          unit_price: unitPrice,
+          total_price: unitPrice.mul(params.quantity),
+          list_price: resolved.hasDiscount ? resolved.listPrice : null,
+          discount_amount: resolved.hasDiscount ? resolved.discountAmount : null,
         }
       });
     }
@@ -1355,10 +1372,7 @@ const addProductToOrder = async (params: {
       where: { draft_order_id: draftOrder.id }
     });
 
-    const totalAmount = items.reduce(
-      (acc, item) => acc.add(item.total_price),
-      new Prisma.Decimal(0)
-    );
+    const totalAmount = computeCartTotalDecimal(items);
 
     await tx.draft_order.update({
       where: { id: draftOrder.id },
@@ -1427,10 +1441,7 @@ const removeProductFromOrder = async (params: {
       where: { draft_order_id: draftOrder.id }
     });
 
-    const totalAmount = items.reduce(
-      (acc, item) => acc.add(item.total_price),
-      new Prisma.Decimal(0)
-    );
+    const totalAmount = computeCartTotalDecimal(items);
 
     await tx.draft_order.update({
       where: { id: draftOrder.id },
@@ -1614,10 +1625,7 @@ export const handleCheckout = async (
       return { status: 'empty' as const };
     }
 
-    const totalAmount = items.reduce(
-      (acc, item) => acc.add(item.total_price),
-      new Prisma.Decimal(0)
-    );
+    const totalAmount = computeCartTotalDecimal(items);
 
     // Snapshot de dirección solo si es DELIVERY
     let customerAddressId: string | undefined;
@@ -3272,23 +3280,7 @@ const setProductQuantity = async ({
     where: { draft_order_id: draftOrder.id }
   });
 
-  let total = 0;
-
-  for (const item of items) {
-    if (!item.product_id) {
-      continue;
-    }
-    const price = await prisma.menu_item_price.findFirst({
-      where: {
-        menu_item_id: item.product_id,
-        is_active: true
-      }
-    });
-
-    if (price) {
-      total += Number(price.amount) * item.quantity;
-    }
-  }
+  const { total } = computeOrderPricing(items);
 
   await prisma.draft_order.update({
     where: { id: draftOrder.id },

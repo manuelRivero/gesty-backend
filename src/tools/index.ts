@@ -36,6 +36,9 @@ import {
 import { getReactContext } from './_context';
 import { createOnlinePaymentLink } from '../services/payment/payment.service';
 import { refreshDraftOrderTimeout } from '../services/draftOrderTimeout.service';
+import { resolveEffectivePrice } from '../helpers/menuItemPrice.helper';
+import { listPaymentAdjustmentsForAmount } from '../services/paymentAdjustment.service';
+import { computeOrderPricing } from '../services/pricing.service';
 
 const toJson = (data: unknown): string => {
   try {
@@ -172,10 +175,11 @@ export const getCartTool = new DynamicStructuredTool<
 >({
   name: 'get_cart',
   description:
-    'Devuelve el contenido del carrito activo (draft order) del cliente, sin modificarlo.',
+    'Devuelve el contenido del carrito activo (draft order) del cliente, sin modificarlo. ' +
+    'Incluye precios con descuento por producto y ajustes estimados según método de pago.',
   schema: getCartSchema,
   func: async (_input: GetCartInput, _runManager, config?: RunnableConfig) => {
-    const { businessId, customerPhone } = getReactContext(config);
+    const { businessId, customerPhone, customerId } = getReactContext(config);
     const draft = await prisma.draft_order.findFirst({
       where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
       include: {
@@ -189,10 +193,20 @@ export const getCartTool = new DynamicStructuredTool<
       return toJson({ exists: false, items: [] });
     }
 
+    const pricing = computeOrderPricing(draft.draft_order_item);
+    const itemsTotal = pricing.subtotal - pricing.productDiscounts;
+
+    // Ajustes estimados por método de pago (sin aplicar delivery fee en esta preview)
+    const paymentAdjustments = await listPaymentAdjustmentsForAmount({
+      businessId,
+      baseAmount: itemsTotal,
+    });
+
     return toJson({
       exists: true,
       draftOrderId: draft.id,
       expiresAt: draft.expires_at?.toISOString() ?? null,
+      fulfillmentType: draft.fulfillment_type ?? null,
       items: draft.draft_order_item.map((it) => ({
         id: it.id,
         productId: it.product_id,
@@ -201,7 +215,30 @@ export const getCartTool = new DynamicStructuredTool<
         unitPrice: it.unit_price.toString(),
         totalPrice: it.total_price.toString(),
         notes: it.notes ?? null,
+        ...(it.list_price && {
+          listPrice: it.list_price.toString(),
+          discountAmount: it.discount_amount?.toString() ?? null,
+        }),
       })),
+      pricing: {
+        itemsSubtotal: pricing.subtotal.toFixed(2),
+        productDiscounts: pricing.productDiscounts > 0
+          ? pricing.productDiscounts.toFixed(2)
+          : null,
+        itemsTotal: itemsTotal.toFixed(2),
+        note: draft.fulfillment_type === 'DELIVERY'
+          ? 'El costo de envío se agrega al confirmar según tu zona de cobertura.'
+          : null,
+      },
+      paymentOptions: paymentAdjustments.length > 0
+        ? paymentAdjustments.map((a) => ({
+            method: a.paymentMethod,
+            label: a.label,
+            adjustment: a.adjustmentAmount.toFixed(2),
+            finalAmount: a.finalAmount.toFixed(2),
+            isSurcharge: a.isSurcharge,
+          }))
+        : null,
     });
   },
 });
@@ -970,7 +1007,8 @@ export const addCartItemTool = new DynamicStructuredTool<
       return toJson({ success: false, error: 'product_not_found_or_unavailable' });
     }
 
-    const unitPrice = item.menu_item_price[0]?.amount ?? new Prisma.Decimal(0);
+    const resolved = resolveEffectivePrice(item);
+    const unitPrice = resolved.finalPrice;
 
     const existing = await prisma.draft_order_item.findFirst({
       where: { draft_order_id: draft.id, product_id: productId },
@@ -981,7 +1019,13 @@ export const addCartItemTool = new DynamicStructuredTool<
       newQty = existing.quantity + qty;
       await prisma.draft_order_item.update({
         where: { id: existing.id },
-        data: { quantity: newQty, total_price: unitPrice.mul(newQty) },
+        data: {
+          quantity: newQty,
+          unit_price: unitPrice,
+          total_price: unitPrice.mul(newQty),
+          list_price: resolved.hasDiscount ? resolved.listPrice : null,
+          discount_amount: resolved.hasDiscount ? resolved.discountAmount : null,
+        },
       });
     } else {
       newQty = qty;
@@ -992,6 +1036,8 @@ export const addCartItemTool = new DynamicStructuredTool<
           quantity: newQty,
           unit_price: unitPrice,
           total_price: unitPrice.mul(newQty),
+          list_price: resolved.hasDiscount ? resolved.listPrice : null,
+          discount_amount: resolved.hasDiscount ? resolved.discountAmount : null,
         },
       });
     }
@@ -1018,7 +1064,15 @@ export const addCartItemTool = new DynamicStructuredTool<
 
     return toJson({
       success: true,
-      added: { itemName: item.name, quantity: qty, unitPrice: unitPrice.toString() },
+      added: {
+        itemName: item.name,
+        quantity: qty,
+        unitPrice: unitPrice.toString(),
+        ...(resolved.hasDiscount && {
+          listPrice: resolved.listPrice.toString(),
+          discountAmount: resolved.discountAmount.toString(),
+        }),
+      },
       cart: {
         total: newTotal.toString(),
         itemCount: updatedItems.length,

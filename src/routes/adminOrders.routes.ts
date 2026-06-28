@@ -86,6 +86,13 @@ import {
   postPaymentProvider,
   removePaymentProvider
 } from "../controllers/adminPaymentProviders.controller";
+import {
+  getPaymentMethodConfigs,
+  getPaymentMethodConfigById,
+  postPaymentMethodConfig,
+  patchPaymentMethodConfig,
+  removePaymentMethodConfig,
+} from "../controllers/adminPaymentMethodConfig.controller";
 import { authenticateJwt, requireRoles } from "../middleware/auth.middleware";
 
 const router = Router();
@@ -253,5 +260,31 @@ router.delete(
 
 router.get("/reservations", getReservations);
 router.get("/reservations/:id", getReservationById);
+
+router.get(
+  "/payment-method-configs",
+  requireRoles("OWNER", "ADMIN"),
+  getPaymentMethodConfigs
+);
+router.get(
+  "/payment-method-configs/:id",
+  requireRoles("OWNER", "ADMIN"),
+  getPaymentMethodConfigById
+);
+router.post(
+  "/payment-method-configs",
+  requireRoles("OWNER", "ADMIN"),
+  postPaymentMethodConfig
+);
+router.patch(
+  "/payment-method-configs/:id",
+  requireRoles("OWNER", "ADMIN"),
+  patchPaymentMethodConfig
+);
+router.delete(
+  "/payment-method-configs/:id",
+  requireRoles("OWNER", "ADMIN"),
+  removePaymentMethodConfig
+);
 
 export default router;

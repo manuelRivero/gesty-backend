@@ -38,6 +38,9 @@ import {
 } from './productQuery/utils';
 import { ConversationIntent } from "../types/conversationIntent";
 import { handleDraftOrder, handleDraftOrderItem } from "./order.service";
+import { computeOrderPricing, formatItemPriceForChat } from "./pricing.service";
+import { resolveEffectivePrice } from "../helpers/menuItemPrice.helper";
+import { resolveDeliveryContext } from "./deliveryFee.service";
 import { refreshDraftOrderTimeout } from "./draftOrderTimeout.service";
 import {
   formatCartGuidanceBlock,
@@ -254,29 +257,26 @@ export const buildAddItemMessage = async (
     return errorText;
   }
 
-
+  const resolved = resolveEffectivePrice(item);
+  const unitDec = resolved.finalPrice;
 
   const existingItem = await prisma.draft_order_item.findFirst({
     where: { draft_order_id: cart.id, product_id: item.id }
   });
 
-  const unitDec =
-    item.menu_item_price[0]?.amount ?? new Prisma.Decimal(0);
-
-  console.log('debug: existingItem', existingItem);
-
   if (existingItem) {
     const newQ = existingItem.quantity + qty;
-    console.log('debug: existingItem found, updating quantity and total price');
     await prisma.draft_order_item.update({
       where: { draft_order_id: cart.id, id: existingItem.id },
       data: {
         quantity: newQ,
+        unit_price: unitDec,
         total_price: unitDec.mul(newQ),
+        list_price: resolved.hasDiscount ? resolved.listPrice : null,
+        discount_amount: resolved.hasDiscount ? resolved.discountAmount : null,
       },
     });
   } else {
-    console.log('debug: existingItem not found, creating new item');
     await prisma.draft_order_item.create({
       data: {
         draft_order_id: cart.id,
@@ -284,6 +284,8 @@ export const buildAddItemMessage = async (
         quantity: qty,
         unit_price: unitDec,
         total_price: unitDec.mul(qty),
+        list_price: resolved.hasDiscount ? resolved.listPrice : null,
+        discount_amount: resolved.hasDiscount ? resolved.discountAmount : null,
       },
     });
   }
@@ -348,10 +350,13 @@ export const buildAddItemMessage = async (
   const guidanceBlock = formatCartGuidanceBlock(coverage).trim();
   const guidanceSuffix = guidanceBlock ? `\n\n${guidanceBlock}\n\n` : '\n\n';
 
-  const qtyLine =
-    qty > 1 ? `*${qty}* × ` : '';
+  const qtyLine = qty > 1 ? `*${qty}* × ` : '';
+  const priceLine = formatItemPriceForChat(resolved);
+  const discountLine = resolved.hasDiscount
+    ? ` ✨ *¡Precio con descuento!* ${priceLine}`
+    : '';
   const mainInner =
-    `${qtyLine}*${item.name}* sumado a tu pedido.\n\n${orderSectionsBlock}${guidanceSuffix}` +
+    `${qtyLine}*${item.name}* sumado a tu pedido.${discountLine}\n\n${orderSectionsBlock}${guidanceSuffix}` +
     `Total: $${total._sum.total_price || 0}${addressLine}\n\n` +
     `En el siguiente mensaje tenés las opciones para seguir.`;
 
@@ -882,14 +887,20 @@ export const handleViewCartFromWebhook = async (
     cartItems.draft_order_item as DraftLineForSection[],
     "*Tu pedido actual*"
   );
-  const total = cartItems.draft_order_item.reduce(
-    (acc: number, item) => acc + item.unit_price.toNumber() * item.quantity,
-    0
-  );
+  const fulfillmentType = cartItems.fulfillment_type;
+
+  const deliveryCtx = await resolveDeliveryContext({
+    customerId: customer.id,
+    businessId: business.id,
+    fulfillmentType,
+  });
+
+  const pricing = computeOrderPricing(cartItems.draft_order_item, {
+    deliveryFee: deliveryCtx.deliveryFee,
+  });
 
   // Línea de entrega según tipo
   let deliveryLine = '';
-  const fulfillmentType = cartItems.fulfillment_type;
   if (fulfillmentType === 'TAKE_AWAY') {
     const localAddress = business.street_address;
     deliveryLine = localAddress
@@ -905,6 +916,12 @@ export const handleViewCartFromWebhook = async (
     }
   }
 
+  // Desglose del total
+  const subtotalLine = pricing.deliveryFee > 0
+    ? `Subtotal: $${(pricing.subtotal - pricing.productDiscounts).toFixed(2)}\nEnvío: $${pricing.deliveryFee.toFixed(2)}\n`
+    : '';
+  const totalLine = `${subtotalLine}*Total: $${pricing.total.toFixed(2)} ${business.currency_code ?? 'ARS'}*`;
+
   return {
     type: 'list',
     header: {
@@ -915,7 +932,7 @@ export const handleViewCartFromWebhook = async (
       text: formatBotUserMessage(
         'Tu pedido actual',
         '🛒',
-        `${orderSectionsBlock}${guidanceMid}Total: $${total} ${business.currency_code ?? 'ARS'}${deliveryLine}\n\n¿Qué querés hacer ahora?`
+        `${orderSectionsBlock}${guidanceMid}${totalLine}${deliveryLine}\n\n¿Qué querés hacer ahora?`
       )
     },
     footer: {

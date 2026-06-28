@@ -154,6 +154,13 @@ export async function listAdminMenuCategoryTagsOptions(params: {
   }));
 }
 
+export type DiscountInput = {
+  /** 'PERCENT' para porcentaje, 'FIXED' para monto fijo, null para quitar descuento */
+  discountType: 'PERCENT' | 'FIXED' | null;
+  /** Valor del descuento: porcentaje (0-100) o monto fijo. null quita el descuento. */
+  discountValue: number | null;
+};
+
 export async function createAdminMenuItem(params: {
   businessId: string;
   categoryId?: string;
@@ -167,6 +174,7 @@ export async function createAdminMenuItem(params: {
   image?: string | null;
   isAvailable?: boolean;
   price?: MenuItemPriceInput;
+  discount?: DiscountInput | null;
 }) {
   const resolvedCategoryId = await resolveCategoryId(params.businessId, {
     categoryId: params.categoryId,
@@ -187,7 +195,9 @@ export async function createAdminMenuItem(params: {
       serves_people: params.servesPeople ?? null,
       is_featured: params.isFeatured ?? false,
       image: params.image ?? null,
-      is_available: params.isAvailable ?? true
+      is_available: params.isAvailable ?? true,
+      discount_type: params.discount?.discountType ?? null,
+      discount_value: params.discount?.discountValue ?? null,
     }
   });
 
@@ -253,6 +263,7 @@ export async function updateAdminMenuItem(params: {
   image?: string | null;
   isAvailable?: boolean;
   price?: MenuItemPriceInput;
+  discount?: DiscountInput | null;
 }) {
   const existing = await prisma.menu_item.findFirst({
     where: {
@@ -288,7 +299,11 @@ export async function updateAdminMenuItem(params: {
       ...(params.servesPeople !== undefined ? { serves_people: params.servesPeople } : {}),
       ...(params.isFeatured !== undefined ? { is_featured: params.isFeatured } : {}),
       ...(params.image !== undefined ? { image: params.image } : {}),
-      ...(params.isAvailable !== undefined ? { is_available: params.isAvailable } : {})
+      ...(params.isAvailable !== undefined ? { is_available: params.isAvailable } : {}),
+      ...(params.discount !== undefined ? {
+        discount_type: params.discount?.discountType ?? null,
+        discount_value: params.discount?.discountValue ?? null,
+      } : {})
     }
   });
 
@@ -358,12 +373,18 @@ type AdminMenuItemRow = Prisma.menu_itemGetPayload<{
 function formatAdminMenuItem(row: AdminMenuItemRow) {
   const activePrice = row.menu_item_price[0];
 
+  const discountType = row.discount_type as 'PERCENT' | 'FIXED' | null;
+  const discountValue = row.discount_value ? Number(row.discount_value) : null;
+
   return {
     ...row,
     menu_item_price: undefined,
     categoryName: row.menu_category?.name ?? null,
     categoryTag: row.menu_category?.category_tag ?? null,
-    price: activePrice ? toMenuItemPriceDto(activePrice) : null
+    price: activePrice ? toMenuItemPriceDto(activePrice) : null,
+    discount: discountType
+      ? { discountType, discountValue }
+      : null,
   };
 }
 

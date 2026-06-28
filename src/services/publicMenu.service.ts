@@ -1,6 +1,7 @@
 import {
   activePriceSelect,
   getBusinessCurrencyCode,
+  resolveEffectivePrice,
   toMenuItemPriceDto
 } from "../helpers/menuItemPrice.helper";
 import { prisma } from "../lib/prisma";
@@ -81,6 +82,8 @@ function mapPublicMenuItem(row: {
   image: string | null;
   serves_people: number | null;
   is_featured: boolean;
+  discount_type: string | null;
+  discount_value: import("@prisma/client").Prisma.Decimal | null;
   menu_category: {
     id: string;
     name: string;
@@ -93,6 +96,7 @@ function mapPublicMenuItem(row: {
   }>;
 }) {
   const activePrice = row.menu_item_price[0];
+  const resolved = resolveEffectivePrice(row);
 
   return {
     id: row.id,
@@ -111,7 +115,15 @@ function mapPublicMenuItem(row: {
         }
       : null,
     price: activePrice ? toMenuItemPriceDto(activePrice) : null,
-    prices: activePrice ? [toMenuItemPriceDto(activePrice)] : []
+    prices: activePrice ? [toMenuItemPriceDto(activePrice)] : [],
+    discount: resolved.hasDiscount
+      ? {
+          discountType: row.discount_type as 'PERCENT' | 'FIXED',
+          discountValue: row.discount_value ? Number(row.discount_value) : null,
+          discountAmount: resolved.discountAmount.toFixed(2),
+          finalPrice: resolved.finalPrice.toFixed(2),
+        }
+      : null,
   };
 }
 
@@ -138,6 +150,8 @@ export async function listFeaturedMenuItems(params: {
       image: true,
       serves_people: true,
       is_featured: true,
+      discount_type: true,
+      discount_value: true,
       menu_category: {
         select: {
           id: true,
@@ -173,6 +187,8 @@ export async function getPublicMenuItemById(params: {
       image: true,
       serves_people: true,
       is_featured: true,
+      discount_type: true,
+      discount_value: true,
       menu_category: {
         select: {
           id: true,

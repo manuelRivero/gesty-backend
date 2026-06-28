@@ -14,9 +14,14 @@ import { emitAdminOrderCreated } from '../socket/adminSocket';
 import {
   buildOrderConfirmedCashMessage,
   buildOrderDispatchThanksMessage,
+  buildMinOrderNotMetMessage,
+  buildPaymentChoiceMessage,
   EMPTY_CART_BOT_MESSAGE,
-  PAYMENT_METHOD_PROMPT_BOT_MESSAGE,
 } from './productQuery/botMessages';
+import { listPaymentAdjustmentsForAmount } from './paymentAdjustment.service';
+import { computeOrderPricing, type PricingResult } from './pricing.service';
+import { resolveDeliveryContext } from './deliveryFee.service';
+import { resolvePaymentAdjustment } from './paymentAdjustment.service';
 
 export interface CreateOrderFromDraftParams {
   paymentStatus?: OrderPaymentStatus;
@@ -40,7 +45,7 @@ export const createOrderFromDraft = async (
   conversation: ConversationType,
   customer: CustomerType,
   params: CreateOrderFromDraftParams = {}
-): Promise<{ orderId: string; total: number; qrDataUrl: string }> => {
+): Promise<{ orderId: string; total: number; pricing: PricingResult; qrDataUrl: string }> => {
   const { paymentStatus = OrderPaymentStatus.unpaid, paymentMethod } = params;
 
   const draft = await prisma.draft_order.findFirst({
@@ -75,10 +80,29 @@ export const createOrderFromDraft = async (
     }
   }
 
-  const total = draft.draft_order_item.reduce(
-    (sum, item) => sum + item.quantity * item.unit_price.toNumber(),
-    0
-  );
+  const deliveryCtx = await resolveDeliveryContext({
+    customerId: customer.id,
+    businessId: business.id,
+    fulfillmentType: draft.fulfillment_type,
+  });
+
+  // Calculamos base (sin ajuste de pago) para usarla como referencia del porcentaje
+  const pricingBase = computeOrderPricing(draft.draft_order_item, {
+    deliveryFee: deliveryCtx.deliveryFee,
+  });
+
+  const payAdjCtx = paymentMethod
+    ? await resolvePaymentAdjustment({
+        businessId: business.id,
+        paymentMethod,
+        baseAmount: pricingBase.total,
+      })
+    : { adjustmentAmount: 0, label: null, hasAdjustment: false };
+
+  const pricing = computeOrderPricing(draft.draft_order_item, {
+    deliveryFee: deliveryCtx.deliveryFee,
+    paymentAdjustment: payAdjCtx.adjustmentAmount,
+  });
 
   const order = await prisma.orders.create({
     data: {
@@ -88,12 +112,16 @@ export const createOrderFromDraft = async (
       status: OrderStatus.placed,
       payment_status: paymentStatus,
       payment_method: paymentMethod ?? null,
-      total_amount: total,
+      total_amount: pricing.total,
+      delivery_fee: deliveryCtx.deliveryFee > 0 ? deliveryCtx.deliveryFee : null,
+      payment_adjustment: payAdjCtx.hasAdjustment ? payAdjCtx.adjustmentAmount : null,
       order_item: {
         create: draft.draft_order_item.map((item) => ({
           menu_item_id: item.product_id!,
           quantity: item.quantity,
           unit_price: item.unit_price,
+          list_price: item.list_price ?? undefined,
+          discount_amount: item.discount_amount ?? undefined,
           notes: item.notes ?? undefined,
         })),
       },
@@ -115,7 +143,7 @@ export const createOrderFromDraft = async (
 
   emitAdminOrderCreated(business.id, {
     orderId: order.id,
-    total: String(total),
+    total: String(pricing.total),
     currency: business.currency_code ?? 'ARS',
   });
 
@@ -125,7 +153,7 @@ export const createOrderFromDraft = async (
     width: 280,
   });
 
-  return { orderId: order.id, total, qrDataUrl };
+  return { orderId: order.id, total: pricing.total, pricing, qrDataUrl };
 };
 
 export const buildCheckoutMessage = async (
@@ -150,27 +178,61 @@ export const buildCheckoutMessage = async (
     return { message: null, errorMessage: errorText };
   }
 
+  // Validar monto mínimo para DELIVERY
+  if (draft.fulfillment_type === 'DELIVERY') {
+    const deliveryCtx = await resolveDeliveryContext({
+      customerId: customer.id,
+      businessId: business.id,
+      fulfillmentType: draft.fulfillment_type,
+    });
+
+    if (deliveryCtx.minOrderAmount > 0) {
+      const draftItems = await prisma.draft_order_item.findMany({
+        where: { draft_order_id: draft.id },
+        select: { quantity: true, unit_price: true, list_price: true, discount_amount: true },
+      });
+      const { subtotal, productDiscounts } = computeOrderPricing(draftItems);
+      const itemsTotal = subtotal - productDiscounts;
+
+      if (itemsTotal < deliveryCtx.minOrderAmount) {
+        const missing = deliveryCtx.minOrderAmount - itemsTotal;
+        return {
+          message: null,
+          errorMessage: buildMinOrderNotMetMessage({
+            minOrderAmount: deliveryCtx.minOrderAmount,
+            currentAmount: itemsTotal,
+            missing,
+          }),
+        };
+      }
+    }
+  }
+
   // Si ya tiene payment_method asignado, no volvemos a preguntar
   if (draft.payment_method) {
     return { message: null };
   }
 
-  // Mostrar botones de elección de método de pago
-  const paymentChoiceMessage = {
-    type: 'interactive',
-    interactive: {
-      type: 'button',
-      body: {
-        text: PAYMENT_METHOD_PROMPT_BOT_MESSAGE,
-      },
-      action: {
-        buttons: [
-          { type: 'reply', reply: { id: 'PAY_ONLINE', title: '💳 Pago online' } },
-          { type: 'reply', reply: { id: 'PAY_CASH', title: '💵 Efectivo' } },
-        ],
-      },
-    },
-  };
+  // Calcular base del total para mostrar precios con ajuste en cada opción
+  const draftItemsForTotal = await prisma.draft_order_item.findMany({
+    where: { draft_order_id: draft.id },
+    select: { quantity: true, unit_price: true, list_price: true, discount_amount: true },
+  });
+  const deliveryCtxForChoice = await resolveDeliveryContext({
+    customerId: customer.id,
+    businessId: business.id,
+    fulfillmentType: draft.fulfillment_type,
+  });
+  const { total: baseTotal } = computeOrderPricing(draftItemsForTotal, {
+    deliveryFee: deliveryCtxForChoice.deliveryFee,
+  });
+
+  const adjustments = await listPaymentAdjustmentsForAmount({
+    businessId: business.id,
+    baseAmount: baseTotal,
+  });
+
+  const paymentChoiceMessage = buildPaymentChoiceMessage(baseTotal, adjustments);
 
   return { message: 'payment_choice', followUps: [{ type: 'interactive', message: paymentChoiceMessage as any }] };
 };
@@ -216,7 +278,7 @@ export const buildCashCheckoutResult = async (
   customer: CustomerType
 ): Promise<CheckoutResult> => {
   try {
-    const { orderId, total, qrDataUrl } = await createOrderFromDraft(
+    const { orderId, total, pricing, qrDataUrl } = await createOrderFromDraft(
       business,
       conversation,
       customer,
@@ -225,7 +287,12 @@ export const buildCashCheckoutResult = async (
 
     await closeConversation(conversation.id);
 
-    const messageText = buildOrderConfirmedCashMessage({ orderId, total });
+    const messageText = buildOrderConfirmedCashMessage({
+      orderId,
+      total,
+      deliveryFee: pricing.deliveryFee > 0 ? pricing.deliveryFee : undefined,
+      paymentAdjustment: pricing.paymentAdjustment !== 0 ? pricing.paymentAdjustment : undefined,
+    });
 
     const followUps: HandlerFollowUp[] = [
       { type: 'image', dataUrl: qrDataUrl },

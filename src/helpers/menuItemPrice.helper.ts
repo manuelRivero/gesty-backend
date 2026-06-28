@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { refreshMenuItemEmbedding } from "../services/ai/menuItemEmbedding.service";
+import { resolveItemDiscount, type ResolvedItemPrice } from "../services/pricing.service";
 
 export type MenuItemPriceInput = {
   amount: number | Prisma.Decimal;
@@ -76,6 +77,22 @@ export type UpsertMenuItemPriceResult = {
   /** `true` si el precio activo se creó o si el monto difiere del anterior. */
   changed: boolean;
 };
+
+/**
+ * Calcula el precio efectivo a aplicar al carrito dado un producto con sus
+ * datos de descuento y el precio de catálogo activo.
+ *
+ * @param item  El `menu_item` con `discount_type`, `discount_value` y el
+ *              array `menu_item_price` (primer elemento = precio activo).
+ */
+export function resolveEffectivePrice(item: {
+  discount_type: string | null;
+  discount_value: Prisma.Decimal | null;
+  menu_item_price: Array<{ amount: Prisma.Decimal }>;
+}): ResolvedItemPrice {
+  const listPrice = item.menu_item_price[0]?.amount ?? new Prisma.Decimal(0);
+  return resolveItemDiscount(listPrice, item.discount_type, item.discount_value);
+}
 
 export async function upsertMenuItemPrice(params: {
   menuItemId: string;

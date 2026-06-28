@@ -47,6 +47,7 @@ model business {
   menu_item                 menu_item[]
   orders                    orders[]
   payment_intent            payment_intent[]
+  payment_method_config     payment_method_config[]
   reservation               reservation[]
   reservation_block         reservation_block[]
   reservation_config        reservation_config?
@@ -165,6 +166,7 @@ model draft_order {
   customer_phone   String
   status           String             @default("active")
   total_amount     Decimal            @default(0) @db.Decimal(10, 2)
+  delivery_fee     Decimal?           @db.Decimal(10, 2)
   currency         String             @default("ARS")
   created_at       DateTime?          @default(now()) @db.Timestamp(6)
   updated_at       DateTime?          @default(now()) @db.Timestamp(6)
@@ -180,15 +182,17 @@ model draft_order {
 }
 
 model draft_order_item {
-  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  draft_order_id String?      @db.Uuid
-  product_id     String?      @db.Uuid
-  quantity       Int
-  unit_price     Decimal      @db.Decimal(10, 2)
-  total_price    Decimal      @db.Decimal(10, 2)
-  notes          String?
-  draft_order    draft_order? @relation(fields: [draft_order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  menu_item      menu_item?   @relation(fields: [product_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id              String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  draft_order_id  String?      @db.Uuid
+  product_id      String?      @db.Uuid
+  quantity        Int
+  unit_price      Decimal      @db.Decimal(10, 2)
+  total_price     Decimal      @db.Decimal(10, 2)
+  list_price      Decimal?     @db.Decimal(10, 2)
+  discount_amount Decimal?     @db.Decimal(10, 2)
+  notes           String?
+  draft_order     draft_order? @relation(fields: [draft_order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  menu_item       menu_item?   @relation(fields: [product_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 model menu_category {
@@ -221,6 +225,8 @@ model menu_item {
   ingredients_notes String?
   image             String?
   embedding         Unsupported("vector")?
+  discount_type     String?
+  discount_value    Decimal?               @db.Decimal(10, 2)
   draft_order_item  draft_order_item[]
   business          business               @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   menu_category     menu_category          @relation(fields: [category_id], references: [id], onUpdate: NoAction)
@@ -268,16 +274,18 @@ model menu_item_price {
 }
 
 model order_item {
-  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  order_id      String    @db.Uuid
-  menu_item_id  String    @db.Uuid
-  quantity      Int       @default(1)
-  unit_price    Decimal   @db.Decimal(12, 2)
-  serves_people Int?
-  notes         String?
-  created_at    DateTime  @default(now()) @db.Timestamptz(6)
-  menu_item     menu_item @relation(fields: [menu_item_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  orders        orders    @relation(fields: [order_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  order_id        String    @db.Uuid
+  menu_item_id    String    @db.Uuid
+  quantity        Int       @default(1)
+  unit_price      Decimal   @db.Decimal(12, 2)
+  serves_people   Int?
+  notes           String?
+  list_price      Decimal?  @db.Decimal(12, 2)
+  discount_amount Decimal?  @db.Decimal(12, 2)
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+  menu_item       menu_item @relation(fields: [menu_item_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  orders          orders    @relation(fields: [order_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 }
 
 model orders {
@@ -288,6 +296,8 @@ model orders {
   status                    OrderStatus        @default(draft)
   currency_code             String             @db.Char(3)
   total_amount              Decimal?           @db.Decimal(12, 2)
+  delivery_fee              Decimal?           @db.Decimal(12, 2)
+  payment_adjustment        Decimal?           @db.Decimal(12, 2)
   created_at                DateTime           @default(now()) @db.Timestamptz(6)
   customer_address_id       String?            @db.Uuid
   delivery_address_snapshot Json?              @default("{}")
@@ -673,4 +683,21 @@ enum MenuCategoryTag {
   DRINK
   DESSERT
   OTHER
+}
+
+model payment_method_config {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id      String   @db.Uuid
+  payment_method   String
+  label            String
+  adjustment_type  String
+  adjustment_value Decimal  @db.Decimal(10, 2)
+  is_surcharge     Boolean  @default(false)
+  is_active        Boolean  @default(true)
+  created_at       DateTime @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime @default(now()) @db.Timestamptz(6)
+  business         business @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([business_id, payment_method])
+  @@index([business_id], map: "idx_pmc_business")
 }

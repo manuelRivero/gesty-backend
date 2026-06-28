@@ -8,7 +8,8 @@ import {
   listAdminMenuCategoriesOptions,
   listAdminMenuCategoryTagsOptions,
   listAdminMenuItems,
-  updateAdminMenuItem
+  updateAdminMenuItem,
+  type DiscountInput
 } from "../services/adminMenuItems.service";
 import { generateMenuItemEnrichment } from "../services/ai/menuItemEnrichment.service";
 import {
@@ -30,6 +31,18 @@ const menuItemPriceSchema = z.object({
   currencyCode: z.string().trim().length(3).optional()
 });
 
+const discountSchema = z
+  .object({
+    discountType: z.enum(['PERCENT', 'FIXED']),
+    discountValue: z.coerce.number().positive()
+  })
+  .refine(
+    (val) => !(val.discountType === 'PERCENT' && val.discountValue > 100),
+    { message: 'El porcentaje de descuento no puede superar el 100%', path: ['discountValue'] }
+  )
+  .nullable()
+  .optional();
+
 const createSchema = z.object({
   categoryId: z.string().uuid().optional(),
   categoryTag: z.nativeEnum(MenuCategoryTag).optional(),
@@ -42,7 +55,8 @@ const createSchema = z.object({
   isFeatured: z.boolean().optional(),
   image: z.string().url().optional().nullable(),
   isAvailable: z.boolean().optional(),
-  price: menuItemPriceSchema.optional()
+  price: menuItemPriceSchema.optional(),
+  discount: discountSchema
 }).refine((data) => Boolean(data.categoryId || data.categoryTag || data.sectionId), {
   message: "Debe enviar categoryId o categoryTag/sectionId",
   path: ["categoryId"]
@@ -64,7 +78,8 @@ const updateSchema = z.object({
   isFeatured: z.boolean().optional(),
   image: z.string().url().optional().nullable(),
   isAvailable: z.boolean().optional(),
-  price: menuItemPriceSchema.optional()
+  price: menuItemPriceSchema.optional(),
+  discount: discountSchema
 });
 
 export async function getMenuItems(req: Request, res: Response) {
@@ -156,7 +171,8 @@ export async function postMenuItem(req: Request, res: Response) {
       businessId,
       ...parsed.data,
       categoryTag: parsed.data.categoryTag ?? parsed.data.sectionId,
-      price: parsed.data.price
+      price: parsed.data.price,
+      discount: (parsed.data.discount as DiscountInput | null | undefined) ?? null,
     });
     if (!row) {
       return res.status(500).json({ error: "No se pudo recuperar el producto creado" });
@@ -200,7 +216,8 @@ export async function patchMenuItem(req: Request, res: Response) {
       id: parsedParams.data.id,
       ...parsedBody.data,
       categoryTag: parsedBody.data.categoryTag ?? parsedBody.data.sectionId,
-      price: parsedBody.data.price
+      price: parsedBody.data.price,
+      discount: (parsedBody.data.discount as DiscountInput | null | undefined),
     });
 
     if (!row) {

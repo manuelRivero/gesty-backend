@@ -1,0 +1,48 @@
+services:
+  app:
+    # En el servidor se hace `pull` de la imagen publicada en el registry.
+    # Sobrescribí IMAGE con el tag real, ej: ghcr.io/tu-usuario/food-service-agent:latest
+    image: ${IMAGE:-food-service-agent:latest}
+    container_name: food-service-agent
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 5001
+    expose:
+      - "5001"
+    # Para probar sin Nginx, descomentar y exponer el puerto al host:
+    # ports:
+    #   - "5001:5001"
+    networks:
+      - web
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: food-service-agent-nginx
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/certbot/www:/var/www/certbot:ro
+      - ./nginx/certbot/conf:/etc/letsencrypt:ro
+    networks:
+      - web
+
+  certbot:
+    image: certbot/certbot:latest
+    container_name: food-service-agent-certbot
+    volumes:
+      - ./nginx/certbot/www:/var/www/certbot:rw
+      - ./nginx/certbot/conf:/etc/letsencrypt:rw
+    # Renovación automática cada 12h (el contenedor queda corriendo).
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done'"
+
+networks:
+  web:
+    driver: bridge

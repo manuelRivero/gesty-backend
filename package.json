@@ -5,6 +5,9 @@
   "description": "Agente conversacional WhatsApp basado en LangGraph + LangChain. Reimplementa el orquestador del bot de food-service-backend como un grafo de nodos.",
   "scripts": {
     "build": "tsc",
+    "build:prod": "tsc -p tsconfig.build.json",
+    "obfuscate": "node scripts/obfuscate.mjs",
+    "build:obf": "npm run build:prod && npm run obfuscate",
     "start": "node dist/index.js",
     "dev": "nodemon --exec ts-node -r dotenv/config src/index.ts",
     "prisma:generate": "prisma generate",
@@ -53,6 +56,7 @@
     "@types/pg": "^8.11.10",
     "@types/qrcode": "^1.5.6",
     "@vitest/coverage-v8": "^4.1.5",
+    "javascript-obfuscator": "^5.4.3",
     "nodemon": "^3.1.11",
     "prisma": "^7.4.1",
     "ts-node": "^10.9.2",
