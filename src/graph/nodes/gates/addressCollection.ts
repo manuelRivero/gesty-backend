@@ -40,6 +40,7 @@ export const addressCollectionNode = async (
   state: AgentState
 ): Promise<AgentStateUpdate> => {
   if (state.skipAIPersistence) return {};
+  if (state.dataCollectionDelegated) return {};  // agente gestiona dirección via save_delivery_address
   if (state.contextRoute !== 'interactive' && state.contextRoute !== 'nlp') return {};
 
   // Si el tipo de entrega ya es TAKE_AWAY no se necesita dirección

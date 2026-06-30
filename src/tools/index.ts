@@ -39,6 +39,10 @@ import { refreshDraftOrderTimeout } from '../services/draftOrderTimeout.service'
 import { resolveEffectivePrice } from '../helpers/menuItemPrice.helper';
 import { listPaymentAdjustmentsForAmount } from '../services/paymentAdjustment.service';
 import { computeOrderPricing } from '../services/pricing.service';
+import { partySizeMetadataFields } from '../services/productQuery/utils';
+import { patchConversationMetadata } from '../repositories/conversationState.repository';
+import { updateCustomerName } from '../repositories';
+import { AddressService } from '../services/address.service';
 
 const toJson = (data: unknown): string => {
   try {
@@ -1253,6 +1257,113 @@ export const updateItemNoteTool = new DynamicStructuredTool<
   },
 });
 
+// ---------------------------------------------------------------------------
+// save_party_size
+// ---------------------------------------------------------------------------
+
+const savePartySizeSchema = z.object({
+  count: z
+    .number()
+    .int()
+    .min(1)
+    .max(99)
+    .describe('Número de personas que van a comer (1–99).'),
+});
+type SavePartySizeInput = z.infer<typeof savePartySizeSchema>;
+
+export const savePartySizeTool = new DynamicStructuredTool<
+  typeof savePartySizeSchema,
+  SavePartySizeInput
+>({
+  name: 'save_party_size',
+  description:
+    'Guarda el número de personas para el pedido actual. ' +
+    'Llamá este tool cuando el cliente indique cuántas personas van a comer, en cualquier forma: ' +
+    '"somos 4", "para mí y mi pareja" (→ 2), "para tres personas", "éramos 6", etc. ' +
+    'Interpretá el número vos antes de llamar el tool. ' +
+    'Una vez guardado, el sistema usa el dato para sugerir cantidades adecuadas.',
+  schema: savePartySizeSchema,
+  func: async ({ count }: SavePartySizeInput, _runManager, config?: RunnableConfig) => {
+    const { conversationId } = getReactContext(config);
+    await patchConversationMetadata(conversationId, {
+      ...partySizeMetadataFields(count),
+      awaitingPeopleCount: false,
+    });
+    return toJson({ success: true, partySize: count });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// save_customer_name
+// ---------------------------------------------------------------------------
+
+const saveCustomerNameSchema = z.object({
+  name: z
+    .string()
+    .min(1)
+    .max(100)
+    .describe('Nombre o alias del cliente tal como lo dijo.'),
+});
+type SaveCustomerNameInput = z.infer<typeof saveCustomerNameSchema>;
+
+export const saveCustomerNameTool = new DynamicStructuredTool<
+  typeof saveCustomerNameSchema,
+  SaveCustomerNameInput
+>({
+  name: 'save_customer_name',
+  description:
+    'Guarda el nombre del cliente cuando lo menciona por primera vez. ' +
+    'Usalo cuando el cliente diga su nombre de forma natural: ' +
+    '"soy Juan", "me llamo Ana", "Juan Pérez" como respuesta a una pregunta, etc. ' +
+    'Solo llamar si el nombre del cliente aparece como "no informado" en el estado.',
+  schema: saveCustomerNameSchema,
+  func: async ({ name }: SaveCustomerNameInput, _runManager, config?: RunnableConfig) => {
+    const { customerId } = getReactContext(config);
+    await updateCustomerName(customerId, name.trim());
+    return toJson({ success: true, name: name.trim() });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// save_delivery_address
+// ---------------------------------------------------------------------------
+
+const saveDeliveryAddressSchema = z.object({
+  addressText: z
+    .string()
+    .min(3)
+    .describe('Dirección de entrega tal como la escribió el cliente (calle, número, ciudad, etc.).'),
+});
+type SaveDeliveryAddressInput = z.infer<typeof saveDeliveryAddressSchema>;
+
+export const saveDeliveryAddressTool = new DynamicStructuredTool<
+  typeof saveDeliveryAddressSchema,
+  SaveDeliveryAddressInput
+>({
+  name: 'save_delivery_address',
+  description:
+    'Geocodifica y guarda la dirección de entrega del cliente. ' +
+    'Llamá este tool cuando el cliente proporcione su dirección para delivery. ' +
+    'Devuelve status: "saved" (con formattedAddress), "out_of_coverage" o "not_found". ' +
+    'Si "saved": confirmale la dirección normalizada y seguí con el pedido. ' +
+    'Si "out_of_coverage": informale amablemente y ofrecé retiro en local si está disponible. ' +
+    'Si "not_found": pedile que reformule la dirección.',
+  schema: saveDeliveryAddressSchema,
+  func: async (
+    { addressText }: SaveDeliveryAddressInput,
+    _runManager,
+    config?: RunnableConfig
+  ) => {
+    const { businessId, customerId } = getReactContext(config);
+    const result = await new AddressService().resolveAndSave({
+      businessId,
+      customerId,
+      addressText,
+    });
+    return toJson(result);
+  },
+});
+
 export const allReactTools = [
   searchProductsTool,
   getProductsDetailsByIdsTool,
@@ -1270,4 +1381,7 @@ export const allReactTools = [
   addCartItemTool,
   removeCartItemTool,
   updateItemNoteTool,
+  savePartySizeTool,
+  saveCustomerNameTool,
+  saveDeliveryAddressTool,
 ];

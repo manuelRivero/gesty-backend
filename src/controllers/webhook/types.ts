@@ -46,12 +46,15 @@ export interface EnrichedContext extends WebhookContext {
   customer: any;
   conversationState: any;
   conversationId: string;
-  coverageZone?: {        // ← Agregar opcional
+  coverageZone?: {
     zone_id: string;
     zone_name: string;
     delivery_fee: number;
     min_order: number;
   };
+  /** Estado de dirección — propagado desde AgentState para el contexto del ReAct agent. */
+  hasAddress?: boolean;
+  isInCoverage?: boolean;
 }
 
 export type HandlerFollowUp =

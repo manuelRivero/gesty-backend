@@ -383,6 +383,12 @@ export const nlpSubgraphNode = async (
     };
   }
 
+  // willUseAgent determina si el turno irá al ReAct agent; se usa para:
+  // 1) saltar el gate de party-size (el agente lo recolecta naturalmente)
+  // 2) setear dataCollectionDelegated para saltar los post-gates
+  const willUseAgent =
+    isHybridAgentMode() && !CLOSED_INTENTS.has(detection.intent as ConversationIntent);
+
   const metaForGate = normalizeMetadata(workingConversationState?.metadata);
   if (abandonedPeopleCountGate) {
     // La metadata en memoria todavía trae el flag viejo; lo limpiamos para que
@@ -391,7 +397,10 @@ export const nlpSubgraphNode = async (
     metaForGate.peopleCountResume = undefined;
   }
 
+  // El gate de party-size solo aplica en la ruta determinística.
+  // En modo agente, el ReAct agent recolecta el dato naturalmente via contexto + save_party_size.
   if (
+    !willUseAgent &&
     shouldBlockForMissingPeopleCount({
       intent: detection.intent,
       metadata: metaForGate,
@@ -419,6 +428,8 @@ export const nlpSubgraphNode = async (
     ...enrichedBase,
     conversationState: workingConversationState,
     detection,
+    hasAddress: state.hasAddress,
+    isInCoverage: state.isInCoverage,
   };
 
   const result = await dispatchOrHybrid(enrichedCtx);
@@ -427,5 +438,10 @@ export const nlpSubgraphNode = async (
   }
 
   const isHumanHandover = detection.intent === ConversationIntent.SUPPORT;
-  return { handlerResult: result, detection, isHumanHandover };
+  return {
+    handlerResult: result,
+    detection,
+    isHumanHandover,
+    dataCollectionDelegated: willUseAgent,
+  };
 };

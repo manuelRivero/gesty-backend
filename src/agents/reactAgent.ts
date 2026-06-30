@@ -88,10 +88,23 @@ const buildContextMessage = (ctx: EnrichedContext): string => {
   const userMsg = ctx.message?.text?.body ?? '';
   const meta = normalizeMetadata(ctx.conversationState?.metadata);
   const partySize = getRequestedPartySize(meta);
-  if (!partySize) return userMsg;
-  // Aclaración crítica: party size es guía de CANTIDAD A PEDIR, no filtro de serves_people.
-  // Sin esta aclaración el agente filtra con minServesPeople y descarta platos individuales.
-  return `[Contexto de cantidad: el cliente quiere pedir para ${partySize} persona${partySize === 1 ? '' : 's'}. Esto es una guía de cuántas unidades sugerir, NO un filtro de minServesPeople — buscá todos los productos disponibles y luego sugerí la cantidad adecuada.]\n${userMsg}`;
+  const customerName = (ctx.customer as { name?: string | null })?.name?.trim() || null;
+  const hasAddress = ctx.hasAddress ?? false;
+  const isInCoverage = ctx.isInCoverage ?? false;
+
+  const addressStatus = !hasAddress
+    ? 'no cargada'
+    : !isInCoverage
+      ? 'cargada pero fuera de cobertura'
+      : 'cargada y en cobertura';
+
+  const lines = [
+    `- Personas para el pedido: ${partySize ? `${partySize} (guía de cantidad a pedir, NO filtro de serves_people)` : 'no informado'}`,
+    `- Nombre del cliente: ${customerName ?? 'no informado'}`,
+    `- Dirección de entrega: ${addressStatus}`,
+  ];
+
+  return `[ESTADO DEL CLIENTE]\n${lines.join('\n')}\n\n${userMsg}`;
 };
 
 const extractFinalText = (result: unknown): string | null => {

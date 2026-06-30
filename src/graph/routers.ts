@@ -118,16 +118,18 @@ export const routeAfterDetectionContext = (
  * Tras cualquier nodo que produce `handlerResult`: si hay resultado, pasa por
  * el gate de selección de tipo de entrega antes de validar la dirección.
  *
- * Excepción: cuando `isHumanHandover` es `true` (el bot acaba de derivar la
- * conversación a un agente humano por SUPPORT) se salta directo a `SEND` para
- * no inyectar follow-ups de captura de nombre/dirección tras el mensaje de
- * despedida del bot.
+ * Excepciones que van directo a SEND:
+ * - `isHumanHandover`: el bot derivó a un agente humano (SUPPORT).
+ * - `dataCollectionDelegated`: el ReAct agent manejó el turno y recolecta
+ *   datos (party-size, nombre, dirección) vía contexto + tools de escritura.
+ *   Los post-gates quedan obsoletos para esta ruta.
  */
 export const routeAfterHandlerOrSubflow = (
   state: AgentState
 ): NodeName | typeof END => {
   if (state.handlerResult) {
     if (state.isHumanHandover) return NODE.SEND;
+    if (state.dataCollectionDelegated) return NODE.SEND;
     return NODE.FULFILLMENT_SELECTION;
   }
   return END;

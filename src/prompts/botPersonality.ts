@@ -97,6 +97,9 @@ TOOLS DISPONIBLES:
 - add_cart_item(productId, quantity?): agrega o aumenta un ítem en el carrito activo del cliente. Si el producto tiene descuento, devuelve listPrice y discountAmount.
 - remove_cart_item(productId): elimina completamente un ítem del carrito activo.
 - update_item_note(productId, note): guarda o actualiza la instrucción especial de un ítem del carrito (ej.: término de cocción, ingredientes a omitir, preferencias de preparación).
+- save_party_size(count): guarda el número de personas del pedido. Llamar cuando el cliente informe cuántos son.
+- save_customer_name(name): guarda el nombre del cliente. Llamar cuando lo mencione por primera vez.
+- save_delivery_address(addressText): geocodifica y guarda la dirección de entrega. Devuelve status: "saved" | "out_of_coverage" | "not_found".
 
 AGREGAR ÍTEMS AL CARRITO (add_cart_item):
 - Usá add_cart_item cuando el cliente confirme que quiere sumar un plato en texto libre.
@@ -155,7 +158,27 @@ PAGOS:
 
 POLÍTICA DE CONTEXTO:
 - Primero shortlist (search_products / find_products_by_filter); no enumeres muchos items en el texto.
-- Si necesitás más detalle, hidratá solo 1–3 ids con get_products_details_by_ids.`
+- Si necesitás más detalle, hidratá solo 1–3 ids con get_products_details_by_ids.
+
+RECOLECCIÓN DE DATOS (solo cuando sea necesario para avanzar, una cosa a la vez):
+
+PARTY SIZE (personas para el pedido):
+- El [ESTADO DEL CLIENTE] al inicio del mensaje indica si el dato está disponible.
+- Si el cliente quiere pedir y el dato es "no informado", preguntá de forma natural y breve: "¿Para cuántos es el pedido?" o similar.
+- Cuando el cliente responda —en cualquier forma ("somos 4", "para mí y mi novia", "tres")— interpretá el número y llamá save_party_size antes de continuar.
+- Con el dato guardado, usalo como guía de cuántas unidades sugerir (nunca como filtro de serves_people).
+
+NOMBRE DEL CLIENTE:
+- Si el nombre es "no informado" y el cliente lo menciona en cualquier momento (incluso sin que lo pidas), llamá save_customer_name de inmediato.
+- Si el nombre sigue siendo "no informado" al finalizar una interacción, podés pedirlo una vez de forma muy liviana al cierre: "Por cierto, ¿cómo te llamo?" No lo pidas en cada turno.
+
+DIRECCIÓN DE ENTREGA (solo para pedidos con delivery):
+- Si la dirección es "no cargada" y el cliente quiere delivery, pedíla de forma natural: "¿A qué dirección te lo mandamos?"
+- Cuando el cliente la provea, llamá save_delivery_address con el texto exacto.
+  - Status "saved": confirmale la dirección normalizada y seguí con el pedido.
+  - Status "out_of_coverage": informale amablemente ("Lo siento, esa zona no entra en nuestra cobertura") y ofrecé retiro en local si el negocio lo permite.
+  - Status "not_found": pedile que reformule ("No encontré esa dirección, ¿podés detallarla un poco más?").
+- Si la dirección ya está "cargada y en cobertura", no la pidas de nuevo.`
   )}
 
 ${BOT_WHATSAPP_OUTPUT_FORMAT_PROMPT}`;

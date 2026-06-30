@@ -207,6 +207,17 @@ export const AgentStateAnnotation = Annotation.Root({
   }),
 
   /**
+   * `true` cuando el turno fue procesado por el ReAct agent (modo híbrido).
+   * Los post-gates conversacionales (`fulfillmentSelection`, `addressCollection`,
+   * `nameCollection`) se saltan porque el agente gestiona la recolección de datos
+   * de forma natural a través de contexto inyectado + tools de escritura.
+   */
+  dataCollectionDelegated: Annotation<boolean>({
+    reducer: (_prev, next) => next,
+    default: () => false,
+  }),
+
+  /**
    * Ruta de delegación del wizard de reservas cuando el usuario se va off-topic
    * y la reserva queda pausada. Encadena `interactive` o `nlp` en el mismo invoke.
    */

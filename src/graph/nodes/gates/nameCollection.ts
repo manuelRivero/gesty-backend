@@ -21,6 +21,7 @@ export const nameCollectionNode = async (
   const customer = state.customer!;
 
   if (state.skipAIPersistence) return {};
+  if (state.dataCollectionDelegated) return {};  // agente gestiona nombre via save_customer_name
   if (customer.name) return {};
 
   const meta = normalizeMetadata(state.workingConversationState?.metadata);

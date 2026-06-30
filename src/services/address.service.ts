@@ -73,6 +73,49 @@ export class AddressService {
     return this.edit(ctx);
   }
 
+  /**
+   * Versión directa para el ReAct agent: geocodifica, valida cobertura y persiste
+   * la dirección en una sola llamada, sin el flujo de confirmación por botones.
+   * El agente describe la dirección encontrada en su respuesta de texto.
+   */
+  async resolveAndSave(params: {
+    businessId: string;
+    customerId: string;
+    addressText: string;
+  }): Promise<
+    | { status: 'saved'; formattedAddress: string; zoneId: string }
+    | { status: 'out_of_coverage' }
+    | { status: 'not_found' }
+  > {
+    const cleaned = params.addressText.trim();
+    if (!cleaned) return { status: 'not_found' };
+
+    const geo = await this.geocode(cleaned);
+    if (!geo) return { status: 'not_found' };
+
+    const zone = await this.getCoverage(geo.lat, geo.lng, params.businessId);
+    if (!zone) return { status: 'out_of_coverage' };
+
+    const formattedAddress =
+      typeof geo.formatted === 'string' ? geo.formatted : String(geo.formatted);
+
+    await prisma.customer_address.updateMany({
+      where: { customer_id: params.customerId },
+      data: { is_default: false },
+    });
+
+    await prisma.customer_address.create({
+      data: {
+        customer_id: params.customerId,
+        street_address: formattedAddress,
+        is_default: true,
+        delivery_zone_id: zone.id,
+      },
+    });
+
+    return { status: 'saved', formattedAddress, zoneId: zone.id };
+  }
+
   async processWithAddressText(
     ctx: EnrichedContext,
     addressText: string
