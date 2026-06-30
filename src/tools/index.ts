@@ -113,7 +113,7 @@ export const searchProductsTool = new DynamicStructuredTool<
           // La raw SQL devuelve campos planos; los reempaquetamos al formato
           // que espera toShortlistItem para que category.name llegue al agente
           menu_category: item.category_id
-            ? { id: item.category_id, name: item.category_name ?? '', category_tag: item.category_tag }
+            ? { id: item.category_id, name: item.category_name ?? '', category_tag: item.category_tag ?? null }
             : null,
         })
       ),

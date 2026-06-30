@@ -38,10 +38,10 @@ export type MenuItemSearchResult = {
   is_available: boolean;
   menu_item_price: MenuPrice[];
   distance?: number;
-  // Campos de categoría — presentes cuando searchMenuItemsByKeyword hace el JOIN
-  category_id: string | null;
-  category_name: string | null;
-  category_tag: string | null;
+  // Campos de categoría — opcionales, presentes cuando searchMenuItemsByKeyword hace el JOIN
+  category_id?: string | null;
+  category_name?: string | null;
+  category_tag?: string | null;
 };
 
 export type FeaturedMenuItemsPageResult = {
