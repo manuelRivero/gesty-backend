@@ -43,6 +43,22 @@ export function parsePeopleCountResume(
 }
 
 /**
+ * Cuando el bot está esperando el número de personas y el usuario responde con
+ * algo que NO es un número válido, este helper decide si debemos abandonar el
+ * gate porque el usuario cambió de intención o preguntó por otra cosa.
+ *
+ * Criterio: si la nueva detección resuelve a una intención accionable (cualquier
+ * cosa distinta de UNKNOWN), asumimos que el usuario dejó atrás la pregunta de
+ * personas y procesamos el mensaje nuevo con normalidad. Si la detección es
+ * UNKNOWN (ruido, texto sin sentido), mantenemos el gate y re-preguntamos.
+ */
+export function shouldAbandonPeopleCountForNewIntent(
+  detection: IntentDetectionResult
+): boolean {
+  return detection.intent !== ConversationIntent.UNKNOWN;
+}
+
+/**
  * True si el intent de pedido/búsqueda requiere número de personas y aún no está definido.
  */
 export function shouldBlockForMissingPeopleCount(params: {

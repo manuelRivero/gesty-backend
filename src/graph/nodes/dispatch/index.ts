@@ -21,10 +21,12 @@ import {
   detectIntentWithConfidence,
   shouldAskIntentConfirmation,
 } from '../../../services/ai/detection.service';
+import type { IntentDetectionResult } from '../../../services/ai/detection.service';
 import {
   parsePeopleCountResume,
   PEOPLE_COUNT_INVALID_REPLY_MESSAGE,
   PEOPLE_COUNT_PROMPT_MESSAGE,
+  shouldAbandonPeopleCountForNewIntent,
   shouldBlockForMissingPeopleCount,
 } from '../../../services/peopleCountGate.service';
 import {
@@ -276,6 +278,15 @@ export const nlpSubgraphNode = async (
     }
   }
 
+  // Cuando abandonamos el gate de personas porque el usuario cambió de
+  // intención, reutilizamos la detección ya calculada para no clasificar dos
+  // veces el mismo mensaje.
+  let precomputedDetection: IntentDetectionResult | null = null;
+  // True cuando salimos del gate de personas en este turno: el gate de
+  // "personas faltantes" debe poder volver a evaluarse como si fuera un mensaje
+  // nuevo (la metadata en memoria todavía trae el flag viejo).
+  let abandonedPeopleCountGate = false;
+
   if (metaPre.awaitingPeopleCount) {
     const resume = parsePeopleCountResume(metaPre);
     if (resume) {
@@ -304,25 +315,43 @@ export const nlpSubgraphNode = async (
         return { handlerResult: resumedResult };
       }
 
-      return {
-        handlerResult: {
-          content: PEOPLE_COUNT_INVALID_REPLY_MESSAGE,
-          isInteractive: false,
-        } satisfies HandlerResult,
-        earlyExit: 'awaiting_people_count_invalid',
-      };
-    }
+      // No es un número válido. Antes de re-preguntar, revisamos si el usuario
+      // cambió de intención o preguntó por otra cosa. Si la nueva detección es
+      // accionable, descartamos el gate de personas (incluida la consulta
+      // original guardada) y procesamos el mensaje nuevo con normalidad. Así el
+      // usuario no queda atrapado pidiéndole un número que ya no quiere dar.
+      const reDetection = await detectIntentWithConfidence(
+        userMessage,
+        detectionContext
+      );
 
-    await omitConversationMetadataKeys(conversation.id, [
-      'awaitingPeopleCount',
-      'peopleCountResume',
-    ]);
+      if (shouldAbandonPeopleCountForNewIntent(reDetection)) {
+        await omitConversationMetadataKeys(conversation.id, [
+          'awaitingPeopleCount',
+          'peopleCountResume',
+        ]);
+        precomputedDetection = reDetection;
+        abandonedPeopleCountGate = true;
+      } else {
+        return {
+          handlerResult: {
+            content: PEOPLE_COUNT_INVALID_REPLY_MESSAGE,
+            isInteractive: false,
+          } satisfies HandlerResult,
+          earlyExit: 'awaiting_people_count_invalid',
+        };
+      }
+    } else {
+      await omitConversationMetadataKeys(conversation.id, [
+        'awaitingPeopleCount',
+        'peopleCountResume',
+      ]);
+    }
   }
 
-  const detection = await detectIntentWithConfidence(
-    userMessage,
-    detectionContext
-  );
+  const detection =
+    precomputedDetection ??
+    (await detectIntentWithConfidence(userMessage, detectionContext));
 
   console.log('[NLP] Detection result:', detection);
   console.log('[NLP] Resolution metadata:', {
@@ -355,6 +384,12 @@ export const nlpSubgraphNode = async (
   }
 
   const metaForGate = normalizeMetadata(workingConversationState?.metadata);
+  if (abandonedPeopleCountGate) {
+    // La metadata en memoria todavía trae el flag viejo; lo limpiamos para que
+    // el gate evalúe el mensaje nuevo como si fuera la primera vez.
+    metaForGate.awaitingPeopleCount = false;
+    metaForGate.peopleCountResume = undefined;
+  }
 
   if (
     shouldBlockForMissingPeopleCount({
