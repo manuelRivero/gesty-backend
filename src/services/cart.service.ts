@@ -456,7 +456,7 @@ export const buildConfirmRemoveItemMessage = async (
     return { message: null, errorMessage: errorText };
   }
 
-  // Buscar ítem que coincida (por nombre o id)
+  // Buscar ítem que coincida por ID de producto
   const matchingItem = cartItems.draft_order_item.find(ci =>
     ci.menu_item?.id === itemIdentifier
   );
