@@ -107,7 +107,16 @@ export const searchProductsTool = new DynamicStructuredTool<
       count: shortlisted.length,
       totalMatches: items.length,
       hasMore: items.length > shortlisted.length,
-      items: shortlisted.map((item) => toShortlistItem(item)),
+      items: shortlisted.map((item) =>
+        toShortlistItem({
+          ...item,
+          // La raw SQL devuelve campos planos; los reempaquetamos al formato
+          // que espera toShortlistItem para que category.name llegue al agente
+          menu_category: item.category_id
+            ? { id: item.category_id, name: item.category_name ?? '', category_tag: item.category_tag }
+            : null,
+        })
+      ),
     });
   },
 });

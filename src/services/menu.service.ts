@@ -38,6 +38,10 @@ export type MenuItemSearchResult = {
   is_available: boolean;
   menu_item_price: MenuPrice[];
   distance?: number;
+  // Campos de categoría — presentes cuando searchMenuItemsByKeyword hace el JOIN
+  category_id: string | null;
+  category_name: string | null;
+  category_tag: string | null;
 };
 
 export type FeaturedMenuItemsPageResult = {
@@ -272,7 +276,7 @@ export class MenuService {
     const queryEmbedding = await getProductEmbedding(keyword)
     const queryEmbeddingString = `[${queryEmbedding.join(",")}]`;
 
-    // 2️⃣ Buscar por similitud coseno
+    // 2️⃣ Buscar por similitud coseno (incluye categoría para que el agente use la taxonomía real)
     const results = await prisma.$queryRaw<MenuItemSearchResult[]>`
   SELECT 
     m.id,
@@ -282,8 +286,12 @@ export class MenuService {
     m.serves_people,
     m.is_available,
     m.image,
-    (m.embedding <=> ${queryEmbeddingString}::vector) AS distance
+    (m.embedding <=> ${queryEmbeddingString}::vector) AS distance,
+    mc.id   AS category_id,
+    mc.name AS category_name,
+    mc.category_tag AS category_tag
   FROM menu_item m
+  LEFT JOIN menu_category mc ON mc.id = m.category_id
   WHERE m.business_id = ${businessId}
     AND m.is_available = true
     AND m.embedding IS NOT NULL
