@@ -57,7 +57,8 @@ export type ContextRoute =
   | 'onboarding_by_state'
   | 'address_capture'
   | 'interactive'
-  | 'nlp';
+  | 'nlp'
+  | 'checkout';
 
 /** Decisión de routing tras NLP / payload mapping. */
 export type IntentRoute =

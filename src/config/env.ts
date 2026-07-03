@@ -22,6 +22,18 @@ const envSchema = z.object({
   AGENT_MODE: z.enum(['deterministic', 'hybrid']).default('deterministic'),
 
   /**
+   * Habilita el ReAct agent dedicado al checkout.
+   * Cuando está activo, el botón CHECKOUT inicia una "sesión de checkout"
+   * gestionada por un agente especializado que valida y pide los datos
+   * obligatorios (tipo de entrega, dirección, nombre) antes de cobrar.
+   * Requiere AGENT_MODE=hybrid para funcionar; en caso contrario se ignora.
+   */
+  CHECKOUT_AGENT_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true' || v === '1'),
+
+  /**
    * Habilita la capa de CTA determinístico post-ReAct.
    * En false (default), runHybridReactAgent devuelve solo texto (comportamiento actual).
    */
@@ -84,6 +96,9 @@ if (!parsed.success) {
 export const env: AppEnv = parsed.data;
 
 export const isHybridAgentMode = (): boolean => env.AGENT_MODE === 'hybrid';
+
+export const isCheckoutAgentEnabled = (): boolean =>
+  isHybridAgentMode() && env.CHECKOUT_AGENT_ENABLED === true;
 
 export const isDryRunWhatsAppSend = (): boolean =>
   env.DRY_RUN_WHATSAPP_SEND === true;

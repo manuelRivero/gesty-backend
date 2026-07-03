@@ -80,6 +80,12 @@ export type ConversationMetadata = {
   pending_fulfillment_action?: string | null;
   /** Payload ADD_ITEM pendiente de confirmación cuando el negocio está cerrado con orders_when_closed=true. */
   pending_closed_add_item?: string | null;
+  /**
+   * `true` mientras el cliente está en una sesión activa del agente de checkout.
+   * Se activa al tocar el botón CHECKOUT (con CHECKOUT_AGENT_ENABLED=true) y se
+   * limpia al finalizar el pago, cancelar, hacer handback o expirar el draft.
+   */
+  checkout_active?: boolean;
 };
 
 export type ConversationMode = 'GLOBAL' | 'FILTER_SET' | 'PRODUCT_FOCUS';

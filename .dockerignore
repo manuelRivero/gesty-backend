@@ -28,4 +28,6 @@ render.yaml
 
 # Infra (no debe entrar al contexto de build de la app)
 docker-compose.yml
+docker-compose.prod.yml
+DEPLOY.md
 nginx

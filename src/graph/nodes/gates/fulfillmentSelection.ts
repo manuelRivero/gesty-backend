@@ -21,7 +21,7 @@ export const CART_FULFILLMENT_INTENTS = new Set<string>([
   ConversationIntent.VIEW_CART_FOR_EDITION,
 ]);
 
-function buildFulfillmentSelectionMessage(): WhatsAppInteractiveMessage {
+export function buildFulfillmentSelectionMessage(): WhatsAppInteractiveMessage {
   return {
     type: 'interactive',
     interactive: {

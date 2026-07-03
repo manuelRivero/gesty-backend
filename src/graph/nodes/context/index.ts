@@ -29,6 +29,7 @@ import { getBusinessOpenInfo } from '../../../services/businessHours.service';
 import { formatInboundMessageForLog } from '../../../controllers/webhook/utils/messageLog';
 import { sendTypingIndicator } from '../../../services/whatsappTypingIndicator.service';
 import { normalizeMetadata } from '../../../services/productQuery/utils';
+import { isCheckoutAgentEnabled } from '../../../config/env';
 import type { AgentState, AgentStateUpdate } from '../../state';
 import type { DetectionContext } from '../../../services/ai/detection.service';
 import type { EnrichedContext } from '../../../controllers/webhook/types';
@@ -244,10 +245,38 @@ export const buildDetectionContextNode = async (
     let hasAddress = false;
     let isInCoverage = false;
 
+    const isCheckoutSession =
+      isCheckoutAgentEnabled() &&
+      !reservationStep &&
+      !onboardingStep &&
+      (wsMeta.checkout_active === true || ctx.payloadId === 'CHECKOUT');
+
     if (reservationStep && !reservationPaused) {
       contextRoute = 'reservation_wizard';
     } else if (onboardingStep) {
       contextRoute = 'onboarding_by_state';
+    } else if (isCheckoutSession) {
+      // El agente de checkout captura el turno completo (texto e interactivos)
+      // y gestiona dirección, nombre, tipo de entrega y pago.
+      const defaultAddress = await findDefaultCustomerAddress(customer.id);
+      hasAddress = !!defaultAddress;
+      if (defaultAddress) {
+        const zone = await findCoverageZoneForAddress(defaultAddress.id, business.id);
+        isInCoverage = zone !== null || defaultAddress.delivery_zone_id === null;
+        if (zone !== null && defaultAddress.delivery_zone_id !== zone.id) {
+          await prisma.customer_address.update({
+            where: { id: defaultAddress.id },
+            data: { delivery_zone_id: zone.id },
+          });
+        } else if (zone === null && defaultAddress.delivery_zone_id !== null) {
+          await prisma.customer_address.update({
+            where: { id: defaultAddress.id },
+            data: { delivery_zone_id: null },
+          });
+          isInCoverage = false;
+        }
+      }
+      contextRoute = 'checkout';
     } else {
       const defaultAddress = await findDefaultCustomerAddress(customer.id);
       hasAddress = !!defaultAddress;
