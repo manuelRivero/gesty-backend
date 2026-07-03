@@ -75,6 +75,7 @@ const buildCheckoutContextMessage = async (
     typeof ctx.customer === 'object' && ctx.customer
       ? (ctx.customer as { phone_number?: string }).phone_number ?? ctx.to
       : ctx.to;
+  const conversationId = ctx.conversationId ?? '';
 
   // Estado del carrito resumido
   let cartSummary = 'sin datos (usá get_cart para obtenerlo)';
@@ -117,11 +118,38 @@ const buildCheckoutContextMessage = async (
       ? 'cargada pero fuera de cobertura'
       : 'cargada y en cobertura';
 
+  // Conteos de rechazo desde metadata del draft activo
+  let nameRefusalCount = 0;
+  let addressRefusalCount = 0;
+  try {
+    const cs = await prisma.conversation_state.findFirst({
+      where: { conversation_id: conversationId },
+      select: { metadata: true },
+    });
+    if (cs && typeof cs.metadata === 'object' && cs.metadata !== null) {
+      const meta = cs.metadata as Record<string, unknown>;
+      nameRefusalCount = (meta.name_refusal_count as number | undefined) ?? 0;
+      addressRefusalCount = (meta.address_refusal_count as number | undefined) ?? 0;
+    }
+  } catch {
+    // Si falla, usar 0 — no es crítico
+  }
+
+  const nameLabel = customerName
+    ? customerName
+    : nameRefusalCount > 0
+      ? `no informado (rechazó ${nameRefusalCount} ${nameRefusalCount === 1 ? 'vez' : 'veces'})`
+      : 'no informado';
+
+  const addressLabel = addressRefusalCount > 0
+    ? `${addressStatus} (rechazó ${addressRefusalCount} ${addressRefusalCount === 1 ? 'vez' : 'veces'})`
+    : addressStatus;
+
   const lines = [
     `[ESTADO DEL CHECKOUT]`,
-    `- Nombre del cliente: ${customerName ?? 'no informado'}`,
+    `- Nombre del cliente: ${nameLabel}`,
     `- Tipo de entrega: ${fulfillmentType} (opciones habilitadas: ${fulfillmentOptionsLabel})`,
-    `- Dirección de entrega: ${addressStatus}`,
+    `- Dirección de entrega: ${addressLabel}`,
     `- Método de pago: ${paymentMethod}`,
     `- Carrito:\n${cartSummary}`,
   ];

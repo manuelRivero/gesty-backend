@@ -13,6 +13,8 @@
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { getReactContext } from './_context';
+import { patchConversationMetadata } from '../repositories/conversationState.repository';
+import { prisma } from '../lib/prisma';
 import type { RunnableConfig } from '@langchain/core/runnables';
 
 // ---------------------------------------------------------------------------
@@ -78,6 +80,84 @@ export const presentPaymentOptionsTool = new DynamicStructuredTool<
 });
 
 // ---------------------------------------------------------------------------
+// mark_name_refused
+// ---------------------------------------------------------------------------
+
+const markNameRefusedSchema = z.object({});
+type MarkNameRefusedInput = z.infer<typeof markNameRefusedSchema>;
+
+/**
+ * Incrementa el contador de rechazos de nombre en metadata.
+ * Llamar cuando el cliente se niega explícitamente a dar su nombre.
+ * El nodo de checkout limpia este contador al cerrar la sesión.
+ */
+export const markNameRefusedTool = new DynamicStructuredTool<
+  typeof markNameRefusedSchema,
+  MarkNameRefusedInput
+>({
+  name: 'mark_name_refused',
+  description:
+    'Registra que el cliente se negó a dar su nombre. ' +
+    'Llamá esta tool ANTES de responder cuando el cliente rechace explícitamente dar el nombre. ' +
+    'Devuelve el conteo actualizado para que adaptes el tono de la respuesta.',
+  schema: markNameRefusedSchema,
+  func: async (_input: MarkNameRefusedInput, _runManager, config?: RunnableConfig) => {
+    const { conversationId } = getReactContext(config);
+    const cs = await prisma.conversation_state.findFirst({
+      where: { conversation_id: conversationId },
+      select: { metadata: true },
+    });
+    const current =
+      cs && typeof cs.metadata === 'object' && cs.metadata !== null
+        ? ((cs.metadata as Record<string, unknown>).name_refusal_count as number | undefined) ?? 0
+        : 0;
+    const next = current + 1;
+    await patchConversationMetadata(conversationId, { name_refusal_count: next });
+    return toJson({ name_refusal_count: next });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// mark_address_refused
+// ---------------------------------------------------------------------------
+
+const markAddressRefusedSchema = z.object({});
+type MarkAddressRefusedInput = z.infer<typeof markAddressRefusedSchema>;
+
+/**
+ * Incrementa el contador de rechazos de dirección en metadata.
+ * Llamar cuando el cliente se niega a dar la dirección O cuando `save_delivery_address`
+ * devuelve `not_found` dos veces seguidas (no tiene sentido para `out_of_coverage`).
+ * El nodo de checkout limpia este contador al cerrar la sesión.
+ */
+export const markAddressRefusedTool = new DynamicStructuredTool<
+  typeof markAddressRefusedSchema,
+  MarkAddressRefusedInput
+>({
+  name: 'mark_address_refused',
+  description:
+    'Registra que el cliente se negó a dar su dirección de entrega, o que la dirección no pudo encontrarse repetidamente. ' +
+    'NO llamar para casos de "out_of_coverage" (eso no es un rechazo, es una limitación de cobertura). ' +
+    'Llamá esta tool ANTES de responder cuando el cliente rechace explícitamente dar la dirección. ' +
+    'Devuelve el conteo actualizado para que adaptes el tono de la respuesta.',
+  schema: markAddressRefusedSchema,
+  func: async (_input: MarkAddressRefusedInput, _runManager, config?: RunnableConfig) => {
+    const { conversationId } = getReactContext(config);
+    const cs = await prisma.conversation_state.findFirst({
+      where: { conversation_id: conversationId },
+      select: { metadata: true },
+    });
+    const current =
+      cs && typeof cs.metadata === 'object' && cs.metadata !== null
+        ? ((cs.metadata as Record<string, unknown>).address_refusal_count as number | undefined) ?? 0
+        : 0;
+    const next = current + 1;
+    await patchConversationMetadata(conversationId, { address_refusal_count: next });
+    return toJson({ address_refusal_count: next });
+  },
+});
+
+// ---------------------------------------------------------------------------
 // handback_to_main
 // ---------------------------------------------------------------------------
 
@@ -119,5 +199,7 @@ export const handbackToMainTool = new DynamicStructuredTool<
 export const allCheckoutTools = [
   presentFulfillmentOptionsTool,
   presentPaymentOptionsTool,
+  markNameRefusedTool,
+  markAddressRefusedTool,
   handbackToMainTool,
 ];

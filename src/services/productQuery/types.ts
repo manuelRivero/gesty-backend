@@ -88,6 +88,19 @@ export type ConversationMetadata = {
   checkout_active?: boolean;
 
   /**
+   * Cantidad de veces que el cliente rechazó explícitamente dar su nombre
+   * durante la sesión de checkout activa. Se resetea al limpiar la sesión.
+   */
+  name_refusal_count?: number;
+
+  /**
+   * Cantidad de veces que el cliente rechazó dar su dirección de entrega
+   * (rechazo explícito o dirección no encontrada repetidamente) durante
+   * la sesión de checkout activa. Se resetea al limpiar la sesión.
+   */
+  address_refusal_count?: number;
+
+  /**
    * `true` mientras el cliente tiene una sesión activa del agente de reservas.
    * Se activa cuando el intent RESERVATION se detecta (con RESERVATION_AGENT_ENABLED=true)
    * y se limpia al confirmar, cancelar o al llamar abandon_reservation.

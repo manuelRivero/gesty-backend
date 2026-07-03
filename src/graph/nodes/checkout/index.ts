@@ -78,7 +78,11 @@ const setFulfillmentType = async (
 // ---------------------------------------------------------------------------
 
 const clearCheckoutSession = async (conversationId: string): Promise<void> => {
-  await omitConversationMetadataKeys(conversationId, ['checkout_active']);
+  await omitConversationMetadataKeys(conversationId, [
+    'checkout_active',
+    'name_refusal_count',
+    'address_refusal_count',
+  ]);
 };
 
 // ---------------------------------------------------------------------------
