@@ -1,0 +1,600 @@
+/**
+ * Tools exclusivas del agente de reservas.
+ *
+ * Se agrupan en cuatro categorías:
+ *  - Escritura: persisten datos en `reservation_draft` vía metadata.
+ *  - Consulta: leen disponibilidad o el estado actual de la DB.
+ *  - Señal-UI: devuelven un marcador estructurado que el nodo interpreta para
+ *    adjuntar listas/botones WhatsApp sin que el agente los genere en texto.
+ *  - Salida: finalizan o delegan la sesión de reservas.
+ */
+
+import { DynamicStructuredTool } from '@langchain/core/tools';
+import { z } from 'zod';
+import { getReactContext } from './_context';
+import {
+  patchConversationMetadata,
+  omitConversationMetadataKeys,
+} from '../repositories/conversationState.repository';
+import {
+  fetchReservationSlotsForBusinessDate,
+  findAnyFutureOccupyingReservationForCustomer,
+  findActiveEnvironmentsByBusinessId,
+  findActiveTablesByBusinessAndEnvironment,
+  findOverlappingReservationForTable,
+  findReservationBlockAtStart,
+} from '../repositories/reservation.repository';
+import { buildDateTime, normalizeDate } from '../services/reservations/utils';
+import { prisma } from '../lib/prisma';
+import type { RunnableConfig } from '@langchain/core/runnables';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+const toJson = (data: unknown): string => JSON.stringify(data);
+
+// ---------------------------------------------------------------------------
+// ESCRITURA: save_reservation_date
+// ---------------------------------------------------------------------------
+
+const saveReservationDateSchema = z.object({
+  date: z
+    .string()
+    .describe('Fecha ya resuelta en formato DD/MM/AAAA. Debe venir de resolve_date.'),
+});
+type SaveReservationDateInput = z.infer<typeof saveReservationDateSchema>;
+
+export const saveReservationDateTool = new DynamicStructuredTool<
+  typeof saveReservationDateSchema,
+  SaveReservationDateInput
+>({
+  name: 'save_reservation_date',
+  description:
+    'Persiste la fecha de la reserva (formato DD/MM/AAAA) en el borrador. ' +
+    'Solo llamar después de haber obtenido la fecha via resolve_date y confirmado con el cliente.',
+  schema: saveReservationDateSchema,
+  func: async ({ date }: SaveReservationDateInput, _runManager, config?: RunnableConfig) => {
+    const { conversationId } = getReactContext(config);
+    await patchConversationMetadata(conversationId, {
+      reservation_draft: { date },
+    });
+    return toJson({ saved: true, date });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// ESCRITURA: save_reservation_party_size
+// ---------------------------------------------------------------------------
+
+const saveReservationPartySizeSchema = z.object({
+  count: z
+    .number()
+    .int()
+    .positive()
+    .describe('Cantidad de personas para la reserva.'),
+});
+type SaveReservationPartySizeInput = z.infer<typeof saveReservationPartySizeSchema>;
+
+export const saveReservationPartySizeTool = new DynamicStructuredTool<
+  typeof saveReservationPartySizeSchema,
+  SaveReservationPartySizeInput
+>({
+  name: 'save_reservation_party_size',
+  description:
+    'Persiste la cantidad de personas de la reserva en el borrador. ' +
+    'Llamar cuando el cliente indique cuántas personas asistirán.',
+  schema: saveReservationPartySizeSchema,
+  func: async ({ count }: SaveReservationPartySizeInput, _runManager, config?: RunnableConfig) => {
+    const { conversationId } = getReactContext(config);
+    // Merge con el draft existente para no pisar otros campos
+    const cs = await prisma.conversation_state.findFirst({
+      where: { conversation_id: conversationId },
+      select: { metadata: true },
+    });
+    const existing =
+      cs && typeof cs.metadata === 'object' && cs.metadata !== null
+        ? ((cs.metadata as Record<string, unknown>).reservation_draft as Record<
+            string,
+            unknown
+          > | undefined) ?? {}
+        : {};
+    await patchConversationMetadata(conversationId, {
+      reservation_draft: { ...existing, partySize: count },
+    });
+    return toJson({ saved: true, partySize: count });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// ESCRITURA: save_reservation_environment
+// ---------------------------------------------------------------------------
+
+const saveReservationEnvironmentSchema = z.object({
+  environmentId: z
+    .string()
+    .nullable()
+    .describe(
+      'UUID del ambiente elegido o null si el cliente no tiene preferencia.'
+    ),
+});
+type SaveReservationEnvironmentInput = z.infer<typeof saveReservationEnvironmentSchema>;
+
+export const saveReservationEnvironmentTool = new DynamicStructuredTool<
+  typeof saveReservationEnvironmentSchema,
+  SaveReservationEnvironmentInput
+>({
+  name: 'save_reservation_environment',
+  description:
+    'Persiste la preferencia de ambiente de la reserva. ' +
+    'Pasá null cuando el cliente diga que no tiene preferencia o que le da lo mismo.',
+  schema: saveReservationEnvironmentSchema,
+  func: async ({ environmentId }: SaveReservationEnvironmentInput, _runManager, config?: RunnableConfig) => {
+    const { conversationId } = getReactContext(config);
+    const cs = await prisma.conversation_state.findFirst({
+      where: { conversation_id: conversationId },
+      select: { metadata: true },
+    });
+    const existing =
+      cs && typeof cs.metadata === 'object' && cs.metadata !== null
+        ? ((cs.metadata as Record<string, unknown>).reservation_draft as Record<
+            string,
+            unknown
+          > | undefined) ?? {}
+        : {};
+    await patchConversationMetadata(conversationId, {
+      reservation_draft: { ...existing, environmentId },
+    });
+    return toJson({ saved: true, environmentId });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// CONSULTA: resolve_date
+// ---------------------------------------------------------------------------
+
+const resolveDateSchema = z.object({
+  text: z
+    .string()
+    .describe(
+      'Texto libre del cliente con la fecha. Ej: "el próximo viernes", "pasado mañana", "el 15", "23/07".'
+    ),
+  currentDate: z
+    .string()
+    .describe('Fecha actual en formato DD/MM/AAAA (inyectada por el contexto).'),
+});
+
+/**
+ * Convierte texto libre de fecha a DD/MM/AAAA usando lógica de calendario.
+ * Soporta expresiones relativas (próximo viernes, pasado mañana, etc.) y
+ * formatos parciales (DD/MM → completa el año actual).
+ */
+const resolveDateSchemaTyped = resolveDateSchema;
+type ResolveDateInput = z.infer<typeof resolveDateSchemaTyped>;
+
+export const resolveDateTool = new DynamicStructuredTool<
+  typeof resolveDateSchemaTyped,
+  ResolveDateInput
+>({
+  name: 'resolve_date',
+  description:
+    'Convierte un texto libre con una fecha ("el próximo viernes", "el 15", "23/07") ' +
+    'al formato DD/MM/AAAA usando la fecha actual como referencia. ' +
+    'Siempre llamar antes de get_available_slots. ' +
+    'Devuelve { date: "DD/MM/AAAA" } o { date: null, error: "..." } si no puede resolver.',
+  schema: resolveDateSchemaTyped,
+  func: async ({ text, currentDate }: ResolveDateInput, _runManager, config?: RunnableConfig) => {
+    getReactContext(config); // validar contexto
+    try {
+      const resolved = resolveDateText(text, currentDate);
+      if (!resolved) {
+        return toJson({ date: null, error: 'No pude interpretar la fecha.' });
+      }
+      return toJson({ date: resolved });
+    } catch {
+      return toJson({ date: null, error: 'Error al resolver la fecha.' });
+    }
+  },
+});
+
+/**
+ * Lógica de resolución de fechas en texto libre.
+ * Soporta: DD/MM, DD/MM/AAAA, "hoy", "mañana", "pasado mañana",
+ * "próximo {día}", "el {día}" con referencia a currentDate.
+ */
+function resolveDateText(text: string, currentDate: string): string | null {
+  const t = text.trim().toLowerCase();
+
+  // Parsear fecha actual
+  const [cd, cm, cy] = currentDate.split('/').map(Number);
+  if (!cd || !cm || !cy) return null;
+  const now = new Date(cy, cm - 1, cd);
+
+  // Formato DD/MM/AAAA o DD/MM
+  const fullMatch = t.match(/^(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{4}))?$/);
+  if (fullMatch) {
+    const d = parseInt(fullMatch[1], 10);
+    const m = parseInt(fullMatch[2], 10);
+    const y = fullMatch[3] ? parseInt(fullMatch[3], 10) : now.getFullYear();
+    const candidate = new Date(y, m - 1, d);
+    // Si la fecha ya pasó este año, usar el próximo
+    if (candidate < now && !fullMatch[3]) {
+      candidate.setFullYear(y + 1);
+    }
+    return formatDMY(candidate);
+  }
+
+  if (t === 'hoy') return formatDMY(now);
+
+  if (t === 'mañana') {
+    const d = new Date(now);
+    d.setDate(d.getDate() + 1);
+    return formatDMY(d);
+  }
+
+  if (t === 'pasado mañana' || t === 'pasado manana') {
+    const d = new Date(now);
+    d.setDate(d.getDate() + 2);
+    return formatDMY(d);
+  }
+
+  // "próximo lunes", "el viernes", "este sábado", etc.
+  const DAY_NAMES: Record<string, number> = {
+    domingo: 0, lunes: 1, martes: 2, miércoles: 3, miercoles: 3,
+    jueves: 4, viernes: 5, sábado: 6, sabado: 6,
+  };
+  const dayMatch = t.match(
+    /(?:próximo|proximo|el|este|el próximo|el proximo)?\s*(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)/
+  );
+  if (dayMatch) {
+    const targetDay = DAY_NAMES[dayMatch[1]];
+    if (targetDay !== undefined) {
+      const d = new Date(now);
+      const currentDay = d.getDay();
+      let diff = targetDay - currentDay;
+      if (diff <= 0) diff += 7;
+      d.setDate(d.getDate() + diff);
+      return formatDMY(d);
+    }
+  }
+
+  // "el 15", "el día 15"
+  const dayOnlyMatch = t.match(/(?:el\s+)?(?:d[ií]a\s+)?(\d{1,2})$/);
+  if (dayOnlyMatch) {
+    const day = parseInt(dayOnlyMatch[1], 10);
+    const candidate = new Date(now.getFullYear(), now.getMonth(), day);
+    if (candidate < now) {
+      candidate.setMonth(candidate.getMonth() + 1);
+    }
+    return formatDMY(candidate);
+  }
+
+  return null;
+}
+
+function formatDMY(d: Date): string {
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  return `${day}/${month}/${year}`;
+}
+
+// ---------------------------------------------------------------------------
+// CONSULTA: get_active_reservation
+// ---------------------------------------------------------------------------
+
+const getActiveReservationSchema = z.object({});
+type GetActiveReservationInput = z.infer<typeof getActiveReservationSchema>;
+
+export const getActiveReservationTool = new DynamicStructuredTool<
+  typeof getActiveReservationSchema,
+  GetActiveReservationInput
+>({
+  name: 'get_active_reservation',
+  description:
+    'Consulta si el cliente tiene una reserva futura activa (confirmada) en la DB. ' +
+    'Devuelve { hasReservation: true, date, time, endTime, partySize } o { hasReservation: false }.',
+  schema: getActiveReservationSchema,
+  func: async (_input: GetActiveReservationInput, _runManager, config?: RunnableConfig) => {
+    const { customerId, businessId } = getReactContext(config);
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const reservation = await findAnyFutureOccupyingReservationForCustomer(
+      customerId,
+      startOfToday
+    );
+    if (!reservation) return toJson({ hasReservation: false });
+
+    const date = formatDMY(reservation.reservation_date);
+    const startTime =
+      reservation.start_time instanceof Date
+        ? `${String(reservation.start_time.getUTCHours()).padStart(2, '0')}:${String(reservation.start_time.getUTCMinutes()).padStart(2, '0')}`
+        : String(reservation.start_time).substring(0, 5);
+    const endTime =
+      reservation.end_time instanceof Date
+        ? `${String(reservation.end_time.getUTCHours()).padStart(2, '0')}:${String(reservation.end_time.getUTCMinutes()).padStart(2, '0')}`
+        : String(reservation.end_time).substring(0, 5);
+
+    // Filtrar por negocio actual
+    if (reservation.business_id !== businessId) {
+      return toJson({ hasReservation: false });
+    }
+
+    return toJson({
+      hasReservation: true,
+      reservationId: reservation.id,
+      date,
+      time: startTime,
+      endTime,
+      partySize: reservation.party_size,
+      status: reservation.status,
+    });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// CONSULTA: check_availability
+// ---------------------------------------------------------------------------
+
+const checkAvailabilitySchema = z.object({
+  date: z.string().describe('Fecha en formato DD/MM/AAAA.'),
+  slotId: z.string().describe('ID del slot de reserva.'),
+  partySize: z.number().int().positive(),
+  environmentId: z
+    .string()
+    .nullable()
+    .optional()
+    .describe('ID del ambiente o null para sin preferencia.'),
+});
+type CheckAvailabilityInput = z.infer<typeof checkAvailabilitySchema>;
+
+export const checkAvailabilityTool = new DynamicStructuredTool<
+  typeof checkAvailabilitySchema,
+  CheckAvailabilityInput
+>({
+  name: 'check_availability',
+  description:
+    'Verifica de forma determinística si hay mesa disponible para la fecha, slot, ' +
+    'cantidad de personas y ambiente indicados. ' +
+    'Devuelve { available: true, tableIds } o { available: false, reason }.',
+  schema: checkAvailabilitySchema,
+  func: async (
+    { date, slotId, partySize, environmentId }: CheckAvailabilityInput,
+    _runManager,
+    config?: RunnableConfig
+  ) => {
+    const { businessId } = getReactContext(config);
+    try {
+      const parsedDate = normalizeDate(date);
+      const slot = await prisma.reservation_slot.findFirst({
+        where: { id: slotId, business_id: businessId, is_active: true },
+      });
+      if (!slot) return toJson({ available: false, reason: 'slot_not_found' });
+
+      const startDateTime = buildDateTime(parsedDate, String(slot.start_time).substring(0, 5));
+      const endDateTime = buildDateTime(parsedDate, String(slot.end_time).substring(0, 5));
+
+      const tables = await findActiveTablesByBusinessAndEnvironment(
+        businessId,
+        environmentId ?? undefined
+      );
+      const suitable = tables.filter((t) => t.capacity >= partySize);
+      if (!suitable.length) {
+        return toJson({ available: false, reason: 'no_tables_for_party_size' });
+      }
+
+      // Verificar disponibilidad de cada mesa
+      const availableTables: string[] = [];
+      for (const table of suitable) {
+        const overlap = await findOverlappingReservationForTable(
+          table.id,
+          parsedDate,
+          startDateTime
+        );
+        if (overlap) continue;
+        const block = await findReservationBlockAtStart(
+          table.id,
+          environmentId ?? null,
+          parsedDate,
+          startDateTime
+        );
+        if (block) continue;
+        availableTables.push(table.id);
+        if (availableTables.length >= 2) break; // suficiente
+      }
+
+      if (!availableTables.length) {
+        return toJson({
+          available: false,
+          reason: 'no_available_tables',
+          date,
+          slotId,
+          startTime: String(slot.start_time).substring(0, 5),
+          endTime: String(slot.end_time).substring(0, 5),
+        });
+      }
+
+      return toJson({
+        available: true,
+        tableIds: availableTables,
+        startTime: String(slot.start_time).substring(0, 5),
+        endTime: String(slot.end_time).substring(0, 5),
+      });
+    } catch {
+      return toJson({ available: false, reason: 'error' });
+    }
+  },
+});
+
+// ---------------------------------------------------------------------------
+// SEÑAL-UI: get_available_slots
+// ---------------------------------------------------------------------------
+
+const getAvailableSlotsSchema = z.object({
+  date: z.string().describe('Fecha en formato DD/MM/AAAA.'),
+});
+type GetAvailableSlotsInput = z.infer<typeof getAvailableSlotsSchema>;
+
+/**
+ * Señal: el nodo fetchea los slots de la DB y adjunta la lista de WhatsApp.
+ * El agente NO escribe los horarios en texto; solo llama esta tool.
+ */
+export const getAvailableSlotsTool = new DynamicStructuredTool<
+  typeof getAvailableSlotsSchema,
+  GetAvailableSlotsInput
+>({
+  name: 'get_available_slots',
+  description:
+    'Muestra al cliente la lista de horarios disponibles para la fecha indicada. ' +
+    'NUNCA listes los horarios en texto: siempre llamá esta tool. ' +
+    'Solo llamar después de haber resuelto la fecha con resolve_date.',
+  schema: getAvailableSlotsSchema,
+  func: async ({ date }: GetAvailableSlotsInput, _runManager, config?: RunnableConfig) => {
+    getReactContext(config); // validar contexto
+    return toJson({ signal: 'present_slots', date });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// SEÑAL-UI: get_available_environments
+// ---------------------------------------------------------------------------
+
+const getAvailableEnvironmentsSchema = z.object({});
+type GetAvailableEnvironmentsInput = z.infer<typeof getAvailableEnvironmentsSchema>;
+
+/**
+ * Señal: el nodo adjunta la lista de ambientes del negocio.
+ * El agente NO los menciona en texto.
+ */
+export const getAvailableEnvironmentsTool = new DynamicStructuredTool<
+  typeof getAvailableEnvironmentsSchema,
+  GetAvailableEnvironmentsInput
+>({
+  name: 'get_available_environments',
+  description:
+    'Muestra al cliente los ambientes disponibles del restaurante para que elija. ' +
+    'NUNCA listes los ambientes en texto: siempre llamá esta tool.',
+  schema: getAvailableEnvironmentsSchema,
+  func: async (_input: GetAvailableEnvironmentsInput, _runManager, config?: RunnableConfig) => {
+    getReactContext(config); // validar contexto
+    return toJson({ signal: 'present_environments' });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// SEÑAL-UI: present_confirmation
+// ---------------------------------------------------------------------------
+
+const presentConfirmationSchema = z.object({});
+type PresentConfirmationInput = z.infer<typeof presentConfirmationSchema>;
+
+/**
+ * Señal: el nodo lee `reservation_draft`, arma el resumen y adjunta los
+ * botones RESERVATION_CONFIRM / RESERVATION_CANCEL.
+ */
+export const presentConfirmationTool = new DynamicStructuredTool<
+  typeof presentConfirmationSchema,
+  PresentConfirmationInput
+>({
+  name: 'present_confirmation',
+  description:
+    'Muestra al cliente el resumen de la reserva y los botones para confirmar o cancelar. ' +
+    'Solo llamar cuando ya tenés fecha, slot, personas (y ambiente si aplica). ' +
+    'El nodo construye el mensaje; no lo escribas vos.',
+  schema: presentConfirmationSchema,
+  func: async (_input: PresentConfirmationInput, _runManager, config?: RunnableConfig) => {
+    getReactContext(config); // validar contexto
+    return toJson({ signal: 'present_confirmation' });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// SALIDA: delegate_to_main (temporal — no limpia reservation_agent_active)
+// ---------------------------------------------------------------------------
+
+const delegateToMainSchema = z.object({
+  reason: z
+    .string()
+    .describe(
+      'Motivo de la delegación en una oración. ' +
+        'Ej: "el cliente preguntó por el menú", "el cliente quiere saber el precio de un plato".'
+    ),
+});
+type DelegateToMainInput = z.infer<typeof delegateToMainSchema>;
+
+/**
+ * Delegación temporal: el nodo llama `runHybridReactAgent` con el mismo mensaje
+ * y devuelve esa respuesta. `reservation_agent_active` NO se limpia.
+ * En el siguiente turno el cliente vuelve automáticamente al agente de reservas.
+ */
+export const delegateToMainTool = new DynamicStructuredTool<
+  typeof delegateToMainSchema,
+  DelegateToMainInput
+>({
+  name: 'delegate_to_main',
+  description:
+    'Delega el turno al asistente principal para responder una pregunta off-topic. ' +
+    'La sesión de reserva sigue activa: el próximo mensaje del cliente vuelve al agente de reservas. ' +
+    'Usá esta tool cuando el cliente pregunta algo fuera de la reserva (menú, precios, horarios). ' +
+    'NO la uses para abandono definitivo: usá abandon_reservation en ese caso.',
+  schema: delegateToMainSchema,
+  func: async ({ reason }: DelegateToMainInput, _runManager, config?: RunnableConfig) => {
+    getReactContext(config); // validar contexto
+    return toJson({ signal: 'delegate_to_main', reason });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// SALIDA: abandon_reservation (permanente — limpia reservation_agent_active)
+// ---------------------------------------------------------------------------
+
+const abandonReservationSchema = z.object({
+  reason: z
+    .string()
+    .describe(
+      'Motivo del abandono. Ej: "el cliente decidió no reservar", "el cliente canceló explícitamente".'
+    ),
+});
+type AbandonReservationInput = z.infer<typeof abandonReservationSchema>;
+
+/**
+ * Abandono permanente: el nodo limpia `reservation_agent_active` y `reservation_draft`.
+ * El siguiente mensaje del cliente no vuelve al agente de reservas.
+ */
+export const abandonReservationTool = new DynamicStructuredTool<
+  typeof abandonReservationSchema,
+  AbandonReservationInput
+>({
+  name: 'abandon_reservation',
+  description:
+    'Cancela la sesión de reserva activa de forma permanente. ' +
+    'Usá esta tool cuando el cliente decide explícitamente no hacer la reserva o no completarla. ' +
+    'Para preguntas off-topic temporales usá delegate_to_main en cambio.',
+  schema: abandonReservationSchema,
+  func: async ({ reason }: AbandonReservationInput, _runManager, config?: RunnableConfig) => {
+    const { conversationId } = getReactContext(config);
+    await omitConversationMetadataKeys(conversationId, [
+      'reservation_agent_active',
+      'reservation_draft',
+    ]);
+    return toJson({ signal: 'abandon_reservation', reason });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Export
+// ---------------------------------------------------------------------------
+
+export const allReservationTools = [
+  saveReservationDateTool,
+  saveReservationPartySizeTool,
+  saveReservationEnvironmentTool,
+  resolveDateTool,
+  getActiveReservationTool,
+  checkAvailabilityTool,
+  getAvailableSlotsTool,
+  getAvailableEnvironmentsTool,
+  presentConfirmationTool,
+  delegateToMainTool,
+  abandonReservationTool,
+];

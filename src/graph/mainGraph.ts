@@ -43,6 +43,7 @@ import {
   nlpSubgraphNode,
 } from './nodes/dispatch';
 import { checkoutAgentNode } from './nodes/checkout';
+import { reservationAgentNode } from './nodes/reservation';
 import { sendResponseNode, persistAIMessageNode } from './nodes/send';
 import {
   NODE,
@@ -78,6 +79,7 @@ const builder = new StateGraph(AgentStateAnnotation)
   .addNode(NODE.INTERACTIVE, interactiveSubgraphNode)
   .addNode(NODE.NLP, nlpSubgraphNode)
   .addNode(NODE.CHECKOUT_AGENT, checkoutAgentNode)
+  .addNode(NODE.RESERVATION_AGENT, reservationAgentNode)
   .addNode(NODE.FULFILLMENT_SELECTION, fulfillmentSelectionNode)
   .addNode(NODE.ADDRESS_COLLECTION, addressCollectionNode)
   .addNode(NODE.NAME_COLLECTION, nameCollectionNode)
@@ -133,6 +135,7 @@ builder.addConditionalEdges(
   routeAfterDetectionContext,
   {
     [NODE.RESERVATION]: NODE.RESERVATION,
+    [NODE.RESERVATION_AGENT]: NODE.RESERVATION_AGENT,
     [NODE.ONBOARDING_BY_STATE]: NODE.ONBOARDING_BY_STATE,
     [NODE.ADDRESS_CAPTURE]: NODE.ADDRESS_CAPTURE,
     [NODE.CHECKOUT_AGENT]: NODE.CHECKOUT_AGENT,
@@ -148,6 +151,7 @@ for (const node of [
   NODE.INTERACTIVE,
   NODE.NLP,
   NODE.CHECKOUT_AGENT,
+  NODE.RESERVATION_AGENT,
 ] as const) {
   builder.addConditionalEdges(node, routeAfterHandlerOrSubflow, {
     [NODE.FULFILLMENT_SELECTION]: NODE.FULFILLMENT_SELECTION,

@@ -12,6 +12,11 @@
  */
 
 import { dispatchIntent, dispatchInteractive } from '../../../controllers/webhook/dispachers';
+import { findActiveEnvironmentsByBusinessId } from '../../../repositories/reservation.repository';
+import { buildListMessageFromButtons } from '../../../whatsappBuilders';
+import { runReservationAgent } from '../../../agents/reservationAgent';
+import { normalizeDate as normReservationDate } from '../../../services/reservations/utils';
+import { fetchReservationSlotsForBusinessDate } from '../../../repositories/reservation.repository';
 import {
   CONFIRM_CLOSED_ORDER,
   CANCEL_CLOSED_ORDER,
@@ -37,14 +42,10 @@ import {
   normalizeMetadata,
   partySizeMetadataFields,
 } from '../../../services/productQuery/utils';
-import {
-  findOrCreateConversationState,
-  omitConversationMetadataKeys,
-  patchConversationMetadata,
-} from '../../../repositories';
+import { patchConversationMetadata, findOrCreateConversationState, omitConversationMetadataKeys } from '../../../repositories';
 import { extractStrictNumericPeopleCount } from '../../../helpers/peopleCountExtraction';
 import { buildIntentAmbiguityInteractiveMessage } from '../../../services/intentAmbiguityConfirmation.service';
-import { isHybridAgentMode } from '../../../config/env';
+import { isHybridAgentMode, isReservationAgentEnabled } from '../../../config/env';
 import { runHybridReactAgent } from '../../../agents/reactAgent';
 import { ConversationIntent } from '../../../types/conversationIntent';
 import type {
@@ -431,6 +432,76 @@ export const nlpSubgraphNode = async (
     hasAddress: state.hasAddress,
     isInCoverage: state.isInCoverage,
   };
+
+  // Intercept: si el intent es RESERVATION y el agente de reservas está
+  // habilitado, activar reservation_agent_active e invocar el agente
+  // directamente en este turno. Los turnos siguientes ya llegarán directo
+  // a reservationAgentNode gracias al contextRoute='reservation_agent'.
+  if (
+    isReservationAgentEnabled() &&
+    (detection.intent === ConversationIntent.RESERVATION ||
+      detection.intent === ConversationIntent.VIEW_RESERVATION)
+  ) {
+    await patchConversationMetadata(conversation.id, {
+      reservation_agent_active: true,
+    });
+
+    const bizId =
+      typeof enrichedBase.business === 'object' && enrichedBase.business
+        ? (enrichedBase.business as { id: string }).id
+        : '';
+    const environments = bizId ? await findActiveEnvironmentsByBusinessId(bizId) : [];
+
+    let agentResult: Awaited<ReturnType<typeof runReservationAgent>>;
+    try {
+      agentResult = await runReservationAgent(enrichedCtx, {
+        hasEnvironments: environments.length > 0,
+        environmentNames: environments.map((e) => ({ id: e.id, name: e.name })),
+      });
+    } catch (err) {
+      console.error('[reservation-agent] error en primer turno NLP:', err);
+      agentResult = null;
+    }
+
+    if (!agentResult) {
+      return { detection, earlyExit: 'no_handler_match' };
+    }
+
+    const { text, signals } = agentResult;
+
+    if (signals.delegateToMain) {
+      let mainResult: HandlerResult | null = null;
+      try { mainResult = await runHybridReactAgent(enrichedCtx); } catch { /* no-op */ }
+      return { handlerResult: mainResult ?? { content: text, isInteractive: false }, detection, dataCollectionDelegated: true };
+    }
+    if (signals.abandonReservation) {
+      await patchConversationMetadata(conversation.id, { reservation_agent_active: false });
+      return { handlerResult: { content: text, isInteractive: false }, detection, dataCollectionDelegated: true };
+    }
+    if (signals.presentSlots && signals.presentSlotsDate && bizId) {
+      try {
+        const parsedDate = normReservationDate(signals.presentSlotsDate);
+        const slots = await fetchReservationSlotsForBusinessDate(bizId, parsedDate);
+        if (slots.length > 0) {
+          const slotList = buildListMessageFromButtons(
+            text,
+            slots.map((s) => ({ title: s.start_time, payload: `RESERVATION_SLOT:${s.id}`, description: `${s.start_time} – ${s.end_time}`, sectionTitle: 'Horarios disponibles' })),
+            'Ver horarios', '', 'Elegí un horario'
+          );
+          return { handlerResult: { content: slotList, isInteractive: true }, detection, dataCollectionDelegated: true };
+        }
+      } catch { /* fallback a texto */ }
+    }
+    if (signals.presentEnvironments && environments.length > 0) {
+      const buttons = [
+        ...environments.map((env) => ({ title: env.name, payload: `RESERVATION_ENV:${env.id}`, description: '', sectionTitle: 'Ambientes' })),
+        { title: 'Sin preferencia', payload: 'RESERVATION_ENV_NONE', description: 'Cualquier ambiente', sectionTitle: 'Ambientes' },
+      ];
+      const envList = buildListMessageFromButtons(text, buttons, 'Ver ambientes', '', 'Elegí un ambiente');
+      return { handlerResult: { content: envList, isInteractive: true }, detection, dataCollectionDelegated: true };
+    }
+    return { handlerResult: { content: text, isInteractive: false }, detection, dataCollectionDelegated: true };
+  }
 
   const result = await dispatchOrHybrid(enrichedCtx);
   if (!result) {

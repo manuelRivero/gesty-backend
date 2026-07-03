@@ -34,6 +34,17 @@ const envSchema = z.object({
     .transform((v) => v === 'true' || v === '1'),
 
   /**
+   * Habilita el ReAct agent dedicado a reservas.
+   * Cuando está activo, el agente gestiona la sesión completa de reserva en
+   * lenguaje natural (fecha libre, party-size en texto, off-topic temporal).
+   * Requiere AGENT_MODE=hybrid para funcionar; en caso contrario se ignora.
+   */
+  RESERVATION_AGENT_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true' || v === '1'),
+
+  /**
    * Habilita la capa de CTA determinístico post-ReAct.
    * En false (default), runHybridReactAgent devuelve solo texto (comportamiento actual).
    */
@@ -99,6 +110,9 @@ export const isHybridAgentMode = (): boolean => env.AGENT_MODE === 'hybrid';
 
 export const isCheckoutAgentEnabled = (): boolean =>
   isHybridAgentMode() && env.CHECKOUT_AGENT_ENABLED === true;
+
+export const isReservationAgentEnabled = (): boolean =>
+  isHybridAgentMode() && env.RESERVATION_AGENT_ENABLED === true;
 
 export const isDryRunWhatsAppSend = (): boolean =>
   env.DRY_RUN_WHATSAPP_SEND === true;

@@ -29,7 +29,7 @@ import { getBusinessOpenInfo } from '../../../services/businessHours.service';
 import { formatInboundMessageForLog } from '../../../controllers/webhook/utils/messageLog';
 import { sendTypingIndicator } from '../../../services/whatsappTypingIndicator.service';
 import { normalizeMetadata } from '../../../services/productQuery/utils';
-import { isCheckoutAgentEnabled } from '../../../config/env';
+import { isCheckoutAgentEnabled, isReservationAgentEnabled } from '../../../config/env';
 import type { AgentState, AgentStateUpdate } from '../../state';
 import type { DetectionContext } from '../../../services/ai/detection.service';
 import type { EnrichedContext } from '../../../controllers/webhook/types';
@@ -251,8 +251,22 @@ export const buildDetectionContextNode = async (
       !onboardingStep &&
       (wsMeta.checkout_active === true || ctx.payloadId === 'CHECKOUT');
 
+    // El agente de reservas captura cualquier turno con reservation_agent_active
+    // activo, o cuando el payload es un RESERVATION_* (slot, env, confirm, etc.),
+    // o cuando el payload es VIEW_RESERVATION (inicio de sesión desde botón).
+    const isReservationAgentSession =
+      isReservationAgentEnabled() &&
+      !reservationStep &&
+      !onboardingStep &&
+      !isCheckoutSession &&
+      (wsMeta.reservation_agent_active === true ||
+        ctx.payloadId?.startsWith('RESERVATION_') === true ||
+        ctx.payloadId === 'VIEW_RESERVATION');
+
     if (reservationStep && !reservationPaused) {
       contextRoute = 'reservation_wizard';
+    } else if (isReservationAgentSession) {
+      contextRoute = 'reservation_agent';
     } else if (onboardingStep) {
       contextRoute = 'onboarding_by_state';
     } else if (isCheckoutSession) {

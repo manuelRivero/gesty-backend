@@ -86,6 +86,32 @@ export type ConversationMetadata = {
    * limpia al finalizar el pago, cancelar, hacer handback o expirar el draft.
    */
   checkout_active?: boolean;
+
+  /**
+   * `true` mientras el cliente tiene una sesión activa del agente de reservas.
+   * Se activa cuando el intent RESERVATION se detecta (con RESERVATION_AGENT_ENABLED=true)
+   * y se limpia al confirmar, cancelar o al llamar abandon_reservation.
+   */
+  reservation_agent_active?: boolean;
+
+  /**
+   * Borrador de los datos recolectados por el agente de reservas durante la
+   * sesión activa. Se persiste turno a turno via tools de escritura.
+   */
+  reservation_draft?: {
+    /** Fecha elegida en formato DD/MM/AAAA ya resuelta. */
+    date?: string;
+    /** ID del slot elegido (reservation_slot.id). */
+    slotId?: string;
+    /** Hora de inicio en HH:MM. */
+    time?: string;
+    /** Hora de fin en HH:MM. */
+    endTime?: string;
+    /** Cantidad de personas. */
+    partySize?: number;
+    /** ID del ambiente elegido; null = sin preferencia. */
+    environmentId?: string | null;
+  };
 };
 
 export type ConversationMode = 'GLOBAL' | 'FILTER_SET' | 'PRODUCT_FOCUS';

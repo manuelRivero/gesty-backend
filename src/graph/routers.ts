@@ -21,6 +21,7 @@ export const NODE = {
   MESSAGE_TYPE_GUARD: 'messageTypeGuard',
   BUILD_DETECTION_CTX: 'buildDetectionContext',
   RESERVATION: 'reservationWizard',
+  RESERVATION_AGENT: 'reservationAgent',
   ONBOARDING_BY_STATE: 'onboardingByState',
   ADDRESS_CAPTURE: 'addressCapture',
   INTERACTIVE: 'interactiveSubgraph',
@@ -102,6 +103,8 @@ export const routeAfterDetectionContext = (
   switch (state.contextRoute) {
     case 'reservation_wizard':
       return NODE.RESERVATION;
+    case 'reservation_agent':
+      return NODE.RESERVATION_AGENT;
     case 'onboarding_by_state':
       return NODE.ONBOARDING_BY_STATE;
     case 'address_capture':
