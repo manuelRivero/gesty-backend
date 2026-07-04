@@ -27,10 +27,15 @@ import { PayCashHandler } from '../../../controllers/webhook/handlers/payCashHan
 import { PayOnlineHandler } from '../../../controllers/webhook/handlers/payOnlineHandler';
 import { runCheckoutAgent } from '../../../agents/checkoutAgent';
 import type { CheckoutAgentContext } from '../../../agents/checkoutAgent';
+import { runHybridReactAgent } from '../../../agents/reactAgent';
+import { detectIntentWithConfidence } from '../../../services/ai/detection.service';
+import { findOrCreateConversationState } from '../../../repositories';
+import { isHybridAgentMode } from '../../../config/env';
 import type { HandlerFollowUp, HandlerResult } from '../../../controllers/webhook/types';
 import type { EnrichedContext } from '../../../controllers/webhook/types';
 import type { WhatsAppInteractiveMessage } from '../../../domain/intent/whatsappTemplates';
 import type { AgentState, AgentStateUpdate } from '../../state';
+import type { DetectionContext } from '../../../services/ai/detection.service';
 import { setDraftFulfillmentType } from '../../../tools/checkout';
 
 // ---------------------------------------------------------------------------
@@ -64,6 +69,50 @@ export const clearCheckoutSession = async (conversationId: string): Promise<void
     'address_refusal_count',
     'pending_fulfillment_action',
   ]);
+};
+
+/** Sesión de checkout huérfana: flag activo pero sin ítems en el carrito. */
+export const isStaleCheckoutSession = async (params: {
+  businessId: string;
+  phone: string;
+  checkoutActive: boolean;
+  payloadId?: string;
+}): Promise<boolean> => {
+  if (!params.checkoutActive) return false;
+  if (params.payloadId === 'CHECKOUT') return false;
+
+  const draft = await prisma.draft_order.findFirst({
+    where: {
+      business_id: params.businessId,
+      customer_phone: params.phone,
+      status: 'active',
+    },
+    select: {
+      draft_order_item: { select: { id: true }, take: 1 },
+    },
+  });
+
+  return !draft || draft.draft_order_item.length === 0;
+};
+
+export const clearCheckoutSessionIfStale = async (params: {
+  businessId: string;
+  phone: string;
+  conversationId: string;
+  checkoutActive: boolean;
+  payloadId?: string;
+}): Promise<boolean> => {
+  const stale = await isStaleCheckoutSession(params);
+  if (!stale) return false;
+  await clearCheckoutSession(params.conversationId);
+  console.log(
+    JSON.stringify({
+      event: '[checkout-agent] stale_session_cleared',
+      reason: 'checkout_active_without_cart_items',
+      conversationId: params.conversationId,
+    })
+  );
+  return true;
 };
 
 // ---------------------------------------------------------------------------
@@ -106,6 +155,44 @@ export const applyDefaultFulfillmentIfSingleOption = async (params: {
 };
 
 // ---------------------------------------------------------------------------
+// Handback inline → agente híbrido (mismo turno, como delegate_to_main en reservas)
+// ---------------------------------------------------------------------------
+
+const invokeHybridAfterCheckoutHandback = async (params: {
+  enrichedCtx: EnrichedContext;
+  conversationId: string;
+  detectionContext: DetectionContext;
+  userMessage: string;
+}): Promise<HandlerResult | null> => {
+  if (!isHybridAgentMode() || !params.userMessage.trim()) {
+    return null;
+  }
+
+  const detection = await detectIntentWithConfidence(
+    params.userMessage,
+    params.detectionContext
+  );
+  const refreshedState = await findOrCreateConversationState(params.conversationId);
+  const hybridCtx: EnrichedContext = {
+    ...params.enrichedCtx,
+    detection,
+    conversationState: refreshedState,
+  };
+
+  try {
+    const hybrid = await runHybridReactAgent(hybridCtx);
+    if (hybrid?.kind === 'response') {
+      return hybrid.handlerResult;
+    }
+    // No encadenar delegate_to_checkout en el mismo turno del handback.
+    return null;
+  } catch (err) {
+    console.error('[checkout-agent] error en handback inline hybrid:', err);
+    return null;
+  }
+};
+
+// ---------------------------------------------------------------------------
 // Resolver respuesta del agente de checkout (compartido con NLP intercept)
 // ---------------------------------------------------------------------------
 
@@ -113,8 +200,10 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
   enrichedCtx: EnrichedContext;
   checkoutCtx: CheckoutAgentContext;
   conversationId: string;
+  /** Si está presente, handback_to_main re-invoca al híbrido con el mismo mensaje. */
+  handbackState?: Pick<AgentState, 'detectionContext' | 'webhookContext'>;
 }): Promise<HandlerResult> => {
-  const { enrichedCtx, checkoutCtx, conversationId } = params;
+  const { enrichedCtx, checkoutCtx, conversationId, handbackState } = params;
 
   let agentResult: Awaited<ReturnType<typeof runCheckoutAgent>>;
   try {
@@ -143,7 +232,34 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
         conversationId,
       })
     );
-    return { content: text, isInteractive: false, skipBodyHumanization: true };
+
+    const userMessage = handbackState?.webhookContext?.message?.text?.body?.trim() ?? '';
+    const detectionContext = handbackState?.detectionContext;
+    let hybridResult: HandlerResult | null = null;
+    if (detectionContext && userMessage) {
+      hybridResult = await invokeHybridAfterCheckoutHandback({
+        enrichedCtx,
+        conversationId,
+        detectionContext,
+        userMessage,
+      });
+      if (hybridResult) {
+        console.log(
+          JSON.stringify({
+            event: '[checkout-agent] handback_inline_hybrid',
+            conversationId,
+          })
+        );
+      }
+    }
+
+    return (
+      hybridResult ?? {
+        content: text,
+        isInteractive: false,
+        skipBodyHumanization: true,
+      }
+    );
   }
 
   if (signals.presentFulfillmentOptions) {
@@ -264,6 +380,7 @@ export const checkoutAgentNode = async (
     enrichedCtx: enrichedBase,
     checkoutCtx,
     conversationId,
+    handbackState: state,
   });
 
   return {

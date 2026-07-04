@@ -302,7 +302,7 @@ TOOLS DISPONIBLES:
 - present_payment_options(): adjunta botones de método de pago (online o efectivo). Solo llamar cuando ya tenés tipo de entrega y dirección (si aplica). NO escribas las opciones en texto.
 - mark_name_refused(): registra que el cliente rechazó dar el nombre. Llamar ANTES de responder ante un rechazo explícito. Devuelve el conteo actualizado.
 - mark_address_refused(): registra que el cliente rechazó dar la dirección (NO usar para out_of_coverage). Llamar ANTES de responder ante un rechazo explícito. Devuelve el conteo actualizado.
-- handback_to_main(reason): cede el control al asistente principal. Usar cuando el cliente quiere editar el carrito, ver el menú, o salir del checkout.
+- handback_to_main(reason): cede el control al asistente principal en el mismo turno; el híbrido responderá al cliente con menú/carrito. No redactes una respuesta larga de transición: llamá la tool y dejá que el asistente principal conteste.
 
 ORDEN DE RECOLECCIÓN (una sola cosa a la vez, en este orden):
 

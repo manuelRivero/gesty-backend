@@ -30,6 +30,9 @@ import { formatInboundMessageForLog } from '../../../controllers/webhook/utils/m
 import { sendTypingIndicator } from '../../../services/whatsappTypingIndicator.service';
 import { normalizeMetadata } from '../../../services/productQuery/utils';
 import { isCheckoutAgentEnabled, isReservationAgentEnabled } from '../../../config/env';
+import {
+  clearCheckoutSessionIfStale,
+} from '../checkout';
 import type { AgentState, AgentStateUpdate } from '../../state';
 import type { DetectionContext } from '../../../services/ai/detection.service';
 import type { EnrichedContext } from '../../../controllers/webhook/types';
@@ -235,7 +238,7 @@ export const buildDetectionContextNode = async (
 
     // Onboarding por estado (metadata.onboarding_step) tiene prioridad sobre
     // todo lo demás cuando el usuario no tiene dirección o está en wizard.
-    const wsMeta = normalizeMetadata(workingConversationState.metadata);
+    let wsMeta = normalizeMetadata(workingConversationState.metadata);
     const reservation = wsMeta.reservation;
     const reservationStep = reservation?.step;
     const reservationPaused = reservation?.paused === true;
@@ -245,11 +248,30 @@ export const buildDetectionContextNode = async (
     let hasAddress = false;
     let isInCoverage = false;
 
+    const customerPhone = customer.phone_number ?? ctx.to;
+    let checkoutActive = wsMeta.checkout_active === true;
+
+    if (
+      isCheckoutAgentEnabled() &&
+      checkoutActive &&
+      (await clearCheckoutSessionIfStale({
+        businessId: business.id,
+        phone: customerPhone,
+        conversationId: conversation.id,
+        checkoutActive: true,
+        payloadId: ctx.payloadId,
+      }))
+    ) {
+      checkoutActive = false;
+      const refreshed = await findOrCreateConversationState(conversation.id);
+      wsMeta = normalizeMetadata(refreshed.metadata);
+    }
+
     const isCheckoutSession =
       isCheckoutAgentEnabled() &&
       !reservationStep &&
       !onboardingStep &&
-      (wsMeta.checkout_active === true || ctx.payloadId === 'CHECKOUT');
+      (checkoutActive || ctx.payloadId === 'CHECKOUT');
 
     // El agente de reservas captura cualquier turno con reservation_agent_active
     // activo, o cuando el payload es un RESERVATION_* (slot, env, confirm, etc.),
