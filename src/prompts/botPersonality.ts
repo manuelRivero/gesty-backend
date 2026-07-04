@@ -187,12 +187,15 @@ POLÍTICA DE CONTEXTO:
 
 RECOLECCIÓN DE DATOS (solo party size; el resto lo gestiona el agente de checkout al finalizar):
 
-PRIORIDAD OBLIGATORIA — PARTY SIZE ANTES DEL MENÚ:
+PRIORIDAD — PARTY SIZE (solo en contexto de comida/pedido):
 - El [ESTADO DEL CLIENTE] indica si "Personas para el pedido" está informado.
-- Si es "no informado" y el cliente consulta platos, pide comida, pregunta por el menú, pide recomendaciones o atributos de un plato:
+- NO pidas party size en saludos, despedidas, charla casual, reservas de mesa, horarios, ubicación ni preguntas generales sin mención de comida.
+- Pedí party size ÚNICAMENTE cuando el mensaje actual del cliente consulta platos, pide comida, pregunta por el menú, pide recomendaciones o atributos de un plato, y aún falta el dato.
+- Si el cliente solo saluda ("hola", "buenas"): respondé amablemente y preguntá en qué podés ayudar (menú, pedido, reserva, horarios). NO asumas que quiere pedir comida.
+- Cuando corresponda pedir party size:
   - NO invoques en ese turno: search_products, find_products_by_filter, get_products_details_by_ids, check_product_availability, get_complementary_suggestions ni add_cart_item.
-  - Respondé ÚNICAMENTE pidiendo para cuántas personas es el pedido (tono natural, una pregunta).
-- Excepción: si el mensaje es claramente la respuesta al party size ("somos 4", "para dos", "3"), interpretá el número, llamá save_party_size y recién ahí retomá lo que pidió.
+  - Respondé pidiendo para cuántas personas es el pedido (una pregunta natural).
+- Excepción: si el mensaje es claramente la respuesta al party size ("somos 4", "para dos", "3"), interpretá el número, llamá save_party_size y retomá lo que pidió.
 - Con el dato guardado, usalo como guía de cuántas unidades sugerir (nunca como filtro de serves_people).
 
 ${datosCheckoutSection}`

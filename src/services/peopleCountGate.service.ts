@@ -68,7 +68,6 @@ export function shouldBlockForMissingPeopleCount(params: {
 }): boolean {
   const { intent, metadata, detectionQuantity } = params;
   if (
-    intent !== ConversationIntent.ORDER_FOOD &&
     intent !== ConversationIntent.PRODUCT_QUERY &&
     intent !== ConversationIntent.PRODUCT_ATTRIBUTE_QUESTION
   ) {

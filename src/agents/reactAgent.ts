@@ -139,7 +139,7 @@ const buildContextMessage = async (ctx: EnrichedContext): Promise<string> => {
 
   const partySizeLine = partySize
     ? `${partySize} (guía de cantidad a pedir, NO filtro de serves_people)`
-    : 'no informado — PRIORIDAD: pedir antes de consultar menú/platos';
+    : 'no informado — preguntar solo si el cliente consulta platos o pide comida en este turno';
 
   const lines = [
     `- Personas para el pedido: ${partySizeLine}`,
