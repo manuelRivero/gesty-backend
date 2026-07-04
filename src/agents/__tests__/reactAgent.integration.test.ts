@@ -63,6 +63,7 @@ vi.mock('../../config/llm', () => ({
 // ---- Imports bajo test ----
 
 import { runHybridReactAgent, resetAgentCacheForTesting } from '../reactAgent';
+import type { HybridAgentRunResult } from '../reactAgent';
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { isHybridCtaEnabled, isHybridCtaEnabledForBusiness } from '../../config/env';
 import { planCta } from '../ctaPlanner';
@@ -75,6 +76,9 @@ import { patchConversationMetadata } from '../../repositories';
 // ---------------------------------------------------------------------------
 
 const BOT_TEXT = '🤖\n\n*Ceviche Clásico* 🐟\n\nEs levemente picante.';
+
+const unwrap = (result: HybridAgentRunResult | null) =>
+  result?.kind === 'response' ? result.handlerResult : null;
 
 const makeAgentInvoke = (text: string) =>
   vi.fn().mockResolvedValue({
@@ -124,7 +128,7 @@ describe('runHybridReactAgent', () => {
     vi.mocked(isHybridCtaEnabled).mockReturnValue(false);
     vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(false);
 
-    const result = await runHybridReactAgent(makeCtx() as any);
+    const result = unwrap(await runHybridReactAgent(makeCtx() as any));
 
     expect(result).not.toBeNull();
     expect(result!.isInteractive).toBe(false);
@@ -152,7 +156,7 @@ describe('runHybridReactAgent', () => {
       isInteractive: true,
     });
 
-    const result = await runHybridReactAgent(makeCtx() as any);
+    const result = unwrap(await runHybridReactAgent(makeCtx() as any));
 
     expect(result!.isInteractive).toBe(true);
     expect(planCta).toHaveBeenCalledOnce();
@@ -181,16 +185,20 @@ describe('runHybridReactAgent', () => {
       isInteractive: true,
     });
 
-    const result = await runHybridReactAgent(makeCtx({
-      detection: {
-        intent: 'PRODUCT_QUERY',
-        confidence: 0.9,
-        detectedProductName: null,
-        quantity: null,
-        candidates: [],
-        raw: null,
-      },
-    }) as any);
+    const result = unwrap(
+      await runHybridReactAgent(
+        makeCtx({
+          detection: {
+            intent: 'PRODUCT_QUERY',
+            confidence: 0.9,
+            detectedProductName: null,
+            quantity: null,
+            candidates: [],
+            raw: null,
+          },
+        }) as any
+      )
+    );
 
     expect(result!.isInteractive).toBe(true);
     expect(resolveCta).toHaveBeenCalledOnce();
@@ -211,7 +219,7 @@ describe('runHybridReactAgent', () => {
       },
     });
 
-    const result = await runHybridReactAgent(ctxWithCooldown as any);
+    const result = unwrap(await runHybridReactAgent(ctxWithCooldown as any));
 
     expect(result!.isInteractive).toBe(false);
     expect(planCta).not.toHaveBeenCalled();
@@ -222,7 +230,7 @@ describe('runHybridReactAgent', () => {
     vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
     vi.mocked(planCta).mockResolvedValue(null);
 
-    const result = await runHybridReactAgent(makeCtx() as any);
+    const result = unwrap(await runHybridReactAgent(makeCtx() as any));
 
     expect(result!.isInteractive).toBe(false);
     expect(buildHybridCtaInteractive).not.toHaveBeenCalled();
@@ -241,16 +249,20 @@ describe('runHybridReactAgent', () => {
     vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
     vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
 
-    const result = await runHybridReactAgent(makeCtx({
-      detection: {
-        intent: 'PRODUCT_ATTRIBUTE_QUESTION',
-        confidence: 0.4, // < MIN_CTA_CONFIDENCE
-        detectedProductName: 'ceviche',
-        quantity: null,
-        candidates: [],
-        raw: null,
-      },
-    }) as any);
+    const result = unwrap(
+      await runHybridReactAgent(
+        makeCtx({
+          detection: {
+            intent: 'PRODUCT_ATTRIBUTE_QUESTION',
+            confidence: 0.4, // < MIN_CTA_CONFIDENCE
+            detectedProductName: 'ceviche',
+            quantity: null,
+            candidates: [],
+            raw: null,
+          },
+        }) as any
+      )
+    );
 
     expect(result!.isInteractive).toBe(false);
     expect(planCta).not.toHaveBeenCalled();

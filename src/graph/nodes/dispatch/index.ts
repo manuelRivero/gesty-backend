@@ -43,10 +43,16 @@ import {
   partySizeMetadataFields,
 } from '../../../services/productQuery/utils';
 import { patchConversationMetadata, findOrCreateConversationState, omitConversationMetadataKeys } from '../../../repositories';
-import { extractStrictNumericPeopleCount } from '../../../helpers/peopleCountExtraction';
+import { extractStrictNumericPeopleCount, resolvePartySizeFromReply } from '../../../helpers/peopleCountExtraction';
 import { buildIntentAmbiguityInteractiveMessage } from '../../../services/intentAmbiguityConfirmation.service';
-import { isHybridAgentMode, isReservationAgentEnabled } from '../../../config/env';
+import { isHybridAgentMode, isReservationAgentEnabled, isCheckoutAgentEnabled } from '../../../config/env';
 import { runHybridReactAgent } from '../../../agents/reactAgent';
+import type { HybridAgentRunResult } from '../../../agents/reactAgent';
+import {
+  activateCheckoutSessionIfCartHasItems,
+  applyDefaultFulfillmentIfSingleOption,
+  resolveCheckoutAgentHandlerResult,
+} from '../checkout';
 import { ConversationIntent } from '../../../types/conversationIntent';
 import type {
   EnrichedContext,
@@ -112,13 +118,76 @@ const CLOSED_INTENTS = new Set<ConversationIntent>([
   ConversationIntent.SELECT_TAKE_AWAY,
 ]);
 
+type CheckoutHandoffParams = {
+  conversationId: string;
+  businessId: string;
+  phone: string;
+  hasAddress: boolean;
+  isInCoverage: boolean;
+  deliveryEnabled: boolean;
+  takeawayEnabled: boolean;
+};
+
+const resolveCheckoutHandoff = async (
+  enrichedCtx: EnrichedContext,
+  handoff: CheckoutHandoffParams
+): Promise<HandlerResult> => {
+  const emptyCart = await activateCheckoutSessionIfCartHasItems({
+    businessId: handoff.businessId,
+    phone: handoff.phone,
+    conversationId: handoff.conversationId,
+  });
+  if (emptyCart) {
+    return emptyCart;
+  }
+
+  await applyDefaultFulfillmentIfSingleOption({
+    businessId: handoff.businessId,
+    phone: handoff.phone,
+    deliveryEnabled: handoff.deliveryEnabled,
+    takeawayEnabled: handoff.takeawayEnabled,
+  });
+
+  return resolveCheckoutAgentHandlerResult({
+    enrichedCtx,
+    checkoutCtx: {
+      hasAddress: handoff.hasAddress,
+      isInCoverage: handoff.isInCoverage,
+      deliveryEnabled: handoff.deliveryEnabled,
+      takeawayEnabled: handoff.takeawayEnabled,
+    },
+    conversationId: handoff.conversationId,
+  });
+};
+
+const unwrapHybridRun = async (
+  hybrid: HybridAgentRunResult | null,
+  enrichedCtx: EnrichedContext,
+  checkoutHandoff?: CheckoutHandoffParams
+): Promise<HandlerResult | null> => {
+  if (!hybrid) return null;
+  if (
+    hybrid.kind === 'delegate_checkout' &&
+    checkoutHandoff &&
+    isCheckoutAgentEnabled()
+  ) {
+    return resolveCheckoutHandoff(enrichedCtx, checkoutHandoff);
+  }
+  if (hybrid.kind === 'response') {
+    return hybrid.handlerResult;
+  }
+  return null;
+};
+
 const dispatchOrHybrid = async (
-  enrichedCtx: EnrichedContext
+  enrichedCtx: EnrichedContext,
+  checkoutHandoff?: CheckoutHandoffParams
 ): Promise<HandlerResult | null> => {
   if (isHybridAgentMode() && !CLOSED_INTENTS.has(enrichedCtx.detection.intent)) {
     try {
       const hybrid = await runHybridReactAgent(enrichedCtx);
-      if (hybrid) return hybrid;
+      const result = await unwrapHybridRun(hybrid, enrichedCtx, checkoutHandoff);
+      if (result) return result;
     } catch (err) {
       console.error('[hybrid-agent] failed, falling back to deterministic', err);
     }
@@ -224,6 +293,20 @@ export const nlpSubgraphNode = async (
   const conversation = state.conversation!;
   const detectionContext = state.detectionContext!;
   let workingConversationState = state.workingConversationState;
+  const business = state.business!;
+  const customer = state.customer!;
+
+  const checkoutHandoff: CheckoutHandoffParams | undefined = isCheckoutAgentEnabled()
+    ? {
+        conversationId: conversation.id,
+        businessId: business.id,
+        phone: customer.phone_number ?? ctx.to,
+        hasAddress: state.hasAddress ?? false,
+        isInCoverage: state.isInCoverage ?? false,
+        deliveryEnabled: state.businessConfig?.delivery_enabled ?? true,
+        takeawayEnabled: state.businessConfig?.takeaway_enabled ?? false,
+      }
+    : undefined;
 
   const userMessage = ctx.message?.text?.body || '';
 
@@ -287,6 +370,67 @@ export const nlpSubgraphNode = async (
   // "personas faltantes" debe poder volver a evaluarse como si fuera un mensaje
   // nuevo (la metadata en memoria todavía trae el flag viejo).
   let abandonedPeopleCountGate = false;
+  let abandonedPartySizeDefer = false;
+
+  // Modo híbrido: reanudar consulta de menú tras responder party size
+  if (isHybridAgentMode() && metaPre.awaitingPartySize) {
+    const resume = parsePeopleCountResume(metaPre);
+    const reDetection = await detectIntentWithConfidence(
+      userMessage,
+      detectionContext
+    );
+    const extractedPeople = resolvePartySizeFromReply(
+      userMessage,
+      reDetection.quantity
+    );
+
+    if (resume && extractedPeople != null && extractedPeople > 0) {
+      await patchConversationMetadata(conversation.id, {
+        ...partySizeMetadataFields(extractedPeople),
+        awaitingPartySize: false,
+      });
+      await omitConversationMetadataKeys(conversation.id, ['peopleCountResume']);
+      workingConversationState = await findOrCreateConversationState(
+        conversation.id
+      );
+
+      const resumedCtx: EnrichedContext = {
+        ...enrichedBase,
+        conversationState: workingConversationState,
+        detection: resume.detection,
+        message: {
+          ...ctx.message!,
+          type: 'text',
+          text: { body: resume.userMessage },
+        },
+        hasAddress: state.hasAddress,
+        isInCoverage: state.isInCoverage,
+      };
+
+      const resumedResult = await dispatchOrHybrid(resumedCtx, checkoutHandoff);
+      if (!resumedResult) {
+        return { earlyExit: 'no_handler_match', workingConversationState };
+      }
+      return {
+        handlerResult: resumedResult,
+        detection: resume.detection,
+        dataCollectionDelegated: true,
+        workingConversationState,
+      };
+    }
+
+    if (shouldAbandonPeopleCountForNewIntent(reDetection) && extractedPeople == null) {
+      await omitConversationMetadataKeys(conversation.id, [
+        'awaitingPartySize',
+        'peopleCountResume',
+      ]);
+      precomputedDetection = reDetection;
+      abandonedPartySizeDefer = true;
+      workingConversationState = await findOrCreateConversationState(
+        conversation.id
+      );
+    }
+  }
 
   if (metaPre.awaitingPeopleCount) {
     const resume = parsePeopleCountResume(metaPre);
@@ -309,11 +453,11 @@ export const nlpSubgraphNode = async (
           },
         };
 
-        const resumedResult = await dispatchOrHybrid(resumedCtx);
+        const resumedResult = await dispatchOrHybrid(resumedCtx, checkoutHandoff);
         if (!resumedResult) {
-          return { earlyExit: 'no_handler_match' };
+          return { earlyExit: 'no_handler_match', workingConversationState };
         }
-        return { handlerResult: resumedResult };
+        return { handlerResult: resumedResult, workingConversationState };
       }
 
       // No es un número válido. Antes de re-preguntar, revisamos si el usuario
@@ -391,15 +535,39 @@ export const nlpSubgraphNode = async (
     isHybridAgentMode() && !CLOSED_INTENTS.has(detection.intent as ConversationIntent);
 
   const metaForGate = normalizeMetadata(workingConversationState?.metadata);
-  if (abandonedPeopleCountGate) {
+  if (abandonedPeopleCountGate || abandonedPartySizeDefer) {
     // La metadata en memoria todavía trae el flag viejo; lo limpiamos para que
     // el gate evalúe el mensaje nuevo como si fuera la primera vez.
     metaForGate.awaitingPeopleCount = false;
+    metaForGate.awaitingPartySize = false;
     metaForGate.peopleCountResume = undefined;
   }
 
-  // El gate de party-size solo aplica en la ruta determinística.
-  // En modo agente, el ReAct agent recolecta el dato naturalmente via contexto + save_party_size.
+  // Híbrido: congelar consulta de menú y delegar al agente que pide party size
+  if (
+    willUseAgent &&
+    !abandonedPartySizeDefer &&
+    shouldBlockForMissingPeopleCount({
+      intent: detection.intent,
+      metadata: metaForGate,
+      detectionQuantity: detection.quantity,
+    })
+  ) {
+    if (!metaForGate.awaitingPartySize) {
+      await patchConversationMetadata(conversation.id, {
+        awaitingPartySize: true,
+        peopleCountResume: {
+          userMessage,
+          detection: JSON.parse(JSON.stringify(detection)),
+        },
+      });
+      workingConversationState = await findOrCreateConversationState(
+        conversation.id
+      );
+    }
+  }
+
+  // Gate duro de party-size solo en ruta determinística (no híbrida).
   if (
     !willUseAgent &&
     shouldBlockForMissingPeopleCount({
@@ -427,7 +595,7 @@ export const nlpSubgraphNode = async (
 
   const enrichedCtx: EnrichedContext = {
     ...enrichedBase,
-    conversationState: workingConversationState,
+    conversationState: workingConversationState ?? enrichedBase.conversationState,
     detection,
     hasAddress: state.hasAddress,
     isInCoverage: state.isInCoverage,
@@ -471,7 +639,11 @@ export const nlpSubgraphNode = async (
 
     if (signals.delegateToMain) {
       let mainResult: HandlerResult | null = null;
-      try { mainResult = await runHybridReactAgent(enrichedCtx); } catch { /* no-op */ }
+      try {
+        const hybrid = await runHybridReactAgent(enrichedCtx);
+        mainResult =
+          hybrid?.kind === 'response' ? hybrid.handlerResult : null;
+      } catch { /* no-op */ }
       return { handlerResult: mainResult ?? { content: text, isInteractive: false }, detection, dataCollectionDelegated: true };
     }
     if (signals.abandonReservation) {
@@ -503,7 +675,49 @@ export const nlpSubgraphNode = async (
     return { handlerResult: { content: text, isInteractive: false }, detection, dataCollectionDelegated: true };
   }
 
-  const result = await dispatchOrHybrid(enrichedCtx);
+  // Intercept: CHECKOUT en texto libre → sesión del checkout agent (igual que botón Finalizar)
+  if (isCheckoutAgentEnabled() && detection.intent === ConversationIntent.CHECKOUT) {
+    const business = state.business!;
+    const customer = state.customer!;
+    const phone = customer.phone_number ?? ctx.to;
+
+    const emptyCart = await activateCheckoutSessionIfCartHasItems({
+      businessId: business.id,
+      phone,
+      conversationId: conversation.id,
+    });
+    if (emptyCart) {
+      return { handlerResult: emptyCart, detection, dataCollectionDelegated: true };
+    }
+
+    const deliveryEnabled = state.businessConfig?.delivery_enabled ?? true;
+    const takeawayEnabled = state.businessConfig?.takeaway_enabled ?? false;
+
+    await applyDefaultFulfillmentIfSingleOption({
+      businessId: business.id,
+      phone,
+      deliveryEnabled,
+      takeawayEnabled,
+    });
+
+    const handlerResult = await resolveCheckoutAgentHandlerResult({
+      enrichedCtx,
+      checkoutCtx: {
+        hasAddress: state.hasAddress ?? false,
+        isInCoverage: state.isInCoverage ?? false,
+        deliveryEnabled,
+        takeawayEnabled,
+      },
+      conversationId: conversation.id,
+    });
+
+    return { handlerResult, detection, dataCollectionDelegated: true };
+  }
+
+  const result = await dispatchOrHybrid(enrichedCtx, checkoutHandoff);
+  if (checkoutHandoff) {
+    workingConversationState = await findOrCreateConversationState(conversation.id);
+  }
   if (!result) {
     return { detection, earlyExit: 'no_handler_match' };
   }
@@ -514,5 +728,6 @@ export const nlpSubgraphNode = async (
     detection,
     isHumanHandover,
     dataCollectionDelegated: willUseAgent,
+    workingConversationState,
   };
 };

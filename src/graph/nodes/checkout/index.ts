@@ -21,7 +21,7 @@ import {
   EMPTY_CART_BOT_MESSAGE,
   PAYMENT_METHOD_PROMPT_BOT_MESSAGE,
 } from '../../../services/productQuery/botMessages';
-import { textResponse, interactiveResponse } from '../../../controllers/webhook/utils';
+import { textResponse } from '../../../controllers/webhook/utils';
 import { buildFulfillmentSelectionMessage } from '../gates/fulfillmentSelection';
 import { PayCashHandler } from '../../../controllers/webhook/handlers/payCashHandler';
 import { PayOnlineHandler } from '../../../controllers/webhook/handlers/payOnlineHandler';
@@ -31,6 +31,7 @@ import type { HandlerFollowUp, HandlerResult } from '../../../controllers/webhoo
 import type { EnrichedContext } from '../../../controllers/webhook/types';
 import type { WhatsAppInteractiveMessage } from '../../../domain/intent/whatsappTemplates';
 import type { AgentState, AgentStateUpdate } from '../../state';
+import { setDraftFulfillmentType } from '../../../tools/checkout';
 
 // ---------------------------------------------------------------------------
 // Mensaje de botones de pago (sin ajustes de precio en v1)
@@ -53,36 +54,127 @@ function buildPaymentButtonsMessage(): WhatsAppInteractiveMessage {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: setear fulfillment_type en el draft activo
-// ---------------------------------------------------------------------------
-
-const setFulfillmentType = async (
-  businessId: string,
-  phone: string,
-  type: 'DELIVERY' | 'TAKE_AWAY'
-): Promise<void> => {
-  const draft = await prisma.draft_order.findFirst({
-    where: { business_id: businessId, customer_phone: phone, status: 'active' },
-    select: { id: true },
-  });
-  if (!draft) return;
-  await prisma.$executeRaw`
-    UPDATE draft_order
-    SET fulfillment_type = ${type}::"FulfillmentType"
-    WHERE id = ${draft.id}::uuid
-  `;
-};
-
-// ---------------------------------------------------------------------------
 // Helper: limpiar sesión de checkout
 // ---------------------------------------------------------------------------
 
-const clearCheckoutSession = async (conversationId: string): Promise<void> => {
+export const clearCheckoutSession = async (conversationId: string): Promise<void> => {
   await omitConversationMetadataKeys(conversationId, [
     'checkout_active',
     'name_refusal_count',
     'address_refusal_count',
+    'pending_fulfillment_action',
   ]);
+};
+
+// ---------------------------------------------------------------------------
+// Activar sesión + validar carrito
+// ---------------------------------------------------------------------------
+
+export const activateCheckoutSessionIfCartHasItems = async (params: {
+  businessId: string;
+  phone: string;
+  conversationId: string;
+}): Promise<HandlerResult | null> => {
+  const draft = await prisma.draft_order.findFirst({
+    where: {
+      business_id: params.businessId,
+      customer_phone: params.phone,
+      status: 'active',
+    },
+    select: { id: true, draft_order_item: { select: { id: true } } },
+  });
+
+  if (!draft || draft.draft_order_item.length === 0) {
+    return textResponse(EMPTY_CART_BOT_MESSAGE);
+  }
+
+  await patchConversationMetadata(params.conversationId, { checkout_active: true });
+  return null;
+};
+
+export const applyDefaultFulfillmentIfSingleOption = async (params: {
+  businessId: string;
+  phone: string;
+  deliveryEnabled: boolean;
+  takeawayEnabled: boolean;
+}): Promise<void> => {
+  if (params.deliveryEnabled && !params.takeawayEnabled) {
+    await setDraftFulfillmentType(params.businessId, params.phone, 'DELIVERY');
+  } else if (!params.deliveryEnabled && params.takeawayEnabled) {
+    await setDraftFulfillmentType(params.businessId, params.phone, 'TAKE_AWAY');
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Resolver respuesta del agente de checkout (compartido con NLP intercept)
+// ---------------------------------------------------------------------------
+
+export const resolveCheckoutAgentHandlerResult = async (params: {
+  enrichedCtx: EnrichedContext;
+  checkoutCtx: CheckoutAgentContext;
+  conversationId: string;
+}): Promise<HandlerResult> => {
+  const { enrichedCtx, checkoutCtx, conversationId } = params;
+
+  let agentResult: Awaited<ReturnType<typeof runCheckoutAgent>>;
+  try {
+    agentResult = await runCheckoutAgent(enrichedCtx, checkoutCtx);
+  } catch (err) {
+    console.error('[checkout-agent] error invocando el agente de checkout:', err);
+    agentResult = null;
+  }
+
+  if (!agentResult) {
+    return (
+      textResponse(
+        '🤖\n\n*Hubo un problema* 😔\n\nNo pude procesar tu pedido en este momento. ¿Podés intentarlo de nuevo?'
+      ) ?? { content: '', isInteractive: false }
+    );
+  }
+
+  const { text, signals } = agentResult;
+
+  if (signals.handback) {
+    await clearCheckoutSession(conversationId);
+    console.log(
+      JSON.stringify({
+        event: '[checkout-agent] handback_to_main',
+        reason: signals.handbackReason,
+        conversationId,
+      })
+    );
+    return { content: text, isInteractive: false, skipBodyHumanization: true };
+  }
+
+  if (signals.presentFulfillmentOptions) {
+    const fulfillmentMessage = buildFulfillmentSelectionMessage();
+    const followUp: HandlerFollowUp = {
+      type: 'interactive',
+      message: fulfillmentMessage as WhatsAppInteractiveMessage,
+    };
+    return {
+      content: text,
+      isInteractive: false,
+      followUps: [followUp],
+      skipBodyHumanization: true,
+    };
+  }
+
+  if (signals.presentPaymentOptions) {
+    const paymentMessage = buildPaymentButtonsMessage();
+    const followUp: HandlerFollowUp = {
+      type: 'interactive',
+      message: paymentMessage as WhatsAppInteractiveMessage,
+    };
+    return {
+      content: text,
+      isInteractive: false,
+      followUps: [followUp],
+      skipBodyHumanization: true,
+    };
+  }
+
+  return { content: text, isInteractive: false, skipBodyHumanization: true };
 };
 
 // ---------------------------------------------------------------------------
@@ -108,9 +200,8 @@ export const checkoutAgentNode = async (
   const deliveryEnabled = businessConfig?.delivery_enabled ?? true;
   const takeawayEnabled = businessConfig?.takeaway_enabled ?? false;
 
-  // ── Pago en efectivo ──────────────────────────────────────────────────────
   if (payloadId === 'PAY_CASH') {
-    const result = await payCashHandler.execute(enrichedBase as any);
+    const result = await payCashHandler.execute(enrichedBase as EnrichedContext);
     await clearCheckoutSession(conversationId);
     return {
       handlerResult: result ?? undefined,
@@ -118,9 +209,8 @@ export const checkoutAgentNode = async (
     };
   }
 
-  // ── Pago online ───────────────────────────────────────────────────────────
   if (payloadId === 'PAY_ONLINE') {
-    const result = await payOnlineHandler.execute(enrichedBase as any);
+    const result = await payOnlineHandler.execute(enrichedBase as EnrichedContext);
     await clearCheckoutSession(conversationId);
     return {
       handlerResult: result ?? undefined,
@@ -128,42 +218,34 @@ export const checkoutAgentNode = async (
     };
   }
 
-  // ── Cancelar checkout ─────────────────────────────────────────────────────
   if (payloadId === 'CANCEL_CHECKOUT') {
     await clearCheckoutSession(conversationId);
     return {
-      handlerResult: textResponse(
-        '🤖\n\n*Checkout cancelado* 👋\n\nTu pedido sigue guardado en el carrito. Avisame cuando quieras retomarlo.'
-      ) ?? undefined,
+      handlerResult:
+        textResponse(
+          '🤖\n\n*Checkout cancelado* 👋\n\nTu pedido sigue guardado en el carrito. Avisame cuando quieras retomarlo.'
+        ) ?? undefined,
       dataCollectionDelegated: true,
     };
   }
 
-  // ── Selección de tipo de entrega ──────────────────────────────────────────
   if (payloadId === 'FULFILLMENT_DELIVERY') {
-    await setFulfillmentType(business.id, phone, 'DELIVERY');
+    await setDraftFulfillmentType(business.id, phone, 'DELIVERY');
   } else if (payloadId === 'FULFILLMENT_TAKE_AWAY') {
-    await setFulfillmentType(business.id, phone, 'TAKE_AWAY');
+    await setDraftFulfillmentType(business.id, phone, 'TAKE_AWAY');
   }
 
-  // ── Activar sesión de checkout en el primer turno ─────────────────────────
   if (payloadId === 'CHECKOUT') {
-    const draft = await prisma.draft_order.findFirst({
-      where: { business_id: business.id, customer_phone: phone, status: 'active' },
-      select: { id: true, draft_order_item: { select: { id: true } } },
+    const emptyCart = await activateCheckoutSessionIfCartHasItems({
+      businessId: business.id,
+      phone,
+      conversationId,
     });
-
-    if (!draft || draft.draft_order_item.length === 0) {
-      return {
-        handlerResult: textResponse(EMPTY_CART_BOT_MESSAGE) ?? undefined,
-        dataCollectionDelegated: true,
-      };
+    if (emptyCart) {
+      return { handlerResult: emptyCart, dataCollectionDelegated: true };
     }
-
-    await patchConversationMetadata(conversationId, { checkout_active: true });
   }
 
-  // ── Invocar el agente de checkout ─────────────────────────────────────────
   const checkoutCtx: CheckoutAgentContext = {
     hasAddress: state.hasAddress,
     isInCoverage: state.isInCoverage,
@@ -171,72 +253,21 @@ export const checkoutAgentNode = async (
     takeawayEnabled,
   };
 
-  let agentResult: Awaited<ReturnType<typeof runCheckoutAgent>>;
-  try {
-    agentResult = await runCheckoutAgent(enrichedBase, checkoutCtx);
-  } catch (err) {
-    console.error('[checkout-agent] error invocando el agente de checkout:', err);
-    agentResult = null;
-  }
+  await applyDefaultFulfillmentIfSingleOption({
+    businessId: business.id,
+    phone,
+    deliveryEnabled,
+    takeawayEnabled,
+  });
 
-  if (!agentResult) {
-    return {
-      handlerResult: textResponse(
-        '🤖\n\n*Hubo un problema* 😔\n\nNo pude procesar tu pedido en este momento. ¿Podés intentarlo de nuevo?'
-      ) ?? undefined,
-      dataCollectionDelegated: true,
-    };
-  }
+  const handlerResult = await resolveCheckoutAgentHandlerResult({
+    enrichedCtx: enrichedBase,
+    checkoutCtx,
+    conversationId,
+  });
 
-  const { text, signals } = agentResult;
-
-  // ── Handback al flujo normal ───────────────────────────────────────────────
-  if (signals.handback) {
-    await clearCheckoutSession(conversationId);
-    console.log(
-      JSON.stringify({
-        event: '[checkout-agent] handback_to_main',
-        reason: signals.handbackReason,
-        conversationId,
-      })
-    );
-    return {
-      handlerResult: { content: text, isInteractive: false },
-      dataCollectionDelegated: true,
-    };
-  }
-
-  // ── Señal: mostrar botones de tipo de entrega ─────────────────────────────
-  if (signals.presentFulfillmentOptions) {
-    const fulfillmentMessage = buildFulfillmentSelectionMessage();
-    const followUp: HandlerFollowUp = { type: 'interactive', message: fulfillmentMessage as any };
-    return {
-      handlerResult: {
-        content: text,
-        isInteractive: false,
-        followUps: [followUp],
-      },
-      dataCollectionDelegated: true,
-    };
-  }
-
-  // ── Señal: mostrar botones de pago ────────────────────────────────────────
-  if (signals.presentPaymentOptions) {
-    const paymentMessage = buildPaymentButtonsMessage();
-    const followUp: HandlerFollowUp = { type: 'interactive', message: paymentMessage as any };
-    return {
-      handlerResult: {
-        content: text,
-        isInteractive: false,
-        followUps: [followUp],
-      },
-      dataCollectionDelegated: true,
-    };
-  }
-
-  // ── Solo texto (pide datos o confirma) ────────────────────────────────────
   return {
-    handlerResult: { content: text, isInteractive: false },
+    handlerResult,
     dataCollectionDelegated: true,
   };
 };

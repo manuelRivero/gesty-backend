@@ -23,6 +23,63 @@ import type { RunnableConfig } from '@langchain/core/runnables';
 
 const toJson = (data: unknown): string => JSON.stringify(data);
 
+/** Persiste el tipo de entrega en el draft activo del cliente. */
+export const setDraftFulfillmentType = async (
+  businessId: string,
+  customerPhone: string,
+  type: 'DELIVERY' | 'TAKE_AWAY'
+): Promise<{ success: boolean; error?: string }> => {
+  const draft = await prisma.draft_order.findFirst({
+    where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
+    select: { id: true },
+  });
+  if (!draft) {
+    return { success: false, error: 'no_active_cart' };
+  }
+  await prisma.$executeRaw`
+    UPDATE draft_order
+    SET fulfillment_type = ${type}::"FulfillmentType"
+    WHERE id = ${draft.id}::uuid
+  `;
+  return { success: true };
+};
+
+// ---------------------------------------------------------------------------
+// save_fulfillment_type
+// ---------------------------------------------------------------------------
+
+const saveFulfillmentTypeSchema = z.object({
+  type: z
+    .enum(['DELIVERY', 'TAKE_AWAY'])
+    .describe(
+      'DELIVERY = envío a domicilio ("en casa", "a domicilio", "delivery"). ' +
+        'TAKE_AWAY = retiro en local ("retiro", "paso a buscar", "take away").'
+    ),
+});
+type SaveFulfillmentTypeInput = z.infer<typeof saveFulfillmentTypeSchema>;
+
+export const saveFulfillmentTypeTool = new DynamicStructuredTool<
+  typeof saveFulfillmentTypeSchema,
+  SaveFulfillmentTypeInput
+>({
+  name: 'save_fulfillment_type',
+  description:
+    'Guarda el tipo de entrega elegido por el cliente en texto libre durante el checkout. ' +
+    'Llamá esta tool cuando el cliente indique cómo quiere recibir el pedido: ' +
+    '"en casa", "a domicilio", "delivery" → DELIVERY; ' +
+    '"retiro", "paso a buscar", "take away", "retiro en local" → TAKE_AWAY. ' +
+    'Solo usar en sesión de checkout cuando fulfillment_type aún no está definido o el cliente cambia de opinión.',
+  schema: saveFulfillmentTypeSchema,
+  func: async ({ type }: SaveFulfillmentTypeInput, _runManager, config?: RunnableConfig) => {
+    const { businessId, customerPhone } = getReactContext(config);
+    const result = await setDraftFulfillmentType(businessId, customerPhone, type);
+    if (!result.success) {
+      return toJson({ success: false, error: result.error });
+    }
+    return toJson({ success: true, fulfillmentType: type });
+  },
+});
+
 // ---------------------------------------------------------------------------
 // present_fulfillment_options
 // ---------------------------------------------------------------------------
@@ -193,10 +250,65 @@ export const handbackToMainTool = new DynamicStructuredTool<
 });
 
 // ---------------------------------------------------------------------------
+// ENTRADA: start_checkout_session (agente híbrido → checkout)
+// ---------------------------------------------------------------------------
+
+const startCheckoutSessionSchema = z.object({
+  reason: z
+    .string()
+    .describe(
+      'Motivo de la delegación en una oración. ' +
+        'Ej: "el cliente quiere finalizar y pagar el pedido", "el cliente pidió cerrar la compra".'
+    ),
+});
+type StartCheckoutSessionInput = z.infer<typeof startCheckoutSessionSchema>;
+
+/**
+ * Señal de salida del agente híbrido: el dispatch activa checkout_active e
+ * invoca runCheckoutAgent en el mismo turno.
+ */
+export const startCheckoutSessionTool = new DynamicStructuredTool<
+  typeof startCheckoutSessionSchema,
+  StartCheckoutSessionInput
+>({
+  name: 'start_checkout_session',
+  description:
+    'Delega al agente de checkout cuando el cliente quiere CERRAR, PAGAR o FINALIZAR el pedido actual. ' +
+    'Usá esta tool cuando el cliente exprese intención de terminar la compra (no cuando quiera agregar platos). ' +
+    'Antes de llamarla, verificá con get_cart que haya ítems; si el carrito está vacío, NO la uses y explicá que primero debe elegir platos. ' +
+    'NO gestiones vos tipo de entrega, dirección, nombre ni pago: solo delegá con esta tool.',
+  schema: startCheckoutSessionSchema,
+  func: async ({ reason }: StartCheckoutSessionInput, _runManager, config?: RunnableConfig) => {
+    const { businessId, customerPhone } = getReactContext(config);
+    const draft = await prisma.draft_order.findFirst({
+      where: {
+        business_id: businessId,
+        customer_phone: customerPhone,
+        status: 'active',
+      },
+      select: {
+        draft_order_item: { select: { id: true }, take: 1 },
+      },
+    });
+
+    if (!draft || draft.draft_order_item.length === 0) {
+      return toJson({
+        success: false,
+        error: 'empty_cart',
+        message: 'El carrito está vacío; no se puede iniciar checkout.',
+      });
+    }
+
+    return toJson({ signal: 'start_checkout_session', reason });
+  },
+});
+
+// ---------------------------------------------------------------------------
 // Export
 // ---------------------------------------------------------------------------
 
 export const allCheckoutTools = [
+  saveFulfillmentTypeTool,
   presentFulfillmentOptionsTool,
   presentPaymentOptionsTool,
   markNameRefusedTool,

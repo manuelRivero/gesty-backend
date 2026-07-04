@@ -2,6 +2,7 @@ import { prisma } from '../../../lib/prisma';
 import { patchConversationMetadata } from '../../../repositories/conversationState.repository';
 import { normalizeMetadata } from '../../../services/productQuery/utils';
 import { detectIntentFromPayload } from '../../../controllers/webhook/payloadMapper';
+import { isHybridAgentMode } from '../../../config/env';
 import { ConversationIntent } from '../../../types/conversationIntent';
 import type { WhatsAppInteractiveMessage } from '../../../domain/intent/whatsappTemplates';
 import type { AgentState, AgentStateUpdate } from '../../state';
@@ -42,21 +43,18 @@ export function buildFulfillmentSelectionMessage(): WhatsAppInteractiveMessage {
 }
 
 /**
- * Gate que precede a `addressCollection`.
+ * Gate legacy de selección de tipo de entrega post-carrito.
  *
- * Lógica:
- * - Si solo está habilitado delivery: no hace nada (flujo actual sin cambios).
- * - Si solo está habilitado take-away: setea `fulfillment_type = TAKE_AWAY`
- *   silenciosamente en el draft y continúa.
- * - Si ambos están habilitados y el draft ya tiene un tipo: no hace nada.
- * - Si ambos están habilitados y el draft NO tiene tipo: reemplaza el
- *   `handlerResult` con los botones de selección y setea
- *   `fulfillmentSelectionPending = true` para que el routing saltee
- *   `addressCollection` y `nameCollection`.
+ * En modo híbrido el checkout agent gestiona fulfillment al finalizar el pedido;
+ * este nodo no intercepta el turno (evita botones de entrega tras ADD_ITEM).
+ *
+ * En modo determinístico mantiene el comportamiento anterior.
  */
 export const fulfillmentSelectionNode = async (
   state: AgentState
 ): Promise<AgentStateUpdate> => {
+  if (isHybridAgentMode()) return {};
+
   if (state.skipAIPersistence) return {};
   if (state.contextRoute !== 'interactive' && state.contextRoute !== 'nlp') return {};
 

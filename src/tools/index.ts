@@ -40,7 +40,7 @@ import { resolveEffectivePrice } from '../helpers/menuItemPrice.helper';
 import { listPaymentAdjustmentsForAmount } from '../services/paymentAdjustment.service';
 import { computeOrderPricing } from '../services/pricing.service';
 import { partySizeMetadataFields } from '../services/productQuery/utils';
-import { patchConversationMetadata } from '../repositories/conversationState.repository';
+import { patchConversationMetadata, omitConversationMetadataKeys } from '../repositories/conversationState.repository';
 import { updateCustomerName } from '../repositories';
 import { AddressService } from '../services/address.service';
 
@@ -1288,7 +1288,9 @@ export const savePartySizeTool = new DynamicStructuredTool<
     await patchConversationMetadata(conversationId, {
       ...partySizeMetadataFields(count),
       awaitingPeopleCount: false,
+      awaitingPartySize: false,
     });
+    await omitConversationMetadataKeys(conversationId, ['peopleCountResume']);
     return toJson({ success: true, partySize: count });
   },
 });
@@ -1377,11 +1379,8 @@ export const allReactTools = [
   checkProductAvailabilityTool,
   getComplementarySuggestionsTool,
   getBusinessInfoTool,
-  createPaymentLinkTool,
   addCartItemTool,
   removeCartItemTool,
   updateItemNoteTool,
   savePartySizeTool,
-  saveCustomerNameTool,
-  saveDeliveryAddressTool,
 ];

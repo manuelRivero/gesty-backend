@@ -369,7 +369,8 @@ export const reservationAgentNode = async (
     // Llamar al agente principal inline; reservation_agent_active NO se limpia
     let mainResult: HandlerResult | null = null;
     try {
-      mainResult = await runHybridReactAgent(enrichedBase);
+      const hybrid = await runHybridReactAgent(enrichedBase);
+      mainResult = hybrid?.kind === 'response' ? hybrid.handlerResult : null;
     } catch (err) {
       console.error('[reservation-agent] error en delegate_to_main:', err);
     }

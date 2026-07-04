@@ -35,6 +35,11 @@ export type ConversationMetadata = {
   >;
   /** Esperando respuesta numérica de personas antes de recomendaciones/pedido. */
   awaitingPeopleCount?: boolean;
+  /**
+   * Modo híbrido: el agente pidió party size y hay una consulta de menú
+   * congelada en `peopleCountResume` para reanudar al responder.
+   */
+  awaitingPartySize?: boolean;
   /** El clasificador dudó entre intenciones; el usuario debe elegir un botón CONFIRM_INTENT. */
   awaitingIntentConfirmation?: boolean;
   /** Los dos candidatos principales mostrados al usuario (misma forma que en detection). */

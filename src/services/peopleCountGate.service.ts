@@ -69,11 +69,13 @@ export function shouldBlockForMissingPeopleCount(params: {
   const { intent, metadata, detectionQuantity } = params;
   if (
     intent !== ConversationIntent.ORDER_FOOD &&
-    intent !== ConversationIntent.PRODUCT_QUERY
+    intent !== ConversationIntent.PRODUCT_QUERY &&
+    intent !== ConversationIntent.PRODUCT_ATTRIBUTE_QUESTION
   ) {
     return false;
   }
   if (metadata.awaitingPeopleCount) return false;
+  if (metadata.awaitingPartySize) return false;
 
   const effective = resolveRequestedPartySize(detectionQuantity, metadata);
   return effective == null || effective <= 0;

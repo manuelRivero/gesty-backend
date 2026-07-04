@@ -26,10 +26,12 @@ import { resolvePersonalityForBusiness } from '../services/botPersonality.servic
 import { allReactTools } from '../tools';
 import type { EnrichedContext, HandlerFollowUp, HandlerResult } from '../controllers/webhook/types';
 import { buildListMessage, formatBotUserMessage, getRequestedPartySize, normalizeMetadata } from '../services/productQuery/utils';
+import { prisma } from '../lib/prisma';
 import {
   isHybridCtaEnabled,
   getHybridCtaTargetIntents,
   isHybridCtaEnabledForBusiness,
+  isCheckoutAgentEnabled,
 } from '../config/env';
 import { planCta } from './ctaPlanner';
 import { resolveCta } from './ctaResolver';
@@ -39,6 +41,7 @@ import {
   extractPrimaryProductId,
 } from '../whatsappBuilders/hybridCta';
 import { patchConversationMetadata } from '../repositories';
+import { startCheckoutSessionTool } from '../tools/checkout';
 import { MenuService } from '../services/menu.service';
 import { truncateDescription, truncateTitle } from '../whatsappBuilders';
 import type { CtaPlannerInput } from './types';
@@ -67,14 +70,21 @@ const TOP_MENU_PRODUCTS_FOR_PLANNER = 5;
 let cachedAgents = new Map<string, ReturnType<typeof createReactAgent>>();
 
 const buildAgent = (personalityId: string, personalityPrompt: string) => {
-  let agent = cachedAgents.get(personalityId);
+  const checkoutDelegation = isCheckoutAgentEnabled();
+  const cacheKey = `${personalityId}:${checkoutDelegation ? 'checkout' : 'main'}`;
+  let agent = cachedAgents.get(cacheKey);
   if (!agent) {
+    const tools = checkoutDelegation
+      ? [...allReactTools, startCheckoutSessionTool]
+      : allReactTools;
     agent = createReactAgent({
       llm: getReactReasonerLlm(),
-      tools: allReactTools,
-      prompt: buildHybridAgentSystemPrompt(personalityPrompt),
+      tools,
+      prompt: buildHybridAgentSystemPrompt(personalityPrompt, {
+        checkoutDelegationEnabled: checkoutDelegation,
+      }),
     });
-    cachedAgents.set(personalityId, agent);
+    cachedAgents.set(cacheKey, agent);
   }
   return agent;
 };
@@ -84,27 +94,102 @@ export const resetAgentCacheForTesting = (): void => {
   cachedAgents = new Map();
 };
 
-const buildContextMessage = (ctx: EnrichedContext): string => {
+const buildContextMessage = async (ctx: EnrichedContext): Promise<string> => {
   const userMsg = ctx.message?.text?.body ?? '';
   const meta = normalizeMetadata(ctx.conversationState?.metadata);
   const partySize = getRequestedPartySize(meta);
-  const customerName = (ctx.customer as { name?: string | null })?.name?.trim() || null;
-  const hasAddress = ctx.hasAddress ?? false;
-  const isInCoverage = ctx.isInCoverage ?? false;
+  const checkoutActive = meta.checkout_active === true;
 
-  const addressStatus = !hasAddress
-    ? 'no cargada'
-    : !isInCoverage
-      ? 'cargada pero fuera de cobertura'
-      : 'cargada y en cobertura';
+  const businessId =
+    typeof ctx.business === 'object' && ctx.business
+      ? (ctx.business as { id: string }).id
+      : '';
+  const customerPhone =
+    typeof ctx.customer === 'object' && ctx.customer
+      ? (ctx.customer as { phone_number?: string }).phone_number ?? ctx.to
+      : ctx.to;
+
+  let cartSummary = 'sin pedido activo';
+  let fulfillmentType = 'no aplica (checkout gestiona entrega al finalizar)';
+
+  if (businessId && customerPhone) {
+    try {
+      const draft = await prisma.draft_order.findFirst({
+        where: {
+          business_id: businessId,
+          customer_phone: customerPhone,
+          status: 'active',
+        },
+        select: {
+          fulfillment_type: true,
+          _count: { select: { draft_order_item: true } },
+        },
+      });
+      if (draft) {
+        const count = draft._count.draft_order_item;
+        cartSummary = count > 0 ? `${count} ítem(s) en carrito` : 'carrito vacío';
+        fulfillmentType = draft.fulfillment_type
+          ? `${draft.fulfillment_type} (solo checkout puede cambiarlo)`
+          : 'sin elegir — se define al finalizar en checkout';
+      }
+    } catch {
+      /* el agente puede usar get_cart */
+    }
+  }
+
+  const partySizeLine = partySize
+    ? `${partySize} (guía de cantidad a pedir, NO filtro de serves_people)`
+    : 'no informado — PRIORIDAD: pedir antes de consultar menú/platos';
 
   const lines = [
-    `- Personas para el pedido: ${partySize ? `${partySize} (guía de cantidad a pedir, NO filtro de serves_people)` : 'no informado'}`,
-    `- Nombre del cliente: ${customerName ?? 'no informado'}`,
-    `- Dirección de entrega: ${addressStatus}`,
+    `- Personas para el pedido: ${partySizeLine}`,
+    `- Carrito: ${cartSummary}`,
+    `- Tipo de entrega: ${fulfillmentType}`,
+    `- Sesión de checkout: ${checkoutActive ? 'activa' : 'inactiva'}`,
   ];
 
   return `[ESTADO DEL CLIENTE]\n${lines.join('\n')}\n\n${userMsg}`;
+};
+
+// ---------------------------------------------------------------------------
+// Señales del agente híbrido (delegación a checkout)
+// ---------------------------------------------------------------------------
+
+export interface HybridAgentSignals {
+  startCheckoutSession: boolean;
+  startCheckoutReason: string | null;
+}
+
+export type HybridAgentRunResult =
+  | { kind: 'response'; handlerResult: HandlerResult }
+  | { kind: 'delegate_checkout'; reason: string | null };
+
+const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
+  const signals: HybridAgentSignals = {
+    startCheckoutSession: false,
+    startCheckoutReason: null,
+  };
+
+  for (const msg of messages) {
+    if (typeof msg !== 'object' || msg === null) continue;
+    const m = msg as Record<string, unknown>;
+    if (typeof m.tool_call_id !== 'string') continue;
+
+    const rawContent = typeof m.content === 'string' ? m.content : null;
+    if (!rawContent) continue;
+
+    try {
+      const data = JSON.parse(rawContent) as { signal?: string; reason?: string };
+      if (data.signal === 'start_checkout_session') {
+        signals.startCheckoutSession = true;
+        signals.startCheckoutReason = data.reason ?? null;
+      }
+    } catch {
+      /* ignorar mensajes no-JSON */
+    }
+  }
+
+  return signals;
 };
 
 const extractFinalText = (result: unknown): string | null => {
@@ -298,7 +383,7 @@ const buildProductListFollowUp = (products: AgentShortlistItem[]): HandlerFollow
  */
 export const runHybridReactAgent = async (
   ctx: EnrichedContext
-): Promise<HandlerResult | null> => {
+): Promise<HybridAgentRunResult | null> => {
   const businessId =
     typeof ctx.business === 'object' && ctx.business
       ? (ctx.business as { id: string }).id
@@ -324,13 +409,31 @@ export const runHybridReactAgent = async (
       : '';
 
   const inputs = {
-    messages: [new HumanMessage(buildContextMessage(ctx))],
+    messages: [new HumanMessage(await buildContextMessage(ctx))],
   };
 
   const out = await agent.invoke(inputs, {
     recursionLimit: 8,
     configurable: { businessId, customerId, customerPhone, conversationId, conversationStartedAt },
   });
+
+  const agentMessages = (out as { messages?: unknown[] }).messages ?? [];
+  const signals = extractHybridSignals(agentMessages);
+
+  if (signals.startCheckoutSession) {
+    console.log(
+      JSON.stringify({
+        event: '[hybrid-agent] delegate_to_checkout',
+        reason: signals.startCheckoutReason,
+        conversationId,
+      })
+    );
+    return {
+      kind: 'delegate_checkout',
+      reason: signals.startCheckoutReason,
+    };
+  }
+
   const rawText = extractFinalText(out);
   if (!rawText) return null;
 
@@ -340,7 +443,6 @@ export const runHybridReactAgent = async (
   const userMessage = ctx.message?.text?.body ?? '';
 
   // Extraer productos encontrados por tools de búsqueda para mostrarlo como lista interactiva.
-  const agentMessages = (out as { messages?: unknown[] }).messages ?? [];
   const foundProducts = extractProductsFromAgentMessages(agentMessages);
   const productFollowUp = buildProductListFollowUp(foundProducts);
 
@@ -381,11 +483,14 @@ export const runHybridReactAgent = async (
     console.log(
       JSON.stringify({ event: '[hybrid-cta] cta_skipped', intent, reason: skipReason, conversationId })
     );
-    return markHybridResult({
-      content: formattedText,
-      isInteractive: false,
-      ...(productFollowUp ? { followUps: [productFollowUp] } : {}),
-    });
+    return {
+      kind: 'response',
+      handlerResult: markHybridResult({
+        content: formattedText,
+        isInteractive: false,
+        ...(productFollowUp ? { followUps: [productFollowUp] } : {}),
+      }),
+    };
   }
 
   const topMenuProductNames = await prefetchTopMenuProducts({
@@ -420,11 +525,14 @@ export const runHybridReactAgent = async (
   );
 
   if (!plannerRaw) {
-    return markHybridResult({
-      content: formattedText,
-      isInteractive: false,
-      ...(productFollowUp ? { followUps: [productFollowUp] } : {}),
-    });
+    return {
+      kind: 'response',
+      handlerResult: markHybridResult({
+        content: formattedText,
+        isInteractive: false,
+        ...(productFollowUp ? { followUps: [productFollowUp] } : {}),
+      }),
+    };
   }
 
   const resolvedPlan = await resolveCta({
@@ -440,11 +548,14 @@ export const runHybridReactAgent = async (
   const handlerResult = buildHybridCtaInteractive(formattedText, resolvedPlan);
 
   if (!handlerResult) {
-    return markHybridResult({
-      content: formattedText,
-      isInteractive: false,
-      ...(productFollowUp ? { followUps: [productFollowUp] } : {}),
-    });
+    return {
+      kind: 'response',
+      handlerResult: markHybridResult({
+        content: formattedText,
+        isInteractive: false,
+        ...(productFollowUp ? { followUps: [productFollowUp] } : {}),
+      }),
+    };
   }
 
   const primaryPayload = extractPrimaryPayload(resolvedPlan);
@@ -472,5 +583,5 @@ export const runHybridReactAgent = async (
   );
 
   // CTA ya maneja la selección de producto; no duplicar la lista.
-  return markHybridResult(handlerResult);
+  return { kind: 'response', handlerResult: markHybridResult(handlerResult) };
 };
