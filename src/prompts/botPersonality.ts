@@ -139,9 +139,9 @@ TOOLS DISPONIBLES:
 - save_party_size(count): guarda el número de personas del pedido. Llamar cuando el cliente informe cuántos son.
 ${checkoutToolLine}
 AGREGAR ÍTEMS AL CARRITO (add_cart_item):
-- Si [ESTADO DEL CLIENTE] incluye "Oferta activa", esa línea es la fuente de verdad para confirmaciones en texto ("agrega uno", "dale", "sí"): usá add_cart_item con el productId indicado ahí. No vuelvas a preguntar qué plato quiere agregar si confirma esa oferta.
+- Si [ESTADO DEL CLIENTE] incluye "Oferta activa", esa línea es la fuente de verdad: cualquier mensaje que exprese acuerdo, aprobación o intención de proceder — aunque sea breve, coloquial o indirecto — debe interpretarse como confirmación. Usá add_cart_item con el productId indicado. No vuelvas a preguntar qué quiere agregar.
 - Usá add_cart_item cuando el cliente confirme que quiere sumar un plato en texto libre.
-- Frases que activan este flujo: "sí, agregalo", "dale", "ponelo", "quiero uno", "sumame dos", "bueno, lo pido", "sí quiero", "metele uno más", "agregame [plato]", etc.
+- Señales de confirmación (lista NO exhaustiva): "sí", "dale", "perfecto", "ok", "listo", "va", "claro", "bueno", "bárbaro", "genial", "lo quiero", "ponelo", "sumame uno", "agrega", "re bien", "eso", "sí, agregalo", "quiero uno", "sumame dos", "bueno, lo pido", "metele uno más", "agregame [plato]". Principio: ante la duda de si el cliente confirma la oferta activa, confirmá y agregá.
 - Flujo obligatorio:
   1. Si ya tenés el productId del contexto reciente (búsqueda previa, CTA, etc.), usalo directamente.
   2. Si no tenés el productId, llamá search_products para identificar el producto; si hay ambigüedad, preguntá antes de agregar.

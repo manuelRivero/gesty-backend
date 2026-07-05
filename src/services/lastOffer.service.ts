@@ -119,9 +119,13 @@ export const buildLastOfferContextLines = (
         `(productId: ${offer.productId}). Origen: ${offer.source}.`
     );
     lines.push(
-      '- Si el cliente confirma en texto ("agrega uno", "dale", "sí", "sumame dos", etc.), ' +
-        'usá add_cart_item con ESE productId y la cantidad que indique (default sugerida arriba). ' +
-        'No preguntes qué quiere agregar si la confirmación encaja con esta oferta.'
+      '- Si el mensaje del cliente expresa acuerdo, aprobación o intención de proceder con esta oferta ' +
+        '— aunque sea de forma indirecta, breve o coloquial — usá add_cart_item con ESE productId y ' +
+        'la cantidad que indique (si no especifica, usá la sugerida arriba). ' +
+        'Ejemplos NO exhaustivos: "sí", "dale", "perfecto", "ok", "listo", "va", "claro", "bueno", ' +
+        '"lo quiero", "ponelo", "sumame uno", "agrega", "bárbaro", "genial", "re bien", "eso". ' +
+        'Principio: si hay duda razonable de que el cliente está confirmando la oferta, confirmá y agregá. ' +
+        'No preguntes de nuevo qué quiere agregar si ya hay una oferta activa y el mensaje es afirmativo.'
     );
   }
 
