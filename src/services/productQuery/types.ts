@@ -86,8 +86,10 @@ export type ConversationMetadata = {
   reservation?: { step?: string; paused?: boolean; [key: string]: unknown };
   /** Paso activo del wizard de onboarding. Presente solo mientras el wizard está activo. */
   onboarding_step?: string;
+  /** `true` mientras el cliente está en una sesión activa del agente de onboarding. */
+  onboarding_agent_active?: boolean;
   /** Dirección temporal capturada durante onboarding (antes de confirmar). */
-  temp_address?: Record<string, unknown>;
+  temp_address?: string | Record<string, unknown>;
   /** `true` mientras esperamos que el cliente nos diga su nombre. */
   awaiting_name?: boolean;
   /** `true` mientras esperamos que el cliente nos diga su dirección de entrega. */

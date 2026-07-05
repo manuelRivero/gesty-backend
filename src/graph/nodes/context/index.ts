@@ -29,7 +29,7 @@ import { getBusinessOpenInfo } from '../../../services/businessHours.service';
 import { formatInboundMessageForLog } from '../../../controllers/webhook/utils/messageLog';
 import { sendTypingIndicator } from '../../../services/whatsappTypingIndicator.service';
 import { normalizeMetadata } from '../../../services/productQuery/utils';
-import { isCheckoutAgentEnabled, isReservationAgentEnabled } from '../../../config/env';
+import { isCheckoutAgentEnabled, isReservationAgentEnabled, isOnboardingAgentEnabled } from '../../../config/env';
 import {
   clearCheckoutSessionIfStale,
 } from '../checkout';
@@ -285,10 +285,26 @@ export const buildDetectionContextNode = async (
         ctx.payloadId?.startsWith('RESERVATION_') === true ||
         ctx.payloadId === 'VIEW_RESERVATION');
 
+    // El agente de onboarding captura turnos cuando la sesión ya está activa, hay un
+    // step en metadata (cualquier estado del wizard), el cliente usa los botones de
+    // confirmación de dirección, o está esperando ingresar una dirección en texto.
+    const isOnboardingAgentSession =
+      isOnboardingAgentEnabled() &&
+      !reservationStep &&
+      !isReservationAgentSession &&
+      !isCheckoutSession &&
+      (wsMeta.onboarding_agent_active === true ||
+        wsMeta.onboarding_step != null ||
+        ctx.payloadId === 'ONBOARDING_CONFIRM_ADDRESS' ||
+        ctx.payloadId === 'ONBOARDING_EDIT_ADDRESS' ||
+        (wsMeta.awaiting_address === true && ctx.message?.type === 'text'));
+
     if (reservationStep && !reservationPaused) {
       contextRoute = 'reservation_wizard';
     } else if (isReservationAgentSession) {
       contextRoute = 'reservation_agent';
+    } else if (isOnboardingAgentSession) {
+      contextRoute = 'onboarding_agent';
     } else if (onboardingStep) {
       contextRoute = 'onboarding_by_state';
     } else if (isCheckoutSession) {

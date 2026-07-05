@@ -23,6 +23,7 @@ export const NODE = {
   RESERVATION: 'reservationWizard',
   RESERVATION_AGENT: 'reservationAgent',
   ONBOARDING_BY_STATE: 'onboardingByState',
+  ONBOARDING_AGENT: 'onboardingAgent',
   ADDRESS_CAPTURE: 'addressCapture',
   INTERACTIVE: 'interactiveSubgraph',
   NLP: 'nlpSubgraph',
@@ -105,6 +106,8 @@ export const routeAfterDetectionContext = (
       return NODE.RESERVATION;
     case 'reservation_agent':
       return NODE.RESERVATION_AGENT;
+    case 'onboarding_agent':
+      return NODE.ONBOARDING_AGENT;
     case 'onboarding_by_state':
       return NODE.ONBOARDING_BY_STATE;
     case 'address_capture':

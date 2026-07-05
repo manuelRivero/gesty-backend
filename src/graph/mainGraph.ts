@@ -8,7 +8,7 @@
  * businessOpenInfo (→ closedBusiness → send) → persistUserMessage →
  * subscriptionAccessGate (→ send) → messageTypeGuard (→ send) →
  * buildDetectionContext →
- * { reservationWizard | onboardingByState | addressCapture | interactive | nlp } →
+ * { reservationWizard | reservationAgent | onboardingAgent | onboardingByState | addressCapture | checkoutAgent | interactive | nlp } →
  * sendResponse → persistAIMessage → END.
  *
  * `messageTypeGuard` filtra mensajes no procesables (imágenes, audio, video,
@@ -44,6 +44,7 @@ import {
 } from './nodes/dispatch';
 import { checkoutAgentNode } from './nodes/checkout';
 import { reservationAgentNode } from './nodes/reservation';
+import { onboardingAgentNode } from './nodes/onboarding';
 import { sendResponseNode, persistAIMessageNode } from './nodes/send';
 import {
   NODE,
@@ -74,6 +75,7 @@ const builder = new StateGraph(AgentStateAnnotation)
   .addNode(NODE.MESSAGE_TYPE_GUARD, messageTypeGuardNode)
   .addNode(NODE.BUILD_DETECTION_CTX, buildDetectionContextNode)
   .addNode(NODE.RESERVATION, reservationWizardNode)
+  .addNode(NODE.ONBOARDING_AGENT, onboardingAgentNode)
   .addNode(NODE.ONBOARDING_BY_STATE, onboardingByStateNode)
   .addNode(NODE.ADDRESS_CAPTURE, addressCaptureNode)
   .addNode(NODE.INTERACTIVE, interactiveSubgraphNode)
@@ -136,6 +138,7 @@ builder.addConditionalEdges(
   {
     [NODE.RESERVATION]: NODE.RESERVATION,
     [NODE.RESERVATION_AGENT]: NODE.RESERVATION_AGENT,
+    [NODE.ONBOARDING_AGENT]: NODE.ONBOARDING_AGENT,
     [NODE.ONBOARDING_BY_STATE]: NODE.ONBOARDING_BY_STATE,
     [NODE.ADDRESS_CAPTURE]: NODE.ADDRESS_CAPTURE,
     [NODE.CHECKOUT_AGENT]: NODE.CHECKOUT_AGENT,
@@ -146,6 +149,7 @@ builder.addConditionalEdges(
 );
 
 for (const node of [
+  NODE.ONBOARDING_AGENT,
   NODE.ONBOARDING_BY_STATE,
   NODE.ADDRESS_CAPTURE,
   NODE.INTERACTIVE,

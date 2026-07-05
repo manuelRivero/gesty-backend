@@ -1,0 +1,203 @@
+/**
+ * Nodo LangGraph del agente de onboarding dedicado.
+ *
+ * Captura todos los turnos mientras `metadata.onboarding_agent_active` está
+ * activo y los delega al `onboardingAgent`.
+ *
+ * Responsabilidades del nodo (no del agente):
+ *  - Interceptar payloads determinísticos ANTES de invocar al agente:
+ *      ONBOARDING_CONFIRM_ADDRESS → guardar dirección vía AddressService.
+ *      ONBOARDING_EDIT_ADDRESS   → volver a pedir dirección.
+ *      message.type === 'location' → reverse geocode + staging + botones.
+ *  - Activar `onboarding_agent_active` en el primer turno.
+ *  - Adjuntar botones WhatsApp cuando el agente devuelve señal `present_address_confirmation`.
+ *  - Llamar runHybridReactAgent inline para señal `delegate_to_main` sin limpiar sesión.
+ *  - Limpiar `onboarding_agent_active` cuando la dirección queda guardada.
+ */
+
+import {
+  omitConversationMetadataKeys,
+  patchConversationMetadata,
+} from '../../../repositories/conversationState.repository';
+import { normalizeToHandlerResult } from '../../../controllers/webhook/utils/index';
+import { textResponse } from '../../../controllers/webhook/utils/index';
+import { AddressService } from '../../../services/address.service';
+import { runHybridReactAgent } from '../../../agents/reactAgent';
+import { runOnboardingAgent } from '../../../agents/onboardingAgent';
+import { normalizeMetadata } from '../../../services/productQuery/utils';
+import type { HandlerResult } from '../../../controllers/webhook/types';
+import type { EnrichedContext } from '../../../controllers/webhook/types';
+import type { AgentState, AgentStateUpdate } from '../../state';
+
+// ---------------------------------------------------------------------------
+// Helper: limpiar sesión de onboarding
+// ---------------------------------------------------------------------------
+
+const clearOnboardingSession = async (conversationId: string): Promise<void> => {
+  await omitConversationMetadataKeys(conversationId, [
+    'onboarding_agent_active',
+    'onboarding_step',
+    'temp_address',
+    'temp_lat',
+    'temp_lng',
+    'temp_zone_id',
+    'awaiting_address',
+    'pending_address_action',
+  ]);
+};
+
+// ---------------------------------------------------------------------------
+// Nodo principal
+// ---------------------------------------------------------------------------
+
+export const onboardingAgentNode = async (
+  state: AgentState
+): Promise<AgentStateUpdate> => {
+  const ctx = state.webhookContext!;
+  const enrichedBase = state.enrichedCtx as unknown as EnrichedContext;
+  const conversation = state.conversation!;
+  const conversationId = conversation.id;
+  const payloadId = ctx.payloadId;
+  const addressService = new AddressService();
+
+  // ── ONBOARDING_CONFIRM_ADDRESS — guardado determinístico ──────────────────
+  if (payloadId === 'ONBOARDING_CONFIRM_ADDRESS') {
+    const result = await addressService.process(enrichedBase);
+    await clearOnboardingSession(conversationId);
+    if (!result) {
+      return { dataCollectionDelegated: true };
+    }
+    return {
+      handlerResult: normalizeToHandlerResult(result),
+      dataCollectionDelegated: true,
+    };
+  }
+
+  // ── ONBOARDING_EDIT_ADDRESS — volver a capturar ───────────────────────────
+  if (payloadId === 'ONBOARDING_EDIT_ADDRESS') {
+    await patchConversationMetadata(conversationId, {
+      onboarding_step: 'CAPTURE',
+      temp_address: null,
+      temp_lat: null,
+      temp_lng: null,
+      temp_zone_id: null,
+    });
+    const editResult = textResponse(
+      '📍 Decime tu dirección o compartí tu ubicación para volver a intentarlo.'
+    );
+    return {
+      handlerResult: editResult ?? undefined,
+      dataCollectionDelegated: true,
+    };
+  }
+
+  // ── Mensaje tipo `location` — procesado determinístico ────────────────────
+  if (ctx.message?.type === 'location') {
+    const result = await addressService.process(enrichedBase);
+    if (!result) {
+      return { dataCollectionDelegated: true };
+    }
+    return {
+      handlerResult: normalizeToHandlerResult(result),
+      dataCollectionDelegated: true,
+    };
+  }
+
+  // ── Activar sesión en el primer turno ────────────────────────────────────
+  const wsMeta = normalizeMetadata(state.workingConversationState?.metadata);
+  if (!wsMeta.onboarding_agent_active) {
+    await patchConversationMetadata(conversationId, { onboarding_agent_active: true });
+  }
+
+  // ── Invocar el agente de onboarding ──────────────────────────────────────
+  let agentResult: Awaited<ReturnType<typeof runOnboardingAgent>>;
+  try {
+    agentResult = await runOnboardingAgent(enrichedBase);
+  } catch (err) {
+    console.error('[onboarding-agent] error invocando el agente:', err);
+    agentResult = null;
+  }
+
+  if (!agentResult) {
+    return {
+      handlerResult: textResponse(
+        '🤖\n\n*Un momento* 🙏\n\nNo pude procesar tu solicitud ahora. ¿Podés intentarlo de nuevo?'
+      ) ?? undefined,
+      dataCollectionDelegated: true,
+    };
+  }
+
+  const { text, signals } = agentResult;
+
+  // ── Señal: delegar turno al agente principal (off-topic temporal) ─────────
+  if (signals.delegateToMain) {
+    console.log(
+      JSON.stringify({
+        event: '[onboarding-agent] delegate_to_main',
+        reason: signals.delegateToMainReason,
+        conversationId,
+      })
+    );
+    let mainResult: HandlerResult | null = null;
+    try {
+      const hybrid = await runHybridReactAgent(enrichedBase);
+      mainResult = hybrid?.kind === 'response' ? hybrid.handlerResult : null;
+    } catch (err) {
+      console.error('[onboarding-agent] error en delegate_to_main:', err);
+    }
+    return {
+      handlerResult: mainResult ?? { content: text, isInteractive: false },
+      dataCollectionDelegated: true,
+    };
+  }
+
+  // ── Señal: cerrar sesión permanentemente ──────────────────────────────────
+  if (signals.finishOnboarding) {
+    console.log(
+      JSON.stringify({
+        event: '[onboarding-agent] finish_onboarding',
+        reason: signals.finishOnboardingReason,
+        conversationId,
+      })
+    );
+    // La tool `finish_onboarding` ya limpió metadata; solo devolvemos el texto.
+    return {
+      handlerResult: { content: text, isInteractive: false },
+      dataCollectionDelegated: true,
+    };
+  }
+
+  // ── Señal: mostrar botones de confirmación de dirección ───────────────────
+  if (signals.presentAddressConfirmation) {
+    const freshMeta = normalizeMetadata(state.workingConversationState?.metadata);
+    const rawTempAddress = freshMeta.temp_address;
+    const tempAddress = typeof rawTempAddress === 'string' ? rawTempAddress.trim() : null;
+
+    if (!tempAddress) {
+      // Sin dirección staged, solo texto del agente
+      return {
+        handlerResult: { content: text, isInteractive: false },
+        dataCollectionDelegated: true,
+      };
+    }
+
+    const confirmationMsg = addressService.buildConfirmAddressMessage(
+      `📍 Encontré esta dirección:\n${tempAddress}\n\n¿Es correcta?`
+    );
+
+    return {
+      handlerResult: {
+        content: text,
+        isInteractive: false,
+        followUps: [{ type: 'interactive', message: confirmationMsg as any }],
+      },
+      dataCollectionDelegated: true,
+    };
+  }
+
+  // ── Solo texto (pide dirección, explica cobertura, etc.) ─────────────────
+  return {
+    handlerResult: { content: text, isInteractive: false },
+    dataCollectionDelegated: true,
+  };
+};

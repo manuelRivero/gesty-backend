@@ -1,6 +1,6 @@
 import { EnrichedContext } from '../controllers/webhook/types';
 import { prisma } from '../lib/prisma';
-import { updateConversationState } from '../repositories/conversationState.repository';
+import { updateConversationState, patchConversationMetadata } from '../repositories/conversationState.repository';
 import { findCoverageZoneForPoint } from '../repositories/coverageZone.repository';
 import { WhatsAppInteractiveMessage, WhatsAppListMessage } from '../domain/intent/whatsappTemplates';
 import { buildSmallTalkMenu } from './smallTalk.service';
@@ -71,6 +71,42 @@ export class AddressService {
 
   async startEdit(ctx: EnrichedContext): Promise<string> {
     return this.edit(ctx);
+  }
+
+  /**
+   * Versión headless para el agente de onboarding: geocodifica, valida cobertura y
+   * persiste temp_* + onboarding_step en metadata, sin construir UI de confirmación.
+   * El agente decide si llamar a `present_address_confirmation` después.
+   */
+  async resolveAndStageAddress(params: {
+    businessId: string;
+    conversationId: string;
+    text: string;
+  }): Promise<
+    | { status: 'in_coverage'; formattedAddress: string }
+    | { status: 'out_of_coverage' }
+    | { status: 'not_found' }
+  > {
+    const cleaned = params.text.trim();
+    if (!cleaned) return { status: 'not_found' };
+
+    const geo = await this.geocode(cleaned);
+    if (!geo) return { status: 'not_found' };
+
+    const zone = await this.getCoverage(geo.lat, geo.lng, params.businessId);
+    if (!zone) return { status: 'out_of_coverage' };
+
+    const formattedAddress = typeof geo.formatted === 'string' ? geo.formatted : String(geo.formatted);
+
+    await patchConversationMetadata(params.conversationId, {
+      onboarding_step: 'CONFIRM',
+      temp_address: formattedAddress,
+      temp_lat: geo.lat,
+      temp_lng: geo.lng,
+      temp_zone_id: zone.id,
+    });
+
+    return { status: 'in_coverage', formattedAddress };
   }
 
   /**
@@ -388,7 +424,7 @@ export class AddressService {
     return '🚫 Lo siento, no tenemos cobertura en esa zona.\n\nProbá con otra dirección.';
   }
 
-  private buildConfirmAddressMessage(body: string): WhatsAppInteractiveMessage {
+  buildConfirmAddressMessage(body: string): WhatsAppInteractiveMessage {
     return {
       type: 'interactive',
       interactive: {

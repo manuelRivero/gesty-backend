@@ -55,6 +55,7 @@ export type EarlyExitReason =
 export type ContextRoute =
   | 'reservation_wizard'
   | 'reservation_agent'
+  | 'onboarding_agent'
   | 'onboarding_by_state'
   | 'address_capture'
   | 'interactive'

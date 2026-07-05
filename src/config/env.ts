@@ -45,6 +45,17 @@ const envSchema = z.object({
     .transform((v) => v === 'true' || v === '1'),
 
   /**
+   * Habilita el ReAct agent dedicado al onboarding (captura de dirección de entrega).
+   * Cuando está activo, reemplaza el wizard determinístico por un agente conversacional
+   * que maneja texto libre, pausas/delegaciones y reanudaciones.
+   * Requiere AGENT_MODE=hybrid para funcionar; en caso contrario se ignora.
+   */
+  ONBOARDING_AGENT_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true' || v === '1'),
+
+  /**
    * Habilita la capa de CTA determinístico post-ReAct.
    * En false (default), runHybridReactAgent devuelve solo texto (comportamiento actual).
    */
@@ -113,6 +124,9 @@ export const isCheckoutAgentEnabled = (): boolean =>
 
 export const isReservationAgentEnabled = (): boolean =>
   isHybridAgentMode() && env.RESERVATION_AGENT_ENABLED === true;
+
+export const isOnboardingAgentEnabled = (): boolean =>
+  isHybridAgentMode() && env.ONBOARDING_AGENT_ENABLED === true;
 
 export const isDryRunWhatsAppSend = (): boolean =>
   env.DRY_RUN_WHATSAPP_SEND === true;
