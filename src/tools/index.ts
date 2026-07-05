@@ -1371,6 +1371,30 @@ export const saveDeliveryAddressTool = new DynamicStructuredTool<
   },
 });
 
+// ---------------------------------------------------------------------------
+// present_cart (señal-UI)
+// ---------------------------------------------------------------------------
+
+const presentCartSchema = z.object({});
+type PresentCartInput = z.infer<typeof presentCartSchema>;
+
+export const presentCartTool = new DynamicStructuredTool<
+  typeof presentCartSchema,
+  PresentCartInput
+>({
+  name: 'present_cart',
+  description:
+    'Muestra el resumen interactivo del carrito actual con opciones para modificar, seguir comprando, finalizar o cancelar. ' +
+    'Llamá esta tool después de add_cart_item (en lugar de escribir un resumen en texto libre) ' +
+    'y también cuando el cliente quiera ver qué tiene en el pedido. ' +
+    'No describas el carrito en texto: esta tool construye el mensaje interactivo completo.',
+  schema: presentCartSchema,
+  func: async (_input: PresentCartInput, _runManager, config?: RunnableConfig) => {
+    getReactContext(config); // validar contexto
+    return toJson({ signal: 'present_cart' });
+  },
+});
+
 export const allReactTools = [
   searchProductsTool,
   getProductsDetailsByIdsTool,
@@ -1388,4 +1412,5 @@ export const allReactTools = [
   removeCartItemTool,
   updateItemNoteTool,
   savePartySizeTool,
+  presentCartTool,
 ];

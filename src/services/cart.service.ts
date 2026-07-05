@@ -809,6 +809,108 @@ export const handleShowCartForEditionFromWebhook = async (
   };
 };
 
+/**
+ * Construye el mensaje interactivo del carrito a partir de IDs directos.
+ * Reutilizable desde el agente híbrido (señal present_cart) y desde handleViewCartFromWebhook.
+ */
+export const buildCartSummaryMessage = async (params: {
+  businessId: string;
+  customerPhone: string;
+  conversationId: string;
+  customerId: string;
+  currencyCode: string | null;
+  businessStreetAddress: string | null;
+}): Promise<WhatsAppListMessage> => {
+  const { businessId, customerPhone, conversationId, customerId, currencyCode, businessStreetAddress } = params;
+
+  const cartItems = await prisma.draft_order.findFirst({
+    where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
+    include: {
+      draft_order_item: {
+        include: {
+          menu_item: {
+            include: { menu_category: { select: { category_tag: true, name: true } } },
+          },
+        },
+      },
+    },
+  });
+
+  if (!cartItems?.draft_order_item.length) {
+    await syncOrderCoverageToConversationState(conversationId, businessId, customerPhone);
+    return buildListMessageFromButtons(
+      EMPTY_CART_BOT_MESSAGE,
+      [
+        { title: 'Ver menú', payload: 'VIEW_MENU', description: 'Explorar platos disponibles', sectionTitle: 'Opciones' },
+        { title: 'Hacer una consulta', payload: 'ASK_QUESTION', description: 'Resolver una duda', sectionTitle: 'Opciones' },
+      ],
+      'Ver opciones',
+      '',
+      'Seleccioná una opción para continuar'
+    );
+  }
+
+  const coverage = await syncOrderCoverageToConversationState(conversationId, businessId, customerPhone);
+  const guidanceBlock = formatCartGuidanceBlock(coverage).trim();
+  const guidanceMid = guidanceBlock ? `\n\n${guidanceBlock}\n\n` : '\n\n';
+
+  const orderSectionsBlock = formatDraftOrderSectionsForWhatsApp(
+    cartItems.draft_order_item as DraftLineForSection[],
+    '*Tu pedido actual*'
+  );
+  const fulfillmentType = cartItems.fulfillment_type;
+
+  const deliveryCtx = await resolveDeliveryContext({ customerId, businessId, fulfillmentType });
+  const pricing = computeOrderPricing(cartItems.draft_order_item, { deliveryFee: deliveryCtx.deliveryFee });
+
+  let deliveryLine = '';
+  if (fulfillmentType === 'TAKE_AWAY') {
+    deliveryLine = businessStreetAddress
+      ? `\n🏪 *Retiro en local:* ${businessStreetAddress}`
+      : '\n📦 *Modalidad:* Take Away';
+  } else if (fulfillmentType === 'DELIVERY') {
+    const defaultAddress = await prisma.customer_address.findFirst({
+      where: { customer_id: customerId, is_default: true },
+      select: { street_address: true },
+    });
+    if (defaultAddress?.street_address) {
+      deliveryLine = `\n📍 *Entrega a:* ${defaultAddress.street_address}`;
+    }
+  }
+
+  const subtotalLine = pricing.deliveryFee > 0
+    ? `Subtotal: $${(pricing.subtotal - pricing.productDiscounts).toFixed(2)}\nEnvío: $${pricing.deliveryFee.toFixed(2)}\n`
+    : '';
+  const totalLine = `${subtotalLine}*Total: $${pricing.total.toFixed(2)} ${currencyCode ?? 'ARS'}*`;
+
+  return {
+    type: 'list',
+    header: { type: 'text', text: '' },
+    body: {
+      text: formatBotUserMessage(
+        'Tu pedido actual',
+        '🛒',
+        `${orderSectionsBlock}${guidanceMid}${totalLine}${deliveryLine}\n\n¿Qué querés hacer ahora?`
+      ),
+    },
+    footer: { text: 'Selecciona una opción' },
+    action: {
+      button: 'Opciones',
+      sections: [
+        {
+          title: 'Gestión del pedido',
+          rows: [
+            { id: 'VIEW_CART_FOR_EDITION', title: 'Modificar pedido', description: 'Cambiar cantidades o remover productos' },
+            { id: 'VIEW_MENU', title: 'Seguir comprando', description: 'Agregar más productos' },
+            { id: 'CHECKOUT', title: 'Finalizar pedido', description: 'Proceder al pago' },
+            { id: 'CANCEL_ORDER', title: 'Cancelar pedido', description: 'Eliminar el pedido actual' },
+          ],
+        },
+      ],
+    },
+  };
+};
+
 export const handleViewCartFromWebhook = async (
   payload: WhatsAppWebhookPayload
 ): Promise<WhatsAppListMessage | string | null> => {
@@ -828,149 +930,14 @@ export const handleViewCartFromWebhook = async (
   const customer = await findOrCreateCustomer(business.id, from);
   const conversation = await createOrGetOpenConversation(business.id, customer.id);
 
-  const cartItems = await prisma.draft_order.findFirst({
-    where: {
-      business_id: business.id,
-      customer_phone: customer.phone_number,
-      status: 'active'
-    },
-    include: {
-      draft_order_item: {
-        include: {
-          menu_item: {
-            include: {
-              menu_category: { select: { category_tag: true, name: true } },
-            },
-          },
-        },
-      },
-    },
-  });
-
-  console.log(' handleViewCartFromWebhook debug:cartItems', cartItems?.draft_order_item.map(item => item.menu_item?.name));
-  if (!cartItems?.draft_order_item.length) {
-    await syncOrderCoverageToConversationState(
-      conversation.id,
-      business.id,
-      customer.phone_number
-    );
-    return buildListMessageFromButtons(
-      EMPTY_CART_BOT_MESSAGE,
-      [
-        {
-          title: 'Ver menú',
-          payload: 'VIEW_MENU',
-          description: 'Explorar platos disponibles',
-          sectionTitle: 'Opciones'
-        },
-        {
-          title: 'Hacer una consulta',
-          payload: 'ASK_QUESTION',
-          description: 'Resolver una duda',
-          sectionTitle: 'Opciones'
-        }
-      ],
-      'Ver opciones',
-      '',
-      'Seleccioná una opción para continuar'
-    );
-  }
-
-  // 🔢 Construir resumen
-  const coverage = await syncOrderCoverageToConversationState(
-    conversation.id,
-    business.id,
-    customer.phone_number
-  );
-  const guidanceBlock = formatCartGuidanceBlock(coverage).trim();
-  const guidanceMid = guidanceBlock ? `\n\n${guidanceBlock}\n\n` : '\n\n';
-
-  const orderSectionsBlock = formatDraftOrderSectionsForWhatsApp(
-    cartItems.draft_order_item as DraftLineForSection[],
-    "*Tu pedido actual*"
-  );
-  const fulfillmentType = cartItems.fulfillment_type;
-
-  const deliveryCtx = await resolveDeliveryContext({
-    customerId: customer.id,
+  return buildCartSummaryMessage({
     businessId: business.id,
-    fulfillmentType,
+    customerPhone: customer.phone_number ?? from,
+    conversationId: conversation.id,
+    customerId: customer.id,
+    currencyCode: business.currency_code ?? null,
+    businessStreetAddress: business.street_address ?? null,
   });
-
-  const pricing = computeOrderPricing(cartItems.draft_order_item, {
-    deliveryFee: deliveryCtx.deliveryFee,
-  });
-
-  // Línea de entrega según tipo
-  let deliveryLine = '';
-  if (fulfillmentType === 'TAKE_AWAY') {
-    const localAddress = business.street_address;
-    deliveryLine = localAddress
-      ? `\n🏪 *Retiro en local:* ${localAddress}`
-      : '\n📦 *Modalidad:* Take Away';
-  } else if (fulfillmentType === 'DELIVERY') {
-    const defaultAddress = await prisma.customer_address.findFirst({
-      where: { customer_id: customer.id, is_default: true },
-      select: { street_address: true }
-    });
-    if (defaultAddress?.street_address) {
-      deliveryLine = `\n📍 *Entrega a:* ${defaultAddress.street_address}`;
-    }
-  }
-
-  // Desglose del total
-  const subtotalLine = pricing.deliveryFee > 0
-    ? `Subtotal: $${(pricing.subtotal - pricing.productDiscounts).toFixed(2)}\nEnvío: $${pricing.deliveryFee.toFixed(2)}\n`
-    : '';
-  const totalLine = `${subtotalLine}*Total: $${pricing.total.toFixed(2)} ${business.currency_code ?? 'ARS'}*`;
-
-  return {
-    type: 'list',
-    header: {
-      type: 'text',
-      text: ''
-    },
-    body: {
-      text: formatBotUserMessage(
-        'Tu pedido actual',
-        '🛒',
-        `${orderSectionsBlock}${guidanceMid}${totalLine}${deliveryLine}\n\n¿Qué querés hacer ahora?`
-      )
-    },
-    footer: {
-      text: 'Selecciona una opción'
-    },
-    action: {
-      button: 'Opciones',
-      sections: [
-        {
-          title: 'Gestión del pedido',
-          rows: [
-            {
-              id: 'VIEW_CART_FOR_EDITION',
-              title: 'Modificar pedido',
-              description: 'Cambiar cantidades o remover productos'
-            },
-            {
-              id: 'VIEW_MENU',
-              title: 'Seguir comprando',
-              description: 'Agregar más productos'
-            },
-            {
-              id: 'CHECKOUT',
-              title: 'Finalizar pedido',
-              description: 'Proceder al pago'
-            },
-            {
-              id: 'CANCEL_ORDER',
-              title: 'Cancelar pedido',
-              description: 'Eliminar el pedido actual'
-            }
-          ]
-        }
-      ]
-    }
-  };
 };
 
 export const handleCartItemSelectionFromWebhook = async (

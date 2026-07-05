@@ -49,6 +49,7 @@ import {
   buildLastOfferContextLines,
   persistLastOffer,
 } from '../services/lastOffer.service';
+import { buildCartSummaryMessage } from '../services/cart.service';
 
 const markHybridResult = (result: HandlerResult): HandlerResult => ({
   ...result,
@@ -205,6 +206,7 @@ const persistLastOfferFromCtaPlan = async (
 export interface HybridAgentSignals {
   startCheckoutSession: boolean;
   startCheckoutReason: string | null;
+  presentCart: boolean;
 }
 
 export type HybridAgentRunResult =
@@ -215,6 +217,7 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
   const signals: HybridAgentSignals = {
     startCheckoutSession: false,
     startCheckoutReason: null,
+    presentCart: false,
   };
 
   for (const msg of messages) {
@@ -230,6 +233,9 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
       if (data.signal === 'start_checkout_session') {
         signals.startCheckoutSession = true;
         signals.startCheckoutReason = data.reason ?? null;
+      }
+      if (data.signal === 'present_cart') {
+        signals.presentCart = true;
       }
     } catch {
       /* ignorar mensajes no-JSON */
@@ -479,6 +485,25 @@ export const runHybridReactAgent = async (
       kind: 'delegate_checkout',
       reason: signals.startCheckoutReason,
     };
+  }
+
+  if (signals.presentCart) {
+    try {
+      const business = ctx.business as { id: string; currency_code?: string | null; street_address?: string | null };
+      const customer = ctx.customer as { id: string };
+      const cartMsg = await buildCartSummaryMessage({
+        businessId,
+        customerPhone,
+        conversationId,
+        customerId: customer.id,
+        currencyCode: business.currency_code ?? null,
+        businessStreetAddress: business.street_address ?? null,
+      });
+      console.log(JSON.stringify({ event: '[hybrid-agent] present_cart_signal', conversationId }));
+      return { kind: 'response', handlerResult: markHybridResult({ content: cartMsg, isInteractive: true }) };
+    } catch (err) {
+      console.error('[hybrid-agent] present_cart failed, falling through', err);
+    }
   }
 
   const rawText = extractFinalText(out);
