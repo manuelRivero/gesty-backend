@@ -280,14 +280,6 @@ export async function executeProductQuery(
 
   await setLastReferencedProductId(ctx.conversation.id, matchedItem.id);
 
-  await persistLastOffer({
-    conversationId: ctx.conversation.id,
-    productId: matchedItem.id,
-    productName: matchedItem.name,
-    suggestedQuantity: 1,
-    source: 'product_query',
-  });
-
   const cleanedSingle = clearProductFilterMetadata(prevSingle);
   const nextSingleMeta = {
     ...cleanedSingle,
@@ -299,6 +291,15 @@ export async function executeProductQuery(
     mode: 'PRODUCT_FOCUS',
     metadata: buildMetadataValue(nextSingleMeta),
   } as Prisma.conversation_stateUpdateInput & { mode?: ConversationMode });
+
+  // Persistir después del updateConversationState para que el patch no sea sobreescrito.
+  await persistLastOffer({
+    conversationId: ctx.conversation.id,
+    productId: matchedItem.id,
+    productName: matchedItem.name,
+    suggestedQuantity: 1,
+    source: 'product_query',
+  });
 
   return fullText;
 }

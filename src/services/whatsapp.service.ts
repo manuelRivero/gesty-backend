@@ -50,6 +50,7 @@ import {
   partySizeMetadataFields,
   withoutLegacyPartyQuantity,
 } from './productQuery/utils';
+import { persistLastOffer } from './lastOffer.service';
 
 const confirmationStates = new Map<string, ConfirmationState>();
 const CONFIRMATION_TTL_MS = 5 * 60 * 1000;
@@ -660,6 +661,16 @@ Respondé en español con información útil sobre el plato (precio, porciones s
     mode: 'PRODUCT_FOCUS',
     metadata: buildMetadataValue(nextProductFocusMeta)
   } as Prisma.conversation_stateUpdateInput & { mode?: ConversationMode });
+
+  // Persistir después del updateConversationState para que el patch no sea sobreescrito.
+  await persistLastOffer({
+    conversationId: conversation.id,
+    productId: item.id,
+    productName: item.name,
+    suggestedQuantity: listSuggestedQuantity ?? 1,
+    source: 'product_query',
+  });
+
   const header = item.image
     ? ({ type: 'image', image: { link: item.image } } as const)
     : ({ type: 'text', text: 'Tenemos un match para tu consulta' } as const);
