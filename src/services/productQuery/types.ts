@@ -62,6 +62,19 @@ export type ConversationMetadata = {
   /** Payload exacto del botón primario del último CTA (para correlacionar clicks). */
   lastCtaPayload?: string | null;
 
+  /**
+   * Oferta conversacional activa para el hybrid agent (confirmación en texto libre).
+   * @see lastOffer.service.ts
+   */
+  lastOffer?: {
+    kind: 'ADD_ITEM';
+    productId: string;
+    productName: string;
+    suggestedQuantity: number;
+    offeredAt: string;
+    source: 'hybrid_cta' | 'product_query' | 'product_focus' | 'product_attribute';
+  } | null;
+
   // --- Detección / contexto de sesión ---
 
   /** Último nombre de producto referenciado (para planner y contexto de detección). */

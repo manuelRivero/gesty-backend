@@ -44,7 +44,11 @@ import { patchConversationMetadata } from '../repositories';
 import { startCheckoutSessionTool } from '../tools/checkout';
 import { MenuService } from '../services/menu.service';
 import { truncateDescription, truncateTitle } from '../whatsappBuilders';
-import type { CtaPlannerInput } from './types';
+import type { CtaPlannerInput, CtaPlan } from './types';
+import {
+  buildLastOfferContextLines,
+  persistLastOffer,
+} from '../services/lastOffer.service';
 
 const markHybridResult = (result: HandlerResult): HandlerResult => ({
   ...result,
@@ -141,14 +145,57 @@ const buildContextMessage = async (ctx: EnrichedContext): Promise<string> => {
     ? `${partySize} (guía de cantidad a pedir, NO filtro de serves_people)`
     : 'no informado — preguntar solo si el cliente consulta platos o pide comida en este turno';
 
+  const detection = ctx.detection;
+  const nlpHint = detection
+    ? {
+        intent: String(detection.intent),
+        detectedProductName: detection.detectedProductName ?? null,
+        quantity: detection.quantity ?? null,
+      }
+    : null;
+
   const lines = [
     `- Personas para el pedido: ${partySizeLine}`,
     `- Carrito: ${cartSummary}`,
     `- Tipo de entrega: ${fulfillmentType}`,
     `- Sesión de checkout: ${checkoutActive ? 'activa' : 'inactiva'}`,
+    ...buildLastOfferContextLines(meta, nlpHint),
   ];
 
   return `[ESTADO DEL CLIENTE]\n${lines.join('\n')}\n\n${userMsg}`;
+};
+
+const persistLastOfferFromCtaPlan = async (
+  conversationId: string,
+  plan: CtaPlan,
+  productHint?: string | null
+): Promise<void> => {
+  if (plan.primary.kind !== 'ADD_ITEM') return;
+
+  const { productId, quantity } = plan.primary;
+  let productName = productHint?.trim() || plan.productHint?.trim() || '';
+
+  if (!productName) {
+    try {
+      const row = await prisma.menu_item.findUnique({
+        where: { id: productId },
+        select: { name: true },
+      });
+      productName = row?.name?.trim() ?? '';
+    } catch {
+      productName = '';
+    }
+  }
+
+  if (!productName) return;
+
+  await persistLastOffer({
+    conversationId,
+    productId,
+    productName,
+    suggestedQuantity: quantity,
+    source: 'hybrid_cta',
+  });
 };
 
 // ---------------------------------------------------------------------------
@@ -567,6 +614,11 @@ export const runHybridReactAgent = async (
       ...(primaryProductId ? { lastCtaProductId: primaryProductId } : {}),
       ...(primaryPayload ? { lastCtaPayload: primaryPayload } : {}),
     });
+    await persistLastOfferFromCtaPlan(
+      conversationId,
+      resolvedPlan,
+      detectedProductName
+    );
   } catch (err) {
     console.error('[hybrid-cta] patchConversationMetadata failed:', err);
   }

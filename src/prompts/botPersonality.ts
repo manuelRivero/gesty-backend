@@ -139,6 +139,7 @@ TOOLS DISPONIBLES:
 - save_party_size(count): guarda el número de personas del pedido. Llamar cuando el cliente informe cuántos son.
 ${checkoutToolLine}
 AGREGAR ÍTEMS AL CARRITO (add_cart_item):
+- Si [ESTADO DEL CLIENTE] incluye "Oferta activa", esa línea es la fuente de verdad para confirmaciones en texto ("agrega uno", "dale", "sí"): usá add_cart_item con el productId indicado ahí. No vuelvas a preguntar qué plato quiere agregar si confirma esa oferta.
 - Usá add_cart_item cuando el cliente confirme que quiere sumar un plato en texto libre.
 - Frases que activan este flujo: "sí, agregalo", "dale", "ponelo", "quiero uno", "sumame dos", "bueno, lo pido", "sí quiero", "metele uno más", "agregame [plato]", etc.
 - Flujo obligatorio:

@@ -19,6 +19,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:e2e": "E2E_RUN=1 vitest run -c vitest.e2e.config.ts",
+    "test:party-checkout-flow": "E2E_RUN=1 vitest run -c vitest.e2e.config.ts e2e/party-checkout-flow.e2e.test.ts",
+    "test:checkout-flow": "E2E_RUN=1 vitest run -c vitest.e2e.config.ts e2e/checkout-flow.e2e.test.ts",
+    "test:last-offer": "E2E_RUN=1 vitest run -c vitest.e2e.config.ts e2e/last-offer-add-item.e2e.test.ts",
     "postinstall": "prisma generate"
   },
   "engines": {

@@ -26,6 +26,7 @@ import { WhatsAppInteractiveMessage, WhatsAppListMessage } from "../domain/inten
 import { buildListMessageFromButtons } from '../whatsappBuilders';
 import { buildAddItemShortcutsFollowUpList } from './complementSuggestions.service';
 import { formatBotUserMessage } from './productQuery';
+import { clearLastOffer } from './lastOffer.service';
 import {
   buildCartItemNotFoundMessage,
   buildCartProductNotFoundMessage,
@@ -423,6 +424,7 @@ export const handleAddItemFromWebhook = async (
     result !== null &&
     'main' in result
   ) {
+    await clearLastOffer(conversation.id);
     await clearLastListSuggestedQuantityFromConversation(conversation.id);
   }
   return result;

@@ -23,6 +23,7 @@ import {
 import type { WhatsAppListMessage } from '../../../domain/intent/whatsappTemplates';
 import { truncateDescription } from '../../../whatsappBuilders';
 import { formatBotUserMessage } from '../../../services/productQuery/utils';
+import { persistLastOffer } from '../../../services/lastOffer.service';
 import { sendResponse } from '../sender';
 import { getRequestedPartySize } from '../../../services/productQuery/utils';
 
@@ -192,6 +193,21 @@ export class ProductAttributeQuestionHandler implements IntentHandler {
       });
 
       if (implicit) {
+        const productId = ctx.conversation.lastReferencedProductId;
+        const focused = await prisma.menu_item.findUnique({
+          where: { id: productId },
+          select: { name: true },
+        });
+        if (focused?.name) {
+          await persistLastOffer({
+            conversationId: ctx.conversation.id,
+            productId,
+            productName: focused.name,
+            suggestedQuantity: 1,
+            source: 'product_focus',
+          });
+        }
+
         return interactiveResponse({
           type: 'interactive',
           interactive: {
@@ -296,6 +312,14 @@ export class ProductAttributeQuestionHandler implements IntentHandler {
         );
         await createConversationMessage(ctx.conversation.id, 'ai', messageText, false);
         await updateConversationLastMessageAt(ctx.conversation.id);
+
+        await persistLastOffer({
+          conversationId: ctx.conversation.id,
+          productId: product.id,
+          productName: product.name,
+          suggestedQuantity: 1,
+          source: 'product_attribute',
+        });
 
         return interactiveResponse({
           type: 'interactive',

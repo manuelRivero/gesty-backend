@@ -37,6 +37,7 @@ import {
   getSmartRecommendations,
   suggestedUnitsForListRow,
 } from './smartFoodRecommendations';
+import { persistLastOffer } from '../lastOffer.service';
 
 /**
  * Flujo PRODUCT_QUERY: búsqueda, estado y payloads para WhatsApp (sin envolver en HandlerResult).
@@ -278,6 +279,14 @@ export async function executeProductQuery(
   await updateConversationLastMessageAt(ctx.conversation.id);
 
   await setLastReferencedProductId(ctx.conversation.id, matchedItem.id);
+
+  await persistLastOffer({
+    conversationId: ctx.conversation.id,
+    productId: matchedItem.id,
+    productName: matchedItem.name,
+    suggestedQuantity: 1,
+    source: 'product_query',
+  });
 
   const cleanedSingle = clearProductFilterMetadata(prevSingle);
   const nextSingleMeta = {

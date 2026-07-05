@@ -55,6 +55,7 @@ async function main() {
       'lastCtaPayload',
       'lastCtaShownAt',
       'lastCtaProductId',
+      'lastOffer',
     ]);
     console.log(`[reset] conversación limpiada: ${conv.id}`);
   }

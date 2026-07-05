@@ -41,6 +41,7 @@ import { listPaymentAdjustmentsForAmount } from '../services/paymentAdjustment.s
 import { computeOrderPricing } from '../services/pricing.service';
 import { partySizeMetadataFields } from '../services/productQuery/utils';
 import { patchConversationMetadata, omitConversationMetadataKeys } from '../repositories/conversationState.repository';
+import { clearLastOffer } from '../services/lastOffer.service';
 import { updateCustomerName } from '../repositories';
 import { AddressService } from '../services/address.service';
 
@@ -978,7 +979,7 @@ export const addCartItemTool = new DynamicStructuredTool<
     'Devuelve el estado actualizado del carrito para que puedas confirmarle al cliente.',
   schema: addCartItemSchema,
   func: async ({ productId, quantity }: AddCartItemInput, _runManager, config?: RunnableConfig) => {
-    const { businessId, customerPhone } = getReactContext(config);
+    const { businessId, customerPhone, conversationId } = getReactContext(config);
     const qty = Math.min(99, Math.max(1, Math.floor(quantity)));
 
     // Obtener o crear draft
@@ -1067,6 +1068,10 @@ export const addCartItemTool = new DynamicStructuredTool<
     });
 
     await refreshDraftOrderTimeout(draft.id);
+
+    if (conversationId) {
+      await clearLastOffer(conversationId);
+    }
 
     // Devolver snapshot del carrito actualizado
     const updatedItems = await prisma.draft_order_item.findMany({
