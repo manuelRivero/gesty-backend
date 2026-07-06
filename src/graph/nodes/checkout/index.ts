@@ -37,7 +37,8 @@ import type { EnrichedContext } from '../../../controllers/webhook/types';
 import type { WhatsAppInteractiveMessage } from '../../../domain/intent/whatsappTemplates';
 import type { AgentState, AgentStateUpdate } from '../../state';
 import type { DetectionContext } from '../../../services/ai/detection.service';
-import { setDraftFulfillmentType } from '../../../tools/checkout';
+import { setDraftFulfillmentType, getDraftCheckoutState } from '../../../tools/checkout';
+import { validateCheckoutResponse } from '../../../services/checkout/checkoutValidation';
 
 // ---------------------------------------------------------------------------
 // Mensaje de botones de pago (sin ajustes de precio en v1)
@@ -224,7 +225,40 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
     );
   }
 
-  const { text, signals } = agentResult;
+  const { text } = agentResult;
+
+  // ── Capa de validación de reglas de negocio ───────────────────────────────
+  // El LLM puede proponer una transición conversacionalmente coherente pero
+  // inválida (ej: pasar a payment sin fulfillment resuelto). Se valida contra
+  // el estado real del draft (post tool-calls) antes de actuar sobre ella.
+  const businessId =
+    typeof enrichedCtx.business === 'object' && enrichedCtx.business
+      ? (enrichedCtx.business as { id: string }).id
+      : '';
+  const customerPhone =
+    typeof enrichedCtx.customer === 'object' && enrichedCtx.customer
+      ? (enrichedCtx.customer as { phone_number?: string }).phone_number ?? enrichedCtx.to
+      : enrichedCtx.to;
+  const draftState = await getDraftCheckoutState(businessId, customerPhone);
+  const validation = validateCheckoutResponse(
+    {
+      fulfillmentType: draftState.fulfillmentType,
+      paymentMethod: draftState.paymentMethod,
+      deliveryEnabled: checkoutCtx.deliveryEnabled,
+      takeawayEnabled: checkoutCtx.takeawayEnabled,
+    },
+    agentResult.signals
+  );
+  if (!validation.valid) {
+    console.log(
+      JSON.stringify({
+        event: '[checkout-agent] validation_corrected',
+        corrections: validation.corrections,
+        conversationId,
+      })
+    );
+  }
+  const signals = validation.signals;
 
   // ── Señal: delegar turno al híbrido (consulta temporal) ───────────────────
   // La sesión de checkout NO se limpia: checkout_active y checkout_pending_action

@@ -43,6 +43,24 @@ export const setDraftPaymentMethod = async (
   return { success: true };
 };
 
+/** Lee el estado de fulfillment/payment del draft activo, para validación previa a una transición. */
+export const getDraftCheckoutState = async (
+  businessId: string,
+  customerPhone: string
+): Promise<{
+  fulfillmentType: 'DELIVERY' | 'TAKE_AWAY' | null;
+  paymentMethod: 'cash' | 'online' | null;
+}> => {
+  const draft = await prisma.draft_order.findFirst({
+    where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
+    select: { fulfillment_type: true, payment_method: true },
+  });
+  return {
+    fulfillmentType: (draft?.fulfillment_type as 'DELIVERY' | 'TAKE_AWAY' | null) ?? null,
+    paymentMethod: (draft?.payment_method as 'cash' | 'online' | null) ?? null,
+  };
+};
+
 /** Persiste el tipo de entrega en el draft activo del cliente. */
 export const setDraftFulfillmentType = async (
   businessId: string,
