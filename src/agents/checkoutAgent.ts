@@ -167,6 +167,7 @@ export interface CheckoutAgentSignals {
   presentPaymentOptions: boolean;
   handback: boolean;
   handbackReason: string | null;
+  paymentMethod: 'cash' | 'online' | null;
 }
 
 const extractSignals = (messages: unknown[]): CheckoutAgentSignals => {
@@ -175,6 +176,7 @@ const extractSignals = (messages: unknown[]): CheckoutAgentSignals => {
     presentPaymentOptions: false,
     handback: false,
     handbackReason: null,
+    paymentMethod: null,
   };
 
   for (const msg of messages) {
@@ -186,12 +188,21 @@ const extractSignals = (messages: unknown[]): CheckoutAgentSignals => {
     if (!rawContent) continue;
 
     try {
-      const data = JSON.parse(rawContent) as { signal?: string; reason?: string };
+      const data = JSON.parse(rawContent) as {
+        signal?: string;
+        reason?: string;
+        paymentMethod?: string;
+      };
       if (data.signal === 'present_fulfillment_options') {
         signals.presentFulfillmentOptions = true;
       }
       if (data.signal === 'present_payment_options') {
         signals.presentPaymentOptions = true;
+      }
+      if (data.signal === 'payment_method_saved') {
+        if (data.paymentMethod === 'cash' || data.paymentMethod === 'online') {
+          signals.paymentMethod = data.paymentMethod;
+        }
       }
       if (data.signal === 'handback_to_main') {
         signals.handback = true;

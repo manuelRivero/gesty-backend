@@ -262,6 +262,22 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
     );
   }
 
+  if (signals.paymentMethod === 'cash') {
+    const result = await payCashHandler.execute(enrichedCtx);
+    await clearCheckoutSession(conversationId);
+    if (result) {
+      return result;
+    }
+  }
+
+  if (signals.paymentMethod === 'online') {
+    const result = await payOnlineHandler.execute(enrichedCtx);
+    await clearCheckoutSession(conversationId);
+    if (result) {
+      return result;
+    }
+  }
+
   if (signals.presentFulfillmentOptions) {
     const fulfillmentMessage = buildFulfillmentSelectionMessage();
     const followUp: HandlerFollowUp = {

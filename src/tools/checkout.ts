@@ -23,6 +23,26 @@ import type { RunnableConfig } from '@langchain/core/runnables';
 
 const toJson = (data: unknown): string => JSON.stringify(data);
 
+/** Persiste el método de pago en el draft activo del cliente. */
+export const setDraftPaymentMethod = async (
+  businessId: string,
+  customerPhone: string,
+  method: 'cash' | 'online'
+): Promise<{ success: boolean; error?: string }> => {
+  const draft = await prisma.draft_order.findFirst({
+    where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
+    select: { id: true },
+  });
+  if (!draft) {
+    return { success: false, error: 'no_active_cart' };
+  }
+  await prisma.draft_order.update({
+    where: { id: draft.id },
+    data: { payment_method: method },
+  });
+  return { success: true };
+};
+
 /** Persiste el tipo de entrega en el draft activo del cliente. */
 export const setDraftFulfillmentType = async (
   businessId: string,
@@ -105,6 +125,46 @@ export const presentFulfillmentOptionsTool = new DynamicStructuredTool<
   func: async (_input: PresentFulfillmentOptionsInput, _runManager, config?: RunnableConfig) => {
     getReactContext(config); // validar contexto
     return toJson({ signal: 'present_fulfillment_options' });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// save_payment_method
+// ---------------------------------------------------------------------------
+
+const savePaymentMethodSchema = z.object({
+  method: z
+    .enum(['cash', 'online'])
+    .describe(
+      'cash = efectivo, en mano, pago al recibir. ' +
+        'online = tarjeta, Mercado Pago, pago online, transferencia digital.'
+    ),
+});
+type SavePaymentMethodInput = z.infer<typeof savePaymentMethodSchema>;
+
+export const savePaymentMethodTool = new DynamicStructuredTool<
+  typeof savePaymentMethodSchema,
+  SavePaymentMethodInput
+>({
+  name: 'save_payment_method',
+  description:
+    'Guarda el método de pago elegido por el cliente en texto libre durante el checkout. ' +
+    'Llamá esta tool cuando el cliente indique cómo quiere pagar: ' +
+    '"efectivo", "en efectivo", "cash" → cash; ' +
+    '"online", "tarjeta", "mercado pago", "con tarjeta" → online. ' +
+    'Solo usar cuando ya están completos tipo de entrega, dirección (si aplica) y nombre.',
+  schema: savePaymentMethodSchema,
+  func: async ({ method }: SavePaymentMethodInput, _runManager, config?: RunnableConfig) => {
+    const { businessId, customerPhone } = getReactContext(config);
+    const result = await setDraftPaymentMethod(businessId, customerPhone, method);
+    if (!result.success) {
+      return toJson({ success: false, error: result.error });
+    }
+    return toJson({
+      success: true,
+      paymentMethod: method,
+      signal: 'payment_method_saved',
+    });
   },
 });
 
@@ -309,6 +369,7 @@ export const startCheckoutSessionTool = new DynamicStructuredTool<
 
 export const allCheckoutTools = [
   saveFulfillmentTypeTool,
+  savePaymentMethodTool,
   presentFulfillmentOptionsTool,
   presentPaymentOptionsTool,
   markNameRefusedTool,
