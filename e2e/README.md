@@ -55,6 +55,7 @@ npm run test:e2e
 npm run test:last-offer
 npm run test:party-checkout-flow
 npm run test:checkout-flow
+npm run test:agent-history
 ```
 
 Si faltan variables, los tests se **saltan** (no fallan) y un test documenta el motivo.
@@ -66,6 +67,7 @@ Si faltan variables, los tests se **saltan** (no fallan) y un test documenta el 
 | `last-offer-add-item.e2e.test.ts` | `lastOffer` + "Agrega uno" → ítem en carrito |
 | `party-checkout-flow.e2e.test.ts` | Party size → menú → checkout → fulfillment |
 | `checkout-flow.e2e.test.ts` | ADD_ITEM, CHECKOUT botón/texto, fulfillment |
+| `agent-history.e2e.test.ts` | Historial conversacional real inyectado a los agentes (`buildAgentHistoryMessages`) |
 
 ## Helpers
 

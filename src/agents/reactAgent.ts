@@ -21,6 +21,7 @@
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { HumanMessage } from '@langchain/core/messages';
 import { getReactReasonerLlm } from '../config/llm';
+import { buildAgentHistoryMessages } from './conversationHistory';
 import { buildHybridAgentSystemPrompt } from '../prompts/botPersonality';
 import { resolvePersonalityForBusiness } from '../services/botPersonality.service';
 import { allReactTools } from '../tools';
@@ -461,8 +462,17 @@ export const runHybridReactAgent = async (
       ? (ctx.conversation as { started_at?: Date }).started_at?.toISOString() ?? ''
       : '';
 
+  const history = await buildAgentHistoryMessages({
+    conversationId,
+    startedAt:
+      typeof ctx.conversation === 'object' && ctx.conversation
+        ? (ctx.conversation as { started_at?: Date }).started_at ?? null
+        : null,
+    currentMessageId: ctx.message?.id ?? null,
+  });
+
   const inputs = {
-    messages: [new HumanMessage(await buildContextMessage(ctx))],
+    messages: [...history, new HumanMessage(await buildContextMessage(ctx))],
   };
 
   const out = await agent.invoke(inputs, {

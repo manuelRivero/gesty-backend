@@ -13,6 +13,7 @@
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { HumanMessage } from '@langchain/core/messages';
 import { getReactReasonerLlm } from '../config/llm';
+import { buildAgentHistoryMessages } from './conversationHistory';
 import { buildCheckoutAgentSystemPrompt } from '../prompts/botPersonality';
 import { resolvePersonalityForBusiness } from '../services/botPersonality.service';
 import {
@@ -274,8 +275,17 @@ export const runCheckoutAgent = async (
 
   const contextMessage = await buildCheckoutContextMessage(ctx, checkoutCtx);
 
+  const history = await buildAgentHistoryMessages({
+    conversationId,
+    startedAt:
+      typeof ctx.conversation === 'object' && ctx.conversation
+        ? (ctx.conversation as { started_at?: Date }).started_at ?? null
+        : null,
+    currentMessageId: ctx.message?.id ?? null,
+  });
+
   const inputs = {
-    messages: [new HumanMessage(contextMessage)],
+    messages: [...history, new HumanMessage(contextMessage)],
   };
 
   const out = await agent.invoke(inputs, {

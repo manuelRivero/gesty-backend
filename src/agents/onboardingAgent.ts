@@ -18,6 +18,7 @@
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { HumanMessage } from '@langchain/core/messages';
 import { getReactReasonerLlm } from '../config/llm';
+import { buildAgentHistoryMessages } from './conversationHistory';
 import { buildOnboardingAgentSystemPrompt } from '../prompts/botPersonality';
 import { resolvePersonalityForBusiness } from '../services/botPersonality.service';
 import { allOnboardingTools } from '../tools/onboarding';
@@ -196,8 +197,17 @@ export const runOnboardingAgent = async (
 
   const contextMessage = buildOnboardingContextMessage(ctx);
 
+  const history = await buildAgentHistoryMessages({
+    conversationId,
+    startedAt:
+      typeof ctx.conversation === 'object' && ctx.conversation
+        ? (ctx.conversation as { started_at?: Date }).started_at ?? null
+        : null,
+    currentMessageId: ctx.message?.id ?? null,
+  });
+
   const out = await agent.invoke(
-    { messages: [new HumanMessage(contextMessage)] },
+    { messages: [...history, new HumanMessage(contextMessage)] },
     {
       recursionLimit: 8,
       configurable: {
