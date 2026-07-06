@@ -279,6 +279,42 @@ export const markAddressRefusedTool = new DynamicStructuredTool<
 });
 
 // ---------------------------------------------------------------------------
+// delegate_to_main (temporal — NO limpia checkout_active)
+// ---------------------------------------------------------------------------
+
+const delegateToMainSchema = z.object({
+  reason: z
+    .string()
+    .describe(
+      'Motivo de la delegación en una oración. ' +
+        'Ej: "el cliente preguntó los horarios", "el cliente preguntó los ingredientes de un plato".'
+    ),
+});
+type DelegateToMainInput = z.infer<typeof delegateToMainSchema>;
+
+/**
+ * Delegación temporal: el nodo llama `runHybridReactAgent` con el mismo mensaje
+ * y devuelve esa respuesta. `checkout_active` y `checkout_pending_action` NO se
+ * limpian. En el siguiente turno el cliente vuelve automáticamente al agente de
+ * checkout. Mismo patrón que reservation/onboarding.
+ */
+export const delegateToMainTool = new DynamicStructuredTool<
+  typeof delegateToMainSchema,
+  DelegateToMainInput
+>({
+  name: 'delegate_to_main',
+  description:
+    'Delega el turno al asistente principal para responder una consulta temporal (horarios, ingredientes, menú, precios, información). ' +
+    'La sesión de checkout sigue activa: el próximo mensaje del cliente vuelve al agente de checkout. ' +
+    'NO la uses para abandono del checkout (editar carrito, agregar/quitar productos, cancelar el pedido): usá handback_to_main en ese caso.',
+  schema: delegateToMainSchema,
+  func: async ({ reason }: DelegateToMainInput, _runManager, config?: RunnableConfig) => {
+    getReactContext(config); // validar contexto
+    return toJson({ signal: 'delegate_to_main', reason });
+  },
+});
+
+// ---------------------------------------------------------------------------
 // handback_to_main
 // ---------------------------------------------------------------------------
 
@@ -378,5 +414,6 @@ export const allCheckoutTools = [
   presentPaymentOptionsTool,
   markNameRefusedTool,
   markAddressRefusedTool,
+  delegateToMainTool,
   handbackToMainTool,
 ];

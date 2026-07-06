@@ -226,6 +226,29 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
 
   const { text, signals } = agentResult;
 
+  // ── Señal: delegar turno al híbrido (consulta temporal) ───────────────────
+  // La sesión de checkout NO se limpia: checkout_active y checkout_pending_action
+  // siguen vivos y el próximo mensaje vuelve al agente de checkout por el routing
+  // existente. NO se ejecuta detectIntentWithConfidence (mismo patrón que reservation/onboarding).
+  if (signals.delegateToMain) {
+    console.log(
+      JSON.stringify({
+        event: '[checkout-agent] delegate_to_main',
+        reason: signals.delegateToMainReason,
+        conversationId,
+      })
+    );
+    let mainResult: HandlerResult | null = null;
+    try {
+      const hybrid = await runHybridReactAgent(enrichedCtx);
+      // Invariante: el híbrido no inicia checkout desde una sesión activa.
+      mainResult = hybrid?.kind === 'response' ? hybrid.handlerResult : null;
+    } catch (err) {
+      console.error('[checkout-agent] error en delegate_to_main:', err);
+    }
+    return mainResult ?? { content: text, isInteractive: false };
+  }
+
   if (signals.handback) {
     await clearCheckoutSession(conversationId);
     console.log(

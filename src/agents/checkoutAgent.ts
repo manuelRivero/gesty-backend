@@ -256,6 +256,8 @@ const buildCheckoutContextMessage = async (
 export interface CheckoutAgentSignals {
   presentFulfillmentOptions: boolean;
   presentPaymentOptions: boolean;
+  delegateToMain: boolean;
+  delegateToMainReason: string | null;
   handback: boolean;
   handbackReason: string | null;
   paymentMethod: 'cash' | 'online' | null;
@@ -265,6 +267,8 @@ const extractSignals = (messages: unknown[]): CheckoutAgentSignals => {
   const signals: CheckoutAgentSignals = {
     presentFulfillmentOptions: false,
     presentPaymentOptions: false,
+    delegateToMain: false,
+    delegateToMainReason: null,
     handback: false,
     handbackReason: null,
     paymentMethod: null,
@@ -294,6 +298,10 @@ const extractSignals = (messages: unknown[]): CheckoutAgentSignals => {
         if (data.paymentMethod === 'cash' || data.paymentMethod === 'online') {
           signals.paymentMethod = data.paymentMethod;
         }
+      }
+      if (data.signal === 'delegate_to_main') {
+        signals.delegateToMain = true;
+        signals.delegateToMainReason = data.reason ?? null;
       }
       if (data.signal === 'handback_to_main') {
         signals.handback = true;
