@@ -70,6 +70,21 @@ describe('extractPendingTurnResponse — deterministic', () => {
     expect(result.status).toBe('delegate');
     expect(result.source).toBe('deterministic');
   });
+
+  it('mejor retiro por el local con pending payment_method → off_pending + TAKE_AWAY', async () => {
+    const result = await extractPendingTurnResponse({
+      userMessage: 'mejor retiro por el local',
+      pendingAction: paymentConfig.pendingAction,
+      botQuestion: paymentConfig.defaultQuestion,
+      schema: paymentConfig.schema,
+      valueHints: paymentConfig.valueHints,
+      actionDescription: paymentConfig.actionDescription,
+    });
+    expect(result.status).toBe('off_pending');
+    expect(result.resolvedAction).toBe('fulfillment_type');
+    expect(result.value).toEqual({ type: 'TAKE_AWAY' });
+    expect(result.source).toBe('deterministic');
+  });
 });
 
 describe('extractPendingTurnResponse — fulfillment_type', () => {
@@ -111,6 +126,20 @@ describe('extractPendingTurnResponse — fulfillment_type', () => {
     });
     expect(result.status).toBe('delegate');
   });
+
+  it('efectivo con pending fulfillment_type → off_pending + cash', async () => {
+    const result = await extractPendingTurnResponse({
+      userMessage: 'efectivo',
+      pendingAction: fulfillmentConfig.pendingAction,
+      botQuestion: fulfillmentConfig.defaultQuestion,
+      schema: fulfillmentConfig.schema,
+      valueHints: fulfillmentConfig.valueHints,
+      actionDescription: fulfillmentConfig.actionDescription,
+    });
+    expect(result.status).toBe('off_pending');
+    expect(result.resolvedAction).toBe('payment_method');
+    expect(result.value).toEqual({ method: 'cash' });
+  });
 });
 
 describe('formatPendingExtractionBlock', () => {
@@ -126,6 +155,21 @@ describe('formatPendingExtractionBlock', () => {
     expect(block).toContain('[EXTRACCIÓN PASO PENDIENTE]');
     expect(block).toContain('Estado: fulfilled');
     expect(block).toContain('{"method":"cash"}');
+  });
+
+  it('incluye campo respondido cuando off_pending', () => {
+    const block = formatPendingExtractionBlock({
+      pendingAction: 'payment_method',
+      botQuestion: '¿Cómo querés pagar?',
+      status: 'off_pending',
+      confidence: 0.95,
+      value: { type: 'TAKE_AWAY' },
+      reason: 'takeaway_explicito',
+      resolvedAction: 'fulfillment_type',
+    });
+    expect(block).toContain('Estado: off_pending');
+    expect(block).toContain('Campo respondido: fulfillment_type');
+    expect(block).toContain('{"type":"TAKE_AWAY"}');
   });
 });
 

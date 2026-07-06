@@ -5,9 +5,14 @@ import {
   PENDING_TURN_EXTRACTOR_SYSTEM_PROMPT,
   buildPendingTurnExtractorUserPrompt,
 } from '../../prompts/pendingTurnExtractor';
-import type { PaymentMethodPendingValue } from '../checkout/pendingActionRegistry';
+import {
+  getCheckoutPendingActionConfig,
+  type CheckoutPendingAction,
+  type FulfillmentTypePendingValue,
+  type PaymentMethodPendingValue,
+} from '../checkout/pendingActionRegistry';
 
-export type PendingTurnStatus = 'fulfilled' | 'reprompt' | 'delegate';
+export type PendingTurnStatus = 'fulfilled' | 'reprompt' | 'delegate' | 'off_pending';
 
 export type PendingTurnExtractionResult<T> = {
   status: PendingTurnStatus;
@@ -15,13 +20,16 @@ export type PendingTurnExtractionResult<T> = {
   confidence: number;
   reason: string | null;
   source: 'deterministic' | 'llm' | 'fallback';
+  /** Campo de checkout respondido cuando status === 'off_pending'. */
+  resolvedAction?: CheckoutPendingAction;
 };
 
 const PendingTurnResponseSchema = z.object({
-  status: z.enum(['fulfilled', 'reprompt', 'delegate']),
+  status: z.enum(['fulfilled', 'reprompt', 'delegate', 'off_pending']),
   confidence: z.number().min(0).max(1),
   reason: z.string().nullable(),
   value: z.unknown().nullable(),
+  resolvedAction: z.enum(['payment_method', 'fulfillment_type']).nullable().optional(),
 });
 
 const normalizeText = (text: string): string =>
@@ -30,6 +38,86 @@ const normalizeText = (text: string): string =>
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .trim();
+
+function matchFulfillmentType(text: string): FulfillmentTypePendingValue | null {
+  const deliveryPatterns = [
+    /^(en casa|a domicilio|domicilio|delivery|envio|envío)[.!]?$/,
+    /\b(envio|envío)\s+a\s+domicilio\b/,
+    /\b(quiero|necesito|mejor|prefiero)\s+.*\b(delivery|domicilio|casa)\b/,
+    /\b(mejor|prefiero|quiero)\s+(delivery|domicilio|en casa)\b/,
+  ];
+  const takeawayPatterns = [
+    /^(retiro|take away|takeaway|paso a buscar|retiro en local|retirar en local)[.!]?$/,
+    /\b(quiero|voy a|mejor|prefiero)\s+(retirar|buscar)\b/,
+    /\b(mejor|prefiero|quiero|voy a)\b.*\b(retiro|retirar|buscar|local|take away|takeaway)\b/,
+    /\bretiro\b.*\b(local|buscar)\b/,
+  ];
+
+  for (const pattern of deliveryPatterns) {
+    if (pattern.test(text)) {
+      return { type: 'DELIVERY' };
+    }
+  }
+  for (const pattern of takeawayPatterns) {
+    if (pattern.test(text)) {
+      return { type: 'TAKE_AWAY' };
+    }
+  }
+  return null;
+}
+
+function matchPaymentMethod(text: string): PaymentMethodPendingValue | null {
+  const cashPattern =
+    /^(efectivo|cash|en efectivo|en mano|pago en efectivo|con efectivo)[.!]?$/;
+  const onlinePattern =
+    /^(online|tarjeta|mercado pago|mercadopago|pago online|con tarjeta|digital)[.!]?$/;
+
+  if (cashPattern.test(text)) {
+    return { method: 'cash' };
+  }
+  if (onlinePattern.test(text)) {
+    return { method: 'online' };
+  }
+  return null;
+}
+
+function tryCrossFieldExtraction<T>(params: {
+  pendingAction: string;
+  userMessage: string;
+}): PendingTurnExtractionResult<T> | null {
+  const text = normalizeText(params.userMessage);
+  if (!text) return null;
+
+  if (params.pendingAction === 'payment_method') {
+    const fulfillment = matchFulfillmentType(text);
+    if (fulfillment) {
+      return {
+        status: 'off_pending',
+        value: fulfillment as T,
+        resolvedAction: 'fulfillment_type',
+        confidence: 0.95,
+        reason: fulfillment.type === 'DELIVERY' ? 'delivery_explicito' : 'takeaway_explicito',
+        source: 'deterministic',
+      };
+    }
+  }
+
+  if (params.pendingAction === 'fulfillment_type') {
+    const payment = matchPaymentMethod(text);
+    if (payment) {
+      return {
+        status: 'off_pending',
+        value: payment as T,
+        resolvedAction: 'payment_method',
+        confidence: 0.95,
+        reason: payment.method === 'cash' ? 'efectivo_explicito' : 'online_explicito',
+        source: 'deterministic',
+      };
+    }
+  }
+
+  return null;
+}
 
 /** Atajos determinísticos triviales antes del LLM. */
 function tryDeterministicExtraction<T>(params: {
@@ -49,37 +137,22 @@ function tryDeterministicExtraction<T>(params: {
   }
 
   if (params.pendingAction === 'payment_method') {
-    const cashPattern =
-      /^(efectivo|cash|en efectivo|en mano|pago en efectivo|con efectivo)[.!]?$/;
-    const onlinePattern =
-      /^(online|tarjeta|mercado pago|mercadopago|pago online|con tarjeta|digital)[.!]?$/;
+    const payment = matchPaymentMethod(text);
+    if (payment) {
+      const parsed = params.schema.safeParse(payment);
+      if (parsed.success) {
+        return {
+          status: 'fulfilled',
+          value: parsed.data,
+          confidence: 0.98,
+          reason: payment.method === 'cash' ? 'efectivo_explicito' : 'online_explicito',
+          source: 'deterministic',
+        };
+      }
+    }
 
-    if (cashPattern.test(text)) {
-      const value = { method: 'cash' as const };
-      const parsed = params.schema.safeParse(value);
-      if (parsed.success) {
-        return {
-          status: 'fulfilled',
-          value: parsed.data,
-          confidence: 0.98,
-          reason: 'efectivo_explicito',
-          source: 'deterministic',
-        };
-      }
-    }
-    if (onlinePattern.test(text)) {
-      const value = { method: 'online' as const };
-      const parsed = params.schema.safeParse(value);
-      if (parsed.success) {
-        return {
-          status: 'fulfilled',
-          value: parsed.data,
-          confidence: 0.98,
-          reason: 'online_explicito',
-          source: 'deterministic',
-        };
-      }
-    }
+    const crossField = tryCrossFieldExtraction<T>(params);
+    if (crossField) return crossField;
 
     if (
       /\b(menu|menú|precio|horario|agregar|quitar|modificar|carrito|reserva)\b/.test(text)
@@ -95,46 +168,22 @@ function tryDeterministicExtraction<T>(params: {
   }
 
   if (params.pendingAction === 'fulfillment_type') {
-    const deliveryPatterns = [
-      /^(en casa|a domicilio|domicilio|delivery|envio|envío)[.!]?$/,
-      /\b(envio|envío)\s+a\s+domicilio\b/,
-      /\b(quiero|necesito)\s+(delivery|domicilio)\b/,
-    ];
-    const takeawayPatterns = [
-      /^(retiro|take away|takeaway|paso a buscar|retiro en local|retirar en local)[.!]?$/,
-      /\b(quiero|voy a)\s+(retirar|buscar)\b/,
-    ];
+    const fulfillment = matchFulfillmentType(text);
+    if (fulfillment) {
+      const parsed = params.schema.safeParse(fulfillment);
+      if (parsed.success) {
+        return {
+          status: 'fulfilled',
+          value: parsed.data,
+          confidence: 0.98,
+          reason: fulfillment.type === 'DELIVERY' ? 'delivery_explicito' : 'takeaway_explicito',
+          source: 'deterministic',
+        };
+      }
+    }
 
-    for (const pattern of deliveryPatterns) {
-      if (pattern.test(text)) {
-        const value = { type: 'DELIVERY' as const };
-        const parsed = params.schema.safeParse(value);
-        if (parsed.success) {
-          return {
-            status: 'fulfilled',
-            value: parsed.data,
-            confidence: 0.98,
-            reason: 'delivery_explicito',
-            source: 'deterministic',
-          };
-        }
-      }
-    }
-    for (const pattern of takeawayPatterns) {
-      if (pattern.test(text)) {
-        const value = { type: 'TAKE_AWAY' as const };
-        const parsed = params.schema.safeParse(value);
-        if (parsed.success) {
-          return {
-            status: 'fulfilled',
-            value: parsed.data,
-            confidence: 0.98,
-            reason: 'takeaway_explicito',
-            source: 'deterministic',
-          };
-        }
-      }
-    }
+    const crossField = tryCrossFieldExtraction<T>(params);
+    if (crossField) return crossField;
 
     if (
       /\b(menu|menú|precio|horario|agregar|quitar|modificar|carrito|reserva|pagar)\b/.test(text)
@@ -218,6 +267,32 @@ export async function extractPendingTurnResponse<T>(params: {
       };
     }
 
+    if (parsed.status === 'off_pending' && parsed.resolvedAction && parsed.value != null) {
+      if (parsed.resolvedAction !== params.pendingAction) {
+        const otherConfig = getCheckoutPendingActionConfig(parsed.resolvedAction);
+        if (otherConfig) {
+          const valueParsed = otherConfig.schema.safeParse(parsed.value);
+          if (valueParsed.success) {
+            return {
+              status: 'off_pending',
+              value: valueParsed.data as T,
+              resolvedAction: parsed.resolvedAction,
+              confidence: parsed.confidence,
+              reason: parsed.reason,
+              source: 'llm',
+            };
+          }
+        }
+      }
+      return {
+        status: 'reprompt',
+        value: null,
+        confidence: parsed.confidence,
+        reason: parsed.reason ?? 'off_pending_invalido',
+        source: 'llm',
+      };
+    }
+
     return {
       status: parsed.status,
       value: null,
@@ -245,6 +320,7 @@ export function formatPendingExtractionBlock(params: {
   confidence: number;
   value: unknown | null;
   reason: string | null;
+  resolvedAction?: CheckoutPendingAction;
 }): string {
   const lines = [
     '[EXTRACCIÓN PASO PENDIENTE]',
@@ -253,7 +329,10 @@ export function formatPendingExtractionBlock(params: {
     `- Estado: ${params.status}`,
     `- Confianza: ${params.confidence}`,
   ];
-  if (params.status === 'fulfilled' && params.value != null) {
+  if (params.status === 'off_pending' && params.resolvedAction) {
+    lines.push(`- Campo respondido: ${params.resolvedAction}`);
+  }
+  if ((params.status === 'fulfilled' || params.status === 'off_pending') && params.value != null) {
     lines.push(`- Valor extraído: ${JSON.stringify(params.value)}`);
   } else {
     lines.push('- Valor extraído: null');

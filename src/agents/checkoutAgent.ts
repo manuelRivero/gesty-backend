@@ -29,7 +29,9 @@ import {
   extractPendingTurnResponse,
   formatPendingExtractionBlock,
 } from '../services/ai/extractPendingTurnResponse';
+import { effectivePending } from '../services/checkout/effectivePending';
 import { getCheckoutPendingActionConfig } from '../services/checkout/pendingActionRegistry';
+import { omitConversationMetadataKeys } from '../repositories/conversationState.repository';
 import type { ConversationMetadata } from '../services/productQuery/types';
 
 // ---------------------------------------------------------------------------
@@ -88,6 +90,8 @@ const buildCheckoutContextMessage = async (
   let cartSummary = 'sin datos (usá get_cart para obtenerlo)';
   let fulfillmentType = 'sin elegir';
   let paymentMethod = 'sin elegir';
+  let snapshotFulfillmentType: string | null = null;
+  let snapshotPaymentMethod: string | null = null;
 
   try {
     const draft = await prisma.draft_order.findFirst({
@@ -106,6 +110,8 @@ const buildCheckoutContextMessage = async (
       });
       const total = Number(draft.total_amount).toLocaleString('es-AR');
       cartSummary = `${itemLines.join('\n')}\n  Total: $${total}`;
+      snapshotFulfillmentType = draft.fulfillment_type;
+      snapshotPaymentMethod = draft.payment_method;
       fulfillmentType = draft.fulfillment_type ?? 'sin elegir';
       paymentMethod = draft.payment_method ?? 'sin elegir';
     }
@@ -163,15 +169,45 @@ const buildCheckoutContextMessage = async (
   ];
 
   const userText = userMsg.trim();
-  const pendingAction = conversationMeta.checkout_pending_action;
   const hasPayload = Boolean(ctx.payloadId?.trim());
   let extractionBlock = '';
 
+  const resolvedPending = effectivePending({
+    metadata: conversationMeta,
+    snapshot: {
+      fulfillmentType: snapshotFulfillmentType,
+      paymentMethod: snapshotPaymentMethod,
+    },
+  });
+
+  if (resolvedPending.stale && conversationId) {
+    console.log(
+      JSON.stringify({
+        event: '[checkout-pending] stale_pending_cleared',
+        conversationId,
+        staleReason: resolvedPending.staleReason,
+        metadataAction: conversationMeta.checkout_pending_action,
+        snapshot: {
+          fulfillmentType: snapshotFulfillmentType,
+          paymentMethod: snapshotPaymentMethod,
+        },
+      })
+    );
+    try {
+      await omitConversationMetadataKeys(conversationId, [
+        'checkout_pending_action',
+        'checkout_pending_question',
+      ]);
+    } catch (error) {
+      console.error('[checkout-pending] failed to clear stale pending metadata:', error);
+    }
+  }
+
+  const pendingAction = resolvedPending.action;
   if (pendingAction && userText && !hasPayload) {
     const config = getCheckoutPendingActionConfig(pendingAction);
     if (config) {
-      const botQuestion =
-        conversationMeta.checkout_pending_question?.trim() || config.defaultQuestion;
+      const botQuestion = resolvedPending.question || config.defaultQuestion;
       const extraction = await extractPendingTurnResponse({
         userMessage: userText,
         pendingAction: config.pendingAction,
@@ -197,6 +233,7 @@ const buildCheckoutContextMessage = async (
         confidence: extraction.confidence,
         value: extraction.value,
         reason: extraction.reason,
+        resolvedAction: extraction.resolvedAction,
       });
     }
   }
