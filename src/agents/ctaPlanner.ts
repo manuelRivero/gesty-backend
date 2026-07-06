@@ -34,7 +34,13 @@ TIPOS DE ACCIÓN PRIMARIA:
 - VIEW_FEATURED: hay intención de compra pero sin productos identificables por nombre; mostrar destacados.
 - VIEW_MENU: el usuario quiere explorar opciones en general (sin producto/s específicos).
 
-REGLA DURA MULTI-PRODUCTO:
+SEÑAL AUTORITATIVA — [PRODUCTOS_LISTADOS]:
+Cuando aparece este bloque, contiene los productos que el bot YA resolvió y va a ofrecer para selección. Es la fuente de verdad y tiene PRIORIDAD sobre cualquier inferencia hecha desde [RESPUESTA_BOT] o [PRODUCTOS_MENU_RELEVANTES]:
+- Con 2 o más nombres: shouldShowCta DEBE ser true, primaryKind DEBE ser SELECT_FROM_LIST y "productHints" DEBE ser EXACTAMENTE esos nombres, en el mismo orden, sin agregar, quitar ni reescribir ninguno. NO elijas VIEW_FEATURED ni VIEW_MENU como primario en este caso, aunque la [RESPUESTA_BOT] no los nombre uno por uno.
+- Con exactamente 1 nombre: shouldShowCta DEBE ser true, primaryKind DEBE ser ADD_ITEM para ese producto (poné su nombre en "productHint").
+- Vacío o ausente: ignorá esta regla y decidí con las reglas generales de abajo.
+
+REGLA DURA MULTI-PRODUCTO (aplica cuando [PRODUCTOS_LISTADOS] está ausente):
 - Si la [RESPUESTA_BOT] enumera 2 o más nombres de plato/producto del menú, primaryKind DEBE ser SELECT_FROM_LIST. Nunca elijas ADD_ITEM tomando uno arbitrariamente cuando hay varios.
 - Si hay sólo un producto mencionado, primaryKind debe ser ADD_ITEM.
 
@@ -67,6 +73,10 @@ const buildPlannerUserMessage = (input: CtaPlannerInput): string => {
     '[RESPUESTA_BOT]:',
     input.botResponseText,
   ];
+
+  if (input.listedProductNames.length > 0) {
+    lines.push('', `[PRODUCTOS_LISTADOS]: ${input.listedProductNames.join(', ')}`);
+  }
 
   if (input.topMenuProductNames.length > 0) {
     lines.push('', `[PRODUCTOS_MENU_RELEVANTES]: ${input.topMenuProductNames.join(', ')}`);

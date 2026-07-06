@@ -32,8 +32,17 @@ const baseInput = (overrides: Partial<CtaPlannerInput> = {}): CtaPlannerInput =>
   lastReferencedProductName: 'Ceviche Clásico',
   userMessage: 'el ceviche puede ser picante?',
   topMenuProductNames: ['Ceviche Clásico', 'Ceviche Mixto'],
+  listedProductNames: [],
   ...overrides,
 });
+
+/** Contenido de los mensajes pasados al LLM: [system, user]. */
+const messagesFrom = (
+  invokeMock: ReturnType<typeof vi.fn>
+): { system: string; user: string } => {
+  const messages = invokeMock.mock.calls[0]?.[0] as Array<{ content: string }>;
+  return { system: messages[0].content, user: messages[1].content };
+};
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -173,6 +182,56 @@ describe('planCta', () => {
       'Ceviche Mixto',
       'Ceviche de Camarones',
     ]);
+  });
+
+  it('inyecta el bloque [PRODUCTOS_LISTADOS] en el prompt cuando el agente listó productos', async () => {
+    const invokeMock = mockLlm(
+      JSON.stringify({
+        shouldShowCta: true,
+        productHint: null,
+        productHints: ['Ceviche Clásico', 'Ceviche Mixto', 'Ceviche de Camarones'],
+        primaryKind: 'SELECT_FROM_LIST',
+        primaryLabel: 'Elegir uno 👇',
+        secondaryKind: 'VIEW_MENU',
+        secondaryLabel: 'Ver menú',
+      })
+    );
+
+    await planCta(
+      baseInput({
+        listedProductNames: [
+          'Ceviche Clásico',
+          'Ceviche Mixto',
+          'Ceviche de Camarones',
+        ],
+      })
+    );
+
+    const { system, user } = messagesFrom(invokeMock);
+    // El bloque con los nombres exactos llega al LLM en el mensaje de usuario…
+    expect(user).toContain(
+      '[PRODUCTOS_LISTADOS]: Ceviche Clásico, Ceviche Mixto, Ceviche de Camarones'
+    );
+    // …y la regla autoritativa vive en el system prompt.
+    expect(system).toContain('SEÑAL AUTORITATIVA');
+  });
+
+  it('no inyecta [PRODUCTOS_LISTADOS] cuando el agente no listó productos', async () => {
+    const invokeMock = mockLlm(
+      JSON.stringify({
+        shouldShowCta: true,
+        productHint: 'ceviche',
+        primaryKind: 'ADD_ITEM',
+        primaryLabel: 'Agregar 🛒',
+        secondaryKind: 'VIEW_FEATURED',
+        secondaryLabel: 'Ver destacados',
+      })
+    );
+
+    await planCta(baseInput({ listedProductNames: [] }));
+
+    // El mensaje de usuario no debe traer el bloque (la regla en system sí existe).
+    expect(messagesFrom(invokeMock).user).not.toContain('[PRODUCTOS_LISTADOS]');
   });
 
   it('SELECT_FROM_LIST sin productHints sigue siendo válido (resolver hace fallback)', async () => {

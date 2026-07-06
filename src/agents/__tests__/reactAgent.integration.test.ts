@@ -85,6 +85,21 @@ const makeAgentInvoke = (text: string) =>
     messages: [{ content: text }],
   });
 
+const makeAgentInvokeWithProductSearch = (
+  text: string,
+  items: Array<{ id: string; name: string; price?: { amount: string; currency: string } }>
+) =>
+  vi.fn().mockResolvedValue({
+    messages: [
+      {
+        tool_call_id: 'tc-search-1',
+        name: 'search_products',
+        content: JSON.stringify({ count: items.length, items }),
+      },
+      { content: text },
+    ],
+  });
+
 const makeCtx = (overrides: Record<string, unknown> = {}) => ({
   business: { id: 'biz-1', currency_code: 'PEN' },
   customer: { id: 'cust-1', phone_number: '51999000000' },
@@ -266,5 +281,35 @@ describe('runHybridReactAgent', () => {
 
     expect(result!.isInteractive).toBe(false);
     expect(planCta).not.toHaveBeenCalled();
+  });
+
+  it('shortlist de tools ≥2 → followUp lista y sin pipeline CTA (evita IDs desalineados)', async () => {
+    vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
+    vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
+
+    const introText =
+      '🤖\n\n*Opciones* 🍽️\n\n¡Qué buena idea! Hay varias pizzanesas que te pueden gustar.';
+    vi.mocked(createReactAgent).mockReturnValue({
+      invoke: makeAgentInvokeWithProductSearch(introText, [
+        { id: 'prod-a', name: 'Pizzanesa Napolitana', price: { amount: '1200', currency: 'ARS' } },
+        { id: 'prod-b', name: 'Pizzanesa Fugazzeta', price: { amount: '1300', currency: 'ARS' } },
+      ]),
+    } as any);
+
+    const result = unwrap(await runHybridReactAgent(makeCtx() as any));
+
+    expect(result!.isInteractive).toBe(false);
+    expect(result!.followUps).toHaveLength(1);
+    expect(result!.followUps![0].type).toBe('list');
+    expect(planCta).not.toHaveBeenCalled();
+    expect(resolveCta).not.toHaveBeenCalled();
+    expect(buildHybridCtaInteractive).not.toHaveBeenCalled();
+    expect(patchConversationMetadata).toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({
+        pendingProductSelection: true,
+        candidateProductIds: ['prod-a', 'prod-b'],
+      })
+    );
   });
 });

@@ -544,9 +544,20 @@ export const runHybridReactAgent = async (
       JSON.stringify({
         event: '[hybrid-agent] product_list_followup',
         productCount: foundProducts.length,
+        ctaSkipped: 'tool_shortlist_authoritative',
         conversationId,
       })
     );
+    // La shortlist de las tools es autoritativa (IDs verificados). No competir con
+    // CTA SELECT_FROM_LIST, que re-busca por nombre y puede desalinear candidateProductIds.
+    return {
+      kind: 'response',
+      handlerResult: markHybridResult({
+        content: formattedText,
+        isInteractive: false,
+        followUps: [productFollowUp],
+      }),
+    };
   }
 
   // --- CTA pipeline ---
@@ -589,6 +600,7 @@ export const runHybridReactAgent = async (
     lastReferencedProductName,
     userMessage,
     topMenuProductNames,
+    listedProductNames: foundProducts.map((p) => p.name),
   };
 
   const plannerStart = Date.now();
@@ -642,12 +654,23 @@ export const runHybridReactAgent = async (
 
   const primaryPayload = extractPrimaryPayload(resolvedPlan);
   const primaryProductId = extractPrimaryProductId(resolvedPlan);
+  const selectListCandidateIds =
+    resolvedPlan.primary.kind === 'SELECT_FROM_LIST'
+      ? resolvedPlan.primary.candidates.map((c) => c.productId)
+      : null;
 
   try {
     await patchConversationMetadata(conversationId, {
       lastCtaShownAt: new Date().toISOString(),
       ...(primaryProductId ? { lastCtaProductId: primaryProductId } : {}),
       ...(primaryPayload ? { lastCtaPayload: primaryPayload } : {}),
+      ...(selectListCandidateIds
+        ? {
+            pendingProductSelection: true,
+            pendingQuestion: userMessage,
+            candidateProductIds: selectListCandidateIds,
+          }
+        : {}),
     });
     await persistLastOfferFromCtaPlan(
       conversationId,
@@ -669,6 +692,5 @@ export const runHybridReactAgent = async (
     })
   );
 
-  // CTA ya maneja la selección de producto; no duplicar la lista.
   return { kind: 'response', handlerResult: markHybridResult(handlerResult) };
 };

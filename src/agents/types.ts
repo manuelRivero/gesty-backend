@@ -77,6 +77,13 @@ export interface CtaPlannerInput {
   userMessage: string;
   /** Nombres de los N productos más relevantes encontrados en el menú (pre-fetch). */
   topMenuProductNames: string[];
+  /**
+   * Nombres de los productos que el agente YA resolvió como shortlist en esta
+   * misma respuesta (tools `search_products` / `find_products_by_filter`).
+   * Señal autoritativa para el planner: ≥2 ⇒ SELECT_FROM_LIST con estos nombres;
+   * exactamente 1 ⇒ ADD_ITEM. Vacío cuando el agente no listó productos.
+   */
+  listedProductNames: string[];
 }
 
 export interface CtaResolverInput {
