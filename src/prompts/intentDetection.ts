@@ -22,7 +22,9 @@ Available intents:
 - PRODUCT_ATTRIBUTE_QUESTION: asking about product details (e.g., "cuánto cuesta?", "es picante?")
 - VIEW_MENU: ONLY when the user wants to browse the full catalog WITHOUT naming a specific food or ingredient. Examples: "ver menú", "mostrar el menú", "mostrar categorías", a very short standalone "qué tienen?" with no dish/ingredient. Do NOT use VIEW_MENU if the user mentions any food, ingredient, or dish — use PRODUCT_QUERY with detectedProductName instead. Headcount alone (e.g. "para 3 personas") with a food word is PRODUCT_QUERY + quantity, not VIEW_MENU.
 - VIEW_CART: wants to see current cart (e.g., "cuánto llevo?", "ver mi pedido")
-- VIEW_CART_FOR_EDITION: wants to see current cart for edition (e.g., "modificar mi pedido")
+- VIEW_CART_FOR_EDITION: wants to edit the cart (e.g., "modificar mi pedido", "cambiar cantidades"). Do NOT use for paying or finishing the order.
+- CHECKOUT: wants to finish the order and pay (e.g., "pagar", "finalizar pedido", "cerrar compra", "quiero pagar", "listo para pagar", "confirmar pedido")
+- CANCEL_ORDER: wants to cancel the entire order (e.g., "cancelar pedido", "no quiero el pedido")
 - SMALL_TALK: greeting or casual (e.g., "hola", "buenas")
 - PROVIDE_NAME: user is providing their personal name as the main subject, typically as a standalone response when asked (e.g., "Juan", "me llamo Juan", "soy Ana", "mi nombre es Pedro Pérez")
 - ASK_QUESTION: general question (e.g., "dónde están?", "cuál es el horario?")
@@ -36,6 +38,7 @@ Available intents:
 
 Rules:
 - Priority: any open product consultation must be PRODUCT_QUERY (food/ingredient, generic product exploration, or constraints like "menos de", "hasta", "por X", "10k", "15 mil", "barato/económico"). Never classify these as VIEW_MENU or SMALL_TALK.
+- "pagar", "finalizar pedido", "cerrar compra" and similar checkout phrases are CHECKOUT, never VIEW_CART or VIEW_CART_FOR_EDITION.
 - Use RECOMMENDATION_REQUEST only when recommendation intent is explicit (keywords like "recomendá", "sugerí", "destacados"). If not explicit, default to PRODUCT_QUERY for product-related requests.
 - Extract product name when mentioned
 - Extract quantity when specified (number or words like "dos", "tres"). For "pedido/orden para N personas" or "somos N", quantity is N people (party size), not item count.

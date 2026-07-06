@@ -25,6 +25,12 @@ import { allCheckoutTools } from '../tools/checkout';
 import type { EnrichedContext } from '../controllers/webhook/types';
 import { formatBotUserMessage, normalizeMetadata } from '../services/productQuery/utils';
 import { prisma } from '../lib/prisma';
+import {
+  extractPendingTurnResponse,
+  formatPendingExtractionBlock,
+} from '../services/ai/extractPendingTurnResponse';
+import { getCheckoutPendingActionConfig } from '../services/checkout/pendingActionRegistry';
+import type { ConversationMetadata } from '../services/productQuery/types';
 
 // ---------------------------------------------------------------------------
 // Cache de agentes por personalidad (mismo patrón que reactAgent.ts)
@@ -119,18 +125,19 @@ const buildCheckoutContextMessage = async (
       ? 'cargada pero fuera de cobertura'
       : 'cargada y en cobertura';
 
-  // Conteos de rechazo desde metadata del draft activo
+  // Conteos de rechazo y pending action desde metadata
   let nameRefusalCount = 0;
   let addressRefusalCount = 0;
+  let conversationMeta: ConversationMetadata = {};
   try {
     const cs = await prisma.conversation_state.findFirst({
       where: { conversation_id: conversationId },
       select: { metadata: true },
     });
     if (cs && typeof cs.metadata === 'object' && cs.metadata !== null) {
-      const meta = cs.metadata as Record<string, unknown>;
-      nameRefusalCount = (meta.name_refusal_count as number | undefined) ?? 0;
-      addressRefusalCount = (meta.address_refusal_count as number | undefined) ?? 0;
+      conversationMeta = normalizeMetadata(cs.metadata) as ConversationMetadata;
+      nameRefusalCount = conversationMeta.name_refusal_count ?? 0;
+      addressRefusalCount = conversationMeta.address_refusal_count ?? 0;
     }
   } catch {
     // Si falla, usar 0 — no es crítico
@@ -155,7 +162,54 @@ const buildCheckoutContextMessage = async (
     `- Carrito:\n${cartSummary}`,
   ];
 
-  return `${lines.join('\n')}\n\n${userMsg}`;
+  const userText = userMsg.trim();
+  const pendingAction = conversationMeta.checkout_pending_action;
+  const hasPayload = Boolean(ctx.payloadId?.trim());
+  let extractionBlock = '';
+
+  if (pendingAction && userText && !hasPayload) {
+    const config = getCheckoutPendingActionConfig(pendingAction);
+    if (config) {
+      const botQuestion =
+        conversationMeta.checkout_pending_question?.trim() || config.defaultQuestion;
+      const extraction = await extractPendingTurnResponse({
+        userMessage: userText,
+        pendingAction: config.pendingAction,
+        botQuestion,
+        schema: config.schema,
+        valueHints: config.valueHints,
+        actionDescription: config.actionDescription,
+      });
+      console.log(
+        JSON.stringify({
+          event: '[checkout-pending] extraction',
+          action: pendingAction,
+          status: extraction.status,
+          confidence: extraction.confidence,
+          source: extraction.source,
+          conversationId,
+        })
+      );
+      extractionBlock = formatPendingExtractionBlock({
+        pendingAction: config.pendingAction,
+        botQuestion,
+        status: extraction.status,
+        confidence: extraction.confidence,
+        value: extraction.value,
+        reason: extraction.reason,
+      });
+    }
+  }
+
+  const contextParts = [lines.join('\n')];
+  if (extractionBlock) {
+    contextParts.push('', extractionBlock);
+  }
+  if (userText) {
+    contextParts.push('', userText);
+  }
+
+  return contextParts.join('\n');
 };
 
 // ---------------------------------------------------------------------------

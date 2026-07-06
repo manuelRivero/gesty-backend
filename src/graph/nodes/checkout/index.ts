@@ -20,6 +20,7 @@ import {
 import {
   EMPTY_CART_BOT_MESSAGE,
   PAYMENT_METHOD_PROMPT_BOT_MESSAGE,
+  FULFILLMENT_TYPE_PROMPT_BOT_MESSAGE,
 } from '../../../services/productQuery/botMessages';
 import { textResponse } from '../../../controllers/webhook/utils';
 import { buildFulfillmentSelectionMessage } from '../gates/fulfillmentSelection';
@@ -65,6 +66,8 @@ function buildPaymentButtonsMessage(): WhatsAppInteractiveMessage {
 export const clearCheckoutSession = async (conversationId: string): Promise<void> => {
   await omitConversationMetadataKeys(conversationId, [
     'checkout_active',
+    'checkout_pending_action',
+    'checkout_pending_question',
     'name_refusal_count',
     'address_refusal_count',
     'pending_fulfillment_action',
@@ -279,6 +282,10 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
   }
 
   if (signals.presentFulfillmentOptions) {
+    await patchConversationMetadata(conversationId, {
+      checkout_pending_action: 'fulfillment_type',
+      checkout_pending_question: FULFILLMENT_TYPE_PROMPT_BOT_MESSAGE,
+    });
     const fulfillmentMessage = buildFulfillmentSelectionMessage();
     const followUp: HandlerFollowUp = {
       type: 'interactive',
@@ -293,6 +300,10 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
   }
 
   if (signals.presentPaymentOptions) {
+    await patchConversationMetadata(conversationId, {
+      checkout_pending_action: 'payment_method',
+      checkout_pending_question: PAYMENT_METHOD_PROMPT_BOT_MESSAGE,
+    });
     const paymentMessage = buildPaymentButtonsMessage();
     const followUp: HandlerFollowUp = {
       type: 'interactive',
@@ -363,8 +374,16 @@ export const checkoutAgentNode = async (
 
   if (payloadId === 'FULFILLMENT_DELIVERY') {
     await setDraftFulfillmentType(business.id, phone, 'DELIVERY');
+    await omitConversationMetadataKeys(conversationId, [
+      'checkout_pending_action',
+      'checkout_pending_question',
+    ]);
   } else if (payloadId === 'FULFILLMENT_TAKE_AWAY') {
     await setDraftFulfillmentType(business.id, phone, 'TAKE_AWAY');
+    await omitConversationMetadataKeys(conversationId, [
+      'checkout_pending_action',
+      'checkout_pending_question',
+    ]);
   }
 
   if (payloadId === 'CHECKOUT') {

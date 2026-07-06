@@ -4,6 +4,7 @@ import { normalizeMetadata } from '../../../services/productQuery/utils';
 import { detectIntentFromPayload } from '../../../controllers/webhook/payloadMapper';
 import { isHybridAgentMode } from '../../../config/env';
 import { ConversationIntent } from '../../../types/conversationIntent';
+import { FULFILLMENT_TYPE_PROMPT_BOT_MESSAGE } from '../../../services/productQuery/botMessages';
 import type { WhatsAppInteractiveMessage } from '../../../domain/intent/whatsappTemplates';
 import type { AgentState, AgentStateUpdate } from '../../state';
 
@@ -29,7 +30,7 @@ export function buildFulfillmentSelectionMessage(): WhatsAppInteractiveMessage {
       type: 'button',
       header: { type: 'text', text: '' },
       body: {
-        text: '🤖\n\n*¿Cómo querés recibir tu pedido?* 🛍️\n\nElegí una opción para continuar:'
+        text: FULFILLMENT_TYPE_PROMPT_BOT_MESSAGE
       },
       footer: { text: 'Seleccioná una opción' },
       action: {

@@ -56,6 +56,9 @@ export const PAYMENT_METHOD_PROMPT_BOT_MESSAGE = formatBotUserMessage(
   'Elegí el método de pago para confirmar tu pedido.'
 );
 
+export const FULFILLMENT_TYPE_PROMPT_BOT_MESSAGE =
+  '🤖\n\n*¿Cómo querés recibir tu pedido?* 🛍️\n\nElegí una opción para continuar:';
+
 export const ADDRESS_SAVED_PAYMENT_PROMPT_BOT_MESSAGE = formatBotUserMessage(
   'Dirección guardada',
   '📍',

@@ -108,6 +108,14 @@ export type ConversationMetadata = {
   checkout_active?: boolean;
 
   /**
+   * Paso del checkout esperando respuesta en texto libre (ej. tras mostrar botones de pago).
+   */
+  checkout_pending_action?: 'payment_method' | 'fulfillment_type' | null;
+
+  /** Pregunta que el bot hizo al setear checkout_pending_action (input del extractor). */
+  checkout_pending_question?: string | null;
+
+  /**
    * Cantidad de veces que el cliente rechazó explícitamente dar su nombre
    * durante la sesión de checkout activa. Se resetea al limpiar la sesión.
    */

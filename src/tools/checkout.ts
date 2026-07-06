@@ -13,7 +13,7 @@
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { getReactContext } from './_context';
-import { patchConversationMetadata } from '../repositories/conversationState.repository';
+import { patchConversationMetadata, omitConversationMetadataKeys } from '../repositories/conversationState.repository';
 import { prisma } from '../lib/prisma';
 import type { RunnableConfig } from '@langchain/core/runnables';
 
@@ -91,11 +91,15 @@ export const saveFulfillmentTypeTool = new DynamicStructuredTool<
     'Solo usar en sesión de checkout cuando fulfillment_type aún no está definido o el cliente cambia de opinión.',
   schema: saveFulfillmentTypeSchema,
   func: async ({ type }: SaveFulfillmentTypeInput, _runManager, config?: RunnableConfig) => {
-    const { businessId, customerPhone } = getReactContext(config);
+    const { businessId, customerPhone, conversationId } = getReactContext(config);
     const result = await setDraftFulfillmentType(businessId, customerPhone, type);
     if (!result.success) {
       return toJson({ success: false, error: result.error });
     }
+    await omitConversationMetadataKeys(conversationId, [
+      'checkout_pending_action',
+      'checkout_pending_question',
+    ]);
     return toJson({ success: true, fulfillmentType: type });
   },
 });

@@ -9,6 +9,7 @@ import {
 } from '../../prompts/intentDetection';
 import { ConversationIntent } from '../../types/conversationIntent';
 import { wantsReservationManagement } from '../reservations/reservationIntentText';
+import { wantsCheckout } from '../checkoutIntentText';
 
 const IntentDetectionRawSchema = z.object({
   intent: z.string(),
@@ -184,6 +185,10 @@ export const detectIntentWithConfidence = async (
       wantsReservationManagement(message)
     ) {
       finalIntent = ConversationIntent.RESERVATION;
+    }
+
+    if (wantsCheckout(message)) {
+      finalIntent = ConversationIntent.CHECKOUT;
     }
 
     // Normalización post-overrides (Opción D)
