@@ -39,6 +39,7 @@ import type { AgentState, AgentStateUpdate } from '../../state';
 import type { DetectionContext } from '../../../services/ai/detection.service';
 import { setDraftFulfillmentType, getDraftCheckoutState } from '../../../tools/checkout';
 import { validateCheckoutResponse } from '../../../services/checkout/checkoutValidation';
+import { applyCheckoutResponsePolicy } from '../../../services/checkout/checkoutResponsePolicy';
 
 // ---------------------------------------------------------------------------
 // Mensaje de botones de pago (sin ajustes de precio en v1)
@@ -260,6 +261,29 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
   }
   const signals = validation.signals;
 
+  // ── Política de respuesta: sin señal reconocida y sin orden creada, el
+  // texto libre del LLM no puede afirmar el cierre del pedido. No se analiza
+  // el contenido del texto: se sustituye por un mensaje de continuación
+  // determinístico basado en el estado real del draft.
+  const policyResult = applyCheckoutResponsePolicy(
+    { text, signals },
+    {
+      fulfillmentType: draftState.fulfillmentType,
+      paymentMethod: draftState.paymentMethod,
+      orderId: null,
+    }
+  );
+  if (!policyResult.responseAllowed) {
+    console.log(
+      JSON.stringify({
+        event: '[checkout-agent] response_policy_corrected',
+        corrections: policyResult.corrections,
+        conversationId,
+      })
+    );
+  }
+  const safeText = policyResult.text;
+
   // ── Señal: delegar turno al híbrido (consulta temporal) ───────────────────
   // La sesión de checkout NO se limpia: checkout_active y checkout_pending_action
   // siguen vivos y el próximo mensaje vuelve al agente de checkout por el routing
@@ -280,7 +304,7 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
     } catch (err) {
       console.error('[checkout-agent] error en delegate_to_main:', err);
     }
-    return mainResult ?? { content: text, isInteractive: false };
+    return mainResult ?? { content: safeText, isInteractive: false };
   }
 
   if (signals.handback) {
@@ -315,7 +339,7 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
 
     return (
       hybridResult ?? {
-        content: text,
+        content: safeText,
         isInteractive: false,
         skipBodyHumanization: true,
       }
@@ -349,7 +373,7 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
       message: fulfillmentMessage as WhatsAppInteractiveMessage,
     };
     return {
-      content: text,
+      content: safeText,
       isInteractive: false,
       followUps: [followUp],
       skipBodyHumanization: true,
@@ -367,14 +391,14 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
       message: paymentMessage as WhatsAppInteractiveMessage,
     };
     return {
-      content: text,
+      content: safeText,
       isInteractive: false,
       followUps: [followUp],
       skipBodyHumanization: true,
     };
   }
 
-  return { content: text, isInteractive: false, skipBodyHumanization: true };
+  return { content: safeText, isInteractive: false, skipBodyHumanization: true };
 };
 
 // ---------------------------------------------------------------------------
