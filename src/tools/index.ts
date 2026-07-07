@@ -999,6 +999,10 @@ export const addCartItemTool = new DynamicStructuredTool<
           currency: business?.currency_code ?? 'ARS',
         },
       });
+      // Inicialización (no renovación): fija el primer expires_at del draft
+      // recién creado. La renovación por actividad del usuario la maneja
+      // exclusivamente touchSession (src/services/sessionActivity.service.ts).
+      await refreshDraftOrderTimeout(draft.id);
     }
 
     // Verificar que el producto existe y está disponible
@@ -1066,8 +1070,8 @@ export const addCartItemTool = new DynamicStructuredTool<
       where: { id: draft.id },
       data: { total_amount: newTotal },
     });
-
-    await refreshDraftOrderTimeout(draft.id);
+    // Si el draft ya existía, touchSession ya renovó su expires_at al
+    // inicio del turno; si acaba de crearse, ya se inicializó más arriba.
 
     if (conversationId) {
       await clearLastOffer(conversationId);
@@ -1166,8 +1170,8 @@ export const removeCartItemTool = new DynamicStructuredTool<
       where: { id: draft.id },
       data: { total_amount: newTotal },
     });
-
-    await refreshDraftOrderTimeout(draft.id);
+    // Remover un ítem nunca crea un draft: touchSession ya renovó su
+    // expires_at al inicio del turno.
 
     // Snapshot actualizado
     const updatedItems = await prisma.draft_order_item.findMany({

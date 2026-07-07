@@ -42,7 +42,6 @@ import { handleDraftOrder, handleDraftOrderItem } from "./order.service";
 import { computeOrderPricing, formatItemPriceForChat } from "./pricing.service";
 import { resolveEffectivePrice } from "../helpers/menuItemPrice.helper";
 import { resolveDeliveryContext } from "./deliveryFee.service";
-import { refreshDraftOrderTimeout } from "./draftOrderTimeout.service";
 import {
   formatCartGuidanceBlock,
   syncOrderCoverageToConversationState,
@@ -406,12 +405,9 @@ export const handleAddItemFromWebhook = async (
   const conversation = await createOrGetOpenConversation(business.id, customer.id);
   await findOrCreateConversationState(conversation.id);
 
+  // handleDraftOrder ya fija expires_at si crea el draft; la renovación por
+  // actividad del usuario la maneja touchSession, no este handler.
   const draftOrder = await handleDraftOrder(business, customer);
-
-  if (draftOrder) {
-    console.log('debug: refreshing draftOrder timeout', draftOrder.id);
-    await refreshDraftOrderTimeout(draftOrder.id);
-  }
   const result = await buildAddItemMessage(
     business,
     conversation,
@@ -605,7 +601,8 @@ export const executeRemoveDraftOrderItemFromWebhook = async (
     "pendingItemId",
     "pendingItemName",
   ]);
-  await refreshDraftOrderTimeout(draftOrder.id);
+  // No crea drafts nuevos (requiere uno existente con ítems): la renovación
+  // del timeout ya la cubrió touchSession al inicio del turno.
 
   const coverage = await syncOrderCoverageToConversationState(
     conversation.id,

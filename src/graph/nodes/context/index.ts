@@ -17,12 +17,11 @@ import {
   createOrGetOpenConversation,
   findOrCreateConversationState,
   createConversationMessage,
-  updateConversationLastMessageAt,
-  clearConversationIdleTimestamps,
   findRecentMessagesForDetectionContext,
   findDefaultCustomerAddress,
   findCoverageZoneForAddress,
 } from '../../../repositories';
+import { touchSession } from '../../../services/sessionActivity.service';
 import { prisma } from '../../../lib/prisma';
 import { getBusinessConfig } from '../../../services/businessConfig.service';
 import { getBusinessOpenInfo } from '../../../services/businessHours.service';
@@ -157,8 +156,15 @@ export const persistUserMessageNode = async (
       message?.id
     );
 
-    await clearConversationIdleTimestamps(conversation.id);
-    await updateConversationLastMessageAt(conversation.id);
+    // Invariante: toda actividad iniciada por el usuario que llega al grafo
+    // ejecuta exactamente una llamada a touchSession() acá, antes de que
+    // cualquier agente o nodo de negocio (checkout/reserva/onboarding/NLP)
+    // procese el evento. No llamar refresh*Timeout directamente en otro lado.
+    await touchSession({
+      conversationId: conversation.id,
+      businessId: business.id,
+      customerPhone: customer.phone_number ?? ctx.to,
+    });
 
     console.log('[Persist] Message saved:', {
       conversationId: conversation.id,

@@ -1,6 +1,14 @@
 import { prisma } from "../lib/prisma";
 import { getBusinessConfig } from "./businessConfig.service";
 
+/**
+ * @internal Detalle de implementación de `touchSession`
+ * (`src/services/sessionActivity.service.ts`), que es el único punto
+ * autorizado para renovar el timeout de un draft por actividad del usuario.
+ * La única llamada directa legítima fuera de `touchSession` es al crear un
+ * `draft_order` nuevo, para fijar su primer `expires_at` (no es una
+ * renovación, es la inicialización del valor).
+ */
 export const refreshDraftOrderTimeout = async (
     draftOrderId: string
   ) => {

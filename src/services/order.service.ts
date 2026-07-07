@@ -9,6 +9,7 @@ import {
   createConversationMessage,
   updateConversationLastMessageAt
 } from '../repositories';
+import { refreshDraftOrderTimeout } from './draftOrderTimeout.service';
 import { buildOrderSearchListMessage } from '../whatsappBuilders'; // Tu ruta: root/whatsappBuilders
 import { normalizeMetadata } from './utils'; // Ajusta ruta si es diferente
 import type { WhatsAppWebhookPayload } from '../types/whatsapp'; // Ajusta ruta
@@ -161,6 +162,10 @@ export const handleDraftOrder = async (
         currency: business.currency_code ?? 'ARS'
       }
     });
+    // Inicialización (no renovación): fija el primer expires_at del draft
+    // recién creado. La renovación por actividad del usuario la maneja
+    // exclusivamente touchSession (src/services/sessionActivity.service.ts).
+    await refreshDraftOrderTimeout(draftOrder.id);
   }
   return draftOrder;
 }
