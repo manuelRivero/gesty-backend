@@ -19,8 +19,8 @@ import {
 } from '../../../repositories/conversationState.repository';
 import {
   EMPTY_CART_BOT_MESSAGE,
-  PAYMENT_METHOD_PROMPT_BOT_MESSAGE,
-  FULFILLMENT_TYPE_PROMPT_BOT_MESSAGE,
+  FULFILLMENT_TYPE_SHORT_QUESTION,
+  PAYMENT_METHOD_SHORT_QUESTION,
   ADDRESS_OUT_OF_COVERAGE_BOT_MESSAGE,
 } from '../../../services/productQuery/botMessages';
 import { AddressService } from '../../../services/address.service';
@@ -53,12 +53,12 @@ import { withOrphanPayloadAsText } from '../session/orphanPayload';
 // Mensaje de botones de pago (sin ajustes de precio en v1)
 // ---------------------------------------------------------------------------
 
-function buildPaymentButtonsMessage(): WhatsAppInteractiveMessage {
+function buildPaymentButtonsMessage(bodyText: string): WhatsAppInteractiveMessage {
   return {
     type: 'interactive',
     interactive: {
       type: 'button',
-      body: { text: PAYMENT_METHOD_PROMPT_BOT_MESSAGE },
+      body: { text: bodyText },
       action: {
         buttons: [
           { type: 'reply', reply: { id: 'PAY_ONLINE', title: '💳 Pago online' } },
@@ -249,10 +249,17 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
       ? (enrichedCtx.customer as { phone_number?: string }).phone_number ?? enrichedCtx.to
       : enrichedCtx.to;
   const draftState = await getDraftCheckoutState(businessId, customerPhone);
+  const customerName =
+    typeof enrichedCtx.customer === 'object' && enrichedCtx.customer
+      ? (enrichedCtx.customer as { name?: string | null }).name?.trim() || null
+      : null;
   const validation = validateCheckoutResponse(
     {
       fulfillmentType: draftState.fulfillmentType,
       paymentMethod: draftState.paymentMethod,
+      hasAddress: checkoutCtx.hasAddress,
+      isInCoverage: checkoutCtx.isInCoverage,
+      customerName,
       deliveryEnabled: checkoutCtx.deliveryEnabled,
       takeawayEnabled: checkoutCtx.takeawayEnabled,
     },
@@ -354,25 +361,40 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
       return baseResult;
     }
 
+    // Un solo mensaje interactivo (respuesta a la consulta + resume corto como
+    // body + botones), en vez de pegar el resume como texto plano y además
+    // reagregar los botones como followUp aparte — repetía la misma pregunta
+    // dos veces (visto en pruebas manuales contra el bot real).
+    if (typeof baseResult.content === 'string' && resume.checkoutPendingAction) {
+      const combinedBody = `${baseResult.content}\n\n${resume.text}`;
+      const interactiveMessage =
+        resume.checkoutPendingAction === 'fulfillment_type'
+          ? buildFulfillmentSelectionMessage(combinedBody)
+          : buildPaymentButtonsMessage(combinedBody);
+      return {
+        ...baseResult,
+        content: interactiveMessage,
+        isInteractive: true,
+      };
+    }
+
+    // `baseResult` ya es interactivo (ej. el híbrido mostró un menú/lista): no
+    // se le puede injertar otro set de botones al mismo body — se anexan los
+    // botones de fulfillment/pago como followUp aparte, como antes.
     const resumeFollowUps: HandlerFollowUp[] = [];
     if (resume.checkoutPendingAction === 'fulfillment_type') {
       resumeFollowUps.push({
         type: 'interactive',
-        message: buildFulfillmentSelectionMessage() as WhatsAppInteractiveMessage,
+        message: buildFulfillmentSelectionMessage(resume.text) as WhatsAppInteractiveMessage,
       });
     } else if (resume.checkoutPendingAction === 'payment_method') {
       resumeFollowUps.push({
         type: 'interactive',
-        message: buildPaymentButtonsMessage(),
+        message: buildPaymentButtonsMessage(resume.text),
       });
     }
-
     return {
       ...baseResult,
-      content:
-        typeof baseResult.content === 'string'
-          ? `${baseResult.content}\n\n${resume.text}`
-          : baseResult.content,
       followUps: [...(baseResult.followUps ?? []), ...resumeFollowUps],
     };
   }
@@ -432,20 +454,17 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
     }
   }
 
+  // Un solo mensaje interactivo (texto del LLM como body + botones), en vez de
+  // un mensaje de texto y un followUp aparte repitiendo la misma pregunta
+  // (visto en pruebas manuales contra el bot real: la Tarea 4.1 corrige esto).
   if (signals.presentFulfillmentOptions) {
     await patchConversationMetadata(conversationId, {
       checkout_pending_action: 'fulfillment_type',
-      checkout_pending_question: FULFILLMENT_TYPE_PROMPT_BOT_MESSAGE,
+      checkout_pending_question: FULFILLMENT_TYPE_SHORT_QUESTION,
     });
-    const fulfillmentMessage = buildFulfillmentSelectionMessage();
-    const followUp: HandlerFollowUp = {
-      type: 'interactive',
-      message: fulfillmentMessage as WhatsAppInteractiveMessage,
-    };
     return {
-      content: safeText,
-      isInteractive: false,
-      followUps: [followUp],
+      content: buildFulfillmentSelectionMessage(safeText),
+      isInteractive: true,
       skipBodyHumanization: true,
     };
   }
@@ -453,17 +472,11 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
   if (signals.presentPaymentOptions) {
     await patchConversationMetadata(conversationId, {
       checkout_pending_action: 'payment_method',
-      checkout_pending_question: PAYMENT_METHOD_PROMPT_BOT_MESSAGE,
+      checkout_pending_question: PAYMENT_METHOD_SHORT_QUESTION,
     });
-    const paymentMessage = buildPaymentButtonsMessage();
-    const followUp: HandlerFollowUp = {
-      type: 'interactive',
-      message: paymentMessage as WhatsAppInteractiveMessage,
-    };
     return {
-      content: safeText,
-      isInteractive: false,
-      followUps: [followUp],
+      content: buildPaymentButtonsMessage(safeText),
+      isInteractive: true,
       skipBodyHumanization: true,
     };
   }

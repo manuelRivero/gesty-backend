@@ -59,6 +59,18 @@ export const PAYMENT_METHOD_PROMPT_BOT_MESSAGE = formatBotUserMessage(
 export const FULFILLMENT_TYPE_PROMPT_BOT_MESSAGE =
   '🤖\n\n*¿Cómo querés recibir tu pedido?* 🛍️\n\nElegí una opción para continuar:';
 
+/**
+ * Pregunta corta (sin emoji/formato de mensaje completo), para usar como
+ * `checkout_pending_question` en metadata y en el resume tras una
+ * interrupción (H-03). Guardar ahí la constante formateada de arriba
+ * producía un texto pegado y duplicado: "Volviendo a tu pedido: 🤖\n\n*¿Cómo
+ * querés recibir tu pedido?*..." (ver conversación de la Tarea 4.1).
+ */
+export const FULFILLMENT_TYPE_SHORT_QUESTION = '¿Delivery o retiro en el local?';
+
+/** Ver `FULFILLMENT_TYPE_SHORT_QUESTION`. */
+export const PAYMENT_METHOD_SHORT_QUESTION = '¿Efectivo o pago online?';
+
 export const ADDRESS_SAVED_PAYMENT_PROMPT_BOT_MESSAGE = formatBotUserMessage(
   'Dirección guardada',
   '📍',

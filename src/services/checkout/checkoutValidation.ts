@@ -15,17 +15,21 @@
  */
 
 import type { CheckoutAgentSignals } from '../../agents/checkoutAgent';
+import { nextCheckoutStep } from './nextCheckoutStep';
 
 export interface CheckoutValidationState {
   fulfillmentType: 'DELIVERY' | 'TAKE_AWAY' | null;
   paymentMethod: 'cash' | 'online' | null;
+  hasAddress: boolean;
+  isInCoverage: boolean;
+  customerName: string | null;
   deliveryEnabled: boolean;
   takeawayEnabled: boolean;
 }
 
 export type CheckoutValidationCorrection =
   | 'conflicting_fulfillment_and_payment_signals'
-  | 'payment_blocked_missing_fulfillment';
+  | 'payment_blocked_missing_prerequisite';
 
 export interface CheckoutValidationResult {
   /** Señales seguras para que el nodo actúe sobre ellas. */
@@ -66,14 +70,38 @@ export const validateCheckoutResponse = (
     signals.paymentMethod = null;
   }
 
-  // Regla 2/3: nunca permitir avanzar a payment (cart → payment) sin haber
-  // completado fulfillment. Si falta, se corrige forzando el paso previo.
+  // Regla 2/3: nunca permitir avanzar a payment (cart → fulfillment → dirección
+  // → nombre → payment) saltando algún paso previo. `nextCheckoutStep` es la
+  // única fuente de verdad de cuál es el paso real (Tarea 4.1/H-10) — se le
+  // pasa `paymentMethod: null` a propósito para preguntar "¿qué falta ANTES
+  // de payment?" sin que el propio paymentMethod once-resolved oculte pasos
+  // previos incompletos.
   const stillWantsPayment = signals.presentPaymentOptions || signals.paymentMethod !== null;
-  if (stillWantsPayment && !currentState.fulfillmentType) {
-    corrections.push('payment_blocked_missing_fulfillment');
-    signals.presentPaymentOptions = false;
-    signals.paymentMethod = null;
-    signals.presentFulfillmentOptions = true;
+  if (stillWantsPayment) {
+    const step = nextCheckoutStep(
+      {
+        fulfillmentType: currentState.fulfillmentType,
+        hasAddress: currentState.hasAddress,
+        isInCoverage: currentState.isInCoverage,
+        customerName: currentState.customerName,
+        paymentMethod: null,
+      },
+      {
+        deliveryEnabled: currentState.deliveryEnabled,
+        takeawayEnabled: currentState.takeawayEnabled,
+      }
+    );
+    if (step !== 'payment') {
+      corrections.push('payment_blocked_missing_prerequisite');
+      signals.presentPaymentOptions = false;
+      signals.paymentMethod = null;
+      // Solo fulfillment tiene una señal-UI propia para forzar; dirección y
+      // nombre se piden en lenguaje natural (sin botones), el agente los
+      // pide solo en el próximo turno según su propio prompt.
+      if (step === 'fulfillment') {
+        signals.presentFulfillmentOptions = true;
+      }
+    }
   }
 
   return {

@@ -23,14 +23,21 @@ export const CART_FULFILLMENT_INTENTS = new Set<string>([
   ConversationIntent.VIEW_CART_FOR_EDITION,
 ]);
 
-export function buildFulfillmentSelectionMessage(): WhatsAppInteractiveMessage {
+/**
+ * `bodyText` opcional (Tarea 4.1): permite usar el texto libre del LLM (ya
+ * validado por `applyCheckoutResponsePolicy`) como cuerpo del mensaje de
+ * botones, para mandar un solo mensaje interactivo en vez de un mensaje de
+ * texto + un followUp con la misma pregunta repetida. Sin `bodyText` (uso
+ * legacy del gate post-carrito) mantiene la constante fija.
+ */
+export function buildFulfillmentSelectionMessage(bodyText?: string): WhatsAppInteractiveMessage {
   return {
     type: 'interactive',
     interactive: {
       type: 'button',
       header: { type: 'text', text: '' },
       body: {
-        text: FULFILLMENT_TYPE_PROMPT_BOT_MESSAGE
+        text: bodyText ?? FULFILLMENT_TYPE_PROMPT_BOT_MESSAGE
       },
       footer: { text: 'Seleccioná una opción' },
       action: {
