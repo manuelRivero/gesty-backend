@@ -102,6 +102,9 @@ export const routeAfterDetectionContext = (
 ): NodeName | typeof END => {
   if (state.earlyExit) return END;
   switch (state.contextRoute) {
+    // @deprecated NODE.RESERVATION es el wizard legacy de reservas. Solo se
+    // alcanza para sesiones con `reservation.step` ya en curso o si
+    // `RESERVATION_AGENT_ENABLED` está apagado. Ver `reservation.service.ts`.
     case 'reservation_wizard':
       return NODE.RESERVATION;
     case 'reservation_agent':
@@ -181,6 +184,8 @@ export const routeAfterNameCollection = (
 };
 
 /**
+ * @deprecated Router del wizard LEGACY de reservas. Ver `reservation.service.ts`.
+ *
  * Tras `reservationWizard`:
  * - DELEGATE: el wizard pausó la reserva → encadenar INTERACTIVE/NLP en el mismo invoke.
  * - FULFILL_STEP: hay handlerResult → mismo comportamiento que routeAfterHandlerOrSubflow.

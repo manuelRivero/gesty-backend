@@ -1,3 +1,5 @@
+/** @deprecated Prompt del clasificador de turnos del wizard legacy de reservas. Ver `reservation.service.ts`. */
+
 import type { ReservationStep } from '../services/reservations/types';
 
 export type ReservationTurnInput = {

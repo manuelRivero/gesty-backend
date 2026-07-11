@@ -30,6 +30,7 @@ export const nameCollectionNode = async (
   const meta = normalizeMetadata(state.workingConversationState?.metadata);
   if (meta.reservation?.step || meta.reservation?.paused) {
     // El nombre en el flujo de reserva lo gestiona el wizard al final (ASK_NAME_FINAL).
+    // `meta.reservation` es del wizard @deprecated (ver reservation.service.ts).
     return {};
   }
 

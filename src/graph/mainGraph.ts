@@ -74,6 +74,7 @@ const builder = new StateGraph(AgentStateAnnotation)
   .addNode(NODE.SUBSCRIPTION_GATE, subscriptionAccessGateNode)
   .addNode(NODE.MESSAGE_TYPE_GUARD, messageTypeGuardNode)
   .addNode(NODE.BUILD_DETECTION_CTX, buildDetectionContextNode)
+  // @deprecated NODE.RESERVATION = wizard legacy. Ver reservationWizardNode.
   .addNode(NODE.RESERVATION, reservationWizardNode)
   .addNode(NODE.ONBOARDING_AGENT, onboardingAgentNode)
   .addNode(NODE.ONBOARDING_BY_STATE, onboardingByStateNode)

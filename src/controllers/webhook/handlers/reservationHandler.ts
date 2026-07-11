@@ -3,6 +3,14 @@ import { interactiveResponse, noResponse, textResponse } from '../utils';
 import { ConversationIntent } from '../../../types/conversationIntent';
 import { handleReservationIntent } from '../../../services/reservations';
 
+/**
+ * @deprecated Handler del dispatcher clásico para el wizard legacy de
+ * reservas. Con `RESERVATION_AGENT_ENABLED=true`, el intent `RESERVATION`
+ * nunca llega hasta acá para conversaciones nuevas (se intercepta antes en
+ * `dispatch/index.ts`/`context/index.ts` y arranca el agente). Este handler
+ * solo se ejecuta si el flag está apagado (fallback/kill-switch) o para
+ * completar una sesión de wizard ya en curso. Ver `reservation.service.ts`.
+ */
 export class ReservationHandler implements IntentHandler {
   readonly command = ConversationIntent.RESERVATION;
 

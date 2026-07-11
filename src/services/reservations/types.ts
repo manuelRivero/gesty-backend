@@ -1,3 +1,9 @@
+/**
+ * @deprecated Tipos del wizard legacy de reservas por steps. Reemplazado por
+ * `reservation_draft` (agente, ver `src/services/productQuery/types.ts` y
+ * `src/agents/reservationAgent.ts`). Solo vive para sesiones ya en curso o
+ * como fallback si `RESERVATION_AGENT_ENABLED` se apaga.
+ */
 export type ReservationStep =
   | 'ASK_NAME'        // @deprecated — solo para shim de migración (estados viejos en DB)
   | 'ASK_DATE'
@@ -7,6 +13,7 @@ export type ReservationStep =
   | 'ASK_NAME_FINAL'  // nombre al final si !customer.name
   | 'CONFIRM';
 
+/** @deprecated Ver `ReservationStep`. */
 export type ReservationState = {
   step: ReservationStep;
   date?: string;
