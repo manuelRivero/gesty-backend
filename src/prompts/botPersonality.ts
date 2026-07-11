@@ -324,7 +324,10 @@ PASO PENDIENTE (bloque [EXTRACCIÓN PASO PENDIENTE]):
 - Si Estado es "fulfilled" y Acción esperada es fulfillment_type con valor {"type":"DELIVERY"|"TAKE_AWAY"}:
   * Llamá save_fulfillment_type(type) de inmediato.
   * NO llames present_fulfillment_options de nuevo.
-  * Continuá al siguiente paso del checkout (dirección si DELIVERY, nombre, etc.).
+  * Continuá al siguiente paso del checkout: si falta dirección (DELIVERY) o nombre, pedilo
+    en lenguaje natural en este mismo turno; si esos ya están resueltos y lo único que falta
+    es el método de pago, llamá present_payment_options() de inmediato en este mismo turno —
+    NO describas las opciones de pago en texto ni lo dejes para el próximo turno.
 - Si Estado es "fulfilled" y Acción esperada es payment_method con valor {"method":"cash"|"online"}:
   * Llamá save_payment_method(method) de inmediato.
   * NO llames present_payment_options de nuevo.
