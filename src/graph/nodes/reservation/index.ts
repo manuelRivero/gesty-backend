@@ -39,7 +39,11 @@ import {
   formatDbTimeReservation,
 } from '../../../services/reservations/utils';
 import { buildListMessageFromButtons } from '../../../whatsappBuilders';
-import { runHybridReactAgent } from '../../../agents/reactAgent';
+import { delegateToMainWithDetection } from '../session/delegateToMain';
+import { buildResumeFollowUp } from '../session/buildResumeFollowUp';
+import { buildDiscardedReentryMessage } from '../session/discardedSignalMessage';
+import { withOrphanPayloadAsText } from '../session/orphanPayload';
+import { findOrCreateConversationState } from '../../../repositories';
 import {
   runReservationAgent,
   type ReservationAgentContext,
@@ -337,10 +341,23 @@ export const reservationAgentNode = async (
     environmentNames: environments.map((e) => ({ id: e.id, name: e.name })),
   };
 
+  // Payload interactivo huérfano (H-09): con `reservation_agent_active` este
+  // nodo captura CUALQUIER interactivo, no solo `RESERVATION_*` — un botón/lista
+  // vieja (ej. `ADD_ITEM:x` de un CTA anterior) llegaría con `userMsg=''` y el
+  // agente respondería a ciegas, perdiendo la acción tocada.
+  const KNOWN_RESERVATION_PAYLOADS = new Set(['RESERVATION_CONFIRM', 'RESERVATION_CANCEL', 'RESERVATION_RESET', 'RESERVATION_ENV_NONE']);
+  const isKnownReservationPayload =
+    Boolean(payloadId) &&
+    (KNOWN_RESERVATION_PAYLOADS.has(payloadId as string) ||
+      payloadId!.startsWith('RESERVATION_SLOT:') ||
+      payloadId!.startsWith('RESERVATION_ENV:'));
+  const agentCtx =
+    payloadId && !isKnownReservationPayload ? withOrphanPayloadAsText(enrichedBase) : enrichedBase;
+
   // ── Invocar el agente de reservas ─────────────────────────────────────────
   let agentResult: Awaited<ReturnType<typeof runReservationAgent>>;
   try {
-    agentResult = await runReservationAgent(enrichedBase, reservationCtx);
+    agentResult = await runReservationAgent(agentCtx, reservationCtx);
   } catch (err) {
     console.error('[reservation-agent] error invocando el agente:', err);
     agentResult = null;
@@ -368,14 +385,54 @@ export const reservationAgentNode = async (
     );
     // Llamar al agente principal inline; reservation_agent_active NO se limpia
     let mainResult: HandlerResult | null = null;
+    let discardedReentrySignal = false;
     try {
-      const hybrid = await runHybridReactAgent(enrichedBase);
-      mainResult = hybrid?.kind === 'response' ? hybrid.handlerResult : null;
+      const delegated = await delegateToMainWithDetection({
+        enrichedCtx: enrichedBase,
+        userMessage: ctx.message?.text?.body?.trim() ?? '',
+        detectionContext: state.detectionContext,
+      });
+      mainResult = delegated.handlerResult;
+      discardedReentrySignal = delegated.discardedReentrySignal;
     } catch (err) {
       console.error('[reservation-agent] error en delegate_to_main:', err);
     }
+
+    if (discardedReentrySignal) {
+      console.log(
+        JSON.stringify({
+          event: '[reservation-agent] delegation_signal_discarded',
+          conversationId,
+        })
+      );
+      return {
+        handlerResult: { content: buildDiscardedReentryMessage('reservation'), isInteractive: false },
+        dataCollectionDelegated: true,
+      };
+    }
+
+    const baseResult = mainResult ?? { content: text, isInteractive: false };
+
+    // Anexar (no reemplazar) la pregunta del paso pendiente de la reserva,
+    // si la hay, para que el usuario no tenga que retomarla por su cuenta (H-03/H-05).
+    const freshState = await findOrCreateConversationState(conversationId);
+    const freshMeta = normalizeMetadata(freshState.metadata);
+    const resume = buildResumeFollowUp({
+      kind: 'reservation',
+      draft: freshMeta.reservation_draft,
+      hasEnvironments: environments.length > 0,
+    });
+
     return {
-      handlerResult: mainResult ?? { content: text, isInteractive: false },
+      handlerResult: resume.text
+        ? {
+            ...baseResult,
+            content:
+              typeof baseResult.content === 'string'
+                ? `${baseResult.content}\n\n${resume.text}`
+                : baseResult.content,
+          }
+        : baseResult,
       dataCollectionDelegated: true,
     };
   }

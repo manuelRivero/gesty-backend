@@ -1,0 +1,86 @@
+/**
+ * Helper puro compartido por los nodos de sesión (checkout, reservas,
+ * onboarding) para re-formular la pregunta suspendida tras un turno
+ * delegado (`delegate_to_main`, H-03).
+ *
+ * La respuesta del híbrido a una consulta lateral ("¿hasta qué hora
+ * abren?") reemplazaba antes por completo el turno: el usuario recibía
+ * la respuesta lateral y debía adivinar que el pedido/reserva/dirección
+ * seguía en curso. Este helper deriva, a partir del estado real (no del
+ * texto del LLM), el follow-up a anexar después de la respuesta lateral.
+ */
+
+export type CheckoutPendingAction = 'fulfillment_type' | 'payment_method';
+
+export interface ReservationDraft {
+  date?: string;
+  slotId?: string;
+  time?: string;
+  endTime?: string;
+  partySize?: number;
+  environmentId?: string | null;
+}
+
+export type ResumeFollowUpInput =
+  | {
+      kind: 'checkout';
+      pendingAction: CheckoutPendingAction | null | undefined;
+      pendingQuestion: string | null | undefined;
+    }
+  | {
+      kind: 'reservation';
+      draft: ReservationDraft | undefined;
+      hasEnvironments: boolean;
+    }
+  | { kind: 'onboarding' };
+
+export interface ResumeFollowUp {
+  /** `null` cuando no hay nada pendiente que retomar (no anexar nada al turno). */
+  text: string | null;
+  /** Solo para checkout: qué botones re-adjuntar junto al texto. */
+  checkoutPendingAction?: CheckoutPendingAction;
+}
+
+const RESUME_PREFIX = {
+  checkout: 'Volviendo a tu pedido:',
+  reservation: 'Seguimos con tu reserva:',
+  onboarding: 'Seguimos con tu dirección:',
+} as const;
+
+function nextReservationDraftQuestion(
+  draft: ReservationDraft | undefined,
+  hasEnvironments: boolean
+): string | null {
+  // Mismo orden de recolección que el system prompt del agente de reservas
+  // (buildReservationAgentSystemPrompt): fecha → horario → personas → ambiente.
+  if (!draft?.date) return '¿para qué día querés reservar?';
+  if (!draft?.slotId) return '¿en qué horario?';
+  if (draft?.partySize == null) return '¿para cuántas personas?';
+  if (hasEnvironments && draft?.environmentId === undefined) {
+    return '¿preferís algún ambiente en particular?';
+  }
+  return null;
+}
+
+export function buildResumeFollowUp(input: ResumeFollowUpInput): ResumeFollowUp {
+  switch (input.kind) {
+    case 'checkout': {
+      if (!input.pendingAction || !input.pendingQuestion) {
+        return { text: null };
+      }
+      return {
+        text: `${RESUME_PREFIX.checkout} ${input.pendingQuestion}`,
+        checkoutPendingAction: input.pendingAction,
+      };
+    }
+    case 'reservation': {
+      const question = nextReservationDraftQuestion(input.draft, input.hasEnvironments);
+      if (!question) return { text: null };
+      return { text: `${RESUME_PREFIX.reservation} ${question}` };
+    }
+    case 'onboarding':
+      return {
+        text: `${RESUME_PREFIX.onboarding} decime tu dirección o compartí tu ubicación 📍`,
+      };
+  }
+}

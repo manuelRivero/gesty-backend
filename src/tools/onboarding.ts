@@ -11,8 +11,12 @@
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { getReactContext } from './_context';
-import { omitConversationMetadataKeys } from '../repositories/conversationState.repository';
+import {
+  omitConversationMetadataKeys,
+  patchConversationMetadata,
+} from '../repositories/conversationState.repository';
 import { AddressService } from '../services/address.service';
+import { prisma } from '../lib/prisma';
 import type { RunnableConfig } from '@langchain/core/runnables';
 
 const toJson = (data: unknown): string => JSON.stringify(data);
@@ -115,6 +119,14 @@ const finishOnboardingSchema = z.object({
       'Motivo del cierre de sesión. Ej: "el cliente prefiere solo take-away", ' +
         '"el cliente decidió no dar su dirección de entrega".'
     ),
+  outcome: z
+    .enum(['address_refused', 'not_needed'])
+    .describe(
+      '"address_refused": el cliente se negó explícitamente a dar su dirección o quiere ' +
+        'volver al menú/cambiar de tema sin completarla (incrementa el contador de rechazos, ' +
+        'igual que mark_address_refused en checkout, para no volver a insistir en sesiones futuras). ' +
+        '"not_needed": la dirección dejó de ser necesaria por otro motivo (ej. el cliente eligió take-away).'
+    ),
 });
 type FinishOnboardingInput = z.infer<typeof finishOnboardingSchema>;
 
@@ -124,12 +136,32 @@ export const finishOnboardingTool = new DynamicStructuredTool<
 >({
   name: 'finish_onboarding',
   description:
-    'Cierra la sesión de onboarding de forma permanente. ' +
-    'Usá esta tool cuando el cliente decide no dar su dirección o prefiere exclusivamente take-away. ' +
-    'Para preguntas off-topic temporales usá delegate_to_main en cambio.',
+    'Cierra la sesión de onboarding de forma permanente (H-06/H-08: es la ÚNICA salida ' +
+    'permanente del agente, aparte del éxito al confirmar la dirección). ' +
+    'Usá esta tool cuando el cliente se niega a dar su dirección, quiere ver el menú, ' +
+    'cambia de tema de forma definitiva, o prefiere exclusivamente take-away. ' +
+    'Para preguntas off-topic temporales (el cliente sigue interesado en dar su dirección ' +
+    'después) usá delegate_to_main en cambio.',
   schema: finishOnboardingSchema,
-  func: async ({ reason }: FinishOnboardingInput, _runManager, config?: RunnableConfig) => {
+  func: async (
+    { reason, outcome }: FinishOnboardingInput,
+    _runManager,
+    config?: RunnableConfig
+  ) => {
     const { conversationId } = getReactContext(config);
+
+    if (outcome === 'address_refused') {
+      const cs = await prisma.conversation_state.findFirst({
+        where: { conversation_id: conversationId },
+        select: { metadata: true },
+      });
+      const current =
+        cs && typeof cs.metadata === 'object' && cs.metadata !== null
+          ? ((cs.metadata as Record<string, unknown>).address_refusal_count as number | undefined) ?? 0
+          : 0;
+      await patchConversationMetadata(conversationId, { address_refusal_count: current + 1 });
+    }
+
     await omitConversationMetadataKeys(conversationId, [
       'onboarding_agent_active',
       'onboarding_step',
@@ -140,7 +172,7 @@ export const finishOnboardingTool = new DynamicStructuredTool<
       'awaiting_address',
       'pending_address_action',
     ]);
-    return toJson({ signal: 'finish_onboarding', reason });
+    return toJson({ signal: 'finish_onboarding', reason, outcome });
   },
 });
 

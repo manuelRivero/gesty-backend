@@ -21,7 +21,9 @@ import {
   EMPTY_CART_BOT_MESSAGE,
   PAYMENT_METHOD_PROMPT_BOT_MESSAGE,
   FULFILLMENT_TYPE_PROMPT_BOT_MESSAGE,
+  ADDRESS_OUT_OF_COVERAGE_BOT_MESSAGE,
 } from '../../../services/productQuery/botMessages';
+import { AddressService } from '../../../services/address.service';
 import { textResponse } from '../../../controllers/webhook/utils';
 import { buildFulfillmentSelectionMessage } from '../gates/fulfillmentSelection';
 import { PayCashHandler } from '../../../controllers/webhook/handlers/payCashHandler';
@@ -29,6 +31,7 @@ import { PayOnlineHandler } from '../../../controllers/webhook/handlers/payOnlin
 import { runCheckoutAgent } from '../../../agents/checkoutAgent';
 import type { CheckoutAgentContext } from '../../../agents/checkoutAgent';
 import { runHybridReactAgent } from '../../../agents/reactAgent';
+import { delegateToMainWithDetection } from '../session/delegateToMain';
 import { detectIntentWithConfidence } from '../../../services/ai/detection.service';
 import { findOrCreateConversationState } from '../../../repositories';
 import { isHybridAgentMode } from '../../../config/env';
@@ -40,6 +43,11 @@ import type { DetectionContext } from '../../../services/ai/detection.service';
 import { setDraftFulfillmentType, getDraftCheckoutState } from '../../../tools/checkout';
 import { validateCheckoutResponse } from '../../../services/checkout/checkoutValidation';
 import { applyCheckoutResponsePolicy } from '../../../services/checkout/checkoutResponsePolicy';
+import { effectivePending } from '../../../services/checkout/effectivePending';
+import { normalizeMetadata } from '../../../services/productQuery/utils';
+import { buildResumeFollowUp } from '../session/buildResumeFollowUp';
+import { buildDiscardedReentryMessage } from '../session/discardedSignalMessage';
+import { withOrphanPayloadAsText } from '../session/orphanPayload';
 
 // ---------------------------------------------------------------------------
 // Mensaje de botones de pago (sin ajustes de precio en v1)
@@ -297,14 +305,76 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
       })
     );
     let mainResult: HandlerResult | null = null;
+    let discardedReentrySignal = false;
     try {
-      const hybrid = await runHybridReactAgent(enrichedCtx);
       // Invariante: el híbrido no inicia checkout desde una sesión activa.
-      mainResult = hybrid?.kind === 'response' ? hybrid.handlerResult : null;
+      const delegated = await delegateToMainWithDetection({
+        enrichedCtx,
+        userMessage: handbackState?.webhookContext?.message?.text?.body?.trim() ?? '',
+        detectionContext: handbackState?.detectionContext,
+      });
+      mainResult = delegated.handlerResult;
+      discardedReentrySignal = delegated.discardedReentrySignal;
     } catch (err) {
       console.error('[checkout-agent] error en delegate_to_main:', err);
     }
-    return mainResult ?? { content: safeText, isInteractive: false };
+
+    if (discardedReentrySignal) {
+      // El híbrido quiso re-entrar al checkout (ej. "sumala y cobrame") en vez de
+      // responder texto — anti-loop correcto, pero hay que explicarlo (H-07),
+      // no responder con el texto residual del agente de sesión.
+      console.log(
+        JSON.stringify({
+          event: '[checkout-agent] delegation_signal_discarded',
+          conversationId,
+        })
+      );
+      return { content: buildDiscardedReentryMessage('checkout'), isInteractive: false };
+    }
+
+    const baseResult = mainResult ?? { content: safeText, isInteractive: false };
+
+    // Anexar (no reemplazar) la pregunta suspendida del checkout, si la hay,
+    // para que el usuario no tenga que adivinar que el pedido sigue en curso (H-03).
+    const freshState = await findOrCreateConversationState(conversationId);
+    const freshMeta = normalizeMetadata(freshState.metadata);
+    const pending = effectivePending({
+      metadata: freshMeta,
+      snapshot: {
+        fulfillmentType: draftState.fulfillmentType,
+        paymentMethod: draftState.paymentMethod,
+      },
+    });
+    const resume = buildResumeFollowUp({
+      kind: 'checkout',
+      pendingAction: pending.action,
+      pendingQuestion: pending.question,
+    });
+    if (!resume.text) {
+      return baseResult;
+    }
+
+    const resumeFollowUps: HandlerFollowUp[] = [];
+    if (resume.checkoutPendingAction === 'fulfillment_type') {
+      resumeFollowUps.push({
+        type: 'interactive',
+        message: buildFulfillmentSelectionMessage() as WhatsAppInteractiveMessage,
+      });
+    } else if (resume.checkoutPendingAction === 'payment_method') {
+      resumeFollowUps.push({
+        type: 'interactive',
+        message: buildPaymentButtonsMessage(),
+      });
+    }
+
+    return {
+      ...baseResult,
+      content:
+        typeof baseResult.content === 'string'
+          ? `${baseResult.content}\n\n${resume.text}`
+          : baseResult.content,
+      followUps: [...(baseResult.followUps ?? []), ...resumeFollowUps],
+    };
   }
 
   if (signals.handback) {
@@ -478,6 +548,35 @@ export const checkoutAgentNode = async (
     }
   }
 
+  // ── Mensaje tipo `location` — procesado determinístico (H-08) ────────────
+  // El agente de checkout pide la dirección de entrega y el cliente responde
+  // con la forma más natural de compartirla en WhatsApp: la ubicación. Se
+  // guarda directo (no vía staging de onboarding_step, que secuestraría el
+  // routing del turno siguiente hacia onboarding_by_state — ver
+  // `resolveAndSaveFromLocation`).
+  if (ctx.message?.type === 'location' && ctx.message.location) {
+    const { lat, lng } = ctx.message.location as { lat: number; lng: number };
+    const result = await new AddressService().resolveAndSaveFromLocation({
+      businessId: business.id,
+      customerId: customer.id,
+      lat,
+      lng,
+    });
+    if (result.status === 'out_of_coverage') {
+      return {
+        handlerResult: textResponse(ADDRESS_OUT_OF_COVERAGE_BOT_MESSAGE) ?? undefined,
+        dataCollectionDelegated: true,
+      };
+    }
+    return {
+      handlerResult:
+        textResponse(
+          `📍 Guardé tu dirección: ${result.formattedAddress}\n\nSeguimos con tu pedido.`
+        ) ?? undefined,
+      dataCollectionDelegated: true,
+    };
+  }
+
   const checkoutCtx: CheckoutAgentContext = {
     hasAddress: state.hasAddress,
     isInCoverage: state.isInCoverage,
@@ -492,8 +591,18 @@ export const checkoutAgentNode = async (
     takeawayEnabled,
   });
 
+  // Payload interactivo huérfano (H-09): un botón/lista de un CTA viejo que
+  // este nodo no maneja explícitamente (ni PAY_*/CANCEL_CHECKOUT/FULFILLMENT_*/
+  // CHECKOUT). Sin esto, el agente recibía el turno con `userMsg=''` y
+  // respondía a ciegas, perdiendo la acción que el cliente tocó.
+  const KNOWN_CHECKOUT_PAYLOADS = new Set(['FULFILLMENT_DELIVERY', 'FULFILLMENT_TAKE_AWAY', 'CHECKOUT']);
+  const agentCtx =
+    payloadId && !KNOWN_CHECKOUT_PAYLOADS.has(payloadId)
+      ? withOrphanPayloadAsText(enrichedBase)
+      : enrichedBase;
+
   const handlerResult = await resolveCheckoutAgentHandlerResult({
-    enrichedCtx: enrichedBase,
+    enrichedCtx: agentCtx,
     checkoutCtx,
     conversationId,
     handbackState: state,

@@ -152,6 +152,46 @@ export class AddressService {
     return { status: 'saved', formattedAddress, zoneId: zone.id };
   }
 
+  /**
+   * Versión directa para el checkout (H-08): geocodifica en reversa una
+   * ubicación de WhatsApp (`message.type === 'location'`) y persiste la
+   * dirección en una sola llamada, igual que `resolveAndSave` para texto.
+   * A propósito NO usa `onboarding_step`/`temp_*` (el flujo de staging del
+   * wizard de onboarding): setearlos secuestraría el routing del turno
+   * siguiente hacia `onboarding_by_state`, sacando al cliente de su sesión
+   * de checkout activa (ver predicados de ruteo en `context/index.ts`).
+   */
+  async resolveAndSaveFromLocation(params: {
+    businessId: string;
+    customerId: string;
+    lat: number;
+    lng: number;
+  }): Promise<
+    | { status: 'saved'; formattedAddress: string; zoneId: string }
+    | { status: 'out_of_coverage' }
+  > {
+    const formattedAddress = await this.reverseGeocode(params.lat, params.lng);
+
+    const zone = await this.getCoverage(params.lat, params.lng, params.businessId);
+    if (!zone) return { status: 'out_of_coverage' };
+
+    await prisma.customer_address.updateMany({
+      where: { customer_id: params.customerId },
+      data: { is_default: false },
+    });
+
+    await prisma.customer_address.create({
+      data: {
+        customer_id: params.customerId,
+        street_address: formattedAddress,
+        is_default: true,
+        delivery_zone_id: zone.id,
+      },
+    });
+
+    return { status: 'saved', formattedAddress, zoneId: zone.id };
+  }
+
   async processWithAddressText(
     ctx: EnrichedContext,
     addressText: string
