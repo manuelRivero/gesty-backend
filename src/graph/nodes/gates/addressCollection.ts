@@ -15,6 +15,13 @@ import type { AgentState, AgentStateUpdate } from '../../state';
  * Intents que requieren dirección para continuar.
  * Agregar producto al carrito, ver carrito o finalizar pedido sin dirección → bloqueante.
  */
+/**
+ * Ventana de re-sugerencia del soft-ask (H-06): pasado este tiempo desde la
+ * última sugerencia, se puede volver a mostrar. No es una capturante — nunca
+ * rutea, solo evita repetir el mensaje en cada turno.
+ */
+export const ADDRESS_SOFT_ASK_TTL_MS = 60 * 60 * 1000;
+
 export const CART_BLOCKING_INTENTS = new Set<string>([
   ConversationIntent.ADD_ITEM,
   ConversationIntent.ADD_PRODUCT,
@@ -85,9 +92,15 @@ export const addressCollectionNode = async (
     return { handlerResult: { content, isInteractive: false } };
   }
 
-  // No bloqueante: solo cuando no hay dirección (fuera de cobertura se informa al agregar al carrito)
-  if (needsAddress && !meta.awaiting_address && state.handlerResult) {
-    await patchConversationMetadata(conversation.id, { awaiting_address: true });
+  // No bloqueante: solo cuando no hay dirección (fuera de cobertura se informa al agregar al carrito).
+  // NUNCA setea `awaiting_address` (H-06): es una sugerencia informativa, no una
+  // captura activa — no debe rutear los próximos mensajes de texto hacia onboarding.
+  const softAskedAt = meta.address_soft_asked ? new Date(meta.address_soft_asked).getTime() : null;
+  const softAskExpired = softAskedAt === null || Date.now() - softAskedAt >= ADDRESS_SOFT_ASK_TTL_MS;
+  if (needsAddress && !meta.awaiting_address && softAskExpired && state.handlerResult) {
+    await patchConversationMetadata(conversation.id, {
+      address_soft_asked: new Date().toISOString(),
+    });
     const ask: HandlerFollowUp = {
       type: 'text',
       message: ADDRESS_SOFT_ASK_BOT_MESSAGE,

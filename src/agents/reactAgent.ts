@@ -561,6 +561,23 @@ export const runHybridReactAgent = async (
   }
 
   // --- CTA pipeline ---
+  // Sin `detection` (turno delegado desde una sesión sin re-detección previa)
+  // no hay intent/confidence confiables para planear un CTA: se degrada a
+  // texto plano en vez de crashear (H-01).
+  if (!ctx.detection) {
+    console.log(
+      JSON.stringify({ event: '[hybrid-cta] cta_skipped', reason: 'no_detection', conversationId: ctx.conversationId })
+    );
+    return {
+      kind: 'response',
+      handlerResult: markHybridResult({
+        content: formattedText,
+        isInteractive: false,
+        ...(productFollowUp ? { followUps: [productFollowUp] } : {}),
+      }),
+    };
+  }
+
   const intent = ctx.detection.intent as string;
   const confidence = ctx.detection.confidence;
   const detectedProductName = ctx.detection.detectedProductName;

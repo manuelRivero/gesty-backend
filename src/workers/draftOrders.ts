@@ -4,6 +4,15 @@ import { getBusinessConfig } from '../services/businessConfig.service';
 import { workerTextMessages } from './textMessages';
 import { buildListMessageFromButtons } from '../whatsappBuilders';
 import { expireOrphanedIntents } from '../services/payment/payment.service';
+import { clearCheckoutSession } from '../graph/nodes/checkout';
+import { normalizeMetadata } from '../services/productQuery/utils';
+
+// Ventana de gracia (H-04): si hubo actividad del usuario dentro de este margen
+// y el checkout sigue activo, se difiere la expiración un ciclo más en vez de
+// borrar el draft. `touchSession` ya extiende `expires_at` en cada turno
+// (incluidas las interrupciones delegadas), así que esto es una defensa
+// adicional ante una corrida del cron justo en el medio de un turno en curso.
+const RECENT_ACTIVITY_GRACE_MS = 60_000;
 
 export const processDraftOrderTimeouts = async () => {
 
@@ -28,7 +37,7 @@ export const processDraftOrderTimeouts = async () => {
             },
             include: {
                 conversation_state: {
-                    select: { is_human_handled: true }
+                    select: { is_human_handled: true, metadata: true }
                 }
             }
         });
@@ -42,6 +51,17 @@ export const processDraftOrderTimeouts = async () => {
 
         const remainingMs = order.expires_at.getTime() - now.getTime();
         const remainingMinutes = remainingMs / 60000;
+
+        if (remainingMinutes <= 0) {
+            const wsMeta = normalizeMetadata(openConversation?.conversation_state?.metadata);
+            const msSinceLastMessage = openConversation
+                ? now.getTime() - openConversation.last_message_at.getTime()
+                : Infinity;
+            if (wsMeta.checkout_active === true && msSinceLastMessage < RECENT_ACTIVITY_GRACE_MS) {
+                console.log('[DraftOrderTimeout] Actividad reciente con checkout activo, difiriendo expiración', order.id);
+                continue;
+            }
+        }
 
         const business = await prisma.business.findUnique({
             where: { id: order.business_id! }
@@ -167,7 +187,14 @@ export const processDraftOrderTimeouts = async () => {
             });
 
             if (conversation) {
-                await resetConversationState(conversation.id);
+                // Solo se limpian las claves del pedido: el draft expiró, no el resto
+                // de la conversación. Preserva `reservation_draft`, `onboarding_step`,
+                // pendings de otros flujos y demás checkpoints ajenos al carrito (H-04).
+                try {
+                    await clearCheckoutSession(conversation.id);
+                } catch (err) {
+                    console.error('[DraftOrderTimeout] error limpiando metadata de checkout:', err);
+                }
             }
 
         }

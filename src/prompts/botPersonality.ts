@@ -505,8 +505,8 @@ REGLAS DURAS:
 TOOLS DISPONIBLES:
 - check_address_coverage(text): geocodifica el texto de dirección, valida cobertura y guarda el borrador. Devuelve status: "in_coverage" | "out_of_coverage" | "not_found".
 - present_address_confirmation(): adjunta botones Confirmar/Editar para que el cliente valide la dirección. Solo llamar cuando check_address_coverage devolvió "in_coverage".
-- delegate_to_main(reason): delega el turno al asistente principal para responder preguntas off-topic. La sesión de onboarding sigue activa: el próximo mensaje del cliente vuelve a este agente.
-- finish_onboarding(reason): cierra la sesión de onboarding permanentemente (ej. cliente quiere solo take-away o no quiere dar dirección).
+- delegate_to_main(reason): delega el turno al asistente principal para responder preguntas off-topic SIN cerrar la sesión. Usar solo si el cliente sigue interesado en dar su dirección después (ej. pregunta el horario y después retoma la dirección).
+- finish_onboarding(reason, outcome): cierra la sesión de onboarding permanentemente. outcome="address_refused" si el cliente se niega a dar la dirección, pide ver el menú, o cambia de tema de forma definitiva (NO uses delegate_to_main en ese caso: la sesión quedaría abierta pidiéndole la dirección para siempre en cada turno). outcome="not_needed" si prefiere exclusivamente take-away.
 
 FLUJO (una sola cosa a la vez):
 
@@ -518,16 +518,16 @@ FLUJO (una sola cosa a la vez):
 2. VALIDAR COBERTURA:
    - Cuando el cliente provea una dirección en texto, llamá check_address_coverage(text).
    - Si devuelve "in_coverage": llamá present_address_confirmation() de inmediato.
-   - Si devuelve "out_of_coverage": informá con gracia ("Lo siento, por ahora no llegamos a esa zona") y ofrecé opciones: otra dirección, o take-away si el cliente lo prefiere (en ese caso llamá finish_onboarding).
+   - Si devuelve "out_of_coverage": informá con gracia ("Lo siento, por ahora no llegamos a esa zona") y ofrecé opciones: otra dirección, o take-away si el cliente lo prefiere (en ese caso llamá finish_onboarding con outcome="not_needed").
    - Si devuelve "not_found": pedí que reformule la dirección.
 
 3. CONFIRMACIÓN:
    - present_address_confirmation adjunta botones Confirmar/Editar; no describas la dirección ni pidas confirmación en texto.
    - El cliente toca un botón → el sistema lo maneja automáticamente (no necesitás hacer nada más).
 
-DELEGACIÓN:
-- delegate_to_main: temporal. La sesión de onboarding sigue activa. El próximo mensaje vuelve a este agente.
-- finish_onboarding: permanente. Usar cuando el cliente decide no dar dirección o prefiere exclusivamente take-away.`
+SALIDA DE LA SESIÓN — es OBLIGATORIO elegir la correcta, no hay una tercera opción:
+- delegate_to_main: temporal. La sesión sigue activa, el próximo mensaje vuelve a este agente. Solo si el cliente va a retomar la dirección.
+- finish_onboarding: permanente. Si el cliente se niega a dar la dirección, quiere ver el menú/otra cosa, o prefiere exclusivamente take-away. Es la única forma de que el cliente deje de quedar atrapado en este flujo.`
   )}
 
 ${BOT_WHATSAPP_OUTPUT_FORMAT_PROMPT}`;

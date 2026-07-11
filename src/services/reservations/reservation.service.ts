@@ -1,3 +1,20 @@
+/**
+ * @deprecated Wizard legacy de reservas (por steps, `metadata.reservation.step`).
+ * Reemplazado por el agente de reservas (`reservation_agent_active` +
+ * `reservation_draft`, ver `src/agents/reservationAgent.ts` y
+ * `src/graph/nodes/reservation/index.ts`).
+ *
+ * Con `RESERVATION_AGENT_ENABLED=true` el routing (`context/index.ts`,
+ * `dispatch/index.ts`) ya no permite que ninguna conversación nueva llegue
+ * acá — `handleReservationIntent` solo sigue procesando sesiones con
+ * `reservation.step` ya en curso desde antes del agente, y queda como
+ * fallback completo si el flag se apaga (kill-switch de rollback).
+ *
+ * No agregar funcionalidad nueva en este archivo: los cambios de producto
+ * van al agente. Ver `REFACTOR-RESERVATION-WIZARD.md` (histórico, previo a
+ * esta decisión de deprecación).
+ */
+
 import type { EnrichedContext, HandlerResult } from '../../controllers/webhook/types';
 import type { WhatsAppInteractiveMessage, WhatsAppListMessage } from '../../domain/intent/whatsappTemplates';
 import { closeConversationAfterReservation } from '../../repositories/conversation.repository';

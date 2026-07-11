@@ -245,6 +245,10 @@ export const buildDetectionContextNode = async (
     // Onboarding por estado (metadata.onboarding_step) tiene prioridad sobre
     // todo lo demás cuando el usuario no tiene dirección o está en wizard.
     let wsMeta = normalizeMetadata(workingConversationState.metadata);
+    // @deprecated `reservation.step`/`reservation.paused` son del wizard LEGACY
+    // de reservas (ver `reservation.service.ts`). Con `RESERVATION_AGENT_ENABLED=true`
+    // ninguna conversación nueva genera este campo; solo puede venir de una
+    // sesión de wizard ya en curso desde antes del agente.
     const reservation = wsMeta.reservation;
     const reservationStep = reservation?.step;
     const reservationPaused = reservation?.paused === true;
@@ -273,9 +277,23 @@ export const buildDetectionContextNode = async (
       wsMeta = normalizeMetadata(refreshed.metadata);
     }
 
+    // Una reserva pausada (`reservation.step` presente pero `paused: true`) es,
+    // por definición, una reserva que el usuario dejó de lado — no debe bloquear
+    // el routing a otra sesión agéntica activa (H-02). Solo una reserva EN CURSO
+    // (no pausada) tiene prioridad de ruteo.
+    const reservationBlocksRouting = Boolean(reservationStep) && !reservationPaused;
+    if (reservationPaused) {
+      console.log(
+        JSON.stringify({
+          event: '[context] reservation_paused_residual',
+          conversationId: conversation.id,
+        })
+      );
+    }
+
     const isCheckoutSession =
       isCheckoutAgentEnabled() &&
-      !reservationStep &&
+      !reservationBlocksRouting &&
       !onboardingStep &&
       (checkoutActive || ctx.payloadId === 'CHECKOUT');
 
@@ -284,7 +302,7 @@ export const buildDetectionContextNode = async (
     // o cuando el payload es VIEW_RESERVATION (inicio de sesión desde botón).
     const isReservationAgentSession =
       isReservationAgentEnabled() &&
-      !reservationStep &&
+      !reservationBlocksRouting &&
       !onboardingStep &&
       !isCheckoutSession &&
       (wsMeta.reservation_agent_active === true ||
@@ -296,7 +314,7 @@ export const buildDetectionContextNode = async (
     // confirmación de dirección, o está esperando ingresar una dirección en texto.
     const isOnboardingAgentSession =
       isOnboardingAgentEnabled() &&
-      !reservationStep &&
+      !reservationBlocksRouting &&
       !isReservationAgentSession &&
       !isCheckoutSession &&
       (wsMeta.onboarding_agent_active === true ||
@@ -385,7 +403,7 @@ export const buildDetectionContextNode = async (
       workingConversationState,
       recentMessages,
       detectionContext,
-      enrichedCtx: enrichedBase as unknown as EnrichedContext,
+      enrichedCtx: enrichedBase as EnrichedContext,
       hasAddress,
       isInCoverage,
       contextRoute,

@@ -1,3 +1,9 @@
+/**
+ * @deprecated Clasificador de turnos (FULFILL_STEP/DELEGATE) del wizard
+ * legacy de reservas. El agente de reservas (`reservationAgent.ts`) no usa
+ * este mecanismo. Ver deprecación en `reservation.service.ts`.
+ */
+
 import { z } from 'zod';
 import { SystemMessage, HumanMessage } from '@langchain/core/messages';
 import { getIntentDetectorLlm } from '../../config/llm';

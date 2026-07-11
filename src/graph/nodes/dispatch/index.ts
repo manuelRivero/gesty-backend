@@ -183,7 +183,7 @@ const dispatchOrHybrid = async (
   enrichedCtx: EnrichedContext,
   checkoutHandoff?: CheckoutHandoffParams
 ): Promise<HandlerResult | null> => {
-  if (isHybridAgentMode() && !CLOSED_INTENTS.has(enrichedCtx.detection.intent)) {
+  if (isHybridAgentMode() && (!enrichedCtx.detection || !CLOSED_INTENTS.has(enrichedCtx.detection.intent))) {
     try {
       const hybrid = await runHybridReactAgent(enrichedCtx);
       const result = await unwrapHybridRun(hybrid, enrichedCtx, checkoutHandoff);

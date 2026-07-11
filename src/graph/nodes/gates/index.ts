@@ -123,9 +123,16 @@ export const subscriptionAccessGateNode = async (
 };
 
 /**
- * Nodo del wizard de reservas: si `conversationState.metadata.reservation.step`
- * está activo, clasifica el turno y decide si ejecutar el handler (FULFILL_STEP)
- * o pausar la reserva y encadenar al flujo normal (DELEGATE).
+ * @deprecated Nodo del wizard LEGACY de reservas (por steps). Reemplazado por
+ * el agente de reservas (`reservationAgentNode`, `src/graph/nodes/reservation/index.ts`).
+ * Con `RESERVATION_AGENT_ENABLED=true` este nodo solo procesa sesiones con
+ * `reservation.step` ya en curso desde antes; no recibe sesiones nuevas
+ * (el routing en `context/index.ts`/`dispatch/index.ts` las manda al agente).
+ * Queda como fallback completo si el flag se apaga. No agregar features acá.
+ *
+ * Si `conversationState.metadata.reservation.step` está activo, clasifica el
+ * turno y decide si ejecutar el handler (FULFILL_STEP) o pausar la reserva y
+ * encadenar al flujo normal (DELEGATE).
  */
 export const reservationWizardNode = async (
   state: AgentState

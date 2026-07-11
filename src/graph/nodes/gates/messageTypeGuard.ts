@@ -7,9 +7,12 @@
  *   (`interactive` con `button_reply` / `list_reply`, y `button` de templates
  *   con Quick Reply).
  * - Ubicación (`location`) únicamente cuando el cliente está dentro del flujo
- *   de onboarding / captura de dirección (necesario para que el
- *   `AddressService` pueda registrar la ubicación compartida). Fuera de ese
- *   contexto, la ubicación —incluida la ubicación en tiempo real— se rechaza.
+ *   de onboarding / captura de dirección, o de una sesión de checkout/onboarding
+ *   agéntico activa (`checkout_active`/`onboarding_agent_active`, H-08: pedir
+ *   la dirección en checkout y rechazar la ubicación compartida por WhatsApp,
+ *   el formato más natural de responder, era fricción exactamente en el paso
+ *   de conversión). Fuera de esos contextos, la ubicación —incluida la
+ *   ubicación en tiempo real— se rechaza.
  *
  * Para cualquier otro tipo (imagen, audio, video, contactos, documentos,
  * stickers, reacciones, etc.) se devuelve un `HandlerResult` interactivo con
@@ -77,7 +80,12 @@ const isWithinAddressCaptureFlow = async (
   if (!conversationState) return false;
 
   const meta = normalizeMetadata(conversationState.metadata);
-  return Boolean(meta.onboarding_step) || Boolean(meta.awaiting_address);
+  return (
+    Boolean(meta.onboarding_step) ||
+    Boolean(meta.awaiting_address) ||
+    Boolean(meta.checkout_active) ||
+    Boolean(meta.onboarding_agent_active)
+  );
 };
 
 export const messageTypeGuardNode = async (

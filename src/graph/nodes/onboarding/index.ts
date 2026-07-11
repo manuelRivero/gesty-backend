@@ -22,8 +22,13 @@ import {
 import { normalizeToHandlerResult } from '../../../controllers/webhook/utils/index';
 import { textResponse } from '../../../controllers/webhook/utils/index';
 import { AddressService } from '../../../services/address.service';
-import { runHybridReactAgent } from '../../../agents/reactAgent';
+import { delegateToMainWithDetection } from '../session/delegateToMain';
+import { buildResumeFollowUp } from '../session/buildResumeFollowUp';
+import { buildDiscardedReentryMessage } from '../session/discardedSignalMessage';
 import { runOnboardingAgent } from '../../../agents/onboardingAgent';
+import { runHybridReactAgent } from '../../../agents/reactAgent';
+import { detectIntentWithConfidence } from '../../../services/ai/detection.service';
+import { findOrCreateConversationState } from '../../../repositories';
 import { normalizeMetadata } from '../../../services/productQuery/utils';
 import type { HandlerResult } from '../../../controllers/webhook/types';
 import type { EnrichedContext } from '../../../controllers/webhook/types';
@@ -139,19 +144,53 @@ export const onboardingAgentNode = async (
       })
     );
     let mainResult: HandlerResult | null = null;
+    let discardedReentrySignal = false;
     try {
-      const hybrid = await runHybridReactAgent(enrichedBase);
-      mainResult = hybrid?.kind === 'response' ? hybrid.handlerResult : null;
+      const delegated = await delegateToMainWithDetection({
+        enrichedCtx: enrichedBase,
+        userMessage: ctx.message?.text?.body?.trim() ?? '',
+        detectionContext: state.detectionContext,
+      });
+      mainResult = delegated.handlerResult;
+      discardedReentrySignal = delegated.discardedReentrySignal;
     } catch (err) {
       console.error('[onboarding-agent] error en delegate_to_main:', err);
     }
+
+    if (discardedReentrySignal) {
+      console.log(
+        JSON.stringify({
+          event: '[onboarding-agent] delegation_signal_discarded',
+          conversationId,
+        })
+      );
+      return {
+        handlerResult: { content: buildDiscardedReentryMessage('onboarding'), isInteractive: false },
+        dataCollectionDelegated: true,
+      };
+    }
+
+    const baseResult = mainResult ?? { content: text, isInteractive: false };
+
+    // Anexar (no reemplazar) el recordatorio de que falta la dirección,
+    // para que el usuario no tenga que adivinar que el onboarding sigue activo (H-03).
+    const resume = buildResumeFollowUp({ kind: 'onboarding' });
+
     return {
-      handlerResult: mainResult ?? { content: text, isInteractive: false },
+      handlerResult: resume.text
+        ? {
+            ...baseResult,
+            content:
+              typeof baseResult.content === 'string'
+                ? `${baseResult.content}\n\n${resume.text}`
+                : baseResult.content,
+          }
+        : baseResult,
       dataCollectionDelegated: true,
     };
   }
 
-  // ── Señal: cerrar sesión permanentemente ──────────────────────────────────
+  // ── Señal: cerrar sesión permanentemente (Tarea 3.5 / H-06) ───────────────
   if (signals.finishOnboarding) {
     console.log(
       JSON.stringify({
@@ -160,9 +199,28 @@ export const onboardingAgentNode = async (
         conversationId,
       })
     );
-    // La tool `finish_onboarding` ya limpió metadata; solo devolvemos el texto.
+    // La tool `finish_onboarding` ya limpió metadata. Si el cliente pidió algo
+    // concreto en el mismo mensaje ("mostrame el menú"), invocar al híbrido
+    // inline (mismo patrón que `handback_to_main` en checkout) para que reciba
+    // una respuesta real en este turno, no solo el texto de despedida del LLM
+    // de onboarding (que no tiene tools para mostrar menú/CTAs).
+    const userMessage = ctx.message?.text?.body?.trim() ?? '';
+    let hybridResult: HandlerResult | null = null;
+    if (state.detectionContext && userMessage) {
+      try {
+        const freshState = await findOrCreateConversationState(conversationId);
+        const hybrid = await runHybridReactAgent({
+          ...enrichedBase,
+          detection: await detectIntentWithConfidence(userMessage, state.detectionContext),
+          conversationState: freshState,
+        });
+        hybridResult = hybrid?.kind === 'response' ? hybrid.handlerResult : null;
+      } catch (err) {
+        console.error('[onboarding-agent] error en finish_onboarding inline hybrid:', err);
+      }
+    }
     return {
-      handlerResult: { content: text, isInteractive: false },
+      handlerResult: hybridResult ?? { content: text, isInteractive: false },
       dataCollectionDelegated: true,
     };
   }
