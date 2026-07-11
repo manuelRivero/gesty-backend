@@ -50,7 +50,7 @@ export class FallbackHandler implements IntentHandler {
     }
 
     const detectionCandidates =
-      'detection' in ctx ? ctx.detection.candidates : [];
+      'detection' in ctx && ctx.detection ? ctx.detection.candidates : [];
     const hasReservationCandidate = detectionCandidates.some((candidate: {
       intent: ConversationIntent;
       confidence: number;

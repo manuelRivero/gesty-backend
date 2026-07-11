@@ -23,7 +23,7 @@ export class RemoveItemHandler implements IntentHandler {
     if (ctx.payloadId) {
       // Flujo botón: payloadId = "REMOVE_ITEM:<uuid>" → extraer UUID directamente
       productId = parseProductId(ctx.payloadId);
-    } else if (ctx.detection.detectedProductName) {
+    } else if (ctx.detection?.detectedProductName) {
       // Flujo NLP: resolver nombre (puede ser alias / display_name / nombre del admin)
       // contra el catálogo real usando búsqueda vectorial por embedding
       const results = await MenuService.searchMenuItemsByKeyword({

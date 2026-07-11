@@ -50,6 +50,10 @@ export const dispatchIntent = async (
 ): Promise<HandlerResult | null> => {
 
   const { detection } = ctx;
+  if (!detection) {
+    console.warn('[DispatchIntent] ctx sin detection; no se puede despachar');
+    return null;
+  }
 
   const handler = handlers.find(h =>
     isIntentHandler(h) && h.canHandle(detection.intent)

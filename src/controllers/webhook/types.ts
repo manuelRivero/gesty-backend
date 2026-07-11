@@ -40,7 +40,13 @@ export interface WebhookContext {
 // src/webhooks/types.ts
 
 export interface EnrichedContext extends WebhookContext {
-  detection: IntentDetectionResult;
+  /**
+   * Puede faltar cuando el contexto se construye para un turno delegado
+   * desde una sesión de checkout/reservas/onboarding (H-01): esos nodos
+   * deben adjuntar `detection` real antes de invocar al híbrido, o el
+   * híbrido debe degradar seguro (skip CTA) si no está presente.
+   */
+  detection?: IntentDetectionResult;
   conversation: any;
   business: any;
   customer: any;

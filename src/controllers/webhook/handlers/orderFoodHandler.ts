@@ -51,7 +51,7 @@ export class OrderFoodHandler implements IntentHandler {
       return this.buildClarificationList(currentItems);
     }
 
-    if (resolution.actions.length === 0 && detection.detectedProductName) {
+    if (resolution.actions.length === 0 && detection?.detectedProductName) {
       resolution.actions.push({
         action: 'add',
         product_name: detection.detectedProductName,
