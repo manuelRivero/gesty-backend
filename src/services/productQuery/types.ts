@@ -82,7 +82,12 @@ export type ConversationMetadata = {
 
   // --- Wizards ---
 
-  /** Paso activo del wizard de reservas. Presente solo mientras el wizard está activo. */
+  /**
+   * @deprecated Paso activo del wizard LEGACY de reservas (reemplazado por
+   * `reservation_draft` + `reservation_agent_active`). Presente solo en
+   * sesiones iniciadas antes del agente, o si `RESERVATION_AGENT_ENABLED`
+   * está apagado. Ver `reservation.service.ts`.
+   */
   reservation?: { step?: string; paused?: boolean; [key: string]: unknown };
   /** Paso activo del wizard de onboarding. Presente solo mientras el wizard está activo. */
   onboarding_step?: string;
@@ -92,8 +97,22 @@ export type ConversationMetadata = {
   temp_address?: string | Record<string, unknown>;
   /** `true` mientras esperamos que el cliente nos diga su nombre. */
   awaiting_name?: boolean;
-  /** `true` mientras esperamos que el cliente nos diga su dirección de entrega. */
+  /**
+   * `true` mientras esperamos que el cliente nos diga su dirección de entrega
+   * y el próximo mensaje de texto debe CAPTURARSE como tal (rutea a
+   * onboarding/`address_capture`). Distinto de `address_soft_asked` (H-06):
+   * este flag SÍ debe setearse solo en el camino bloqueante (intent de
+   * carrito/pedido sin dirección), nunca en la sugerencia informativa.
+   */
   awaiting_address?: boolean;
+  /**
+   * Timestamp ISO de la última sugerencia NO bloqueante de cargar dirección
+   * (`ADDRESS_SOFT_ASK_BOT_MESSAGE`). Puramente informativo: a diferencia de
+   * `awaiting_address`, nunca debe usarse para rutear un turno. Existe solo
+   * para no repetir la sugerencia en cada mensaje; expira sola (ver
+   * `ADDRESS_SOFT_ASK_TTL_MS` en `addressCollection.ts`).
+   */
+  address_soft_asked?: string | null;
   /** Intent original que fue bloqueado por falta de dirección (ej. CHECKOUT); se usa para retomar al confirmar. */
   pending_address_action?: string | null;
   /** Intent de carrito que quedó pendiente mientras el usuario elige delivery vs take-away. */
