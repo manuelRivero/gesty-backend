@@ -58,7 +58,7 @@ describe('extractPendingTurnResponse — deterministic', () => {
     expect(result.value).toBeNull();
   });
 
-  it('quiero ver el menú → delegate', async () => {
+  it('quiero ver el menú → delegate (vía LLM, no hay regex de cambio de tema)', async () => {
     const result = await extractPendingTurnResponse({
       userMessage: 'quiero ver el menú',
       pendingAction: paymentConfig.pendingAction,
@@ -68,7 +68,7 @@ describe('extractPendingTurnResponse — deterministic', () => {
       actionDescription: paymentConfig.actionDescription,
     });
     expect(result.status).toBe('delegate');
-    expect(result.source).toBe('deterministic');
+    expect(result.source).toBe('llm');
   });
 
   it('mejor retiro por el local con pending payment_method → off_pending + TAKE_AWAY', async () => {

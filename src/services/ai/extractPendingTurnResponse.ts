@@ -154,17 +154,10 @@ function tryDeterministicExtraction<T>(params: {
     const crossField = tryCrossFieldExtraction<T>(params);
     if (crossField) return crossField;
 
-    if (
-      /\b(menu|menú|precio|horario|agregar|quitar|modificar|carrito|reserva)\b/.test(text)
-    ) {
-      return {
-        status: 'delegate',
-        value: null,
-        confidence: 0.9,
-        reason: 'cambio_de_tema',
-        source: 'deterministic',
-      };
-    }
+    // Nada de regex para "¿esto cambia de tema?" — es una pregunta de
+    // significado, no de vocabulario cerrado, y no generaliza a otros
+    // idiomas ni formas de preguntar. Eso lo resuelve el clasificador LLM
+    // más abajo (su prompt ya instruye "preguntas de precio → delegate").
   }
 
   if (params.pendingAction === 'fulfillment_type') {
@@ -185,18 +178,14 @@ function tryDeterministicExtraction<T>(params: {
     const crossField = tryCrossFieldExtraction<T>(params);
     if (crossField) return crossField;
 
-    if (
-      /\b(menu|menú|precio|horario|agregar|quitar|modificar|carrito|reserva|pagar)\b/.test(text)
-    ) {
-      return {
-        status: 'delegate',
-        value: null,
-        confidence: 0.9,
-        reason: 'cambio_de_tema',
-        source: 'deterministic',
-      };
-    }
+    // Ídem: sin regex de "cambio de tema" — lo resuelve el LLM más abajo.
   }
+
+  // `confirm_order` no tiene atajo determinístico: "sí"/"no" varían demasiado
+  // entre idiomas y formas de hablar como para acotarlos a un patrón fijo.
+  // El clasificador LLM de abajo ya recibe el schema {confirmed: boolean} y
+  // los valueHints de `pendingActionRegistry.ts` — lo resuelve igual que
+  // cualquier otro pending action, sin necesitar una rama especial acá.
 
   return null;
 }
@@ -244,7 +233,7 @@ export async function extractPendingTurnResponse<T>(params: {
           })
         ),
       ],
-      { signal: AbortSignal.timeout(1500) }
+      { signal: AbortSignal.timeout(3000) }
     );
 
     if (parsed.status === 'fulfilled' && parsed.value != null) {

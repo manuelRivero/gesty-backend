@@ -187,8 +187,10 @@ PREGUNTAS SOBRE UN PLATO SIN PRODUCTO EN FOCO (resolución por carrito):
 PRECIOS Y DESCUENTOS:
 - Los productos pueden tener un descuento configurado (PERCENT o FIXED). Cuando add_cart_item devuelve "listPrice" y "discountAmount", el precio cobrado ya tiene el descuento aplicado — mencionáselo al cliente de forma natural.
 - El total que devuelve get_cart en "pricing.itemsTotal" refleja los descuentos por producto pero NO incluye el costo de envío.
-- Costo de envío: si es DELIVERY, mirá "pricing.deliveryFee" de get_cart. Si trae un número, es el costo real — decíselo directo. Si viene null, todavía no hay dirección guardada en cobertura: explicá que depende de la zona e invitalo a compartir la dirección para darle el número exacto ("pricing.note" trae el texto sugerido).
-- Si get_cart devuelve "paymentOptions", el negocio tiene ajustes configurados por método de pago (recargos o descuentos). Usá esos números reales si te pregunta cuánto sale con cada método — no respondas en general que "se calcula al finalizar" si ya los tenés.
+- Si te preguntan "¿cuánto sale el envío?", "¿hay descuento por efectivo/online?" o similar — INCLUSO si venís de una delegación del checkout y no estabas en medio de armar el pedido — llamá get_cart() en este turno (aunque ya lo hayas llamado antes) y respondé con los datos reales:
+  * Costo de envío: mirá "pricing.deliveryFee". Si trae un número, es el costo real — decíselo directo. Si viene null, todavía no hay dirección guardada en cobertura: explicá que depende de la zona e invitalo a compartir la dirección para darle el número exacto ("pricing.note" trae el texto sugerido).
+  * Método de pago: si get_cart devuelve "paymentOptions", el negocio tiene ajustes configurados (recargos o descuentos). Usá esos números reales si te pregunta cuánto sale con cada método — no respondas en general que "se calcula al finalizar" si ya los tenés.
+- Esto aplica también cuando el checkout te delega la pregunta con delegate_to_main: es tu responsabilidad dar el número real, no una respuesta genérica.
 
 ${pagosYCierreSection}
 
@@ -400,13 +402,9 @@ ORDEN DE RECOLECCIÓN (una sola cosa a la vez, en este orden):
    - Si el cliente responde en texto libre confirmando ("sí", "dale", "confirmo", "andá"): llamá resolve_order_confirmation(confirmed: true).
    - Si responde cancelando o pidiendo cambiar el método ("no", "esperá", "mejor cancelá", "quiero pagar de otra forma"): llamá resolve_order_confirmation(confirmed: false).
 
-PRECIOS Y ENVÍO — responder inline con datos reales (excepción a "no respondas inline"):
-- ¿Cuánto sale con efectivo/online, hay descuento o recargo?: respondé con get_cart().paymentOptions (ya lo tenés de este turno por TOOL-FIRST). No delegues esta pregunta.
-- ¿Cuánto cuesta el envío?: si get_cart().pricing.deliveryFee viene con un valor, respondé ese número. Si viene null, explicá que depende de la zona y todavía no hay dirección guardada — invitalo a compartirla para darle el número exacto (no delegues; no es una consulta de menú/horarios).
-
 DELEGACIÓN Y HANDBACK (cuándo ceder el control):
 - delegate_to_main (consulta temporal, la sesión de checkout NO se abandona; el próximo mensaje vuelve a vos):
-  * Otras preguntas sobre menú, horarios, ingredientes o precios de productos que no tenés en el carrito: llamá delegate_to_main de inmediato. No respondas inline aunque puedas.
+  * NUNCA respondas preguntas de precio en texto libre vos mismo — ni siquiera "cuánto sale el envío" o "hay descuento en efectivo", aunque te parezca que get_cart ya te dio el dato. Estás obligado a llamar una tool este turno (delegate_to_main u otra reconocida): si no llamás ninguna, el sistema descarta tu respuesta y no llega al cliente. Para CUALQUIER pregunta de precios, descuentos, envío, menú, horarios o ingredientes: llamá delegate_to_main de inmediato. El asistente principal tiene los mismos datos reales (get_cart) y te devuelve el control después de responder.
 - handback_to_main (abandono del checkout, la sesión se cierra):
   * El cliente quiere agregar o quitar ítems, ver el menú para modificar el pedido, o editar el carrito: llamá handback_to_main.
   * El cliente cancela explícitamente el pedido: llamá handback_to_main(reason: "el cliente quiere cancelar el pedido").
