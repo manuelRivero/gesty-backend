@@ -42,6 +42,11 @@ import { computeOrderPricing } from '../services/pricing.service';
 import { partySizeMetadataFields } from '../services/productQuery/utils';
 import { patchConversationMetadata, omitConversationMetadataKeys } from '../repositories/conversationState.repository';
 import { clearLastOffer } from '../services/lastOffer.service';
+import {
+  getCompletarPedidoLedger,
+  recordCompletarPedidoAbandonment,
+  reviveCompletarPedidoIfAbandoned,
+} from '../services/completarPedidoGoal.service';
 import { updateCustomerName } from '../repositories';
 import { AddressService } from '../services/address.service';
 
@@ -1075,6 +1080,17 @@ export const addCartItemTool = new DynamicStructuredTool<
 
     if (conversationId) {
       await clearLastOffer(conversationId);
+      // Revival del Goal COMPLETAR_PEDIDO (ADR-0005, corolario): si el
+      // cliente había abandonado el pedido y agrega otro ítem, el abandono
+      // se limpia solo.
+      const stateForRevival = await prisma.conversation_state.findUnique({
+        where: { conversation_id: conversationId },
+        select: { metadata: true },
+      });
+      await reviveCompletarPedidoIfAbandoned(
+        conversationId,
+        getCompletarPedidoLedger(stateForRevival?.metadata)
+      );
     }
 
     // Devolver snapshot del carrito actualizado
@@ -1113,6 +1129,12 @@ export const addCartItemTool = new DynamicStructuredTool<
 // remove_cart_item
 // ---------------------------------------------------------------------------
 
+// ADR-0002: el Constraint "no eliminar sin confirmar" vive acá, en el borde
+// de la Tool — no en el prompt. La evidencia de confirmación es un pending
+// que la propia Tool escribió en un llamado anterior, nunca un flag que el
+// modelo pueda setear en el mismo schema (eso sería confiar en el llamador).
+const REMOVAL_CONFIRMATION_TTL_MS = 5 * 60 * 1000;
+
 const removeCartItemSchema = z.object({
   productId: z
     .string()
@@ -1131,12 +1153,17 @@ export const removeCartItemTool = new DynamicStructuredTool<
     'Usá este tool cuando el cliente pida quitar un ítem en texto libre: ' +
     '"quitá el pollo", "sacá la ensalada", "no quiero la pizza", "borralo", etc. ' +
     'Antes de llamar necesitás el productId: si no lo tenés, llamá get_cart primero. ' +
+    'Requiere confirmación explícita del cliente: el primer llamado NO elimina — devuelve ' +
+    '`requiresConfirmation: true` con el ítem encontrado. Preguntale al cliente si confirma ' +
+    '("¿confirmás que elimino la milanesa?") y llamá la tool de nuevo con el mismo productId ' +
+    'recién cuando el cliente confirme explícitamente. No la llames dos veces en el mismo turno ' +
+    'sin que el cliente haya confirmado entre medio. ' +
     'Si querés solo reducir la cantidad (no eliminar), usá add_cart_item con quantity negativo no es posible — ' +
     'en ese caso confirmale al cliente que el ítem fue eliminado y que puede volver a agregarlo con la cantidad deseada. ' +
     'Devuelve el estado actualizado del carrito.',
   schema: removeCartItemSchema,
   func: async ({ productId }: RemoveCartItemInput, _runManager, config?: RunnableConfig) => {
-    const { businessId, customerPhone } = getReactContext(config);
+    const { businessId, customerPhone, conversationId } = getReactContext(config);
 
     const draft = await prisma.draft_order.findFirst({
       where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
@@ -1158,6 +1185,37 @@ export const removeCartItemTool = new DynamicStructuredTool<
     const removedName = line.menu_item?.name ?? 'Producto';
     const removedQty = line.quantity;
 
+    const stateRow = await prisma.conversation_state.findUnique({
+      where: { conversation_id: conversationId },
+      select: { metadata: true },
+    });
+    const metadata =
+      stateRow?.metadata && typeof stateRow.metadata === 'object' && !Array.isArray(stateRow.metadata)
+        ? (stateRow.metadata as Record<string, unknown>)
+        : {};
+    const pending = metadata.pending_item_removal as
+      | { productId?: string; requestedAt?: string }
+      | undefined;
+    const isConfirmed =
+      pending?.productId === productId &&
+      typeof pending.requestedAt === 'string' &&
+      Date.now() - new Date(pending.requestedAt).getTime() <= REMOVAL_CONFIRMATION_TTL_MS;
+
+    if (!isConfirmed) {
+      await patchConversationMetadata(conversationId, {
+        pending_item_removal: { productId, requestedAt: new Date().toISOString() },
+      });
+      return toJson({
+        success: false,
+        requiresConfirmation: true,
+        item: { productId, itemName: removedName, quantity: removedQty },
+        message:
+          'Pedile confirmación explícita al cliente antes de eliminar. Volvé a llamar esta tool ' +
+          'con el mismo productId solo si el cliente confirma.',
+      });
+    }
+
+    await omitConversationMetadataKeys(conversationId, ['pending_item_removal']);
     await prisma.draft_order_item.delete({ where: { id: line.id } });
 
     // Recalcular total
@@ -1399,6 +1457,37 @@ export const presentCartTool = new DynamicStructuredTool<
   },
 });
 
+// ---------------------------------------------------------------------------
+// abandon_pending_order (Ledger — Tool de la familia Intent, ADR-0005/0007/0008)
+// ---------------------------------------------------------------------------
+
+const abandonPendingOrderSchema = z.object({});
+type AbandonPendingOrderInput = z.infer<typeof abandonPendingOrderSchema>;
+
+export const abandonPendingOrderTool = new DynamicStructuredTool<
+  typeof abandonPendingOrderSchema,
+  AbandonPendingOrderInput
+>({
+  name: 'abandon_pending_order',
+  description:
+    'Registrá que el cliente pidió explícitamente que dejes de insistir con el pedido pendiente ' +
+    '("dejalo", "no me sigas preguntando por el pedido", "olvidate de eso", "no quiero seguir con eso"). ' +
+    'NO borra el carrito ni sus ítems — el pedido sigue ahí por si el cliente vuelve más tarde. ' +
+    'Solo silencia los recordatorios del sistema sobre ese pedido. Si el cliente agrega otro ítem ' +
+    'después, el silencio se levanta solo.',
+  schema: abandonPendingOrderSchema,
+  func: async (_input: AbandonPendingOrderInput, _runManager, config?: RunnableConfig) => {
+    const { conversationId } = getReactContext(config);
+    const stateRow = await prisma.conversation_state.findUnique({
+      where: { conversation_id: conversationId },
+      select: { metadata: true },
+    });
+    const ledger = getCompletarPedidoLedger(stateRow?.metadata);
+    await recordCompletarPedidoAbandonment(conversationId, ledger);
+    return toJson({ success: true, message: 'Listo, no insisto más con el pedido pendiente.' });
+  },
+});
+
 export const allReactTools = [
   searchProductsTool,
   getProductsDetailsByIdsTool,
@@ -1417,4 +1506,5 @@ export const allReactTools = [
   updateItemNoteTool,
   savePartySizeTool,
   presentCartTool,
+  abandonPendingOrderTool,
 ];
