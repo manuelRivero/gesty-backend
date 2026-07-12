@@ -19,6 +19,7 @@ export const NODE = {
   PERSIST_USER: 'persistUserMessage',
   SUBSCRIPTION_GATE: 'subscriptionAccessGate',
   MESSAGE_TYPE_GUARD: 'messageTypeGuard',
+  ESCALATION_GATE: 'escalationGate',
   BUILD_DETECTION_CTX: 'buildDetectionContext',
   RESERVATION: 'reservationWizard',
   RESERVATION_AGENT: 'reservationAgent',
@@ -90,6 +91,19 @@ export const routeAfterMessageTypeGuard = (
 ): NodeName | typeof END => {
   if (state.earlyExit === 'unsupported_message_type') return NODE.SEND;
   if (state.earlyExit) return END;
+  return NODE.ESCALATION_GATE;
+};
+
+/**
+ * Tras `escalationGate` (V-02, ADR-0002): interrupt determinista, corre en
+ * todo turno sin excepción de sesión. Si detectó un pedido de humano, va
+ * directo a SEND — no debe llegar a Ownership ni a ningún agente.
+ */
+export const routeAfterEscalationGate = (
+  state: AgentState
+): NodeName | typeof END => {
+  if (state.earlyExit) return END;
+  if (state.isHumanHandover) return NODE.SEND;
   return NODE.BUILD_DETECTION_CTX;
 };
 

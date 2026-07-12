@@ -7,6 +7,7 @@
  * extract → resolveBusiness → businessConfig → resolveCustomer →
  * businessOpenInfo (→ closedBusiness → send) → persistUserMessage →
  * subscriptionAccessGate (→ send) → messageTypeGuard (→ send) →
+ * escalationGate (→ send) →
  * buildDetectionContext →
  * { reservationWizard | reservationAgent | onboardingAgent | onboardingByState | addressCapture | checkoutAgent | interactive | nlp } →
  * sendResponse → persistAIMessage → END.
@@ -14,6 +15,11 @@
  * `messageTypeGuard` filtra mensajes no procesables (imágenes, audio, video,
  * contactos, documentos, ubicación fuera de un flujo de captura de dirección,
  * etc.) y responde con un aviso amable + reply button "Pedir ayuda".
+ *
+ * `escalationGate` (V-02, ADR-0002) es un interrupt determinista: corre en
+ * todo turno, antes de que Ownership decida quién habla, sin excepción de
+ * sesión. Si el cliente pidió un humano (texto libre o botón "Pedir ayuda"),
+ * corta acá — nunca llega a checkout/reserva/onboarding/NLP.
  */
 
 import { END, START, StateGraph } from '@langchain/langgraph';
@@ -38,6 +44,7 @@ import { addressCollectionNode } from './nodes/gates/addressCollection';
 import { fulfillmentSelectionNode } from './nodes/gates/fulfillmentSelection';
 import { nameCollectionNode } from './nodes/gates/nameCollection';
 import { messageTypeGuardNode } from './nodes/gates/messageTypeGuard';
+import { escalationGateNode } from './nodes/gates/escalation';
 import {
   interactiveSubgraphNode,
   nlpSubgraphNode,
@@ -54,6 +61,7 @@ import {
   routeAfterHandlerOrSubflow,
   routeAfterFulfillmentSelection,
   routeAfterAddressCollection,
+  routeAfterEscalationGate,
   routeAfterMessageTypeGuard,
   routeAfterNameCollection,
   routeAfterPersistUser,
@@ -73,6 +81,7 @@ const builder = new StateGraph(AgentStateAnnotation)
   .addNode(NODE.PERSIST_USER, persistUserMessageNode)
   .addNode(NODE.SUBSCRIPTION_GATE, subscriptionAccessGateNode)
   .addNode(NODE.MESSAGE_TYPE_GUARD, messageTypeGuardNode)
+  .addNode(NODE.ESCALATION_GATE, escalationGateNode)
   .addNode(NODE.BUILD_DETECTION_CTX, buildDetectionContextNode)
   // @deprecated NODE.RESERVATION = wizard legacy. Ver reservationWizardNode.
   .addNode(NODE.RESERVATION, reservationWizardNode)
@@ -128,6 +137,12 @@ builder.addConditionalEdges(NODE.SUBSCRIPTION_GATE, routeAfterSubscriptionGate, 
 });
 
 builder.addConditionalEdges(NODE.MESSAGE_TYPE_GUARD, routeAfterMessageTypeGuard, {
+  [NODE.SEND]: NODE.SEND,
+  [NODE.ESCALATION_GATE]: NODE.ESCALATION_GATE,
+  [END]: END,
+});
+
+builder.addConditionalEdges(NODE.ESCALATION_GATE, routeAfterEscalationGate, {
   [NODE.SEND]: NODE.SEND,
   [NODE.BUILD_DETECTION_CTX]: NODE.BUILD_DETECTION_CTX,
   [END]: END,

@@ -51,6 +51,10 @@ import {
   persistLastOffer,
 } from '../services/lastOffer.service';
 import { buildCartSummaryMessage } from '../services/cart.service';
+import {
+  buildCompletarPedidoContextLines,
+  getCompletarPedidoLedger,
+} from '../services/completarPedidoGoal.service';
 
 const markHybridResult = (result: HandlerResult): HandlerResult => ({
   ...result,
@@ -117,6 +121,7 @@ const buildContextMessage = async (ctx: EnrichedContext): Promise<string> => {
 
   let cartSummary = 'sin pedido activo';
   let fulfillmentType = 'no aplica (checkout gestiona entrega al finalizar)';
+  let hasItems = false;
 
   if (businessId && customerPhone) {
     try {
@@ -133,6 +138,7 @@ const buildContextMessage = async (ctx: EnrichedContext): Promise<string> => {
       });
       if (draft) {
         const count = draft._count.draft_order_item;
+        hasItems = count > 0;
         cartSummary = count > 0 ? `${count} ítem(s) en carrito` : 'carrito vacío';
         fulfillmentType = draft.fulfillment_type
           ? `${draft.fulfillment_type} (solo checkout puede cambiarlo)`
@@ -162,6 +168,11 @@ const buildContextMessage = async (ctx: EnrichedContext): Promise<string> => {
     `- Tipo de entrega: ${fulfillmentType}`,
     `- Sesión de checkout: ${checkoutActive ? 'activa' : 'inactiva'}`,
     ...buildLastOfferContextLines(meta, nlpHint),
+    ...buildCompletarPedidoContextLines({
+      facts: { hasItems, checkoutActive },
+      ledger: getCompletarPedidoLedger(meta),
+      conversationId: ctx.conversationId,
+    }),
   ];
 
   return `[ESTADO DEL CLIENTE]\n${lines.join('\n')}\n\n${userMsg}`;

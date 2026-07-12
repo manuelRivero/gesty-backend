@@ -172,6 +172,22 @@ export type ConversationMetadata = {
     /** ID del ambiente elegido; null = sin preferencia. */
     environmentId?: string | null;
   };
+
+  /**
+   * Ledger de la familia Intent (ADR-0007): memoria del comportamiento del
+   * sistema sobre cada Goal/Opportunity/Alert, indexada por tipo. Nunca
+   * datos del negocio — si se borra entero, solo cambia el tono del bot.
+   */
+  intentLedger?: {
+    COMPLETAR_PEDIDO?: {
+      /** El cliente pidió explícitamente que no insistamos (ADR-0005). */
+      abandonment?: boolean;
+      /** Veces que se planteó el Goal esta "vida" del pedido (ADR-0008: 3 → enmudece). */
+      surfaceCount?: number;
+      /** ISO timestamp del último planteo, para el cooldown. */
+      lastSurfacedAt?: string | null;
+    };
+  };
 };
 
 export type ConversationMode = 'GLOBAL' | 'FILTER_SET' | 'PRODUCT_FOCUS';
