@@ -15,6 +15,7 @@ import {
 import {
   FULFILLMENT_TYPE_SHORT_QUESTION,
   PAYMENT_METHOD_SHORT_QUESTION,
+  CONFIRM_ORDER_SHORT_QUESTION,
 } from '../../productQuery/botMessages';
 
 describe('resolveCheckoutPendingFromStep', () => {
@@ -32,6 +33,13 @@ describe('resolveCheckoutPendingFromStep', () => {
     });
   });
 
+  it('confirm → pending action estructurado con la pregunta corta', () => {
+    expect(resolveCheckoutPendingFromStep('confirm')).toEqual({
+      action: 'confirm_order',
+      question: CONFIRM_ORDER_SHORT_QUESTION,
+    });
+  });
+
   it('address → sin pending estructurado (se pide en lenguaje natural, sin botones)', () => {
     expect(resolveCheckoutPendingFromStep('address')).toEqual({ action: null, question: null });
   });
@@ -45,12 +53,13 @@ describe('resolveCheckoutPendingFromStep', () => {
   });
 });
 
-describe('checkoutGoalForStep — nombra el paso como uno de los cuatro Goals del catálogo', () => {
+describe('checkoutGoalForStep — nombra el paso como uno de los Goals del catálogo', () => {
   it.each([
     ['fulfillment', 'DEFINIR_ENTREGA'],
     ['address', 'OBTENER_DIRECCION'],
     ['name', 'OBTENER_NOMBRE'],
     ['payment', 'DEFINIR_METODO_DE_PAGO'],
+    ['confirm', 'CONFIRMAR_PEDIDO'],
     ['done', null],
   ] as const)('%s → %s', (step, expected) => {
     expect(checkoutGoalForStep(step)).toBe(expected);

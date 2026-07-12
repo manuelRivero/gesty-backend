@@ -10,6 +10,7 @@ const baseSignals = (): CheckoutAgentSignals => ({
   handback: false,
   handbackReason: null,
   paymentMethod: null,
+  orderConfirmationResolved: null,
 });
 
 describe('applyCheckoutResponsePolicy', () => {

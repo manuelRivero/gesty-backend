@@ -29,7 +29,7 @@ const PendingTurnResponseSchema = z.object({
   confidence: z.number().min(0).max(1),
   reason: z.string().nullable(),
   value: z.unknown().nullable(),
-  resolvedAction: z.enum(['payment_method', 'fulfillment_type']).nullable().optional(),
+  resolvedAction: z.enum(['payment_method', 'fulfillment_type', 'confirm_order']).nullable().optional(),
 });
 
 const normalizeText = (text: string): string =>

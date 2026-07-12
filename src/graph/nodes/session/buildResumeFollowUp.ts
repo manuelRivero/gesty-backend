@@ -10,7 +10,7 @@
  * texto del LLM), el follow-up a anexar después de la respuesta lateral.
  */
 
-export type CheckoutPendingAction = 'fulfillment_type' | 'payment_method';
+export type CheckoutPendingAction = 'fulfillment_type' | 'payment_method' | 'confirm_order';
 
 export interface ReservationDraft {
   date?: string;

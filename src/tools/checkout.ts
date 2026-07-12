@@ -43,6 +43,28 @@ export const setDraftPaymentMethod = async (
   return { success: true };
 };
 
+/**
+ * Revierte el método de pago a "sin elegir". Usado al cancelar el resumen de
+ * confirmación final (`EDIT_PAYMENT_METHOD` / `resolve_order_confirmation`
+ * con `confirmed: false`): vuelve a `nextCheckoutStep` al paso `payment` sin
+ * necesitar un flag aparte — el método de pago es el único Fact que distingue
+ * "confirm" de "payment".
+ */
+export const clearDraftPaymentMethod = async (
+  businessId: string,
+  customerPhone: string
+): Promise<void> => {
+  const draft = await prisma.draft_order.findFirst({
+    where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
+    select: { id: true },
+  });
+  if (!draft) return;
+  await prisma.draft_order.update({
+    where: { id: draft.id },
+    data: { payment_method: null },
+  });
+};
+
 /** Lee el estado de fulfillment/payment del draft activo, para validación previa a una transición. */
 export const getDraftCheckoutState = async (
   businessId: string,
@@ -170,7 +192,10 @@ export const savePaymentMethodTool = new DynamicStructuredTool<
     'Llamá esta tool cuando el cliente indique cómo quiere pagar: ' +
     '"efectivo", "en efectivo", "cash" → cash; ' +
     '"online", "tarjeta", "mercado pago", "con tarjeta" → online. ' +
-    'Solo usar cuando ya están completos tipo de entrega, dirección (si aplica) y nombre.',
+    'Solo usar cuando ya están completos tipo de entrega, dirección (si aplica) y nombre. ' +
+    'IMPORTANTE: esto NO crea el pedido ni cobra — el sistema le muestra al cliente un resumen ' +
+    'con el total real (incluyendo envío y el ajuste del método elegido) para que confirme antes ' +
+    'de que se procese. No hace falta que vos redactes nada más después de llamar esta tool.',
   schema: savePaymentMethodSchema,
   func: async ({ method }: SavePaymentMethodInput, _runManager, config?: RunnableConfig) => {
     const { businessId, customerPhone } = getReactContext(config);
@@ -211,6 +236,40 @@ export const presentPaymentOptionsTool = new DynamicStructuredTool<
   func: async (_input: PresentPaymentOptionsInput, _runManager, config?: RunnableConfig) => {
     getReactContext(config); // validar contexto
     return toJson({ signal: 'present_payment_options' });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// resolve_order_confirmation
+// ---------------------------------------------------------------------------
+
+const resolveOrderConfirmationSchema = z.object({
+  confirmed: z
+    .boolean()
+    .describe('true si el cliente confirmó el pedido, false si pidió cancelar/volver atrás.'),
+});
+type ResolveOrderConfirmationInput = z.infer<typeof resolveOrderConfirmationSchema>;
+
+/**
+ * Señal para que el nodo ejecute (confirmed=true) o descarte (confirmed=false)
+ * el pedido tras mostrar el resumen final. El nodo es quien crea la orden o
+ * limpia el método de pago — esta tool nunca cobra por sí misma (ADR-0004).
+ */
+export const resolveOrderConfirmationTool = new DynamicStructuredTool<
+  typeof resolveOrderConfirmationSchema,
+  ResolveOrderConfirmationInput
+>({
+  name: 'resolve_order_confirmation',
+  description:
+    'Registrá la respuesta del cliente al resumen final del pedido (el que muestra el total real y ' +
+    'pide "Confirmar pedido" o "Cancelar"). Llamala SOLO cuando el cliente responda en texto libre a ' +
+    'esa confirmación — si tocó un botón, el sistema ya lo procesó y no hace falta llamarla. ' +
+    'confirmed=true si el cliente confirma ("sí", "dale", "confirmo"); confirmed=false si pide cancelar ' +
+    'o cambiar el método de pago ("no", "esperá", "mejor cancelá").',
+  schema: resolveOrderConfirmationSchema,
+  func: async ({ confirmed }: ResolveOrderConfirmationInput, _runManager, config?: RunnableConfig) => {
+    getReactContext(config); // validar contexto
+    return toJson({ signal: 'order_confirmation_resolved', confirmed });
   },
 });
 
@@ -426,6 +485,7 @@ export const allCheckoutTools = [
   savePaymentMethodTool,
   presentFulfillmentOptionsTool,
   presentPaymentOptionsTool,
+  resolveOrderConfirmationTool,
   markNameRefusedTool,
   markAddressRefusedTool,
   delegateToMainTool,

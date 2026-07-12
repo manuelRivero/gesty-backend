@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   getCheckoutPendingActionConfig,
   PaymentMethodPendingSchema,
+  ConfirmOrderPendingSchema,
 } from '../pendingActionRegistry';
 
 describe('pendingActionRegistry', () => {
@@ -24,6 +25,15 @@ describe('pendingActionRegistry', () => {
     expect(config?.schema.safeParse({ type: 'TAKE_AWAY' }).success).toBe(true);
   });
 
+  it('resuelve confirm_order con schema y pregunta alineada', () => {
+    const config = getCheckoutPendingActionConfig('confirm_order');
+    expect(config?.pendingAction).toBe('confirm_order');
+    expect(config?.defaultQuestion).toContain('Confirmás');
+    expect(config?.schema.safeParse({ confirmed: true }).success).toBe(true);
+    expect(config?.schema.safeParse({ confirmed: false }).success).toBe(true);
+    expect(config?.schema.safeParse({}).success).toBe(false);
+  });
+
   it('retorna null para acción desconocida', () => {
     expect(getCheckoutPendingActionConfig('unknown')).toBeNull();
   });
@@ -31,5 +41,10 @@ describe('pendingActionRegistry', () => {
   it('PaymentMethodPendingSchema rechaza valores inválidos', () => {
     expect(PaymentMethodPendingSchema.safeParse({ method: 'cash' }).success).toBe(true);
     expect(PaymentMethodPendingSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('ConfirmOrderPendingSchema rechaza valores inválidos', () => {
+    expect(ConfirmOrderPendingSchema.safeParse({ confirmed: true }).success).toBe(true);
+    expect(ConfirmOrderPendingSchema.safeParse({ confirmed: 'yes' }).success).toBe(false);
   });
 });

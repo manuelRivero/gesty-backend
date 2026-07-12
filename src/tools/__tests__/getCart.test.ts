@@ -135,6 +135,41 @@ describe('get_cart — costo real de envío y ajustes por método de pago', () =
     expect(result.pricing.note).toBeNull();
   });
 
+  it('sin fulfillment elegido pero con dirección default en cobertura → responde el costo real', async () => {
+    // Bug real encontrado en prueba manual: antes de tocar "delivery", el
+    // fulfillment_type del draft es null. resolveDeliveryContext exige
+    // fulfillmentType==='DELIVERY' para resolver — sin este caso, la
+    // pregunta "¿cuánto sale el envío?" respondía "necesito tu dirección"
+    // aunque el cliente ya la tuviera guardada de una compra anterior.
+    vi.mocked(prisma.draft_order.findFirst).mockResolvedValue(
+      draft({ fulfillment_type: null }) as never
+    );
+    vi.mocked(resolveDeliveryContext).mockResolvedValue({
+      deliveryFee: 800,
+      minOrderAmount: 0,
+      zoneName: 'Centro',
+      zoneId: 'zone-1',
+      estimatedMinutes: 30,
+    });
+
+    const result = JSON.parse((await callTool()) as string);
+    expect(resolveDeliveryContext).toHaveBeenCalledWith(
+      expect.objectContaining({ fulfillmentType: 'DELIVERY' })
+    );
+    expect(result.pricing.deliveryFee).toBe('800.00');
+    expect(result.pricing.total).toBe('4300.00');
+  });
+
+  it('TAKE_AWAY no consulta el costo de envío ni lo insinúa', async () => {
+    vi.mocked(prisma.draft_order.findFirst).mockResolvedValue(
+      draft({ fulfillment_type: 'TAKE_AWAY' }) as never
+    );
+    await callTool();
+    expect(resolveDeliveryContext).toHaveBeenCalledWith(
+      expect.objectContaining({ fulfillmentType: null })
+    );
+  });
+
   it('expone paymentOptions reales cuando el negocio tiene ajustes configurados', async () => {
     vi.mocked(prisma.draft_order.findFirst).mockResolvedValue(draft() as never);
     vi.mocked(listPaymentAdjustmentsForAmount).mockResolvedValue([

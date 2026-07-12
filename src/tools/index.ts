@@ -229,15 +229,22 @@ export const getCartTool = new DynamicStructuredTool<
       baseAmount: itemsTotal,
     });
 
-    // Costo real de envío: solo resoluble si ya hay dirección guardada en
-    // cobertura (`resolveDeliveryContext` devuelve `zoneId: null` si no la
-    // hay todavía — eso se distingue de "la zona cobra $0 de envío").
+    // Costo real de envío: se resuelve por dirección/zona, no por si el
+    // cliente ya tocó el botón de "delivery". `resolveDeliveryContext` exige
+    // fulfillmentType==='DELIVERY' para no devolver de más en un pedido de
+    // TAKE_AWAY confirmado — pero antes de elegir tipo de entrega (fulfillment_type
+    // aún null) la pregunta "¿cuánto sale el envío?" es legítima y respondible
+    // si el cliente ya tiene una dirección default en cobertura de una compra
+    // anterior. Sin este `?? 'DELIVERY'`, la respuesta decía "necesito tu
+    // dirección" aunque el sistema ya la tuviera, solo porque todavía no se
+    // había tocado el botón de delivery (bug real, encontrado en prueba manual).
+    const deliveryLookupType = draft.fulfillment_type === 'TAKE_AWAY' ? null : 'DELIVERY';
     const deliveryCtx = await resolveDeliveryContext({
       customerId,
       businessId,
-      fulfillmentType: draft.fulfillment_type,
+      fulfillmentType: deliveryLookupType,
     });
-    const deliveryFeeKnown = draft.fulfillment_type === 'DELIVERY' && deliveryCtx.zoneId !== null;
+    const deliveryFeeKnown = deliveryLookupType === 'DELIVERY' && deliveryCtx.zoneId !== null;
 
     return toJson({
       exists: true,
@@ -266,7 +273,7 @@ export const getCartTool = new DynamicStructuredTool<
         deliveryFee: deliveryFeeKnown ? deliveryCtx.deliveryFee.toFixed(2) : null,
         total: deliveryFeeKnown ? (itemsTotal + deliveryCtx.deliveryFee).toFixed(2) : null,
         note:
-          draft.fulfillment_type === 'DELIVERY' && !deliveryFeeKnown
+          deliveryLookupType === 'DELIVERY' && !deliveryFeeKnown
             ? 'El costo de envío depende de la zona — todavía no hay una dirección guardada en cobertura. ' +
               'Si el cliente pregunta cuánto sale, invitalo a compartir la dirección para darle el número exacto.'
             : null,

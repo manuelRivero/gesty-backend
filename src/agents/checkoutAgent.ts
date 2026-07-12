@@ -248,6 +248,8 @@ export interface CheckoutAgentSignals {
   handback: boolean;
   handbackReason: string | null;
   paymentMethod: 'cash' | 'online' | null;
+  /** `null` = no se resolvió este turno; `true`/`false` = el cliente confirmó o canceló el pedido. */
+  orderConfirmationResolved: boolean | null;
 }
 
 const extractSignals = (messages: unknown[]): CheckoutAgentSignals => {
@@ -259,6 +261,7 @@ const extractSignals = (messages: unknown[]): CheckoutAgentSignals => {
     handback: false,
     handbackReason: null,
     paymentMethod: null,
+    orderConfirmationResolved: null,
   };
 
   for (const msg of messages) {
@@ -274,6 +277,7 @@ const extractSignals = (messages: unknown[]): CheckoutAgentSignals => {
         signal?: string;
         reason?: string;
         paymentMethod?: string;
+        confirmed?: boolean;
       };
       if (data.signal === 'present_fulfillment_options') {
         signals.presentFulfillmentOptions = true;
@@ -285,6 +289,9 @@ const extractSignals = (messages: unknown[]): CheckoutAgentSignals => {
         if (data.paymentMethod === 'cash' || data.paymentMethod === 'online') {
           signals.paymentMethod = data.paymentMethod;
         }
+      }
+      if (data.signal === 'order_confirmation_resolved') {
+        signals.orderConfirmationResolved = data.confirmed === true;
       }
       if (data.signal === 'delegate_to_main') {
         signals.delegateToMain = true;

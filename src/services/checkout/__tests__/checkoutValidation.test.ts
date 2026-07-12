@@ -11,6 +11,7 @@ const baseSignals = (): CheckoutAgentSignals => ({
   handback: false,
   handbackReason: null,
   paymentMethod: null,
+  orderConfirmationResolved: null,
 });
 
 /** Dirección y nombre resueltos por defecto: los tests de fulfillment/payment

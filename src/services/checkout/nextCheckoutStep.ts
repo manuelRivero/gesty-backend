@@ -9,7 +9,7 @@
  * que el LLM proponga y la máquina disponga, no al revés.
  */
 
-export type CheckoutStep = 'fulfillment' | 'address' | 'name' | 'payment' | 'done';
+export type CheckoutStep = 'fulfillment' | 'address' | 'name' | 'payment' | 'confirm' | 'done';
 
 export interface CheckoutStepState {
   fulfillmentType: 'DELIVERY' | 'TAKE_AWAY' | null;
@@ -24,6 +24,14 @@ export interface CheckoutStepConfig {
   takeawayEnabled: boolean;
 }
 
+/**
+ * `confirm`: el método de pago ya está elegido (Fact) pero la sesión de
+ * checkout sigue activa — significa que el pedido todavía no se creó. La
+ * orden se ejecuta recién cuando el cliente confirma el resumen final
+ * (`resolve_order_confirmation`); hasta entonces, elegir el método NUNCA
+ * dispara el cobro por sí solo. Cancelar la confirmación vuelve a `payment`
+ * (se limpia `paymentMethod` en el draft) — no hace falta un flag aparte.
+ */
 export function nextCheckoutStep(
   state: CheckoutStepState,
   _config: CheckoutStepConfig
@@ -34,5 +42,5 @@ export function nextCheckoutStep(
   }
   if (!state.customerName?.trim()) return 'name';
   if (!state.paymentMethod) return 'payment';
-  return 'done';
+  return 'confirm';
 }

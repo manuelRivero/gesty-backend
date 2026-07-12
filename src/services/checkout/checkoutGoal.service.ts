@@ -14,6 +14,7 @@
 import {
   FULFILLMENT_TYPE_SHORT_QUESTION,
   PAYMENT_METHOD_SHORT_QUESTION,
+  CONFIRM_ORDER_SHORT_QUESTION,
 } from '../productQuery/botMessages';
 import type { CheckoutPendingAction } from './pendingActionRegistry';
 import type { CheckoutStep } from './nextCheckoutStep';
@@ -26,8 +27,9 @@ export interface CheckoutPendingResolution {
 /**
  * Deriva el pending action estructurado (para `extractPendingTurnResponse`)
  * y la pregunta corta a re-mostrar, directamente del paso actual del
- * checkout. Solo `fulfillment` y `payment` tienen una pregunta enlatada de
- * opción cerrada; `address`/`name` se piden en lenguaje natural sin botones.
+ * checkout. `fulfillment`, `payment` y `confirm` tienen una pregunta
+ * enlatada de opción cerrada; `address`/`name` se piden en lenguaje natural
+ * sin botones.
  */
 export const resolveCheckoutPendingFromStep = (
   step: CheckoutStep
@@ -38,6 +40,9 @@ export const resolveCheckoutPendingFromStep = (
   if (step === 'payment') {
     return { action: 'payment_method', question: PAYMENT_METHOD_SHORT_QUESTION };
   }
+  if (step === 'confirm') {
+    return { action: 'confirm_order', question: CONFIRM_ORDER_SHORT_QUESTION };
+  }
   return { action: null, question: null };
 };
 
@@ -46,9 +51,10 @@ export type CheckoutGoalType =
   | 'OBTENER_DIRECCION'
   | 'OBTENER_NOMBRE'
   | 'DEFINIR_METODO_DE_PAGO'
+  | 'CONFIRMAR_PEDIDO'
   | null;
 
-/** Nombra el paso derivado como uno de los cuatro Goals del catálogo cerrado (TAXONOMIA.md §2). */
+/** Nombra el paso derivado como uno de los Goals del catálogo cerrado (TAXONOMIA.md §2). */
 export const checkoutGoalForStep = (step: CheckoutStep): CheckoutGoalType => {
   switch (step) {
     case 'fulfillment':
@@ -59,6 +65,8 @@ export const checkoutGoalForStep = (step: CheckoutStep): CheckoutGoalType => {
       return 'OBTENER_NOMBRE';
     case 'payment':
       return 'DEFINIR_METODO_DE_PAGO';
+    case 'confirm':
+      return 'CONFIRMAR_PEDIDO';
     case 'done':
       return null;
   }

@@ -2,9 +2,10 @@ import { z } from 'zod';
 import {
   PAYMENT_METHOD_PROMPT_BOT_MESSAGE,
   FULFILLMENT_TYPE_PROMPT_BOT_MESSAGE,
+  CONFIRM_ORDER_SHORT_QUESTION,
 } from '../productQuery/botMessages';
 
-export type CheckoutPendingAction = 'payment_method' | 'fulfillment_type';
+export type CheckoutPendingAction = 'payment_method' | 'fulfillment_type' | 'confirm_order';
 
 export const PaymentMethodPendingSchema = z.object({
   method: z.enum(['cash', 'online']),
@@ -52,15 +53,35 @@ const FULFILLMENT_TYPE_CONFIG: CheckoutPendingActionConfig<FulfillmentTypePendin
     'El usuario debe elegir si quiere delivery a domicilio o retiro en el local.',
 };
 
+export const ConfirmOrderPendingSchema = z.object({
+  confirmed: z.boolean(),
+});
+
+export type ConfirmOrderPendingValue = z.infer<typeof ConfirmOrderPendingSchema>;
+
+const CONFIRM_ORDER_CONFIG: CheckoutPendingActionConfig<ConfirmOrderPendingValue> = {
+  pendingAction: 'confirm_order',
+  defaultQuestion: CONFIRM_ORDER_SHORT_QUESTION,
+  schema: ConfirmOrderPendingSchema,
+  valueHints: `{
+  "confirmed": true | false
+}
+- true: sí, dale, confirmo, ok, adelante, listo, procedé
+- false: no, cancelá, mejor no, esperá, todavía no, pará`,
+  actionDescription:
+    'El usuario debe confirmar o cancelar el pedido antes de que se cree la orden y se procese el pago.',
+};
+
 const REGISTRY: Record<CheckoutPendingAction, CheckoutPendingActionConfig> = {
   payment_method: PAYMENT_METHOD_CONFIG,
   fulfillment_type: FULFILLMENT_TYPE_CONFIG,
+  confirm_order: CONFIRM_ORDER_CONFIG,
 };
 
 export function getCheckoutPendingActionConfig(
   action: string
 ): CheckoutPendingActionConfig | null {
-  if (action === 'payment_method' || action === 'fulfillment_type') {
+  if (action === 'payment_method' || action === 'fulfillment_type' || action === 'confirm_order') {
     return REGISTRY[action];
   }
   return null;
