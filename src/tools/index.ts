@@ -39,7 +39,8 @@ import { refreshDraftOrderTimeout } from '../services/draftOrderTimeout.service'
 import { resolveEffectivePrice } from '../helpers/menuItemPrice.helper';
 import { listPaymentAdjustmentsForAmount } from '../services/paymentAdjustment.service';
 import { computeOrderPricing } from '../services/pricing.service';
-import { partySizeMetadataFields } from '../services/productQuery/utils';
+import { partySizeMetadataFields, normalizeMetadata } from '../services/productQuery/utils';
+import { resolveDeliveryContext } from '../services/deliveryFee.service';
 import { patchConversationMetadata, omitConversationMetadataKeys } from '../repositories/conversationState.repository';
 import { clearLastOffer } from '../services/lastOffer.service';
 import {
@@ -199,7 +200,10 @@ export const getCartTool = new DynamicStructuredTool<
   name: 'get_cart',
   description:
     'Devuelve el contenido del carrito activo (draft order) del cliente, sin modificarlo. ' +
-    'Incluye precios con descuento por producto y ajustes estimados según método de pago.',
+    'Incluye precios con descuento por producto, el costo real de envío cuando ya se puede calcular ' +
+    '(pricing.deliveryFee, solo si hay dirección guardada en cobertura) y los ajustes reales por ' +
+    'método de pago (paymentOptions: descuento efectivo / recargo online, si el negocio los tiene configurados). ' +
+    'Usá estos datos para responder preguntas de precio con números reales en vez de derivarlas.',
   schema: getCartSchema,
   func: async (_input: GetCartInput, _runManager, config?: RunnableConfig) => {
     const { businessId, customerPhone, customerId } = getReactContext(config);
@@ -219,11 +223,21 @@ export const getCartTool = new DynamicStructuredTool<
     const pricing = computeOrderPricing(draft.draft_order_item);
     const itemsTotal = pricing.subtotal - pricing.productDiscounts;
 
-    // Ajustes estimados por método de pago (sin aplicar delivery fee en esta preview)
+    // Ajustes reales por método de pago (no incluyen el costo de envío).
     const paymentAdjustments = await listPaymentAdjustmentsForAmount({
       businessId,
       baseAmount: itemsTotal,
     });
+
+    // Costo real de envío: solo resoluble si ya hay dirección guardada en
+    // cobertura (`resolveDeliveryContext` devuelve `zoneId: null` si no la
+    // hay todavía — eso se distingue de "la zona cobra $0 de envío").
+    const deliveryCtx = await resolveDeliveryContext({
+      customerId,
+      businessId,
+      fulfillmentType: draft.fulfillment_type,
+    });
+    const deliveryFeeKnown = draft.fulfillment_type === 'DELIVERY' && deliveryCtx.zoneId !== null;
 
     return toJson({
       exists: true,
@@ -249,9 +263,13 @@ export const getCartTool = new DynamicStructuredTool<
           ? pricing.productDiscounts.toFixed(2)
           : null,
         itemsTotal: itemsTotal.toFixed(2),
-        note: draft.fulfillment_type === 'DELIVERY'
-          ? 'El costo de envío se agrega al confirmar según tu zona de cobertura.'
-          : null,
+        deliveryFee: deliveryFeeKnown ? deliveryCtx.deliveryFee.toFixed(2) : null,
+        total: deliveryFeeKnown ? (itemsTotal + deliveryCtx.deliveryFee).toFixed(2) : null,
+        note:
+          draft.fulfillment_type === 'DELIVERY' && !deliveryFeeKnown
+            ? 'El costo de envío depende de la zona — todavía no hay una dirección guardada en cobertura. ' +
+              'Si el cliente pregunta cuánto sale, invitalo a compartir la dirección para darle el número exacto.'
+            : null,
       },
       paymentOptions: paymentAdjustments.length > 0
         ? paymentAdjustments.map((a) => ({
@@ -1135,8 +1153,18 @@ export const addCartItemTool = new DynamicStructuredTool<
 
 // ADR-0002: el Constraint "no eliminar sin confirmar" vive acá, en el borde
 // de la Tool — no en el prompt. La evidencia de confirmación es un pending
-// que la propia Tool escribió en un llamado anterior, nunca un flag que el
-// modelo pueda setear en el mismo schema (eso sería confiar en el llamador).
+// que se escribió en un llamado/turno anterior, nunca un flag que el modelo
+// pueda setear en el mismo schema (eso sería confiar en el llamador).
+//
+// `pendingAction`/`pendingItemId` es la MISMA clave que usa el flujo
+// determinístico de botones (`cart.service.ts`, `RemoveItemHandler`) para su
+// propia confirmación por UI. Antes esta Tool llevaba su propio
+// `pending_item_removal` separado — dos fuentes de verdad para "¿ya se
+// preguntó por este ítem?" que no se enteraban una de la otra. Un cliente que
+// respondía en texto libre ("sí") a la confirmación por botones podía terminar
+// re-preguntado por la Tool, y viceversa. Unificar en un solo campo hace que
+// cualquiera de los dos caminos que preguntó primero sea evidencia válida
+// para que el otro proceda — ya no hay dos preguntas por el mismo ítem.
 const REMOVAL_CONFIRMATION_TTL_MS = 5 * 60 * 1000;
 
 const removeCartItemSchema = z.object({
@@ -1193,21 +1221,19 @@ export const removeCartItemTool = new DynamicStructuredTool<
       where: { conversation_id: conversationId },
       select: { metadata: true },
     });
-    const metadata =
-      stateRow?.metadata && typeof stateRow.metadata === 'object' && !Array.isArray(stateRow.metadata)
-        ? (stateRow.metadata as Record<string, unknown>)
-        : {};
-    const pending = metadata.pending_item_removal as
-      | { productId?: string; requestedAt?: string }
-      | undefined;
+    const metadata = normalizeMetadata(stateRow?.metadata);
     const isConfirmed =
-      pending?.productId === productId &&
-      typeof pending.requestedAt === 'string' &&
-      Date.now() - new Date(pending.requestedAt).getTime() <= REMOVAL_CONFIRMATION_TTL_MS;
+      metadata.pendingAction === 'CONFIRM_REMOVE' &&
+      metadata.pendingItemId === productId &&
+      typeof metadata.pendingActionAt === 'string' &&
+      Date.now() - new Date(metadata.pendingActionAt).getTime() <= REMOVAL_CONFIRMATION_TTL_MS;
 
     if (!isConfirmed) {
       await patchConversationMetadata(conversationId, {
-        pending_item_removal: { productId, requestedAt: new Date().toISOString() },
+        pendingAction: 'CONFIRM_REMOVE',
+        pendingItemId: productId,
+        pendingItemName: removedName,
+        pendingActionAt: new Date().toISOString(),
       });
       return toJson({
         success: false,
@@ -1219,7 +1245,12 @@ export const removeCartItemTool = new DynamicStructuredTool<
       });
     }
 
-    await omitConversationMetadataKeys(conversationId, ['pending_item_removal']);
+    await omitConversationMetadataKeys(conversationId, [
+      'pendingAction',
+      'pendingItemId',
+      'pendingItemName',
+      'pendingActionAt',
+    ]);
     await prisma.draft_order_item.delete({ where: { id: line.id } });
 
     // Recalcular total

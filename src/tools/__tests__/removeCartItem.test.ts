@@ -2,6 +2,11 @@
  * Test del Constraint de ADR-0002 en remove_cart_item: la Tool no elimina
  * sin evidencia de confirmación previa, sin importar lo que el modelo diga.
  *
+ * La evidencia (`pendingAction`/`pendingItemId`) es la MISMA clave que usa
+ * el flujo determinístico de botones (`cart.service.ts`, `RemoveItemHandler`)
+ * — así cualquiera de los dos caminos que preguntó primero sirve de evidencia
+ * para el otro, sin duplicar el estado de "¿ya se preguntó por este ítem?".
+ *
  * prisma y el repositorio de conversation_state se mockean para no requerir BD.
  */
 
@@ -80,18 +85,20 @@ describe('remove_cart_item — Constraint de confirmación (ADR-0002)', () => {
     expect(result.success).toBe(false);
     expect(result.requiresConfirmation).toBe(true);
     expect(prisma.draft_order_item.delete).not.toHaveBeenCalled();
-    expect(patchConversationMetadata).toHaveBeenCalledWith(
-      'conv-1',
-      expect.objectContaining({
-        pending_item_removal: expect.objectContaining({ productId: PRODUCT_ID }),
-      })
-    );
+    expect(patchConversationMetadata).toHaveBeenCalledWith('conv-1', {
+      pendingAction: 'CONFIRM_REMOVE',
+      pendingItemId: PRODUCT_ID,
+      pendingItemName: 'Milanesa',
+      pendingActionAt: expect.any(String),
+    });
   });
 
   it('elimina el ítem cuando hay un pending previo vigente para el mismo productId', async () => {
     vi.mocked(prisma.conversation_state.findUnique).mockResolvedValue({
       metadata: {
-        pending_item_removal: { productId: PRODUCT_ID, requestedAt: new Date().toISOString() },
+        pendingAction: 'CONFIRM_REMOVE',
+        pendingItemId: PRODUCT_ID,
+        pendingActionAt: new Date().toISOString(),
       },
     } as never);
     vi.mocked(prisma.draft_order_item.aggregate).mockResolvedValue({
@@ -104,16 +111,63 @@ describe('remove_cart_item — Constraint de confirmación (ADR-0002)', () => {
 
     expect(result.success).toBe(true);
     expect(prisma.draft_order_item.delete).toHaveBeenCalledWith({ where: { id: 'line-1' } });
-    expect(omitConversationMetadataKeys).toHaveBeenCalledWith('conv-1', ['pending_item_removal']);
+    expect(omitConversationMetadataKeys).toHaveBeenCalledWith('conv-1', [
+      'pendingAction',
+      'pendingItemId',
+      'pendingItemName',
+      'pendingActionAt',
+    ]);
+  });
+
+  it('elimina directo cuando el pending lo dejó el flujo determinístico de botones', async () => {
+    // Reproduce el bug real: RemoveItemHandler (cart.service.ts) ya mostró la
+    // confirmación por botones y dejó pendingAction/pendingItemId en metadata.
+    // El cliente responde en texto libre ("sí") en vez de tocar el botón, el
+    // híbrido llama esta Tool — antes de la unificación, la Tool no sabía nada
+    // de ese pending y volvía a preguntar por su cuenta.
+    vi.mocked(prisma.conversation_state.findUnique).mockResolvedValue({
+      metadata: {
+        pendingAction: 'CONFIRM_REMOVE',
+        pendingItemId: PRODUCT_ID,
+        pendingItemName: 'Milanesa',
+        pendingActionAt: new Date().toISOString(),
+      },
+    } as never);
+    vi.mocked(prisma.draft_order_item.aggregate).mockResolvedValue({
+      _sum: { total_price: null },
+    } as never);
+    vi.mocked(prisma.draft_order_item.findMany).mockResolvedValue([] as never);
+
+    const raw = await callTool({ productId: PRODUCT_ID });
+    const result = JSON.parse(raw as string);
+
+    expect(result.success).toBe(true);
+    expect(prisma.draft_order_item.delete).toHaveBeenCalled();
   });
 
   it('no elimina si el pending previo es de otro productId', async () => {
     vi.mocked(prisma.conversation_state.findUnique).mockResolvedValue({
       metadata: {
-        pending_item_removal: {
-          productId: '22222222-2222-2222-2222-222222222222',
-          requestedAt: new Date().toISOString(),
-        },
+        pendingAction: 'CONFIRM_REMOVE',
+        pendingItemId: '22222222-2222-2222-2222-222222222222',
+        pendingActionAt: new Date().toISOString(),
+      },
+    } as never);
+
+    const raw = await callTool({ productId: PRODUCT_ID });
+    const result = JSON.parse(raw as string);
+
+    expect(result.success).toBe(false);
+    expect(result.requiresConfirmation).toBe(true);
+    expect(prisma.draft_order_item.delete).not.toHaveBeenCalled();
+  });
+
+  it('no elimina si el pendingAction es de otro tipo (ej. EDIT_CART)', async () => {
+    vi.mocked(prisma.conversation_state.findUnique).mockResolvedValue({
+      metadata: {
+        pendingAction: 'EDIT_CART',
+        pendingItemId: PRODUCT_ID,
+        pendingActionAt: new Date().toISOString(),
       },
     } as never);
 
@@ -128,7 +182,11 @@ describe('remove_cart_item — Constraint de confirmación (ADR-0002)', () => {
   it('no elimina si el pending previo expiró (TTL vencido)', async () => {
     const expired = new Date(Date.now() - 10 * 60 * 1000).toISOString(); // 10 min > 5 min TTL
     vi.mocked(prisma.conversation_state.findUnique).mockResolvedValue({
-      metadata: { pending_item_removal: { productId: PRODUCT_ID, requestedAt: expired } },
+      metadata: {
+        pendingAction: 'CONFIRM_REMOVE',
+        pendingItemId: PRODUCT_ID,
+        pendingActionAt: expired,
+      },
     } as never);
 
     const raw = await callTool({ productId: PRODUCT_ID });

@@ -38,6 +38,7 @@ export class CancelRemoveActionHandler implements IntentHandler {
       'pendingAction',
       'pendingItemId',
       'pendingItemName',
+      'pendingActionAt',
     ]);
 
     const text = formatBotUserMessage(

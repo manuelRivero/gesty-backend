@@ -10,6 +10,18 @@ export type ConversationMetadata = {
   pendingQuestion?: string;
   candidateProductIds?: string[];
   /**
+   * Confirmación pendiente sobre un ítem del carrito (`cart.service.ts`).
+   * `CONFIRM_REMOVE` es el Constraint de borde de `remove_cart_item`
+   * (ADR-0002): fuente única, compartida entre el flujo determinístico de
+   * botones y la Tool del agente híbrido — evita que ambos mantengan su
+   * propia copia de "qué ítem está pendiente de confirmación".
+   */
+  pendingAction?: 'CONFIRM_REMOVE' | 'EDIT_CART';
+  pendingItemId?: string;
+  pendingItemName?: string;
+  /** ISO timestamp de cuándo se planteó `pendingAction`, para el TTL de confirmación. */
+  pendingActionAt?: string;
+  /**
    * Personas/comensales de contexto de sesión (persiste durante el pedido).
    * Reemplaza el uso temporal de solo product query.
    */

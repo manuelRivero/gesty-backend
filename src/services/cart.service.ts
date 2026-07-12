@@ -16,6 +16,7 @@ import {
   findBusinessByPhoneNumberId,
   findOrCreateConversationState,
   omitConversationMetadataKeys,
+  patchConversationMetadata,
   updateConversationLastMessageAt,
   updateConversationState,
 } from "../repositories";
@@ -506,13 +507,14 @@ export const buildConfirmRemoveItemMessage = async (
     }
   };
 
-  // Guardar en metadata que estamos esperando confirmación
-  await updateConversationState(conversation.id, {
-    metadata: {
-      pendingAction: 'CONFIRM_REMOVE',
-      pendingItemId: matchingItem.menu_item?.id ?? '',
-      pendingItemName: matchingItem.menu_item?.name ?? ''
-    }
+  // Guardar en metadata que estamos esperando confirmación. `patchConversationMetadata`
+  // mergea — `updateConversationState({ metadata: {...} })` pisaría el resto de la
+  // metadata de la conversación (checkout_active, intentLedger, etc.), no solo estas claves.
+  await patchConversationMetadata(conversation.id, {
+    pendingAction: 'CONFIRM_REMOVE',
+    pendingItemId: matchingItem.menu_item?.id ?? '',
+    pendingItemName: matchingItem.menu_item?.name ?? '',
+    pendingActionAt: new Date().toISOString(),
   });
 
   await createConversationMessage(
@@ -600,6 +602,7 @@ export const executeRemoveDraftOrderItemFromWebhook = async (
     "pendingAction",
     "pendingItemId",
     "pendingItemName",
+    "pendingActionAt",
   ]);
   // No crea drafts nuevos (requiere uno existente con ítems): la renovación
   // del timeout ya la cubrió touchSession al inicio del turno.
