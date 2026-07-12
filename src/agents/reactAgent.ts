@@ -52,9 +52,19 @@ import {
 } from '../services/lastOffer.service';
 import { buildCartSummaryMessage } from '../services/cart.service';
 import {
-  buildCompletarPedidoContextLines,
-  getCompletarPedidoLedger,
-} from '../services/completarPedidoGoal.service';
+  buildOrderCompletionContextLines,
+  getOrderCompletionLedger,
+  deriveOrderCompletionGoal,
+  computeOrderCompletionPermission,
+} from '../services/orderCompletionGoal.service';
+import {
+  buildReservationCompletionContextLines,
+  getReservationCompletionLedger,
+  hasReservationDraftInProgress,
+  deriveReservationCompletionGoal,
+  computeReservationCompletionPermission,
+} from '../services/reservationCompletionGoal.service';
+import { findActiveEnvironmentsByBusinessId } from '../repositories/reservation.repository';
 
 const markHybridResult = (result: HandlerResult): HandlerResult => ({
   ...result,
@@ -149,6 +159,19 @@ const buildContextMessage = async (ctx: EnrichedContext): Promise<string> => {
     }
   }
 
+  const reservationDraft = meta.reservation_draft;
+  const reservationAgentActive = meta.reservation_agent_active === true;
+  const hasReservationDraft = hasReservationDraftInProgress(reservationDraft);
+  let hasEnvironments = false;
+  if (hasReservationDraft && businessId) {
+    try {
+      const environments = await findActiveEnvironmentsByBusinessId(businessId);
+      hasEnvironments = environments.length > 0;
+    } catch {
+      /* si falla, se asume sin ambientes — solo afecta el texto del hint */
+    }
+  }
+
   const partySizeLine = partySize
     ? `${partySize} (guía de cantidad a pedir, NO filtro de serves_people)`
     : 'no informado — preguntar solo si el cliente consulta platos o pide comida en este turno';
@@ -162,16 +185,46 @@ const buildContextMessage = async (ctx: EnrichedContext): Promise<string> => {
       }
     : null;
 
+  // ADR-0009: a lo sumo un Intent activo por turno. Con dos Goals derivados
+  // (Fase 0 y Fase 1b) hace falta un arbitraje explícito: se calcula el
+  // permiso puro de cada uno primero, y si ambos ganarían el turno, se
+  // suprime uno antes de construir las líneas (evita consumir presupuesto
+  // de ambos y mostrarle al modelo dos objetivos a la vez). Empate entre
+  // Goals de igual presión ("reanudable"): gana COMPLETAR_PEDIDO — un pago
+  // pendiente es más urgente que una reserva a futuro.
+  const orderLedger = getOrderCompletionLedger(meta);
+  const orderGoal = deriveOrderCompletionGoal({ hasItems, checkoutActive }, orderLedger);
+  const orderPermission = computeOrderCompletionPermission(orderGoal, orderLedger);
+
+  const reservationLedger = getReservationCompletionLedger(meta);
+  const reservationGoal = deriveReservationCompletionGoal(
+    { hasDraft: hasReservationDraft, reservationAgentActive },
+    reservationLedger
+  );
+  const reservationPermission = computeReservationCompletionPermission(
+    reservationGoal,
+    reservationLedger
+  );
+  const suppressReservation = orderPermission.granted && reservationPermission.granted;
+
   const lines = [
     `- Personas para el pedido: ${partySizeLine}`,
     `- Carrito: ${cartSummary}`,
     `- Tipo de entrega: ${fulfillmentType}`,
     `- Sesión de checkout: ${checkoutActive ? 'activa' : 'inactiva'}`,
     ...buildLastOfferContextLines(meta, nlpHint),
-    ...buildCompletarPedidoContextLines({
+    ...buildOrderCompletionContextLines({
       facts: { hasItems, checkoutActive },
-      ledger: getCompletarPedidoLedger(meta),
+      ledger: orderLedger,
       conversationId: ctx.conversationId,
+    }),
+    ...buildReservationCompletionContextLines({
+      facts: { hasDraft: hasReservationDraft, reservationAgentActive },
+      ledger: reservationLedger,
+      conversationId: ctx.conversationId,
+      suppressedBySaliency: suppressReservation,
+      draft: reservationDraft,
+      hasEnvironments,
     }),
   ];
 

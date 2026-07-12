@@ -545,6 +545,47 @@ export const delegateToMainTool = new DynamicStructuredTool<
 });
 
 // ---------------------------------------------------------------------------
+// SALIDA: handback_reservation (temporal — conserva reservation_draft)
+// ---------------------------------------------------------------------------
+
+const handbackReservationSchema = z.object({
+  reason: z
+    .string()
+    .describe(
+      'Motivo del handback en una oración corta. ' +
+        'Ej: "el cliente quiere ver el menú", "el cliente quiere hacer un pedido".'
+    ),
+});
+type HandbackReservationInput = z.infer<typeof handbackReservationSchema>;
+
+/**
+ * Salida temporal (Fase 1b, ADR-0005): el nodo limpia `reservation_agent_active`
+ * pero CONSERVA `reservation_draft` — a diferencia de `abandon_reservation`, que
+ * borra los dos. El cliente vuelve al flujo normal, y el borrador sigue vivo
+ * por si retoma la reserva más adelante: es lo que hace posible que el Goal
+ * `COMPLETAR_RESERVA` pueda reabrirse (ver `reservationCompletionGoal.service.ts`).
+ * Mismo patrón que `handback_to_main` en checkout.
+ */
+export const handbackReservationTool = new DynamicStructuredTool<
+  typeof handbackReservationSchema,
+  HandbackReservationInput
+>({
+  name: 'handback_reservation',
+  description:
+    'Sale de la sesión de reserva y devuelve el control al asistente principal, SIN perder ' +
+    'los datos ya cargados (fecha, horario, personas, ambiente). ' +
+    'Usá esta tool cuando el cliente quiera hacer algo fuera de la reserva mientras la sigue queriendo ' +
+    'completar más tarde: ver el menú, hacer un pedido, cambiar de tema sin cancelar. ' +
+    'NO la uses si el cliente decide explícitamente no reservar: para eso usá abandon_reservation, ' +
+    'que sí borra el borrador.',
+  schema: handbackReservationSchema,
+  func: async ({ reason }: HandbackReservationInput, _runManager, config?: RunnableConfig) => {
+    getReactContext(config); // validar contexto
+    return toJson({ signal: 'handback_reservation', reason });
+  },
+});
+
+// ---------------------------------------------------------------------------
 // SALIDA: abandon_reservation (permanente — limpia reservation_agent_active)
 // ---------------------------------------------------------------------------
 
@@ -596,5 +637,6 @@ export const allReservationTools = [
   getAvailableEnvironmentsTool,
   presentConfirmationTool,
   delegateToMainTool,
+  handbackReservationTool,
   abandonReservationTool,
 ];

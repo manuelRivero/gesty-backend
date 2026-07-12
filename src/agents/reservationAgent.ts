@@ -7,7 +7,9 @@
  * y expone señales para adjuntar UI de WhatsApp desde el nodo orquestador.
  *
  * Diferencias clave respecto al agente de checkout:
- *  - Dos tools de salida: `delegate_to_main` (temporal) y `abandon_reservation` (permanente).
+ *  - Tres tools de salida: `delegate_to_main` (temporal, sesión sigue activa),
+ *    `handback_reservation` (temporal, limpia la sesión pero conserva el
+ *    borrador) y `abandon_reservation` (permanente, borra todo).
  *  - `delegate_to_main` NO limpia `reservation_agent_active`; el nodo llama
  *    `runHybridReactAgent` inline y la sesión continúa en el turno siguiente.
  *  - Múltiples señales de UI: slots, ambientes, confirmación.
@@ -123,6 +125,8 @@ export interface ReservationAgentSignals {
   presentConfirmation: boolean;
   delegateToMain: boolean;
   delegateToMainReason: string | null;
+  handbackReservation: boolean;
+  handbackReservationReason: string | null;
   abandonReservation: boolean;
   abandonReservationReason: string | null;
 }
@@ -135,6 +139,8 @@ const extractSignals = (messages: unknown[]): ReservationAgentSignals => {
     presentConfirmation: false,
     delegateToMain: false,
     delegateToMainReason: null,
+    handbackReservation: false,
+    handbackReservationReason: null,
     abandonReservation: false,
     abandonReservationReason: null,
   };
@@ -166,6 +172,10 @@ const extractSignals = (messages: unknown[]): ReservationAgentSignals => {
       if (data.signal === 'delegate_to_main') {
         signals.delegateToMain = true;
         signals.delegateToMainReason = data.reason ?? null;
+      }
+      if (data.signal === 'handback_reservation') {
+        signals.handbackReservation = true;
+        signals.handbackReservationReason = data.reason ?? null;
       }
       if (data.signal === 'abandon_reservation') {
         signals.abandonReservation = true;

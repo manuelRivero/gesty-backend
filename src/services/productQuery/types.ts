@@ -127,14 +127,6 @@ export type ConversationMetadata = {
   checkout_active?: boolean;
 
   /**
-   * Paso del checkout esperando respuesta en texto libre (ej. tras mostrar botones de pago).
-   */
-  checkout_pending_action?: 'payment_method' | 'fulfillment_type' | null;
-
-  /** Pregunta que el bot hizo al setear checkout_pending_action (input del extractor). */
-  checkout_pending_question?: string | null;
-
-  /**
    * Cantidad de veces que el cliente rechazó explícitamente dar su nombre
    * durante la sesión de checkout activa. Se resetea al limpiar la sesión.
    */
@@ -183,6 +175,14 @@ export type ConversationMetadata = {
       /** El cliente pidió explícitamente que no insistamos (ADR-0005). */
       abandonment?: boolean;
       /** Veces que se planteó el Goal esta "vida" del pedido (ADR-0008: 3 → enmudece). */
+      surfaceCount?: number;
+      /** ISO timestamp del último planteo, para el cooldown. */
+      lastSurfacedAt?: string | null;
+    };
+    COMPLETAR_RESERVA?: {
+      /** El cliente pidió explícitamente que no insistamos con la reserva (ADR-0005). */
+      abandonment?: boolean;
+      /** Veces que se planteó el Goal esta "vida" del borrador (ADR-0008: 3 → enmudece). */
       surfaceCount?: number;
       /** ISO timestamp del último planteo, para el cooldown. */
       lastSurfacedAt?: string | null;

@@ -29,9 +29,12 @@ import {
   extractPendingTurnResponse,
   formatPendingExtractionBlock,
 } from '../services/ai/extractPendingTurnResponse';
-import { effectivePending } from '../services/checkout/effectivePending';
 import { getCheckoutPendingActionConfig } from '../services/checkout/pendingActionRegistry';
-import { omitConversationMetadataKeys } from '../repositories/conversationState.repository';
+import { nextCheckoutStep } from '../services/checkout/nextCheckoutStep';
+import {
+  resolveCheckoutPendingFromStep,
+  logCheckoutGoal,
+} from '../services/checkout/checkoutGoal.service';
 import type { ConversationMetadata } from '../services/productQuery/types';
 
 // ---------------------------------------------------------------------------
@@ -172,36 +175,20 @@ const buildCheckoutContextMessage = async (
   const hasPayload = Boolean(ctx.payloadId?.trim());
   let extractionBlock = '';
 
-  const resolvedPending = effectivePending({
-    metadata: conversationMeta,
-    snapshot: {
-      fulfillmentType: snapshotFulfillmentType,
-      paymentMethod: snapshotPaymentMethod,
+  // Paso derivado (ADR-0006/0005): nada que reconciliar, porque no hay una
+  // segunda copia del paso — se deriva del snapshot real en cada turno.
+  const step = nextCheckoutStep(
+    {
+      fulfillmentType: snapshotFulfillmentType as 'DELIVERY' | 'TAKE_AWAY' | null,
+      hasAddress: checkoutCtx.hasAddress,
+      isInCoverage: checkoutCtx.isInCoverage,
+      customerName,
+      paymentMethod: snapshotPaymentMethod as 'cash' | 'online' | null,
     },
-  });
-
-  if (resolvedPending.stale && conversationId) {
-    console.log(
-      JSON.stringify({
-        event: '[checkout-pending] stale_pending_cleared',
-        conversationId,
-        staleReason: resolvedPending.staleReason,
-        metadataAction: conversationMeta.checkout_pending_action,
-        snapshot: {
-          fulfillmentType: snapshotFulfillmentType,
-          paymentMethod: snapshotPaymentMethod,
-        },
-      })
-    );
-    try {
-      await omitConversationMetadataKeys(conversationId, [
-        'checkout_pending_action',
-        'checkout_pending_question',
-      ]);
-    } catch (error) {
-      console.error('[checkout-pending] failed to clear stale pending metadata:', error);
-    }
-  }
+    { deliveryEnabled: checkoutCtx.deliveryEnabled, takeawayEnabled: checkoutCtx.takeawayEnabled }
+  );
+  logCheckoutGoal({ conversationId, step });
+  const resolvedPending = resolveCheckoutPendingFromStep(step);
 
   const pendingAction = resolvedPending.action;
   if (pendingAction && userText && !hasPayload) {

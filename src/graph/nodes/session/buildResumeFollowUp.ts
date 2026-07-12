@@ -47,7 +47,12 @@ const RESUME_PREFIX = {
   onboarding: 'Seguimos con tu dirección:',
 } as const;
 
-function nextReservationDraftQuestion(
+/**
+ * Exportada para reuso en `reservationCompletionGoal.service.ts` (Fase 1b): es la
+ * misma fuente de verdad de qué falta en el borrador, tanto para retomar tras
+ * una interrupción como para saber si el Goal `COMPLETAR_RESERVA` sigue abierto.
+ */
+export function nextReservationDraftQuestion(
   draft: ReservationDraft | undefined,
   hasEnvironments: boolean
 ): string | null {

@@ -10,97 +10,92 @@
  * sin que el sistema pierda la cuenta de cuántas veces ya insistió.
  */
 
-import { patchConversationMetadata } from '../repositories';
+import { patchIntentLedgerEntry } from './intentLedger.repository';
 import type { ConversationMetadata } from './productQuery/types';
 import { normalizeMetadata } from './productQuery/utils';
 
-export interface CompletarPedidoFacts {
+export interface OrderCompletionFacts {
   hasItems: boolean;
   checkoutActive: boolean;
 }
 
-export interface CompletarPedidoLedger {
+export interface OrderCompletionLedger {
   abandonment: boolean;
   surfaceCount: number;
   lastSurfacedAt: string | null;
 }
 
-const EMPTY_LEDGER: CompletarPedidoLedger = {
+const EMPTY_LEDGER: OrderCompletionLedger = {
   abandonment: false,
   surfaceCount: 0,
   lastSurfacedAt: null,
 };
 
-export const getCompletarPedidoLedger = (metadata: unknown): CompletarPedidoLedger => {
+export const getOrderCompletionLedger = (metadata: unknown): OrderCompletionLedger => {
   const meta: ConversationMetadata = normalizeMetadata(metadata);
   return { ...EMPTY_LEDGER, ...(meta.intentLedger?.COMPLETAR_PEDIDO ?? {}) };
 };
 
-export interface CompletarPedidoGoal {
+export interface OrderCompletionGoal {
   /** Abierto ⟺ hay ítems, no arrancó el checkout y no fue abandonado. */
   open: boolean;
 }
 
 /** Derivador puro (ADR-0005, ADR-0006): sin estado propio, recalculado cada turno. */
-export const deriveCompletarPedidoGoal = (
-  facts: CompletarPedidoFacts,
-  ledger: CompletarPedidoLedger
-): CompletarPedidoGoal => ({
+export const deriveOrderCompletionGoal = (
+  facts: OrderCompletionFacts,
+  ledger: OrderCompletionLedger
+): OrderCompletionGoal => ({
   open: facts.hasItems && !facts.checkoutActive && !ledger.abandonment,
 });
 
 /** Presupuesto de insistencia (ADR-0008): 3 → enmudece, no muere. */
-export const COMPLETAR_PEDIDO_SURFACE_BUDGET = 3;
+export const ORDER_COMPLETION_SURFACE_BUDGET = 3;
 
 /** Cooldown entre planteos consecutivos del mismo Goal. */
-export const COMPLETAR_PEDIDO_COOLDOWN_MS = 10 * 60 * 1000;
+export const ORDER_COMPLETION_COOLDOWN_MS = 10 * 60 * 1000;
 
-export type CompletarPedidoPermissionReason =
+export type OrderCompletionPermissionReason =
   | 'granted'
   | 'closed'
   | 'budget_exhausted'
-  | 'cooldown';
+  | 'cooldown'
+  | 'suppressed_by_saliency';
 
-export interface CompletarPedidoPermission {
+export interface OrderCompletionPermission {
   granted: boolean;
-  reason: CompletarPedidoPermissionReason;
+  reason: OrderCompletionPermissionReason;
 }
 
 /**
  * Permiso que calcula el sistema (ADR-0009, ADR-0010): el modelo nunca
  * decide si el Goal puede plantearse, solo si este turno es el momento.
  */
-export const computeCompletarPedidoPermission = (
-  goal: CompletarPedidoGoal,
-  ledger: CompletarPedidoLedger,
+export const computeOrderCompletionPermission = (
+  goal: OrderCompletionGoal,
+  ledger: OrderCompletionLedger,
   now: number = Date.now()
-): CompletarPedidoPermission => {
+): OrderCompletionPermission => {
   if (!goal.open) return { granted: false, reason: 'closed' };
-  if (ledger.surfaceCount >= COMPLETAR_PEDIDO_SURFACE_BUDGET) {
+  if (ledger.surfaceCount >= ORDER_COMPLETION_SURFACE_BUDGET) {
     return { granted: false, reason: 'budget_exhausted' };
   }
   if (
     ledger.lastSurfacedAt &&
-    now - new Date(ledger.lastSurfacedAt).getTime() < COMPLETAR_PEDIDO_COOLDOWN_MS
+    now - new Date(ledger.lastSurfacedAt).getTime() < ORDER_COMPLETION_COOLDOWN_MS
   ) {
     return { granted: false, reason: 'cooldown' };
   }
   return { granted: true, reason: 'granted' };
 };
 
-const patchLedger = async (
-  conversationId: string,
-  ledger: CompletarPedidoLedger
-): Promise<void> => {
-  await patchConversationMetadata(conversationId, {
-    intentLedger: { COMPLETAR_PEDIDO: ledger },
-  });
-};
+const patchLedger = (conversationId: string, ledger: OrderCompletionLedger): Promise<void> =>
+  patchIntentLedgerEntry(conversationId, 'COMPLETAR_PEDIDO', ledger);
 
 /** Registra que el Goal se planteó este turno (consume presupuesto de insistencia). */
-export const recordCompletarPedidoSurfaced = async (
+export const recordOrderCompletionSurfaced = async (
   conversationId: string,
-  ledger: CompletarPedidoLedger
+  ledger: OrderCompletionLedger
 ): Promise<void> => {
   await patchLedger(conversationId, {
     ...ledger,
@@ -113,9 +108,9 @@ export const recordCompletarPedidoSurfaced = async (
  * El cliente pidió explícitamente que no insistamos (ADR-0005, caso 1: "el
  * único bit que separa un asistente de un acosador"). NO borra el carrito.
  */
-export const recordCompletarPedidoAbandonment = async (
+export const recordOrderCompletionAbandonment = async (
   conversationId: string,
-  ledger: CompletarPedidoLedger
+  ledger: OrderCompletionLedger
 ): Promise<void> => {
   await patchLedger(conversationId, { ...ledger, abandonment: true });
 };
@@ -125,9 +120,9 @@ export const recordCompletarPedidoAbandonment = async (
  * el pedido y agrega otro ítem, el abandono se limpia solo — sin esto,
  * `abandonment = true` es una lápida que el bot nunca vuelve a ayudar a cerrar.
  */
-export const reviveCompletarPedidoIfAbandoned = async (
+export const reviveOrderCompletionIfAbandoned = async (
   conversationId: string,
-  ledger: CompletarPedidoLedger
+  ledger: OrderCompletionLedger
 ): Promise<void> => {
   if (!ledger.abandonment && ledger.surfaceCount === 0) return;
   await patchLedger(conversationId, EMPTY_LEDGER);
@@ -139,8 +134,8 @@ export const reviveCompletarPedidoIfAbandoned = async (
  */
 const resetLedgerIfCartEmpty = async (
   conversationId: string,
-  facts: CompletarPedidoFacts,
-  ledger: CompletarPedidoLedger
+  facts: OrderCompletionFacts,
+  ledger: OrderCompletionLedger
 ): Promise<void> => {
   if (facts.hasItems) return;
   if (ledger.surfaceCount === 0 && !ledger.abandonment) return;
@@ -154,18 +149,24 @@ const resetLedgerIfCartEmpty = async (
  * consume presupuesto acá — es el único punto del turno donde se sabe que el
  * Goal fue puesto en la función objetivo del modelo.
  */
-export const buildCompletarPedidoContextLines = (params: {
-  facts: CompletarPedidoFacts;
-  ledger: CompletarPedidoLedger;
+export const buildOrderCompletionContextLines = (params: {
+  facts: OrderCompletionFacts;
+  ledger: OrderCompletionLedger;
   conversationId: string;
+  /** ADR-0009: a lo sumo un Intent activo por turno — lo decide el arbitraje del caller. */
+  suppressedBySaliency?: boolean;
 }): string[] => {
-  const { facts, ledger, conversationId } = params;
-  const goal = deriveCompletarPedidoGoal(facts, ledger);
-  const permission = computeCompletarPedidoPermission(goal, ledger);
+  const { facts, ledger, conversationId, suppressedBySaliency } = params;
+  const goal = deriveOrderCompletionGoal(facts, ledger);
+  const rawPermission = computeOrderCompletionPermission(goal, ledger);
+  const permission: OrderCompletionPermission =
+    suppressedBySaliency && rawPermission.granted
+      ? { granted: false, reason: 'suppressed_by_saliency' }
+      : rawPermission;
 
   console.log(
     JSON.stringify({
-      event: '[goal] completar_pedido_ledger',
+      event: '[goal] order_completion_ledger',
       conversationId,
       open: goal.open,
       permission: permission.reason,
@@ -175,13 +176,13 @@ export const buildCompletarPedidoContextLines = (params: {
   );
 
   void resetLedgerIfCartEmpty(conversationId, facts, ledger).catch((err) =>
-    console.error('[goal] failed to reset completar_pedido ledger:', err)
+    console.error('[goal] failed to reset order completion ledger:', err)
   );
 
   if (!permission.granted) return [];
 
-  void recordCompletarPedidoSurfaced(conversationId, ledger).catch((err) =>
-    console.error('[goal] failed to record completar_pedido surfaced:', err)
+  void recordOrderCompletionSurfaced(conversationId, ledger).catch((err) =>
+    console.error('[goal] failed to record order completion surfaced:', err)
   );
 
   return [

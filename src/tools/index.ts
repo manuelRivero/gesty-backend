@@ -43,10 +43,14 @@ import { partySizeMetadataFields } from '../services/productQuery/utils';
 import { patchConversationMetadata, omitConversationMetadataKeys } from '../repositories/conversationState.repository';
 import { clearLastOffer } from '../services/lastOffer.service';
 import {
-  getCompletarPedidoLedger,
-  recordCompletarPedidoAbandonment,
-  reviveCompletarPedidoIfAbandoned,
-} from '../services/completarPedidoGoal.service';
+  getOrderCompletionLedger,
+  recordOrderCompletionAbandonment,
+  reviveOrderCompletionIfAbandoned,
+} from '../services/orderCompletionGoal.service';
+import {
+  getReservationCompletionLedger,
+  recordReservationCompletionAbandonment,
+} from '../services/reservationCompletionGoal.service';
 import { updateCustomerName } from '../repositories';
 import { AddressService } from '../services/address.service';
 
@@ -1087,9 +1091,9 @@ export const addCartItemTool = new DynamicStructuredTool<
         where: { conversation_id: conversationId },
         select: { metadata: true },
       });
-      await reviveCompletarPedidoIfAbandoned(
+      await reviveOrderCompletionIfAbandoned(
         conversationId,
-        getCompletarPedidoLedger(stateForRevival?.metadata)
+        getOrderCompletionLedger(stateForRevival?.metadata)
       );
     }
 
@@ -1482,9 +1486,39 @@ export const abandonPendingOrderTool = new DynamicStructuredTool<
       where: { conversation_id: conversationId },
       select: { metadata: true },
     });
-    const ledger = getCompletarPedidoLedger(stateRow?.metadata);
-    await recordCompletarPedidoAbandonment(conversationId, ledger);
+    const ledger = getOrderCompletionLedger(stateRow?.metadata);
+    await recordOrderCompletionAbandonment(conversationId, ledger);
     return toJson({ success: true, message: 'Listo, no insisto más con el pedido pendiente.' });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// abandon_pending_reservation (Ledger — Tool de la familia Intent, Fase 1b)
+// ---------------------------------------------------------------------------
+
+const abandonPendingReservationSchema = z.object({});
+type AbandonPendingReservationInput = z.infer<typeof abandonPendingReservationSchema>;
+
+export const abandonPendingReservationTool = new DynamicStructuredTool<
+  typeof abandonPendingReservationSchema,
+  AbandonPendingReservationInput
+>({
+  name: 'abandon_pending_reservation',
+  description:
+    'Registrá que el cliente pidió explícitamente que dejes de insistir con la reserva pendiente ' +
+    '("dejalo", "no me sigas preguntando por la reserva", "olvidate de la reserva por ahora"). ' +
+    'NO borra el borrador — la reserva sigue ahí por si el cliente la retoma más tarde. ' +
+    'Solo silencia los recordatorios del sistema sobre esa reserva.',
+  schema: abandonPendingReservationSchema,
+  func: async (_input: AbandonPendingReservationInput, _runManager, config?: RunnableConfig) => {
+    const { conversationId } = getReactContext(config);
+    const stateRow = await prisma.conversation_state.findUnique({
+      where: { conversation_id: conversationId },
+      select: { metadata: true },
+    });
+    const ledger = getReservationCompletionLedger(stateRow?.metadata);
+    await recordReservationCompletionAbandonment(conversationId, ledger);
+    return toJson({ success: true, message: 'Listo, no insisto más con la reserva pendiente.' });
   },
 });
 
@@ -1507,4 +1541,5 @@ export const allReactTools = [
   savePartySizeTool,
   presentCartTool,
   abandonPendingOrderTool,
+  abandonPendingReservationTool,
 ];

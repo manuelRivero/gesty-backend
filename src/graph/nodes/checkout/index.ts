@@ -19,8 +19,6 @@ import {
 } from '../../../repositories/conversationState.repository';
 import {
   EMPTY_CART_BOT_MESSAGE,
-  FULFILLMENT_TYPE_SHORT_QUESTION,
-  PAYMENT_METHOD_SHORT_QUESTION,
   ADDRESS_OUT_OF_COVERAGE_BOT_MESSAGE,
 } from '../../../services/productQuery/botMessages';
 import { AddressService } from '../../../services/address.service';
@@ -43,8 +41,11 @@ import type { DetectionContext } from '../../../services/ai/detection.service';
 import { setDraftFulfillmentType, getDraftCheckoutState } from '../../../tools/checkout';
 import { validateCheckoutResponse } from '../../../services/checkout/checkoutValidation';
 import { applyCheckoutResponsePolicy } from '../../../services/checkout/checkoutResponsePolicy';
-import { effectivePending } from '../../../services/checkout/effectivePending';
-import { normalizeMetadata } from '../../../services/productQuery/utils';
+import { nextCheckoutStep } from '../../../services/checkout/nextCheckoutStep';
+import {
+  resolveCheckoutPendingFromStep,
+  logCheckoutGoal,
+} from '../../../services/checkout/checkoutGoal.service';
 import { buildResumeFollowUp } from '../session/buildResumeFollowUp';
 import { buildDiscardedReentryMessage } from '../session/discardedSignalMessage';
 import { withOrphanPayloadAsText } from '../session/orphanPayload';
@@ -76,8 +77,6 @@ function buildPaymentButtonsMessage(bodyText: string): WhatsAppInteractiveMessag
 export const clearCheckoutSession = async (conversationId: string): Promise<void> => {
   await omitConversationMetadataKeys(conversationId, [
     'checkout_active',
-    'checkout_pending_action',
-    'checkout_pending_question',
     'name_refusal_count',
     'address_refusal_count',
     'pending_fulfillment_action',
@@ -253,6 +252,21 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
     typeof enrichedCtx.customer === 'object' && enrichedCtx.customer
       ? (enrichedCtx.customer as { name?: string | null }).name?.trim() || null
       : null;
+
+  // Paso derivado (ADR-0006/0005/0007): única fuente de verdad de qué Goal
+  // de checkout está activo este turno; ver `checkoutGoal.service.ts`.
+  const currentStep = nextCheckoutStep(
+    {
+      fulfillmentType: draftState.fulfillmentType,
+      hasAddress: checkoutCtx.hasAddress,
+      isInCoverage: checkoutCtx.isInCoverage,
+      customerName,
+      paymentMethod: draftState.paymentMethod,
+    },
+    { deliveryEnabled: checkoutCtx.deliveryEnabled, takeawayEnabled: checkoutCtx.takeawayEnabled }
+  );
+  logCheckoutGoal({ conversationId, step: currentStep });
+
   const validation = validateCheckoutResponse(
     {
       fulfillmentType: draftState.fulfillmentType,
@@ -300,9 +314,9 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
   const safeText = policyResult.text;
 
   // ── Señal: delegar turno al híbrido (consulta temporal) ───────────────────
-  // La sesión de checkout NO se limpia: checkout_active y checkout_pending_action
-  // siguen vivos y el próximo mensaje vuelve al agente de checkout por el routing
-  // existente. NO se ejecuta detectIntentWithConfidence (mismo patrón que reservation/onboarding).
+  // La sesión de checkout NO se limpia: checkout_active sigue vivo y el
+  // próximo mensaje vuelve al agente de checkout por el routing existente.
+  // NO se ejecuta detectIntentWithConfidence (mismo patrón que reservation/onboarding).
   if (signals.delegateToMain) {
     console.log(
       JSON.stringify({
@@ -342,16 +356,11 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
     const baseResult = mainResult ?? { content: safeText, isInteractive: false };
 
     // Anexar (no reemplazar) la pregunta suspendida del checkout, si la hay,
-    // para que el usuario no tenga que adivinar que el pedido sigue en curso (H-03).
-    const freshState = await findOrCreateConversationState(conversationId);
-    const freshMeta = normalizeMetadata(freshState.metadata);
-    const pending = effectivePending({
-      metadata: freshMeta,
-      snapshot: {
-        fulfillmentType: draftState.fulfillmentType,
-        paymentMethod: draftState.paymentMethod,
-      },
-    });
+    // para que el usuario no tenga que adivinar que el pedido sigue en curso
+    // (H-03). `currentStep` ya se derivó arriba del mismo snapshot: no hace
+    // falta releer metadata, no hay nada persistido que pueda haber quedado
+    // stale entre el inicio del turno y acá.
+    const pending = resolveCheckoutPendingFromStep(currentStep);
     const resume = buildResumeFollowUp({
       kind: 'checkout',
       pendingAction: pending.action,
@@ -457,11 +466,9 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
   // Un solo mensaje interactivo (texto del LLM como body + botones), en vez de
   // un mensaje de texto y un followUp aparte repitiendo la misma pregunta
   // (visto en pruebas manuales contra el bot real: la Tarea 4.1 corrige esto).
+  // Nada que persistir acá: `currentStep` ya deriva qué pregunta está
+  // pendiente (`checkoutGoal.service.ts`), se recalcula solo el próximo turno.
   if (signals.presentFulfillmentOptions) {
-    await patchConversationMetadata(conversationId, {
-      checkout_pending_action: 'fulfillment_type',
-      checkout_pending_question: FULFILLMENT_TYPE_SHORT_QUESTION,
-    });
     return {
       content: buildFulfillmentSelectionMessage(safeText),
       isInteractive: true,
@@ -470,10 +477,6 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
   }
 
   if (signals.presentPaymentOptions) {
-    await patchConversationMetadata(conversationId, {
-      checkout_pending_action: 'payment_method',
-      checkout_pending_question: PAYMENT_METHOD_SHORT_QUESTION,
-    });
     return {
       content: buildPaymentButtonsMessage(safeText),
       isInteractive: true,
@@ -538,16 +541,8 @@ export const checkoutAgentNode = async (
 
   if (payloadId === 'FULFILLMENT_DELIVERY') {
     await setDraftFulfillmentType(business.id, phone, 'DELIVERY');
-    await omitConversationMetadataKeys(conversationId, [
-      'checkout_pending_action',
-      'checkout_pending_question',
-    ]);
   } else if (payloadId === 'FULFILLMENT_TAKE_AWAY') {
     await setDraftFulfillmentType(business.id, phone, 'TAKE_AWAY');
-    await omitConversationMetadataKeys(conversationId, [
-      'checkout_pending_action',
-      'checkout_pending_question',
-    ]);
   }
 
   if (payloadId === 'CHECKOUT') {

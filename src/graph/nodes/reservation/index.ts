@@ -48,11 +48,19 @@ import {
   runReservationAgent,
   type ReservationAgentContext,
 } from '../../../agents/reservationAgent';
+import { runHybridReactAgent } from '../../../agents/reactAgent';
+import { detectIntentWithConfidence } from '../../../services/ai/detection.service';
+import { isHybridAgentMode } from '../../../config/env';
 import { normalizeMetadata } from '../../../services/productQuery/utils';
+import {
+  getReservationCompletionLedger,
+  reviveReservationCompletionIfAbandoned,
+} from '../../../services/reservationCompletionGoal.service';
 import type { HandlerFollowUp, HandlerResult } from '../../../controllers/webhook/types';
 import type { EnrichedContext } from '../../../controllers/webhook/types';
 import type { WhatsAppInteractiveMessage } from '../../../domain/intent/whatsappTemplates';
 import type { AgentState, AgentStateUpdate } from '../../state';
+import type { DetectionContext } from '../../../services/ai/detection.service';
 
 // ---------------------------------------------------------------------------
 // Helpers: limpiar sesión de reserva
@@ -63,6 +71,49 @@ const clearReservationSession = async (conversationId: string): Promise<void> =>
     'reservation_agent_active',
     'reservation_draft',
   ]);
+};
+
+/**
+ * Salida temporal (Fase 1b): a diferencia de `clearReservationSession`, NO
+ * borra `reservation_draft` — es lo que permite que `COMPLETAR_RESERVA`
+ * pueda reabrirse más adelante (ver `reservationCompletionGoal.service.ts`).
+ */
+const clearReservationAgentOnly = async (conversationId: string): Promise<void> => {
+  await omitConversationMetadataKeys(conversationId, ['reservation_agent_active']);
+};
+
+/** Mismo patrón que `invokeHybridAfterCheckoutHandback` en checkout. */
+const invokeHybridAfterReservationHandback = async (params: {
+  enrichedCtx: EnrichedContext;
+  conversationId: string;
+  detectionContext: DetectionContext;
+  userMessage: string;
+}): Promise<HandlerResult | null> => {
+  if (!isHybridAgentMode() || !params.userMessage.trim()) {
+    return null;
+  }
+
+  const detection = await detectIntentWithConfidence(
+    params.userMessage,
+    params.detectionContext
+  );
+  const refreshedState = await findOrCreateConversationState(params.conversationId);
+  const hybridCtx: EnrichedContext = {
+    ...params.enrichedCtx,
+    detection,
+    conversationState: refreshedState,
+  };
+
+  try {
+    const hybrid = await runHybridReactAgent(hybridCtx);
+    if (hybrid?.kind === 'response') {
+      return hybrid.handlerResult;
+    }
+    return null;
+  } catch (err) {
+    console.error('[reservation-agent] error en handback inline hybrid:', err);
+    return null;
+  }
 };
 
 // ---------------------------------------------------------------------------
@@ -332,6 +383,13 @@ export const reservationAgentNode = async (
     await patchConversationMetadata(conversationId, {
       reservation_agent_active: true,
     });
+    // Revival del Goal COMPLETAR_RESERVA (ADR-0005, corolario): si el
+    // cliente había abandonado la reserva y vuelve a esta sesión, el
+    // abandono se limpia solo — retomarla es la señal de reactivación.
+    await reviveReservationCompletionIfAbandoned(
+      conversationId,
+      getReservationCompletionLedger(wsMeta)
+    );
   }
 
   // ── Obtener ambientes disponibles ─────────────────────────────────────────
@@ -433,6 +491,43 @@ export const reservationAgentNode = async (
                 : baseResult.content,
           }
         : baseResult,
+      dataCollectionDelegated: true,
+    };
+  }
+
+  // ── Señal: handback temporal (conserva el borrador) ───────────────────────
+  if (signals.handbackReservation) {
+    await clearReservationAgentOnly(conversationId);
+    console.log(
+      JSON.stringify({
+        event: '[reservation-agent] handback_reservation',
+        reason: signals.handbackReservationReason,
+        conversationId,
+      })
+    );
+
+    const userMessage = ctx.message?.text?.body?.trim() ?? '';
+    const detectionContext = state.detectionContext;
+    let hybridResult: HandlerResult | null = null;
+    if (detectionContext && userMessage) {
+      hybridResult = await invokeHybridAfterReservationHandback({
+        enrichedCtx: enrichedBase,
+        conversationId,
+        detectionContext,
+        userMessage,
+      });
+    }
+    if (hybridResult) {
+      console.log(
+        JSON.stringify({
+          event: '[reservation-agent] handback_inline_hybrid',
+          conversationId,
+        })
+      );
+    }
+
+    return {
+      handlerResult: hybridResult ?? { content: text, isInteractive: false },
       dataCollectionDelegated: true,
     };
   }
