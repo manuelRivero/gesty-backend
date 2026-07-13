@@ -3,9 +3,13 @@
  *
  * Categorías:
  *  - Escritura + consulta: `check_address_coverage` — geocodifica, valida cobertura y persiste temp_*.
- *  - Señal-UI: `present_address_confirmation` — el nodo construye los botones WhatsApp.
  *  - Salida temporal: `delegate_to_main` — pausa, el nodo llama al main agent inline.
  *  - Salida permanente: `finish_onboarding` — limpia la sesión de onboarding.
+ *
+ * `present_address_confirmation` NO está acá: es un tool exclusivo del híbrido
+ * (ver `tools/index.ts`) para el flujo `stage_delivery_address` — el agente de
+ * onboarding adjunta los botones directamente en el nodo (`onboardingAgentNode`),
+ * sin depender de que el LLM llame ninguna tool para eso.
  */
 
 import { DynamicStructuredTool } from '@langchain/core/tools';
@@ -41,7 +45,8 @@ export const checkAddressCoverageTool = new DynamicStructuredTool<
     'Geocodifica el texto de dirección del cliente, valida si está en la zona de cobertura del negocio ' +
     'y guarda el borrador (temp_address, temp_lat, temp_lng, temp_zone_id). ' +
     'Devuelve status: "in_coverage" | "out_of_coverage" | "not_found". ' +
-    'Si es "in_coverage", llamá present_address_confirmation() de inmediato.',
+    'Si es "in_coverage", preguntale al cliente si es correcta con tu propio texto natural ' +
+    '— el sistema adjunta los botones de confirmar/editar automáticamente.',
   schema: checkAddressCoverageSchema,
   func: async ({ text }: CheckAddressCoverageInput, _runManager, config?: RunnableConfig) => {
     const { businessId, conversationId } = getReactContext(config);
@@ -51,29 +56,6 @@ export const checkAddressCoverageTool = new DynamicStructuredTool<
       text,
     });
     return toJson(result);
-  },
-});
-
-// ---------------------------------------------------------------------------
-// present_address_confirmation (señal-UI)
-// ---------------------------------------------------------------------------
-
-const presentAddressConfirmationSchema = z.object({});
-type PresentAddressConfirmationInput = z.infer<typeof presentAddressConfirmationSchema>;
-
-export const presentAddressConfirmationTool = new DynamicStructuredTool<
-  typeof presentAddressConfirmationSchema,
-  PresentAddressConfirmationInput
->({
-  name: 'present_address_confirmation',
-  description:
-    'Muestra al cliente los botones para confirmar o editar la dirección staged. ' +
-    'Solo llamar después de que check_address_coverage devolvió status "in_coverage". ' +
-    'El nodo construye los botones; no describas la dirección en texto ni pidas confirmación verbal.',
-  schema: presentAddressConfirmationSchema,
-  func: async (_input: PresentAddressConfirmationInput, _runManager, config?: RunnableConfig) => {
-    getReactContext(config); // validar contexto
-    return toJson({ signal: 'present_address_confirmation' });
   },
 });
 
@@ -217,7 +199,6 @@ export const finishOnboardingTool = new DynamicStructuredTool<
 
 export const allOnboardingTools = [
   checkAddressCoverageTool,
-  presentAddressConfirmationTool,
   resolveAddressConfirmationTool,
   onboardingDelegateToMainTool,
   finishOnboardingTool,
