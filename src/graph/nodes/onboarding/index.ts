@@ -51,6 +51,40 @@ const clearOnboardingSession = async (conversationId: string): Promise<void> => 
   ]);
 };
 
+/**
+ * Tras guardar la dirección (fuera del caso CHECKOUT, ya resuelto
+ * determinísticamente por `AddressService`), "qué sigue" es responsabilidad
+ * del híbrido — nunca de un agente de dominio (ADR-0002: ownership por
+ * borde, no por prosa de prompt). El híbrido ya trae el Goal COMPLETAR_PEDIDO
+ * (`orderCompletionGoal.service.ts`) para ofrecer continuar el pedido si
+ * corresponde, con su propio presupuesto anti-insistencia — no hace falta
+ * duplicar esa lógica acá. Mismo patrón que `finish_onboarding` (invocar
+ * inline, sin limpiar la sesión antes de tener el resultado).
+ */
+const invokeHybridAfterAddressSaved = async (params: {
+  enrichedBase: EnrichedContext;
+  conversationId: string;
+  detectionContext: AgentState['detectionContext'];
+  userMessage: string;
+  fallbackResult: HandlerResult | undefined;
+}): Promise<HandlerResult | undefined> => {
+  const { enrichedBase, conversationId, detectionContext, userMessage, fallbackResult } = params;
+  if (!detectionContext || !userMessage.trim()) return fallbackResult;
+
+  try {
+    const freshState = await findOrCreateConversationState(conversationId);
+    const hybrid = await runHybridReactAgent({
+      ...enrichedBase,
+      detection: await detectIntentWithConfidence(userMessage, detectionContext),
+      conversationState: freshState,
+    });
+    return hybrid?.kind === 'response' ? hybrid.handlerResult : fallbackResult;
+  } catch (err) {
+    console.error('[onboarding-agent] error invocando híbrido tras guardar dirección:', err);
+    return fallbackResult;
+  }
+};
+
 // ---------------------------------------------------------------------------
 // Nodo principal
 // ---------------------------------------------------------------------------
@@ -241,11 +275,24 @@ export const onboardingAgentNode = async (
       enrichedBase,
       signals.addressConfirmationResolved
     );
-    if (signals.addressConfirmationResolved) {
-      await clearOnboardingSession(conversationId);
+    if (!signals.addressConfirmationResolved) {
+      return {
+        handlerResult: normalizeToHandlerResult(result),
+        dataCollectionDelegated: true,
+      };
     }
+
+    await clearOnboardingSession(conversationId);
+    const ackResult = normalizeToHandlerResult(result);
+    const finalResult = await invokeHybridAfterAddressSaved({
+      enrichedBase,
+      conversationId,
+      detectionContext: state.detectionContext,
+      userMessage: ctx.message?.text?.body?.trim() ?? '',
+      fallbackResult: ackResult,
+    });
     return {
-      handlerResult: normalizeToHandlerResult(result),
+      handlerResult: finalResult,
       dataCollectionDelegated: true,
     };
   }
@@ -275,6 +322,33 @@ export const onboardingAgentNode = async (
       `📍 Encontré esta dirección:\n${tempAddress}\n\n¿Es correcta?`
     );
 
+    return {
+      handlerResult: {
+        content: confirmationMsg,
+        isInteractive: true,
+        skipBodyHumanization: true,
+      },
+      dataCollectionDelegated: true,
+    };
+  }
+
+  // ── Salvaguarda determinística: dirección staged sin confirmar (ADR-0002) ──
+  // El LLM a veces responde en texto libre en vez de llamar
+  // present_address_confirmation (visto en pruebas manuales: mandaba su
+  // propia pregunta de confirmación sin botones). La garantía no puede
+  // depender de que el modelo recuerde llamar la tool — si hay una
+  // dirección staged sin resolver este turno, se muestra la tarjeta igual,
+  // sin importar qué señal (o ninguna) haya devuelto el agente.
+  const freshMetaFallback = normalizeMetadata(state.workingConversationState?.metadata);
+  const rawTempAddressFallback = freshMetaFallback.temp_address;
+  const tempAddressFallback =
+    freshMetaFallback.onboarding_step === 'CONFIRM' && typeof rawTempAddressFallback === 'string'
+      ? rawTempAddressFallback.trim()
+      : null;
+  if (tempAddressFallback) {
+    const confirmationMsg = addressService.buildConfirmAddressMessage(
+      `📍 Encontré esta dirección:\n${tempAddressFallback}\n\n¿Es correcta?`
+    );
     return {
       handlerResult: {
         content: confirmationMsg,

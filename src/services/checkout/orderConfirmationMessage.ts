@@ -88,7 +88,15 @@ export const buildOrderConfirmationMessage = async (params: {
   lines.push('');
   lines.push(`Pago: ${PAYMENT_METHOD_LABEL[paymentMethod]}`);
 
-  const summaryText = formatBotUserMessage('Resumen del pedido', '🧾', lines.join('\n'));
+  // Con `leadingText` (retomando tras una respuesta lateral, ver
+  // `checkout/index.ts`/`delegatedAddressConfirmationNode`), NO envolver de
+  // nuevo con formatBotUserMessage — ya viene con su propio header "🤖" (el
+  // del híbrido). Envolverlo otra vez pegaba dos bloques "🤖" en el mismo
+  // body (visto en pruebas manuales: parecían dos mensajes separados). Solo
+  // se usa el header completo cuando la tarjeta es el único contenido.
+  const summaryText = leadingText
+    ? `*Resumen del pedido* 🧾\n\n${lines.join('\n')}`
+    : formatBotUserMessage('Resumen del pedido', '🧾', lines.join('\n'));
 
   return {
     type: 'interactive',

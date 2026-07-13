@@ -27,6 +27,16 @@ export const DELEGATED_ADDRESS_CONFIRMATION_KEYS = [
 export class AddressService {
 
 
+  /**
+   * @deprecated LEGACY — wizard de onboarding por pasos (`onboarding_step`
+   * en metadata, sin LLM). Solo lo alcanzan `onboardingByStateNode`/
+   * `addressCaptureNode` (`ONBOARDING_AGENT_ENABLED=false` o sesiones viejas
+   * en transición). Superado por `runOnboardingAgent`/`onboardingAgentNode`
+   * (ReAct + PASO PENDIENTE). Pendiente de eliminación completa junto con
+   * `.capture()`/`.confirm()`/`.start()`/`.edit()`/`.handleTextAddress()`/
+   * `.handleLocation()` — no extender ni corregir bugs de UX acá, solo lo
+   * estrictamente necesario para no romper sesiones ya en curso.
+   */
   async process(ctx: EnrichedContext): Promise<WhatsAppInteractiveMessage | WhatsAppListMessage | string | null> {
     const step = ctx.conversationState?.metadata?.onboarding_step;
     console.log('[AddressService] process', {
@@ -467,15 +477,24 @@ export class AddressService {
    * — mismo guardado/limpieza que los payloads determinísticos
    * `ONBOARDING_CONFIRM_ADDRESS`/`ONBOARDING_EDIT_ADDRESS`, una sola fuente
    * de verdad para "qué pasa al confirmar", sin importar el canal.
+   *
+   * Ningún agente de dominio compone su propia respuesta "qué sigue": eso es
+   * responsabilidad exclusiva del híbrido (get_cart, Goal COMPLETAR_PEDIDO).
+   * Por eso, fuera del caso CHECKOUT (continuación determinística legítima),
+   * devuelve solo un ack corto — el caller (`onboardingAgentNode`) es quien
+   * decide invocar al híbrido inline después.
    */
   async resolveStagedAddressConfirmation(
     ctx: EnrichedContext,
     confirmed: boolean
   ): Promise<string | WhatsAppListMessage | WhatsAppInteractiveMessage> {
-    return confirmed ? this.saveAddress(ctx) : this.edit(ctx);
+    return confirmed ? this.saveAddress(ctx, { skipSmallTalkMenu: true }) : this.edit(ctx);
   }
 
-  private async saveAddress(ctx: EnrichedContext): Promise<string | WhatsAppListMessage | WhatsAppInteractiveMessage> {
+  private async saveAddress(
+    ctx: EnrichedContext,
+    options?: { skipSmallTalkMenu?: boolean }
+  ): Promise<string | WhatsAppListMessage | WhatsAppInteractiveMessage> {
     const meta = ctx.conversationState.metadata;
     const pendingAction = meta?.pending_address_action;
 
@@ -521,9 +540,14 @@ export class AddressService {
       } as WhatsAppInteractiveMessage;
     }
 
-    const menu = await buildSmallTalkMenu(ctx);
-    if (menu && typeof menu !== 'string') {
-      return menu;
+    if (!options?.skipSmallTalkMenu) {
+      // @deprecated LEGACY — solo lo alcanza `.confirm()` (wizard por pasos,
+      // ver nota en `.process()`). El flujo ReAct (`resolveStagedAddressConfirmation`)
+      // pasa `skipSmallTalkMenu: true` y delega "qué sigue" al híbrido.
+      const menu = await buildSmallTalkMenu(ctx);
+      if (menu && typeof menu !== 'string') {
+        return menu;
+      }
     }
 
     return formatBotUserMessage(

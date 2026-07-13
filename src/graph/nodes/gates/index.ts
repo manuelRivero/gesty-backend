@@ -180,6 +180,11 @@ export const reservationWizardNode = async (
 };
 
 /**
+ * @deprecated LEGACY — ver nota en `AddressService.process()`. Solo se
+ * alcanza con `ONBOARDING_AGENT_ENABLED=false` o sesiones viejas con
+ * `onboarding_step` ya en curso desde antes del agente ReAct. Pendiente de
+ * eliminación completa junto con `addressCaptureNode`/`runOnboardingAddressCapture`.
+ *
  * Nodo de onboarding forzado por `metadata.onboarding_step`. Reusa exactamente
  * el flujo de `runOnboardingAddressCaptureFlow` (mismo helper que el captura
  * sin dirección).
@@ -202,6 +207,9 @@ export const onboardingByStateNode = async (
 };
 
 /**
+ * @deprecated LEGACY — ver nota en `AddressService.process()` /
+ * `onboardingByStateNode`. Pendiente de eliminación completa.
+ *
  * Nodo de captura de dirección del onboarding inicial (cuando el cliente no
  * tiene `customer_address`). Comparte la implementación con
  * `onboardingByStateNode`.

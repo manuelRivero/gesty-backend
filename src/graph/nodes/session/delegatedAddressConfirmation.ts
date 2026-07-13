@@ -25,6 +25,9 @@ import {
   CONFIRM_ADDRESS_ACTION_DESCRIPTION,
 } from '../../../agents/onboardingAgent';
 import { delegateToMainWithDetection } from './delegateToMain';
+import { runHybridReactAgent } from '../../../agents/reactAgent';
+import { detectIntentWithConfidence } from '../../../services/ai/detection.service';
+import { findOrCreateConversationState } from '../../../repositories';
 import { getDraftCheckoutState } from '../../../tools/checkout';
 import { buildPaymentButtonsMessage } from '../checkout';
 import { nextCheckoutStep } from '../../../services/checkout/nextCheckoutStep';
@@ -108,6 +111,39 @@ const buildCheckoutResumeResult = async (params: {
   return textResponse(resumeText);
 };
 
+/**
+ * Sin checkout activo, "qué sigue" es responsabilidad del híbrido, no de
+ * este nodo (ADR-0002: ningún agente de dominio compone su propia respuesta
+ * general — ver misma decisión en `onboardingAgentNode`). Si hay un carrito
+ * con ítems, el híbrido ya trae el Goal COMPLETAR_PEDIDO
+ * (`orderCompletionGoal.service.ts`) para ofrecer continuar el pedido,
+ * con su propio presupuesto anti-insistencia — no se duplica esa lógica acá.
+ */
+const invokeHybridAfterAddressSaved = async (params: {
+  enrichedBase: EnrichedContext;
+  conversationId: string;
+  detectionContext: AgentState['detectionContext'];
+  userMessage: string;
+  fallbackText: string;
+}): Promise<HandlerResult> => {
+  const { enrichedBase, conversationId, detectionContext, userMessage, fallbackText } = params;
+  const fallback = textResponse(fallbackText) ?? { content: fallbackText, isInteractive: false };
+  if (!detectionContext || !userMessage.trim()) return fallback;
+
+  try {
+    const freshState = await findOrCreateConversationState(conversationId);
+    const hybrid = await runHybridReactAgent({
+      ...enrichedBase,
+      detection: await detectIntentWithConfidence(userMessage, detectionContext),
+      conversationState: freshState,
+    });
+    return hybrid?.kind === 'response' ? hybrid.handlerResult : fallback;
+  } catch (err) {
+    console.error('[delegated-address-confirmation] error invocando híbrido tras guardar dirección:', err);
+    return fallback;
+  }
+};
+
 export const delegatedAddressConfirmationNode = async (
   state: AgentState
 ): Promise<AgentStateUpdate> => {
@@ -150,10 +186,27 @@ export const delegatedAddressConfirmationNode = async (
       leadingText: combinedLeading,
     });
 
-    return {
-      handlerResult: resume ?? textResponse(combinedLeading) ?? undefined,
-      dataCollectionDelegated: true,
-    };
+    if (resume) {
+      return { handlerResult: resume, dataCollectionDelegated: true };
+    }
+
+    if (!confirmed) {
+      // Rechazó/pidió editar: nada que continuar, solo el pedido de la
+      // dirección correcta — no tiene sentido delegarle esto al híbrido.
+      return { handlerResult: textResponse(combinedLeading), dataCollectionDelegated: true };
+    }
+
+    // Confirmó y no hay checkout activo: delegarle al híbrido "qué sigue"
+    // (puede ofrecer continuar el pedido vía COMPLETAR_PEDIDO si hay
+    // carrito) en vez de devolver siempre el mismo ack plano.
+    const finalResult = await invokeHybridAfterAddressSaved({
+      enrichedBase,
+      conversationId,
+      detectionContext: state.detectionContext,
+      userMessage: ctx.message?.text?.body?.trim() ?? '',
+      fallbackText: combinedLeading,
+    });
+    return { handlerResult: finalResult, dataCollectionDelegated: true };
   };
 
   if (ctx.payloadId === 'DELEGATED_CONFIRM_ADDRESS') {
