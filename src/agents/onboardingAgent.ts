@@ -10,7 +10,8 @@
  *  - `delegate_to_main` (temporal) → el nodo llama `runHybridReactAgent` inline
  *    sin limpiar `onboarding_agent_active`; el próximo turno vuelve al agente.
  *  - `finish_onboarding` (permanente) → el nodo limpia la sesión.
- *  - `present_address_confirmation` → el nodo lee `temp_address` y arma los botones.
+ *  - Dirección staged sin confirmar (`onboarding_step === 'CONFIRM'`) → el nodo
+ *    adjunta los botones Confirmar/Editar al propio texto del LLM (sin reemplazarlo).
  *  - Confirmación/edición de la dirección se hacen determinísticamente en el nodo
  *    (payloads ONBOARDING_CONFIRM_ADDRESS / ONBOARDING_EDIT_ADDRESS).
  */
@@ -146,7 +147,6 @@ const buildOnboardingContextMessage = async (ctx: EnrichedContext): Promise<stri
 // ---------------------------------------------------------------------------
 
 export interface OnboardingAgentSignals {
-  presentAddressConfirmation: boolean;
   /** `null` = no se resolvió este turno; `true`/`false` = el cliente confirmó o pidió editar. */
   addressConfirmationResolved: boolean | null;
   delegateToMain: boolean;
@@ -157,7 +157,6 @@ export interface OnboardingAgentSignals {
 
 const extractSignals = (messages: unknown[]): OnboardingAgentSignals => {
   const signals: OnboardingAgentSignals = {
-    presentAddressConfirmation: false,
     addressConfirmationResolved: null,
     delegateToMain: false,
     delegateToMainReason: null,
@@ -179,9 +178,6 @@ const extractSignals = (messages: unknown[]): OnboardingAgentSignals => {
         reason?: string;
         confirmed?: boolean;
       };
-      if (data.signal === 'present_address_confirmation') {
-        signals.presentAddressConfirmation = true;
-      }
       if (data.signal === 'address_confirmation_resolved') {
         signals.addressConfirmationResolved = data.confirmed === true;
       }
@@ -234,6 +230,8 @@ const extractFinalText = (result: unknown): string | null => {
 
 export interface OnboardingAgentResult {
   text: string;
+  /** Texto del LLM sin el wrapper de `formatBotUserMessage` — para embeberlo dentro de otro mensaje (ej. tarjeta de confirmación) sin duplicar el header "🤖". */
+  rawText: string | null;
   signals: OnboardingAgentSignals;
 }
 
@@ -307,5 +305,5 @@ export const runOnboardingAgent = async (
         'Necesito tu dirección de entrega para continuar con el pedido. ¿Me la podés dar?'
       );
 
-  return { text, signals };
+  return { text, rawText, signals };
 };

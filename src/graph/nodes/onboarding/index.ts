@@ -166,7 +166,7 @@ export const onboardingAgentNode = async (
     };
   }
 
-  const { text, signals } = agentResult;
+  const { text, rawText, signals } = agentResult;
 
   // ── Señal: delegar turno al agente principal (off-topic temporal) ─────────
   if (signals.delegateToMain) {
@@ -297,58 +297,27 @@ export const onboardingAgentNode = async (
     };
   }
 
-  // ── Señal: mostrar botones de confirmación de dirección ───────────────────
-  if (signals.presentAddressConfirmation) {
-    const freshMeta = normalizeMetadata(state.workingConversationState?.metadata);
-    const rawTempAddress = freshMeta.temp_address;
-    const tempAddress = typeof rawTempAddress === 'string' ? rawTempAddress.trim() : null;
-
-    if (!tempAddress) {
-      // Sin dirección staged, solo texto del agente
-      return {
-        handlerResult: { content: text, isInteractive: false },
-        dataCollectionDelegated: true,
-      };
-    }
-
-    // ADR-0002: la confirmación es un solo mensaje determinístico. El texto
-    // libre del LLM (`text`) se descarta acá a propósito — nada garantiza
-    // que no afirme "ya confirmado" mientras el botón real todavía espera
-    // respuesta (pasó en producción: dos mensajes contradictorios el mismo
-    // turno, uno diciendo "dirección confirmada" y otro preguntando "¿es
-    // correcta?"). Igual que `present_fulfillment_options`/`present_payment_options`
-    // en checkout: la UI de confirmación reemplaza el texto, no lo acompaña.
-    const confirmationMsg = addressService.buildConfirmAddressMessage(
-      `📍 Encontré esta dirección:\n${tempAddress}\n\n¿Es correcta?`
-    );
-
-    return {
-      handlerResult: {
-        content: confirmationMsg,
-        isInteractive: true,
-        skipBodyHumanization: true,
-      },
-      dataCollectionDelegated: true,
-    };
-  }
-
-  // ── Salvaguarda determinística: dirección staged sin confirmar (ADR-0002) ──
-  // El LLM a veces responde en texto libre en vez de llamar
-  // present_address_confirmation (visto en pruebas manuales: mandaba su
-  // propia pregunta de confirmación sin botones). La garantía no puede
-  // depender de que el modelo recuerde llamar la tool — si hay una
-  // dirección staged sin resolver este turno, se muestra la tarjeta igual,
-  // sin importar qué señal (o ninguna) haya devuelto el agente.
-  const freshMetaFallback = normalizeMetadata(state.workingConversationState?.metadata);
-  const rawTempAddressFallback = freshMetaFallback.temp_address;
-  const tempAddressFallback =
-    freshMetaFallback.onboarding_step === 'CONFIRM' && typeof rawTempAddressFallback === 'string'
-      ? rawTempAddressFallback.trim()
+  // ── Dirección staged sin confirmar: adjuntar botones al texto del agente ──
+  // No se reemplaza el texto del LLM por una frase enlatada — el texto ya
+  // suele pedir la confirmación con naturalidad ("¿es correcta?"). Lo único
+  // que se garantiza estructuralmente son los botones (no depender de que el
+  // modelo recuerde llamar present_address_confirmation). Se relee la
+  // metadata FRESCA (no `state.workingConversationState`, que es la foto de
+  // antes de este turno) porque check_address_coverage puede haber staged la
+  // dirección recién en este mismo turno — con la foto vieja, los botones
+  // aparecían recién en el turno siguiente (visto en pruebas manuales).
+  const freshState = await findOrCreateConversationState(conversationId);
+  const freshMeta = normalizeMetadata(freshState.metadata);
+  const rawTempAddress = freshMeta.temp_address;
+  const tempAddress =
+    freshMeta.onboarding_step === 'CONFIRM' && typeof rawTempAddress === 'string'
+      ? rawTempAddress.trim()
       : null;
-  if (tempAddressFallback) {
-    const confirmationMsg = addressService.buildConfirmAddressMessage(
-      `📍 Encontré esta dirección:\n${tempAddressFallback}\n\n¿Es correcta?`
-    );
+
+  if (tempAddress) {
+    const confirmBody =
+      rawText?.trim() || `Encontré esta dirección:\n${tempAddress}\n\n¿Es correcta?`;
+    const confirmationMsg = addressService.buildConfirmAddressMessage(confirmBody);
     return {
       handlerResult: {
         content: confirmationMsg,

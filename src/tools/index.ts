@@ -25,7 +25,7 @@ import type { RunnableConfig } from '@langchain/core/runnables';
 import { Prisma } from '@prisma/client';
 import { MenuService } from '../services/menu.service';
 import { getBusinessOpenInfo } from '../services/businessHours.service';
-import { findRecentMessagesForDetectionContext } from '../repositories';
+import { findRecentMessagesForDetectionContext, findDefaultCustomerAddress } from '../repositories';
 import { prisma } from '../lib/prisma';
 import { buildGoogleMapsUrl } from '../utils/googleMapsUrl';
 import {
@@ -54,7 +54,6 @@ import {
 } from '../services/reservationCompletionGoal.service';
 import { updateCustomerName } from '../repositories';
 import { AddressService } from '../services/address.service';
-import { presentAddressConfirmationTool } from './onboarding';
 
 const toJson = (data: unknown): string => {
   try {
@@ -201,10 +200,11 @@ export const getCartTool = new DynamicStructuredTool<
   name: 'get_cart',
   description:
     'Devuelve el contenido del carrito activo (draft order) del cliente, sin modificarlo. ' +
-    'Incluye precios con descuento por producto, el costo real de envío cuando ya se puede calcular ' +
+    'Incluye precios con descuento por producto, el costo real de envío YA aplicado al total del pedido ' +
     '(pricing.deliveryFee, solo si hay dirección guardada en cobertura) y los ajustes reales por ' +
     'método de pago (paymentOptions: descuento efectivo / recargo online, si el negocio los tiene configurados). ' +
-    'Usá estos datos para responder preguntas de precio con números reales en vez de derivarlas.',
+    'Para responder si el negocio hace delivery a la zona del cliente o cuánto cuesta el envío en general ' +
+    '(sin depender de que haya carrito), usá check_delivery_coverage en vez de esta tool.',
   schema: getCartSchema,
   func: async (_input: GetCartInput, _runManager, config?: RunnableConfig) => {
     const { businessId, customerPhone, customerId } = getReactContext(config);
@@ -1512,6 +1512,75 @@ export const stageDeliveryAddressTool = new DynamicStructuredTool<
 });
 
 // ---------------------------------------------------------------------------
+// present_address_confirmation (híbrido — señal-UI para stage_delivery_address)
+// ---------------------------------------------------------------------------
+
+const presentAddressConfirmationSchema = z.object({});
+type PresentAddressConfirmationInput = z.infer<typeof presentAddressConfirmationSchema>;
+
+export const presentAddressConfirmationTool = new DynamicStructuredTool<
+  typeof presentAddressConfirmationSchema,
+  PresentAddressConfirmationInput
+>({
+  name: 'present_address_confirmation',
+  description:
+    'Muestra al cliente los botones para confirmar o editar la dirección staged con stage_delivery_address. ' +
+    'Solo llamar después de que esa tool devolvió status "in_coverage". ' +
+    'El sistema construye los botones; no describas la dirección en texto ni pidas confirmación verbal.',
+  schema: presentAddressConfirmationSchema,
+  func: async (_input: PresentAddressConfirmationInput, _runManager, config?: RunnableConfig) => {
+    getReactContext(config); // validar contexto
+    return toJson({ signal: 'present_address_confirmation' });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// check_delivery_coverage (híbrido — cobertura/costo, independiente del carrito)
+// ---------------------------------------------------------------------------
+
+const checkDeliveryCoverageSchema = z.object({});
+type CheckDeliveryCoverageInput = z.infer<typeof checkDeliveryCoverageSchema>;
+
+export const checkDeliveryCoverageTool = new DynamicStructuredTool<
+  typeof checkDeliveryCoverageSchema,
+  CheckDeliveryCoverageInput
+>({
+  name: 'check_delivery_coverage',
+  description:
+    'Responde si el negocio hace delivery a la dirección GUARDADA del cliente y cuánto cuesta — ' +
+    'sin depender de que haya un carrito activo. Usala para cualquier pregunta de cobertura o costo ' +
+    'de envío ("¿hacen delivery a mi dirección?", "¿llegan hasta mi zona?", "¿cuánto sale el envío?"), ' +
+    'incluso si el cliente todavía no agregó nada al pedido. ' +
+    'Devuelve hasAddress (false si el cliente nunca guardó una dirección — en ese caso pedísela e invocá ' +
+    'stage_delivery_address con lo que responda), y si hasAddress es true: address, inCoverage, ' +
+    'deliveryFee, minOrderAmount, estimatedMinutes (todos null si inCoverage es false).',
+  schema: checkDeliveryCoverageSchema,
+  func: async (_input: CheckDeliveryCoverageInput, _runManager, config?: RunnableConfig) => {
+    const { businessId, customerId } = getReactContext(config);
+    const defaultAddress = await findDefaultCustomerAddress(customerId);
+    if (!defaultAddress) {
+      return toJson({ hasAddress: false });
+    }
+
+    const deliveryCtx = await resolveDeliveryContext({
+      customerId,
+      businessId,
+      fulfillmentType: 'DELIVERY',
+    });
+    const inCoverage = deliveryCtx.zoneId !== null;
+
+    return toJson({
+      hasAddress: true,
+      address: defaultAddress.street_address,
+      inCoverage,
+      deliveryFee: inCoverage ? deliveryCtx.deliveryFee.toFixed(2) : null,
+      minOrderAmount: inCoverage ? deliveryCtx.minOrderAmount.toFixed(2) : null,
+      estimatedMinutes: inCoverage ? deliveryCtx.estimatedMinutes : null,
+    });
+  },
+});
+
+// ---------------------------------------------------------------------------
 // present_cart (señal-UI)
 // ---------------------------------------------------------------------------
 
@@ -1618,4 +1687,5 @@ export const allReactTools = [
   abandonPendingReservationTool,
   stageDeliveryAddressTool,
   presentAddressConfirmationTool,
+  checkDeliveryCoverageTool,
 ];
