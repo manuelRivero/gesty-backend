@@ -78,6 +78,41 @@ export const presentAddressConfirmationTool = new DynamicStructuredTool<
 });
 
 // ---------------------------------------------------------------------------
+// resolve_address_confirmation
+// ---------------------------------------------------------------------------
+
+const resolveAddressConfirmationSchema = z.object({
+  confirmed: z
+    .boolean()
+    .describe('true si el cliente confirmó que la dirección es correcta, false si pidió editarla.'),
+});
+type ResolveAddressConfirmationInput = z.infer<typeof resolveAddressConfirmationSchema>;
+
+/**
+ * Señal para que el nodo guarde (confirmed=true) o descarte y vuelva a pedir
+ * (confirmed=false) la dirección staged. La tool nunca guarda por sí misma
+ * (ADR-0004) — solo cuando el cliente responde en TEXTO LIBRE a la
+ * confirmación; si tocó un botón, el sistema ya lo procesó.
+ */
+export const resolveAddressConfirmationTool = new DynamicStructuredTool<
+  typeof resolveAddressConfirmationSchema,
+  ResolveAddressConfirmationInput
+>({
+  name: 'resolve_address_confirmation',
+  description:
+    'Registrá la respuesta del cliente a la confirmación de dirección (el mensaje que muestra la ' +
+    'dirección detectada y pregunta "¿es correcta?"). Llamala SOLO cuando el cliente responde en ' +
+    'texto libre — si tocó un botón, el sistema ya lo procesó y no hace falta llamarla. ' +
+    'confirmed=true si confirma ("sí", "es correcta", "dale"); confirmed=false si pide editarla ' +
+    '("no", "esa no es", "cambiala").',
+  schema: resolveAddressConfirmationSchema,
+  func: async ({ confirmed }: ResolveAddressConfirmationInput, _runManager, config?: RunnableConfig) => {
+    getReactContext(config); // validar contexto
+    return toJson({ signal: 'address_confirmation_resolved', confirmed });
+  },
+});
+
+// ---------------------------------------------------------------------------
 // delegate_to_main (salida temporal)
 // ---------------------------------------------------------------------------
 
@@ -183,6 +218,7 @@ export const finishOnboardingTool = new DynamicStructuredTool<
 export const allOnboardingTools = [
   checkAddressCoverageTool,
   presentAddressConfirmationTool,
+  resolveAddressConfirmationTool,
   onboardingDelegateToMainTool,
   finishOnboardingTool,
 ];

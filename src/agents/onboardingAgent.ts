@@ -24,7 +24,23 @@ import { resolvePersonalityForBusiness } from '../services/botPersonality.servic
 import { allOnboardingTools } from '../tools/onboarding';
 import { normalizeMetadata } from '../services/productQuery/utils';
 import { formatBotUserMessage } from '../services/productQuery/utils';
+import { z } from 'zod';
+import {
+  extractPendingTurnResponse,
+  formatPendingExtractionBlock,
+} from '../services/ai/extractPendingTurnResponse';
 import type { EnrichedContext } from '../controllers/webhook/types';
+
+// ---------------------------------------------------------------------------
+// Paso pendiente: confirmar la dirección staged (mismo patrón que checkout —
+// ver `checkoutAgent.ts` / ADR-0002). Un mensaje libre mientras se espera
+// confirmación puede ser "sí"/"no" o una pregunta lateral ("cuánto sale el
+// envío"); un clasificador LLM dedicado decide cuál es, en vez de dejar que
+// el agente principal lo intuya por su cuenta (no lo hacía de forma confiable).
+// ---------------------------------------------------------------------------
+
+const ConfirmAddressPendingSchema = z.object({ confirmed: z.boolean() });
+const CONFIRM_ADDRESS_QUESTION = '¿Es correcta la dirección?';
 
 // ---------------------------------------------------------------------------
 // Cache de agentes por personalidad
@@ -55,7 +71,7 @@ export const resetOnboardingAgentCacheForTesting = (): void => {
 // Context message [ESTADO DEL ONBOARDING]
 // ---------------------------------------------------------------------------
 
-const buildOnboardingContextMessage = (ctx: EnrichedContext): string => {
+const buildOnboardingContextMessage = async (ctx: EnrichedContext): Promise<string> => {
   const userMsg = ctx.message?.text?.body ?? '';
   const customerName = (ctx.customer as { name?: string | null })?.name?.trim() || null;
 
@@ -75,7 +91,52 @@ const buildOnboardingContextMessage = (ctx: EnrichedContext): string => {
     `- Nombre del cliente: ${customerName ?? 'no informado'}`,
   ];
 
-  return `${lines.join('\n')}\n\n${userMsg}`;
+  const userText = userMsg.trim();
+  const hasPayload = Boolean(ctx.payloadId?.trim());
+  let extractionBlock = '';
+
+  if (hasStagedAddress && userText && !hasPayload) {
+    const extraction = await extractPendingTurnResponse({
+      userMessage: userText,
+      pendingAction: 'confirm_address',
+      botQuestion: CONFIRM_ADDRESS_QUESTION,
+      schema: ConfirmAddressPendingSchema,
+      valueHints: `{
+  "confirmed": true | false
+}
+- true: sí, dale, confirmo, es correcta, está bien
+- false: no, esa no es, editar, cambiar, quiero cambiarla`,
+      actionDescription:
+        'El cliente debe confirmar si la dirección propuesta es correcta o pedir editarla.',
+    });
+    console.log(
+      JSON.stringify({
+        event: '[onboarding-pending] extraction',
+        status: extraction.status,
+        confidence: extraction.confidence,
+        source: extraction.source,
+        conversationId: ctx.conversationId,
+      })
+    );
+    extractionBlock = formatPendingExtractionBlock({
+      pendingAction: 'confirm_address',
+      botQuestion: CONFIRM_ADDRESS_QUESTION,
+      status: extraction.status,
+      confidence: extraction.confidence,
+      value: extraction.value,
+      reason: extraction.reason,
+    });
+  }
+
+  const contextParts = [lines.join('\n')];
+  if (extractionBlock) {
+    contextParts.push('', extractionBlock);
+  }
+  if (userMsg) {
+    contextParts.push('', userMsg);
+  }
+
+  return contextParts.join('\n');
 };
 
 // ---------------------------------------------------------------------------
@@ -84,6 +145,8 @@ const buildOnboardingContextMessage = (ctx: EnrichedContext): string => {
 
 export interface OnboardingAgentSignals {
   presentAddressConfirmation: boolean;
+  /** `null` = no se resolvió este turno; `true`/`false` = el cliente confirmó o pidió editar. */
+  addressConfirmationResolved: boolean | null;
   delegateToMain: boolean;
   delegateToMainReason: string | null;
   finishOnboarding: boolean;
@@ -93,6 +156,7 @@ export interface OnboardingAgentSignals {
 const extractSignals = (messages: unknown[]): OnboardingAgentSignals => {
   const signals: OnboardingAgentSignals = {
     presentAddressConfirmation: false,
+    addressConfirmationResolved: null,
     delegateToMain: false,
     delegateToMainReason: null,
     finishOnboarding: false,
@@ -108,9 +172,16 @@ const extractSignals = (messages: unknown[]): OnboardingAgentSignals => {
     if (!rawContent) continue;
 
     try {
-      const data = JSON.parse(rawContent) as { signal?: string; reason?: string };
+      const data = JSON.parse(rawContent) as {
+        signal?: string;
+        reason?: string;
+        confirmed?: boolean;
+      };
       if (data.signal === 'present_address_confirmation') {
         signals.presentAddressConfirmation = true;
+      }
+      if (data.signal === 'address_confirmation_resolved') {
+        signals.addressConfirmationResolved = data.confirmed === true;
       }
       if (data.signal === 'delegate_to_main') {
         signals.delegateToMain = true;
@@ -195,7 +266,7 @@ export const runOnboardingAgent = async (
       ? (ctx.conversation as { started_at?: Date }).started_at?.toISOString() ?? ''
       : '';
 
-  const contextMessage = buildOnboardingContextMessage(ctx);
+  const contextMessage = await buildOnboardingContextMessage(ctx);
 
   const history = await buildAgentHistoryMessages({
     conversationId,

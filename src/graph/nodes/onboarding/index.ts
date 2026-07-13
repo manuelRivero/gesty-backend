@@ -225,6 +225,31 @@ export const onboardingAgentNode = async (
     };
   }
 
+  // ── Señal: el cliente resolvió la confirmación en texto libre ─────────────
+  // (vía PASO PENDIENTE + resolve_address_confirmation, mismo patrón que la
+  // confirmación final del checkout — ADR-0002: el guardado real pasa por
+  // `AddressService`, la tool solo señala.)
+  if (signals.addressConfirmationResolved !== null) {
+    console.log(
+      JSON.stringify({
+        event: '[onboarding-agent] address_confirmation_resolved',
+        confirmed: signals.addressConfirmationResolved,
+        conversationId,
+      })
+    );
+    const result = await addressService.resolveStagedAddressConfirmation(
+      enrichedBase,
+      signals.addressConfirmationResolved
+    );
+    if (signals.addressConfirmationResolved) {
+      await clearOnboardingSession(conversationId);
+    }
+    return {
+      handlerResult: normalizeToHandlerResult(result),
+      dataCollectionDelegated: true,
+    };
+  }
+
   // ── Señal: mostrar botones de confirmación de dirección ───────────────────
   if (signals.presentAddressConfirmation) {
     const freshMeta = normalizeMetadata(state.workingConversationState?.metadata);
@@ -239,15 +264,22 @@ export const onboardingAgentNode = async (
       };
     }
 
+    // ADR-0002: la confirmación es un solo mensaje determinístico. El texto
+    // libre del LLM (`text`) se descarta acá a propósito — nada garantiza
+    // que no afirme "ya confirmado" mientras el botón real todavía espera
+    // respuesta (pasó en producción: dos mensajes contradictorios el mismo
+    // turno, uno diciendo "dirección confirmada" y otro preguntando "¿es
+    // correcta?"). Igual que `present_fulfillment_options`/`present_payment_options`
+    // en checkout: la UI de confirmación reemplaza el texto, no lo acompaña.
     const confirmationMsg = addressService.buildConfirmAddressMessage(
       `📍 Encontré esta dirección:\n${tempAddress}\n\n¿Es correcta?`
     );
 
     return {
       handlerResult: {
-        content: text,
-        isInteractive: false,
-        followUps: [{ type: 'interactive', message: confirmationMsg as any }],
+        content: confirmationMsg,
+        isInteractive: true,
+        skipBodyHumanization: true,
       },
       dataCollectionDelegated: true,
     };

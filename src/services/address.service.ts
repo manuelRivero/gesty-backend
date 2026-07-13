@@ -335,6 +335,22 @@ export class AddressService {
     return 'No pude recuperar tu dirección anterior. Empecemos de nuevo.\n\n📍 Decime tu dirección o compartí tu ubicación.';
   }
 
+  /**
+   * Resuelve la confirmación de la dirección staged sin depender de
+   * `ctx.payloadId` (a diferencia de `.process()`/`.confirm()`, pensados
+   * para el flujo de botones). La usa `resolve_address_confirmation`
+   * (`tools/onboarding.ts`) cuando el cliente confirma/edita en texto libre
+   * — mismo guardado/limpieza que los payloads determinísticos
+   * `ONBOARDING_CONFIRM_ADDRESS`/`ONBOARDING_EDIT_ADDRESS`, una sola fuente
+   * de verdad para "qué pasa al confirmar", sin importar el canal.
+   */
+  async resolveStagedAddressConfirmation(
+    ctx: EnrichedContext,
+    confirmed: boolean
+  ): Promise<string | WhatsAppListMessage | WhatsAppInteractiveMessage> {
+    return confirmed ? this.saveAddress(ctx) : this.edit(ctx);
+  }
+
   private async saveAddress(ctx: EnrichedContext): Promise<string | WhatsAppListMessage | WhatsAppInteractiveMessage> {
     const meta = ctx.conversationState.metadata;
     const pendingAction = meta?.pending_address_action;
