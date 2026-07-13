@@ -60,7 +60,7 @@ import { withOrphanPayloadAsText } from '../session/orphanPayload';
 // Mensaje de botones de pago (sin ajustes de precio en v1)
 // ---------------------------------------------------------------------------
 
-function buildPaymentButtonsMessage(bodyText: string): WhatsAppInteractiveMessage {
+export function buildPaymentButtonsMessage(bodyText: string): WhatsAppInteractiveMessage {
   return {
     type: 'interactive',
     interactive: {
@@ -384,6 +384,27 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
       return baseResult;
     }
 
+    // `confirm_order` siempre resuelve en UN solo mensaje — la tarjeta de
+    // confirmación (con el total real) es la única fuente de verdad de ese
+    // paso, sin importar qué haya devuelto el híbrido (texto, o su propia
+    // tarjeta interactiva vía present_cart). Fusionarla como followUp aparte
+    // producía dos tarjetas con el mismo total en la misma respuesta (visto
+    // en pruebas manuales: la del híbrido + la de confirmación pegadas).
+    if (resume.checkoutPendingAction === 'confirm_order' && draftState.paymentMethod) {
+      const leadingText = typeof baseResult.content === 'string' ? baseResult.content : undefined;
+      const confirmMessage = await buildOrderConfirmationMessage({
+        businessId,
+        customerId,
+        customerPhone,
+        paymentMethod: draftState.paymentMethod,
+        currencyCode,
+        leadingText,
+      });
+      if (confirmMessage) {
+        return { ...baseResult, content: confirmMessage, isInteractive: true, followUps: undefined };
+      }
+    }
+
     // Un solo mensaje interactivo (respuesta a la consulta + resume corto como
     // body + botones), en vez de pegar el resume como texto plano y además
     // reagregar los botones como followUp aparte — repetía la misma pregunta
@@ -396,24 +417,11 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
       if (resume.checkoutPendingAction === 'payment_method') {
         return { ...baseResult, content: buildPaymentButtonsMessage(combinedBody), isInteractive: true };
       }
-      if (resume.checkoutPendingAction === 'confirm_order' && draftState.paymentMethod) {
-        const confirmMessage = await buildOrderConfirmationMessage({
-          businessId,
-          customerId,
-          customerPhone,
-          paymentMethod: draftState.paymentMethod,
-          currencyCode,
-          leadingText: baseResult.content,
-        });
-        if (confirmMessage) {
-          return { ...baseResult, content: confirmMessage, isInteractive: true };
-        }
-      }
     }
 
     // `baseResult` ya es interactivo (ej. el híbrido mostró un menú/lista): no
     // se le puede injertar otro set de botones al mismo body — se anexan los
-    // botones de fulfillment/pago/confirmación como followUp aparte, como antes.
+    // botones de fulfillment/pago como followUp aparte, como antes.
     const resumeFollowUps: HandlerFollowUp[] = [];
     if (resume.checkoutPendingAction === 'fulfillment_type') {
       resumeFollowUps.push({
@@ -425,17 +433,6 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
         type: 'interactive',
         message: buildPaymentButtonsMessage(resume.text),
       });
-    } else if (resume.checkoutPendingAction === 'confirm_order' && draftState.paymentMethod) {
-      const confirmMessage = await buildOrderConfirmationMessage({
-        businessId,
-        customerId,
-        customerPhone,
-        paymentMethod: draftState.paymentMethod,
-        currencyCode,
-      });
-      if (confirmMessage) {
-        resumeFollowUps.push({ type: 'interactive', message: confirmMessage });
-      }
     }
     return {
       ...baseResult,

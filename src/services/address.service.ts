@@ -1,6 +1,10 @@
 import { EnrichedContext } from '../controllers/webhook/types';
 import { prisma } from '../lib/prisma';
-import { updateConversationState, patchConversationMetadata } from '../repositories/conversationState.repository';
+import {
+  updateConversationState,
+  patchConversationMetadata,
+  omitConversationMetadataKeys,
+} from '../repositories/conversationState.repository';
 import { findCoverageZoneForPoint } from '../repositories/coverageZone.repository';
 import { WhatsAppInteractiveMessage, WhatsAppListMessage } from '../domain/intent/whatsappTemplates';
 import { buildSmallTalkMenu } from './smallTalk.service';
@@ -10,6 +14,15 @@ import {
 } from './productQuery/botMessages';
 import { formatBotUserMessage } from './productQuery/utils';
 
+
+/** Claves usadas por `stageAddressForDelegatedConfirmation`/`resolveDelegatedAddressConfirmation`. */
+export const DELEGATED_ADDRESS_CONFIRMATION_KEYS = [
+  'pending_address_confirmation',
+  'pending_address_text',
+  'pending_address_lat',
+  'pending_address_lng',
+  'pending_address_zone_id',
+];
 
 export class AddressService {
 
@@ -333,6 +346,117 @@ export class AddressService {
 
     await this.clearState(ctx);
     return 'No pude recuperar tu dirección anterior. Empecemos de nuevo.\n\n📍 Decime tu dirección o compartí tu ubicación.';
+  }
+
+  /**
+   * Versión para el híbrido cuando responde una pregunta de envío delegada
+   * desde otra sesión (checkout, o sin sesión alguna): geocodifica, valida
+   * cobertura y deja la dirección "staged" en claves DEDICADAS
+   * (`pending_address_*`), nunca `onboarding_step`/`temp_*` — pisar
+   * `onboarding_step` secuestraría el routing del turno siguiente hacia
+   * `onboarding_by_state`, sacando al cliente de la sesión que esté activa
+   * (mismo motivo que documenta `resolveAndSaveFromLocation`).
+   * `context/index.ts` prioriza `pending_address_confirmation` sobre
+   * cualquier otra sesión para capturar la confirmación del próximo turno.
+   */
+  async stageAddressForDelegatedConfirmation(params: {
+    businessId: string;
+    conversationId: string;
+    text: string;
+  }): Promise<
+    | { status: 'in_coverage'; formattedAddress: string }
+    | { status: 'out_of_coverage' }
+    | { status: 'not_found' }
+  > {
+    const cleaned = params.text.trim();
+    if (!cleaned) return { status: 'not_found' };
+
+    const geo = await this.geocode(cleaned);
+    if (!geo) return { status: 'not_found' };
+
+    const zone = await this.getCoverage(geo.lat, geo.lng, params.businessId);
+    if (!zone) return { status: 'out_of_coverage' };
+
+    const formattedAddress = typeof geo.formatted === 'string' ? geo.formatted : String(geo.formatted);
+
+    await patchConversationMetadata(params.conversationId, {
+      pending_address_confirmation: true,
+      pending_address_text: formattedAddress,
+      pending_address_lat: geo.lat,
+      pending_address_lng: geo.lng,
+      pending_address_zone_id: zone.id,
+    });
+
+    return { status: 'in_coverage', formattedAddress };
+  }
+
+  /**
+   * Resuelve la confirmación de una dirección staged por
+   * `stageAddressForDelegatedConfirmation` (botón o texto libre, ver
+   * `delegatedAddressConfirmationNode`). Guarda como default si `confirmed`,
+   * limpia las claves `pending_address_*` en cualquier caso.
+   */
+  async resolveDelegatedAddressConfirmation(
+    ctx: EnrichedContext,
+    confirmed: boolean
+  ): Promise<string> {
+    const meta = ctx.conversationState?.metadata ?? {};
+    const addressText = typeof meta.pending_address_text === 'string' ? meta.pending_address_text : null;
+
+    if (!confirmed) {
+      await omitConversationMetadataKeys(ctx.conversationId, DELEGATED_ADDRESS_CONFIRMATION_KEYS);
+      return 'Dale, decime la dirección correcta y la reviso de nuevo 📍';
+    }
+
+    if (!addressText) {
+      await omitConversationMetadataKeys(ctx.conversationId, DELEGATED_ADDRESS_CONFIRMATION_KEYS);
+      return 'No pude recuperar la dirección. ¿Me la volvés a compartir?';
+    }
+
+    await prisma.customer_address.updateMany({
+      where: { customer_id: ctx.customer.id },
+      data: { is_default: false },
+    });
+
+    const created = await prisma.customer_address.create({
+      data: {
+        customer_id: ctx.customer.id,
+        street_address: addressText,
+        is_default: true,
+        delivery_zone_id: (meta.pending_address_zone_id as string | undefined) ?? null,
+      },
+    });
+
+    const lat = meta.pending_address_lat as number | undefined;
+    const lng = meta.pending_address_lng as number | undefined;
+    if (lat != null && lng != null) {
+      await prisma.$executeRaw`
+        UPDATE customer_address
+        SET location = ST_SetSRID(ST_MakePoint(${lng}::float8, ${lat}::float8), 4326)::geography
+        WHERE id = ${created.id}::uuid
+      `;
+    }
+
+    await omitConversationMetadataKeys(ctx.conversationId, DELEGATED_ADDRESS_CONFIRMATION_KEYS);
+    return `Listo, guardé tu dirección: ${addressText} ✅`;
+  }
+
+  buildDelegatedConfirmAddressMessage(body: string): WhatsAppInteractiveMessage {
+    return {
+      type: 'interactive',
+      interactive: {
+        type: 'button',
+        header: { type: 'text', text: 'Confirmá tu dirección' },
+        body: { text: body },
+        footer: { text: 'Seleccioná una opción para continuar.' },
+        action: {
+          buttons: [
+            { type: 'reply', reply: { id: 'DELEGATED_CONFIRM_ADDRESS', title: 'Confirmar' } },
+            { type: 'reply', reply: { id: 'DELEGATED_EDIT_ADDRESS', title: 'Editar' } },
+          ],
+        },
+      },
+    };
   }
 
   /**

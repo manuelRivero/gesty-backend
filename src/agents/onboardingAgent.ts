@@ -39,8 +39,15 @@ import type { EnrichedContext } from '../controllers/webhook/types';
 // el agente principal lo intuya por su cuenta (no lo hacía de forma confiable).
 // ---------------------------------------------------------------------------
 
-const ConfirmAddressPendingSchema = z.object({ confirmed: z.boolean() });
-const CONFIRM_ADDRESS_QUESTION = '¿Es correcta la dirección?';
+export const ConfirmAddressPendingSchema = z.object({ confirmed: z.boolean() });
+export const CONFIRM_ADDRESS_QUESTION = '¿Es correcta la dirección?';
+export const CONFIRM_ADDRESS_VALUE_HINTS = `{
+  "confirmed": true | false
+}
+- true: sí, dale, confirmo, es correcta, está bien
+- false: no, esa no es, editar, cambiar, quiero cambiarla`;
+export const CONFIRM_ADDRESS_ACTION_DESCRIPTION =
+  'El cliente debe confirmar si la dirección propuesta es correcta o pedir editarla.';
 
 // ---------------------------------------------------------------------------
 // Cache de agentes por personalidad
@@ -101,13 +108,8 @@ const buildOnboardingContextMessage = async (ctx: EnrichedContext): Promise<stri
       pendingAction: 'confirm_address',
       botQuestion: CONFIRM_ADDRESS_QUESTION,
       schema: ConfirmAddressPendingSchema,
-      valueHints: `{
-  "confirmed": true | false
-}
-- true: sí, dale, confirmo, es correcta, está bien
-- false: no, esa no es, editar, cambiar, quiero cambiarla`,
-      actionDescription:
-        'El cliente debe confirmar si la dirección propuesta es correcta o pedir editarla.',
+      valueHints: CONFIRM_ADDRESS_VALUE_HINTS,
+      actionDescription: CONFIRM_ADDRESS_ACTION_DESCRIPTION,
     });
     console.log(
       JSON.stringify({

@@ -58,6 +58,7 @@ export type ContextRoute =
   | 'onboarding_agent'
   | 'onboarding_by_state'
   | 'address_capture'
+  | 'delegated_address_confirmation'
   | 'interactive'
   | 'nlp'
   | 'checkout';

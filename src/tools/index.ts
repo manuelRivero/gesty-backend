@@ -54,6 +54,7 @@ import {
 } from '../services/reservationCompletionGoal.service';
 import { updateCustomerName } from '../repositories';
 import { AddressService } from '../services/address.service';
+import { presentAddressConfirmationTool } from './onboarding';
 
 const toJson = (data: unknown): string => {
   try {
@@ -1476,6 +1477,41 @@ export const saveDeliveryAddressTool = new DynamicStructuredTool<
 });
 
 // ---------------------------------------------------------------------------
+// stage_delivery_address (híbrido — pregunta de envío delegada)
+// ---------------------------------------------------------------------------
+
+const stageDeliveryAddressSchema = z.object({
+  addressText: z
+    .string()
+    .min(3)
+    .describe('Dirección que el cliente compartió, tal como la escribió (calle, número, ciudad, etc.).'),
+});
+type StageDeliveryAddressInput = z.infer<typeof stageDeliveryAddressSchema>;
+
+export const stageDeliveryAddressTool = new DynamicStructuredTool<
+  typeof stageDeliveryAddressSchema,
+  StageDeliveryAddressInput
+>({
+  name: 'stage_delivery_address',
+  description:
+    'Geocodifica la dirección que el cliente compartió (típicamente al preguntar cuánto sale el envío) y la ' +
+    'deja pendiente de confirmación — NO la guarda todavía. Devuelve status: "in_coverage" (con formattedAddress) ' +
+    '| "out_of_coverage" | "not_found". Si "in_coverage": llamá present_address_confirmation() de inmediato para ' +
+    'mostrar los botones de confirmar/editar. Si "out_of_coverage" o "not_found": explicá el problema en texto, ' +
+    'no llames present_address_confirmation.',
+  schema: stageDeliveryAddressSchema,
+  func: async ({ addressText }: StageDeliveryAddressInput, _runManager, config?: RunnableConfig) => {
+    const { businessId, conversationId } = getReactContext(config);
+    const result = await new AddressService().stageAddressForDelegatedConfirmation({
+      businessId,
+      conversationId,
+      text: addressText,
+    });
+    return toJson(result);
+  },
+});
+
+// ---------------------------------------------------------------------------
 // present_cart (señal-UI)
 // ---------------------------------------------------------------------------
 
@@ -1580,4 +1616,6 @@ export const allReactTools = [
   presentCartTool,
   abandonPendingOrderTool,
   abandonPendingReservationTool,
+  stageDeliveryAddressTool,
+  presentAddressConfirmationTool,
 ];

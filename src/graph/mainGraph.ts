@@ -50,6 +50,7 @@ import {
   nlpSubgraphNode,
 } from './nodes/dispatch';
 import { checkoutAgentNode } from './nodes/checkout';
+import { delegatedAddressConfirmationNode } from './nodes/session/delegatedAddressConfirmation';
 import { reservationAgentNode } from './nodes/reservation';
 import { onboardingAgentNode } from './nodes/onboarding';
 import { sendResponseNode, persistAIMessageNode } from './nodes/send';
@@ -88,6 +89,7 @@ const builder = new StateGraph(AgentStateAnnotation)
   .addNode(NODE.ONBOARDING_AGENT, onboardingAgentNode)
   .addNode(NODE.ONBOARDING_BY_STATE, onboardingByStateNode)
   .addNode(NODE.ADDRESS_CAPTURE, addressCaptureNode)
+  .addNode(NODE.DELEGATED_ADDRESS_CONFIRMATION, delegatedAddressConfirmationNode)
   .addNode(NODE.INTERACTIVE, interactiveSubgraphNode)
   .addNode(NODE.NLP, nlpSubgraphNode)
   .addNode(NODE.CHECKOUT_AGENT, checkoutAgentNode)
@@ -157,6 +159,7 @@ builder.addConditionalEdges(
     [NODE.ONBOARDING_AGENT]: NODE.ONBOARDING_AGENT,
     [NODE.ONBOARDING_BY_STATE]: NODE.ONBOARDING_BY_STATE,
     [NODE.ADDRESS_CAPTURE]: NODE.ADDRESS_CAPTURE,
+    [NODE.DELEGATED_ADDRESS_CONFIRMATION]: NODE.DELEGATED_ADDRESS_CONFIRMATION,
     [NODE.CHECKOUT_AGENT]: NODE.CHECKOUT_AGENT,
     [NODE.INTERACTIVE]: NODE.INTERACTIVE,
     [NODE.NLP]: NODE.NLP,
@@ -168,6 +171,7 @@ for (const node of [
   NODE.ONBOARDING_AGENT,
   NODE.ONBOARDING_BY_STATE,
   NODE.ADDRESS_CAPTURE,
+  NODE.DELEGATED_ADDRESS_CONFIRMATION,
   NODE.INTERACTIVE,
   NODE.NLP,
   NODE.CHECKOUT_AGENT,

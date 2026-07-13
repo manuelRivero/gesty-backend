@@ -254,6 +254,13 @@ export const buildDetectionContextNode = async (
     const reservationPaused = reservation?.paused === true;
     const onboardingStep = wsMeta.onboarding_step;
 
+    // Dirección staged por el híbrido al responder una pregunta de envío
+    // delegada (`stage_delivery_address`, ver `AddressService`). Prioridad
+    // sobre cualquier otra sesión: si no se captura acá primero, el próximo
+    // mensaje del cliente (botón o "sí, es correcta") cae en la sesión que
+    // esté activa debajo (checkout, onboarding) y la confirmación se pierde.
+    const isPendingDelegatedAddressConfirmation = wsMeta.pending_address_confirmation === true;
+
     let contextRoute: AgentStateUpdate['contextRoute'];
     let hasAddress = false;
     let isInCoverage = false;
@@ -323,7 +330,9 @@ export const buildDetectionContextNode = async (
         ctx.payloadId === 'ONBOARDING_EDIT_ADDRESS' ||
         (wsMeta.awaiting_address === true && ctx.message?.type === 'text'));
 
-    if (reservationStep && !reservationPaused) {
+    if (isPendingDelegatedAddressConfirmation) {
+      contextRoute = 'delegated_address_confirmation';
+    } else if (reservationStep && !reservationPaused) {
       contextRoute = 'reservation_wizard';
     } else if (isReservationAgentSession) {
       contextRoute = 'reservation_agent';
@@ -338,7 +347,13 @@ export const buildDetectionContextNode = async (
       hasAddress = !!defaultAddress;
       if (defaultAddress) {
         const zone = await findCoverageZoneForAddress(defaultAddress.id, business.id);
-        isInCoverage = zone !== null || defaultAddress.delivery_zone_id === null;
+        // Exige zona real (V-21): una dirección sin `delivery_zone_id` asignado
+        // NO se considera "en cobertura" solo por compatibilidad con registros
+        // viejos — eso dejaba avanzar el checkout más allá del paso de
+        // dirección con una dirección que `resolveDeliveryContext`/`get_cart`
+        // no podía cotizar, mostrando "sin envío" en el resumen final y un
+        // mensaje genérico de "no hay dirección" al preguntar el costo.
+        isInCoverage = zone !== null;
         if (zone !== null && defaultAddress.delivery_zone_id !== zone.id) {
           await prisma.customer_address.update({
             where: { id: defaultAddress.id },
@@ -383,10 +398,9 @@ export const buildDetectionContextNode = async (
             data: { delivery_zone_id: null },
           });
           isInCoverage = false;
-        } else {
-          // Sin location almacenada ni zone_id → asumir válida por compatibilidad con registros previos
-          isInCoverage = true;
         }
+        // Sin `zone` ni `delivery_zone_id` previo: sigue sin cobertura real
+        // (V-21) — sin fallback legacy, ver nota arriba en la rama de checkout.
         contextRoute = ctx.message?.type === 'interactive' ? 'interactive' : 'nlp';
         if (contextRoute === 'interactive') {
           console.log('[Orchestrator] Route: Interactive');

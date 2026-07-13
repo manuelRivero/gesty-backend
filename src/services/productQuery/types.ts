@@ -127,6 +127,17 @@ export type ConversationMetadata = {
   address_soft_asked?: string | null;
   /** Intent original que fue bloqueado por falta de dirección (ej. CHECKOUT); se usa para retomar al confirmar. */
   pending_address_action?: string | null;
+  /**
+   * `true` mientras una dirección compartida al híbrido (pregunta de envío
+   * delegada) espera confirmación — ver `AddressService.stageAddressForDelegatedConfirmation`
+   * y `delegatedAddressConfirmationNode`. `context/index.ts` prioriza este
+   * flag sobre cualquier otra sesión activa.
+   */
+  pending_address_confirmation?: boolean;
+  pending_address_text?: string | null;
+  pending_address_lat?: number | null;
+  pending_address_lng?: number | null;
+  pending_address_zone_id?: string | null;
   /** Intent de carrito que quedó pendiente mientras el usuario elige delivery vs take-away. */
   pending_fulfillment_action?: string | null;
   /** Payload ADD_ITEM pendiente de confirmación cuando el negocio está cerrado con orders_when_closed=true. */

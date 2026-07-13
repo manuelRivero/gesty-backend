@@ -26,6 +26,7 @@ export const NODE = {
   ONBOARDING_BY_STATE: 'onboardingByState',
   ONBOARDING_AGENT: 'onboardingAgent',
   ADDRESS_CAPTURE: 'addressCapture',
+  DELEGATED_ADDRESS_CONFIRMATION: 'delegatedAddressConfirmation',
   INTERACTIVE: 'interactiveSubgraph',
   NLP: 'nlpSubgraph',
   CHECKOUT_AGENT: 'checkoutAgent',
@@ -129,6 +130,8 @@ export const routeAfterDetectionContext = (
       return NODE.ONBOARDING_BY_STATE;
     case 'address_capture':
       return NODE.ADDRESS_CAPTURE;
+    case 'delegated_address_confirmation':
+      return NODE.DELEGATED_ADDRESS_CONFIRMATION;
     case 'checkout':
       return NODE.CHECKOUT_AGENT;
     case 'interactive':

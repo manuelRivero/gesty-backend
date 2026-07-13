@@ -51,6 +51,7 @@ import {
   persistLastOffer,
 } from '../services/lastOffer.service';
 import { buildCartSummaryMessage } from '../services/cart.service';
+import { AddressService } from '../services/address.service';
 import {
   buildOrderCompletionContextLines,
   getOrderCompletionLedger,
@@ -272,6 +273,9 @@ export interface HybridAgentSignals {
   startCheckoutSession: boolean;
   startCheckoutReason: string | null;
   presentCart: boolean;
+  presentAddressConfirmation: boolean;
+  /** Texto normalizado de la última dirección dejada `in_coverage` por `stage_delivery_address` este turno. */
+  stagedAddressText: string | null;
 }
 
 export type HybridAgentRunResult =
@@ -283,6 +287,8 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
     startCheckoutSession: false,
     startCheckoutReason: null,
     presentCart: false,
+    presentAddressConfirmation: false,
+    stagedAddressText: null,
   };
 
   for (const msg of messages) {
@@ -294,13 +300,24 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
     if (!rawContent) continue;
 
     try {
-      const data = JSON.parse(rawContent) as { signal?: string; reason?: string };
+      const data = JSON.parse(rawContent) as {
+        signal?: string;
+        reason?: string;
+        status?: string;
+        formattedAddress?: string;
+      };
       if (data.signal === 'start_checkout_session') {
         signals.startCheckoutSession = true;
         signals.startCheckoutReason = data.reason ?? null;
       }
       if (data.signal === 'present_cart') {
         signals.presentCart = true;
+      }
+      if (data.signal === 'present_address_confirmation') {
+        signals.presentAddressConfirmation = true;
+      }
+      if (m.name === 'stage_delivery_address' && data.status === 'in_coverage' && data.formattedAddress) {
+        signals.stagedAddressText = data.formattedAddress;
       }
     } catch {
       /* ignorar mensajes no-JSON */
@@ -578,6 +595,19 @@ export const runHybridReactAgent = async (
     } catch (err) {
       console.error('[hybrid-agent] present_cart failed, falling through', err);
     }
+  }
+
+  // Dirección compartida al responder una pregunta de envío delegada (ADR-0002):
+  // `stage_delivery_address` ya la dejó pendiente de confirmación (`pending_address_*`
+  // en metadata, ver AddressService); acá solo se construye la tarjeta. La confirmación
+  // real (botón o texto libre) la resuelve `delegatedAddressConfirmationNode`, que
+  // `context/index.ts` prioriza sobre cualquier otra sesión en el próximo turno.
+  if (signals.presentAddressConfirmation && signals.stagedAddressText) {
+    const confirmMsg = new AddressService().buildDelegatedConfirmAddressMessage(
+      `📍 Encontré esta dirección:\n${signals.stagedAddressText}\n\n¿Es correcta?`
+    );
+    console.log(JSON.stringify({ event: '[hybrid-agent] present_address_confirmation_signal', conversationId }));
+    return { kind: 'response', handlerResult: markHybridResult({ content: confirmMsg, isInteractive: true }) };
   }
 
   const rawText = extractFinalText(out);
