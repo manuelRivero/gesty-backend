@@ -16,7 +16,10 @@ Analyze the user's message and return structured intent information.
 Available intents:
 - ORDER_FOOD: wants to order/add something (e.g., "quiero una hamburguesa", "dame 2 pizzas")
 - REMOVE_ITEM: wants to remove/delete something from order (e.g., "sacá la pizza", "quitame la coca")
-- MODIFY_QUANTITY: wants to change quantity (e.g., "cambiá a 3", "son 4 en total")
+- MODIFY_QUANTITY: wants to change the quantity of something ALREADY in the cart. Two distinct cases — set \`quantityMode\` accordingly:
+  * ABSOLUTE ("quantityMode": "absolute"): user states the FINAL total they want, e.g. "cambiá a 3", "son 4 en total", "quiero solamente 1 de eso", "que queden 2". \`quantity\` is the final target.
+  * DECREASE ("quantityMode": "decrease"): user wants to REMOVE some units from what they already have, e.g. "quita 1", "sacá 2", "restale una", "una menos". \`quantity\` is how many units to remove (NOT the final total).
+  Do not confuse DECREASE with REMOVE_ITEM: REMOVE_ITEM removes the item entirely (no partial quantity mentioned); MODIFY_QUANTITY/decrease keeps some units.
 - PRODUCT_QUERY: ANY open product discovery request belongs here: user searches for food, ingredient, dish type, generic food topic, or applies constraints like budget/price (e.g. "tienen ceviche?", "pollo para 3 personas", "algo con carne", "hay postres", "qué tienen de pescado", "algo de menos de 10k", "hasta 15 mil", "por 8k qué hay?", "qué opciones baratas tienen?"). Always set detectedProductName to the most useful food/product keyword when present. If there is no explicit dish/ingredient but the query is still about products (especially price/budget), keep intent as PRODUCT_QUERY and set detectedProductName to null.
 - RECOMMENDATION_REQUEST: ONLY when the user EXPLICITLY asks for recommendations/suggestions/featured items (e.g., "qué me recomendás?", "qué sugieren?", "recomendame algo rico", "cuáles son los destacados?"). Do not use this intent for generic product search or price-filter queries.
 - PRODUCT_ATTRIBUTE_QUESTION: asking about product details (e.g., "cuánto cuesta?", "es picante?")
@@ -42,6 +45,7 @@ Rules:
 - Use RECOMMENDATION_REQUEST only when recommendation intent is explicit (keywords like "recomendá", "sugerí", "destacados"). If not explicit, default to PRODUCT_QUERY for product-related requests.
 - Extract product name when mentioned
 - Extract quantity when specified (number or words like "dos", "tres"). For "pedido/orden para N personas" or "somos N", quantity is N people (party size), not item count.
+- For MODIFY_QUANTITY only: always set \`quantityMode\` ("absolute" or "decrease") per the rules above. For every other intent, set \`quantityMode\` to null.
 - If the user includes a delivery address, extract it in addressText even if there is a greeting
 - If there is a clear address, still return intent but always include addressText
 - Provide confidence 0-1
@@ -68,6 +72,7 @@ Respond with JSON:
   "confidence": 0.0-1.0,
   "detectedProductName": "product name mentioned or null",
   "quantity": number or null,
+  "quantityMode": "absolute" | "decrease" | null,
   "addressText": "full address or null",
   "addressConfidence": 0.0-1.0,
   "customerName": "person name or null",

@@ -227,7 +227,16 @@ export const buildAddItemMessage = async (
   conversation: conversation,
   menuItemId: string,
   customer: customer,
-  addQuantity: number = 1
+  addQuantity: number = 1,
+  /**
+   * 'add' (default): suma `addQuantity` a lo que ya había en el carrito
+   * (semántica histórica de ADD_ITEM/INCREASE_ITEM). 'set': fija la cantidad
+   * final en `addQuantity`, sin importar cuánto había antes — para
+   * instrucciones de cantidad absoluta ("quiero solamente 1 de X", "que
+   * queden 2"), que antes se trataban como aditivas por error (MODIFY_QUANTITY
+   * llamaba esta misma función sin distinguir el modo).
+   */
+  mode: 'add' | 'set' = 'add'
 ): Promise<AddItemMessageResult> => {
   const qty = Math.min(99, Math.max(1, Math.floor(addQuantity)));
 
@@ -266,7 +275,7 @@ export const buildAddItemMessage = async (
   });
 
   if (existingItem) {
-    const newQ = existingItem.quantity + qty;
+    const newQ = mode === 'set' ? qty : existingItem.quantity + qty;
     await prisma.draft_order_item.update({
       where: { draft_order_id: cart.id, id: existingItem.id },
       data: {
@@ -356,12 +365,20 @@ export const buildAddItemMessage = async (
   const discountLine = resolved.hasDiscount
     ? ` ✨ *¡Precio con descuento!* ${priceLine}`
     : '';
+  const actionLine =
+    mode === 'set'
+      ? `Ahora tenés ${qtyLine}*${item.name}* en tu pedido.`
+      : `${qtyLine}*${item.name}* sumado a tu pedido.`;
   const mainInner =
-    `${qtyLine}*${item.name}* sumado a tu pedido.${discountLine}\n\n${orderSectionsBlock}${guidanceSuffix}` +
+    `${actionLine}${discountLine}\n\n${orderSectionsBlock}${guidanceSuffix}` +
     `Total: $${total._sum.total_price || 0}${addressLine}\n\n` +
     `En el siguiente mensaje tenés las opciones para seguir.`;
 
-  const mainText = formatBotUserMessage('Producto agregado', '🛒', mainInner);
+  const mainText = formatBotUserMessage(
+    mode === 'set' ? 'Cantidad actualizada' : 'Producto agregado',
+    '🛒',
+    mainInner
+  );
 
   await createConversationMessage(conversation.id, 'ai', mainText, false);
   await updateConversationLastMessageAt(conversation.id);
@@ -387,7 +404,8 @@ export const buildAddItemMessage = async (
 export const handleAddItemFromWebhook = async (
   payload: WhatsAppWebhookPayload,
   menuItemId: string,
-  addQuantity: number = 1
+  addQuantity: number = 1,
+  mode: 'add' | 'set' = 'add'
 ): Promise<AddItemMessageResult | null> => {
 
   const entry = payload.entry?.[0];
@@ -414,7 +432,8 @@ export const handleAddItemFromWebhook = async (
     conversation,
     menuItemId,
     customer,
-    addQuantity
+    addQuantity,
+    mode
   );
   if (
     typeof result === 'object' &&

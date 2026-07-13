@@ -70,7 +70,8 @@ export const dispatchIntent = async (
     intent: detection.intent,
     confidence: detection.confidence,
     detectedProductName: detection.detectedProductName,
-    quantity: detection.quantity
+    quantity: detection.quantity,
+    quantityMode: detection.quantityMode
   };
 
   return handler.execute(ctx, classification);

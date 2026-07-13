@@ -529,7 +529,16 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
   // (visto en pruebas manuales contra el bot real: la Tarea 4.1 corrige esto).
   // Nada que persistir acá: `currentStep` ya deriva qué pregunta está
   // pendiente (`checkoutGoal.service.ts`), se recalcula solo el próximo turno.
-  if (signals.presentFulfillmentOptions) {
+  //
+  // Los botones se adjuntan según el ESTADO REAL (`currentStep`), no solo
+  // según la señal — el LLM a veces no llama present_fulfillment_options/
+  // present_payment_options pese a la instrucción del prompt (visto en
+  // pruebas con usuarios reales: el mensaje "¿Cómo querés pagar?" salía en
+  // texto plano, sin botones, porque el turno cayó en el fallback de
+  // `checkoutResponsePolicy` sin señal reconocida). La garantía no puede
+  // depender de que el modelo recuerde llamar la tool — mismo criterio que
+  // ya se aplicó en `onboardingAgentNode` para la confirmación de dirección.
+  if (signals.presentFulfillmentOptions || currentStep === 'fulfillment') {
     return {
       content: buildFulfillmentSelectionMessage(safeText),
       isInteractive: true,
@@ -537,7 +546,7 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
     };
   }
 
-  if (signals.presentPaymentOptions) {
+  if (signals.presentPaymentOptions || currentStep === 'payment') {
     return {
       content: buildPaymentButtonsMessage(safeText),
       isInteractive: true,

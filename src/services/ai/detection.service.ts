@@ -16,6 +16,8 @@ const IntentDetectionRawSchema = z.object({
   confidence: z.number().min(0).max(1),
   detectedProductName: z.string().nullable(),
   quantity: z.number().nullable(),
+  /** Solo relevante para MODIFY_QUANTITY: distingue "cambiá a 3" (absolute) de "quita 1" (decrease). */
+  quantityMode: z.enum(['absolute', 'decrease']).nullable().optional(),
   addressText: z.string().nullable(),
   addressConfidence: z.number().nullable(),
   customerName: z.string().nullable().optional(),
@@ -35,6 +37,8 @@ export interface IntentDetectionResult {
   confidence: number;
   detectedProductName: string | null;
   quantity: number | null;
+  /** Solo para MODIFY_QUANTITY: "absolute" ("quiero solamente 1") vs "decrease" ("quita 1"). */
+  quantityMode?: 'absolute' | 'decrease' | null;
   addressText?: string | null;
   addressConfidence?: number | null;
   customerName?: string | null;
@@ -97,6 +101,7 @@ const UNKNOWN_RESULT: IntentDetectionResult = {
   confidence: 0,
   detectedProductName: null,
   quantity: null,
+  quantityMode: null,
   addressText: null,
   addressConfidence: null,
   customerName: null,
@@ -220,6 +225,7 @@ export const detectIntentWithConfidence = async (
       confidence: outConfidence,
       detectedProductName,
       quantity,
+      quantityMode: finalIntent === ConversationIntent.MODIFY_QUANTITY ? parsed.quantityMode ?? null : null,
       addressText: parsed.addressText?.trim() ?? null,
       addressConfidence: parsed.addressConfidence ?? null,
       customerName: parsed.customerName?.trim() ?? null,

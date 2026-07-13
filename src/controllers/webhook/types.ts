@@ -85,6 +85,8 @@ export interface IntentClassification {
   confidence: number;
   detectedProductName: string | null;
   quantity: number | null;
+  /** Solo para MODIFY_QUANTITY: "absolute" ("quiero solamente 1") vs "decrease" ("quita 1"). */
+  quantityMode?: 'absolute' | 'decrease' | null;
 }
 
 // === INTERFAZ PARA INTENCIONES ===
