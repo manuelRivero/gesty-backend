@@ -1547,10 +1547,11 @@ export const checkDeliveryCoverageTool = new DynamicStructuredTool<
 >({
   name: 'check_delivery_coverage',
   description:
-    'Responde si el negocio hace delivery a la dirección GUARDADA del cliente y cuánto cuesta — ' +
-    'sin depender de que haya un carrito activo. Usala para cualquier pregunta de cobertura o costo ' +
-    'de envío ("¿hacen delivery a mi dirección?", "¿llegan hasta mi zona?", "¿cuánto sale el envío?"), ' +
-    'incluso si el cliente todavía no agregó nada al pedido. ' +
+    'Devuelve la dirección GUARDADA del cliente, si el negocio hace delivery ahí y cuánto cuesta — ' +
+    'sin depender de que haya un carrito activo. Usala para CUALQUIER pregunta sobre su dirección ' +
+    '("¿cuál dirección tienen guardada?"), cobertura ("¿hacen delivery a mi dirección?", "¿llegan hasta ' +
+    'mi zona?") o costo de envío ("¿cuánto sale el envío?"), incluso si el cliente todavía no agregó ' +
+    'nada al pedido. NUNCA respondas que no tenés acceso a la dirección sin llamar esta tool primero. ' +
     'Devuelve hasAddress (false si el cliente nunca guardó una dirección — en ese caso pedísela e invocá ' +
     'stage_delivery_address con lo que responda), y si hasAddress es true: address, inCoverage, ' +
     'deliveryFee, minOrderAmount, estimatedMinutes (todos null si inCoverage es false).',
@@ -1601,6 +1602,38 @@ export const presentCartTool = new DynamicStructuredTool<
   func: async (_input: PresentCartInput, _runManager, config?: RunnableConfig) => {
     getReactContext(config); // validar contexto
     return toJson({ signal: 'present_cart' });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// present_welcome_options (señal-UI — empuje proactivo en el primer saludo)
+// ---------------------------------------------------------------------------
+
+const presentWelcomeOptionsSchema = z.object({
+  bodyText: z
+    .string()
+    .min(1)
+    .describe(
+      'Tu saludo breve y propio (1-2 oraciones), ofreciendo concretamente ver el menú, hacer un ' +
+        'pedido o reservar una mesa — NO una pregunta abierta genérica tipo "¿en qué te ayudo?".'
+    ),
+});
+type PresentWelcomeOptionsInput = z.infer<typeof presentWelcomeOptionsSchema>;
+
+export const presentWelcomeOptionsTool = new DynamicStructuredTool<
+  typeof presentWelcomeOptionsSchema,
+  PresentWelcomeOptionsInput
+>({
+  name: 'present_welcome_options',
+  description:
+    'Muestra tu saludo junto a botones concretos (ver menú, reservar mesa, etc.) en el primer saludo ' +
+    'de la conversación. Llamala en vez de responder solo texto cuando el cliente saluda sin pedir algo ' +
+    'específico — el objetivo es empujarlo activamente hacia armar un pedido o reservar, no solo ' +
+    'preguntar "¿en qué te ayudo?" y esperar.',
+  schema: presentWelcomeOptionsSchema,
+  func: async ({ bodyText }: PresentWelcomeOptionsInput, _runManager, config?: RunnableConfig) => {
+    getReactContext(config); // validar contexto
+    return toJson({ signal: 'present_welcome_options', bodyText });
   },
 });
 
@@ -1683,6 +1716,7 @@ export const allReactTools = [
   updateItemNoteTool,
   savePartySizeTool,
   presentCartTool,
+  presentWelcomeOptionsTool,
   abandonPendingOrderTool,
   abandonPendingReservationTool,
   stageDeliveryAddressTool,

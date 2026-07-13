@@ -3,6 +3,8 @@ import { EnrichedContext } from '../controllers/webhook/types';
 import { buildListMessageFromButtons } from '../whatsappBuilders';
 import type { WhatsAppListMessage } from '../domain/intent/whatsappTemplates';
 import { formatBotUserMessage } from './productQuery/utils';
+import { getBusinessConfig } from './businessConfig.service';
+import { isReservationAgentEnabled } from '../config/env';
 
 const baseButtons = [
   {
@@ -29,11 +31,12 @@ export const buildSmallTalkButtons = async (ctx: EnrichedContext) => {
   const business = await prisma.business.findFirst({
     where: { name: ctx.business?.name ?? '' }
   });
+  const businessId = ctx.business?.id ?? business?.id ?? null;
 
-  const [activeOrder, defaultAddress] = await Promise.all([
+  const [activeOrder, defaultAddress, businessConfig] = await Promise.all([
     prisma.draft_order.findFirst({
       where: {
-        business_id: ctx.business?.id ?? business?.id ?? null,
+        business_id: businessId,
         customer_phone: ctx.customer?.phone_number,
         status: 'active'
       },
@@ -45,7 +48,8 @@ export const buildSmallTalkButtons = async (ctx: EnrichedContext) => {
         is_default: true
       },
       select: { id: true }
-    })
+    }),
+    businessId ? getBusinessConfig(businessId) : Promise.resolve(null)
   ]);
 
   const buttons = [...baseButtons];
@@ -54,6 +58,14 @@ export const buildSmallTalkButtons = async (ctx: EnrichedContext) => {
       title: 'Ver pedido',
       payload: 'VIEW_ORDER',
       description: 'Revisar tu pedido actual',
+      sectionTitle: 'Opciones'
+    });
+  }
+  if (isReservationAgentEnabled() && businessConfig?.reservations_enabled) {
+    buttons.push({
+      title: 'Reservar mesa',
+      payload: 'VIEW_RESERVATION',
+      description: 'Reservar una mesa',
       sectionTitle: 'Opciones'
     });
   }
@@ -70,14 +82,16 @@ export const buildSmallTalkButtons = async (ctx: EnrichedContext) => {
 };
 
 export const buildSmallTalkMenu = async (
-    ctx: EnrichedContext
+    ctx: EnrichedContext,
+    /** Texto propio del agente (ej. saludo del híbrido) a usar como body en vez del genérico. */
+    customBodyText?: string
 ): Promise<WhatsAppListMessage | string | null> => {
   const businessNameFromCtx = ctx.business?.name;
   if (!businessNameFromCtx) {
     return formatBotUserMessage(
       'Asistente',
       '👋',
-      '¿En qué te puedo ayudar?'
+      customBodyText?.trim() || '¿En qué te puedo ayudar?'
     );
   }
 
@@ -89,11 +103,13 @@ export const buildSmallTalkMenu = async (
   const buttons = await buildSmallTalkButtons(ctx);
 
   const headerText = ``;
-  const bodyText = formatBotUserMessage(
-    `Bienvenido a ${businessName}`,
-    '👋',
-    `¡Hola! Soy el asistente de IA de *${businessName}*.\n\n¿En qué te puedo ayudar?`
-  );
+  const bodyText = customBodyText?.trim()
+    ? formatBotUserMessage(`Bienvenido a ${businessName}`, '👋', customBodyText.trim())
+    : formatBotUserMessage(
+        `Bienvenido a ${businessName}`,
+        '👋',
+        `¡Hola! Soy el asistente de IA de *${businessName}*.\n\n¿En qué te puedo ayudar?`
+      );
 
   return buildListMessageFromButtons(
     bodyText,

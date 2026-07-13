@@ -100,14 +100,23 @@ export const onboardingAgentNode = async (
   const addressService = new AddressService();
 
   // ── ONBOARDING_CONFIRM_ADDRESS — guardado determinístico ──────────────────
+  // Misma fuente de verdad que el camino de texto libre (resolveStagedAddressConfirmation):
+  // `addressService.process()` es el método LEGACY (ver @deprecated) y no
+  // pasa `skipSmallTalkMenu`, por eso mostraba el saludo de bienvenida
+  // completo al confirmar por botón (bug real, visto en pruebas manuales).
   if (payloadId === 'ONBOARDING_CONFIRM_ADDRESS') {
-    const result = await addressService.process(enrichedBase);
+    const result = await addressService.resolveStagedAddressConfirmation(enrichedBase, true);
     await clearOnboardingSession(conversationId);
-    if (!result) {
-      return { dataCollectionDelegated: true };
-    }
+    const ackResult = normalizeToHandlerResult(result);
+    const finalResult = await invokeHybridAfterAddressSaved({
+      enrichedBase,
+      conversationId,
+      detectionContext: state.detectionContext,
+      userMessage: ctx.message?.text?.body?.trim() ?? '',
+      fallbackResult: ackResult,
+    });
     return {
-      handlerResult: normalizeToHandlerResult(result),
+      handlerResult: finalResult,
       dataCollectionDelegated: true,
     };
   }

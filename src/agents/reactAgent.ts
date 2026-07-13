@@ -52,6 +52,7 @@ import {
 } from '../services/lastOffer.service';
 import { buildCartSummaryMessage } from '../services/cart.service';
 import { AddressService } from '../services/address.service';
+import { buildSmallTalkMenu } from '../services/smallTalk.service';
 import {
   buildOrderCompletionContextLines,
   getOrderCompletionLedger,
@@ -276,6 +277,8 @@ export interface HybridAgentSignals {
   presentAddressConfirmation: boolean;
   /** Texto normalizado de la última dirección dejada `in_coverage` por `stage_delivery_address` este turno. */
   stagedAddressText: string | null;
+  presentWelcomeOptions: boolean;
+  welcomeBodyText: string | null;
 }
 
 export type HybridAgentRunResult =
@@ -289,6 +292,8 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
     presentCart: false,
     presentAddressConfirmation: false,
     stagedAddressText: null,
+    presentWelcomeOptions: false,
+    welcomeBodyText: null,
   };
 
   for (const msg of messages) {
@@ -305,6 +310,7 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
         reason?: string;
         status?: string;
         formattedAddress?: string;
+        bodyText?: string;
       };
       if (data.signal === 'start_checkout_session') {
         signals.startCheckoutSession = true;
@@ -318,6 +324,10 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
       }
       if (m.name === 'stage_delivery_address' && data.status === 'in_coverage' && data.formattedAddress) {
         signals.stagedAddressText = data.formattedAddress;
+      }
+      if (data.signal === 'present_welcome_options') {
+        signals.presentWelcomeOptions = true;
+        signals.welcomeBodyText = data.bodyText ?? null;
       }
     } catch {
       /* ignorar mensajes no-JSON */
@@ -608,6 +618,23 @@ export const runHybridReactAgent = async (
     );
     console.log(JSON.stringify({ event: '[hybrid-agent] present_address_confirmation_signal', conversationId }));
     return { kind: 'response', handlerResult: markHybridResult({ content: confirmMsg, isInteractive: true }) };
+  }
+
+  // Empuje proactivo en el primer saludo (objetivo primario del bot: no
+  // quedarse en "¿en qué te ayudo?" abierto — ofrecer concretamente
+  // menú/pedido/reserva). El body es el saludo propio del LLM (dado como
+  // argumento de la tool, no el `text` final ya envuelto por
+  // `ensureWhatsAppBotFormat` — evita duplicar el header "🤖").
+  if (signals.presentWelcomeOptions) {
+    try {
+      const menu = await buildSmallTalkMenu(ctx, signals.welcomeBodyText ?? undefined);
+      if (menu && typeof menu !== 'string') {
+        console.log(JSON.stringify({ event: '[hybrid-agent] present_welcome_options_signal', conversationId }));
+        return { kind: 'response', handlerResult: markHybridResult({ content: menu, isInteractive: true }) };
+      }
+    } catch (err) {
+      console.error('[hybrid-agent] present_welcome_options failed, falling through', err);
+    }
   }
 
   const rawText = extractFinalText(out);
