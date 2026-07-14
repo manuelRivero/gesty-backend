@@ -9,7 +9,7 @@ import { prisma } from "../lib/prisma";
 import { WhatsAppSenderService } from "./whatsappSender.service";
 import { formatBotUserMessage } from "./productQuery/utils";
 
-function shortOrderRef(orderId: string): string {
+export function shortOrderRef(orderId: string): string {
   return orderId.replace(/-/g, "").slice(0, 8).toUpperCase();
 }
 

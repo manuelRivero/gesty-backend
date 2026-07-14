@@ -22,7 +22,7 @@
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
 import type { RunnableConfig } from '@langchain/core/runnables';
-import { Prisma } from '@prisma/client';
+import { Prisma, OrderStatus } from '@prisma/client';
 import { MenuService } from '../services/menu.service';
 import { getBusinessOpenInfo } from '../services/businessHours.service';
 import { findRecentMessagesForDetectionContext, findDefaultCustomerAddress } from '../repositories';
@@ -54,6 +54,11 @@ import {
 } from '../services/reservationCompletionGoal.service';
 import { updateCustomerName } from '../repositories';
 import { AddressService } from '../services/address.service';
+import { shortOrderRef } from '../services/orderStatusNotification.service';
+import {
+  ORDER_STATUS_LABEL_ES,
+  ORDER_PAYMENT_STATUS_LABEL_ES,
+} from '../constants/orderWorkflow';
 
 const toJson = (data: unknown): string => {
   try {
@@ -1638,6 +1643,66 @@ export const presentWelcomeOptionsTool = new DynamicStructuredTool<
 });
 
 // ---------------------------------------------------------------------------
+// get_order_status (híbrido — seguimiento de un pedido YA creado)
+// ---------------------------------------------------------------------------
+
+const getOrderStatusSchema = z.object({});
+type GetOrderStatusInput = z.infer<typeof getOrderStatusSchema>;
+
+export const getOrderStatusTool = new DynamicStructuredTool<
+  typeof getOrderStatusSchema,
+  GetOrderStatusInput
+>({
+  name: 'get_order_status',
+  description:
+    'Devuelve TODOS los pedidos YA CREADOS del cliente que todavía no fueron entregados (puede tener ' +
+    'varios pedidos activos el mismo día) — no confundir con get_cart, que es el carrito ANTES de crear ' +
+    'la orden. Usala cuando el cliente pregunta por un pedido ya hecho ("¿cómo va mi pedido?", "¿ya está ' +
+    'listo?", "¿dónde está?", "¿lo entregaron?"). Devuelve exists (false si no tiene pedidos activos), y ' +
+    'si exists: orders (array, ordenado del más viejo al más nuevo). Cada pedido trae "index" (1, 2, 3... ' +
+    'en ese orden — usalo para nombrarlo "pedido 1", "pedido 2" si hay más de uno, nunca inventes otra ' +
+    'numeración), orderRef (código corto alternativo), status (en español, ya legible), paymentStatus, ' +
+    'fulfillmentType, totalAmount, currencyCode, createdAt, items (nombre y cantidad).',
+  schema: getOrderStatusSchema,
+  func: async (_input: GetOrderStatusInput, _runManager, config?: RunnableConfig) => {
+    const { businessId, customerId } = getReactContext(config);
+    const orders = await prisma.orders.findMany({
+      where: {
+        business_id: businessId,
+        customer_id: customerId,
+        status: { not: OrderStatus.delivered },
+      },
+      orderBy: { created_at: 'asc' },
+      include: {
+        order_item: { include: { menu_item: { select: { name: true } } } },
+      },
+    });
+
+    if (orders.length === 0) {
+      return toJson({ exists: false });
+    }
+
+    return toJson({
+      exists: true,
+      orders: orders.map((order, idx) => ({
+        index: idx + 1,
+        orderRef: shortOrderRef(order.id),
+        status: ORDER_STATUS_LABEL_ES[order.status],
+        paymentStatus: ORDER_PAYMENT_STATUS_LABEL_ES[order.payment_status],
+        fulfillmentType: order.fulfillment_type,
+        totalAmount: order.total_amount?.toFixed(2) ?? null,
+        currencyCode: order.currency_code,
+        createdAt: order.created_at.toISOString(),
+        items: order.order_item.map((it) => ({
+          name: it.menu_item?.name ?? 'Producto',
+          quantity: it.quantity,
+        })),
+      })),
+    });
+  },
+});
+
+// ---------------------------------------------------------------------------
 // abandon_pending_order (Ledger — Tool de la familia Intent, ADR-0005/0007/0008)
 // ---------------------------------------------------------------------------
 
@@ -1722,4 +1787,5 @@ export const allReactTools = [
   stageDeliveryAddressTool,
   presentAddressConfirmationTool,
   checkDeliveryCoverageTool,
+  getOrderStatusTool,
 ];

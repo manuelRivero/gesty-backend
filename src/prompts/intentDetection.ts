@@ -28,6 +28,7 @@ Available intents:
 - VIEW_CART_FOR_EDITION: wants to edit the cart (e.g., "modificar mi pedido", "cambiar cantidades"). Do NOT use for paying or finishing the order.
 - CHECKOUT: wants to finish the order and pay (e.g., "pagar", "finalizar pedido", "cerrar compra", "quiero pagar", "listo para pagar", "confirmar pedido")
 - CANCEL_ORDER: wants to cancel the entire order (e.g., "cancelar pedido", "no quiero el pedido")
+- TRACK_ORDER: asks about the status of an order ALREADY placed/paid (post-checkout), e.g. "¿cómo va mi pedido?", "¿ya está listo?", "¿dónde está mi pedido?", "¿lo entregaron?", "¿cuánto falta para que llegue?". Do NOT use for the current cart before paying — that's VIEW_CART.
 - SMALL_TALK: greeting or casual (e.g., "hola", "buenas")
 - PROVIDE_NAME: user is providing their personal name as the main subject, typically as a standalone response when asked (e.g., "Juan", "me llamo Juan", "soy Ana", "mi nombre es Pedro Pérez")
 - ASK_QUESTION: general question (e.g., "dónde están?", "cuál es el horario?")

@@ -87,7 +87,9 @@ const CLOSED_INTENTS = new Set<ConversationIntent>([
   ConversationIntent.CHECKOUT,
   ConversationIntent.CANCEL_ORDER,
   ConversationIntent.END_CONVERSATION,
-  ConversationIntent.TRACK_ORDER,
+  // TRACK_ORDER NO está acá a propósito: no tenía ningún IntentHandler
+  // registrado (intent muerto — "no handler for: TRACK_ORDER"). Ahora lo
+  // resuelve el híbrido con get_order_status().
   ConversationIntent.PAYMENT_REQUEST,
   ConversationIntent.SUPPORT,
   ConversationIntent.ADD_PRODUCT,
