@@ -1670,7 +1670,12 @@ export const getOrderStatusTool = new DynamicStructuredTool<
       where: {
         business_id: businessId,
         customer_id: customerId,
-        status: { not: OrderStatus.delivered },
+        // Solo pedidos "en curso" — entregado/cancelado son historial cerrado
+        // (nada que rastrear) y draft es vestigial (los pedidos se crean
+        // directo en 'placed', nunca queda uno de verdad en este estado).
+        status: {
+          in: [OrderStatus.placed, OrderStatus.preparing, OrderStatus.shipped, OrderStatus.ready_for_pickup],
+        },
       },
       orderBy: { created_at: 'asc' },
       include: {

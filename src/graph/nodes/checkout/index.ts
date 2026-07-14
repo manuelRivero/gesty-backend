@@ -554,6 +554,27 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
     };
   }
 
+  // Mismo criterio en el paso `confirm`: si el LLM no llamó
+  // resolve_order_confirmation este turno (ej. respondió una pregunta
+  // lateral en texto sin delegar), no puede perderse la tarjeta de
+  // confirmación real — sin esto, el fallback de `checkoutResponsePolicy`
+  // mostraba un texto genérico ("seguimos con tu pedido") sin los botones
+  // Confirmar/Cancelar ni el total real, dejando al cliente sin forma de
+  // confirmar por botón ese turno.
+  if (currentStep === 'confirm' && draftState.paymentMethod) {
+    const confirmMessage = await buildOrderConfirmationMessage({
+      businessId,
+      customerId,
+      customerPhone,
+      paymentMethod: draftState.paymentMethod,
+      currencyCode,
+      leadingText: safeText,
+    });
+    if (confirmMessage) {
+      return { content: confirmMessage, isInteractive: true, skipBodyHumanization: true };
+    }
+  }
+
   return { content: safeText, isInteractive: false, skipBodyHumanization: true };
 };
 
