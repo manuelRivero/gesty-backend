@@ -3,6 +3,16 @@ import {
   getSuperAdminBusinessById,
   getSuperAdminBusinessesList
 } from "../controllers/superAdminBusinesses.controller";
+import {
+  createAnnouncementHandler,
+  deleteAnnouncementHandler,
+  deleteAnnouncementMediaHandler,
+  getAnnouncementHandler,
+  listAnnouncementsHandler,
+  updateAnnouncementHandler,
+  uploadAnnouncementMediaHandler,
+} from "../controllers/superAdminAnnouncements.controller";
+import { announcementMediaUploadMiddleware } from "../middleware/announcementMediaUpload.middleware";
 import { authenticateJwt, requireRoles } from "../middleware/auth.middleware";
 
 const router = Router();
@@ -12,5 +22,16 @@ router.use(requireRoles("SUPER_ADMIN"));
 
 router.get("/businesses", getSuperAdminBusinessesList);
 router.get("/businesses/:id", getSuperAdminBusinessById);
+
+// Announcements CRUD
+router.get("/announcements", listAnnouncementsHandler);
+router.get("/announcements/:id", getAnnouncementHandler);
+router.post("/announcements", createAnnouncementHandler);
+router.patch("/announcements/:id", updateAnnouncementHandler);
+router.delete("/announcements/:id", deleteAnnouncementHandler);
+
+// Announcement media
+router.post("/announcements/:id/media", announcementMediaUploadMiddleware, uploadAnnouncementMediaHandler);
+router.delete("/announcements/:id/media", deleteAnnouncementMediaHandler);
 
 export default router;

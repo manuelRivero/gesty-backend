@@ -53,7 +53,6 @@ const createSchema = z.object({
   preparation: z.string().max(3000).optional().nullable(),
   servesPeople: z.coerce.number().int().min(1).max(100).optional().nullable(),
   isFeatured: z.boolean().optional(),
-  image: z.string().url().optional().nullable(),
   isAvailable: z.boolean().optional(),
   price: menuItemPriceSchema.optional(),
   discount: discountSchema
@@ -76,7 +75,6 @@ const updateSchema = z.object({
   preparation: z.string().max(3000).optional().nullable(),
   servesPeople: z.coerce.number().int().min(1).max(100).optional().nullable(),
   isFeatured: z.boolean().optional(),
-  image: z.string().url().optional().nullable(),
   isAvailable: z.boolean().optional(),
   price: menuItemPriceSchema.optional(),
   discount: discountSchema

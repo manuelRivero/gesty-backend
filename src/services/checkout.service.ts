@@ -275,8 +275,10 @@ export const handleCheckoutFromWebhook = async (
 export const buildCashCheckoutResult = async (
   business: BusinessType,
   conversation: ConversationType,
-  customer: CustomerType
+  customer: CustomerType,
+  options: { externalDeliveryEnabled?: boolean } = {}
 ): Promise<CheckoutResult> => {
+  const { externalDeliveryEnabled = false } = options;
   try {
     const { orderId, total, pricing, qrDataUrl } = await createOrderFromDraft(
       business,
@@ -295,7 +297,7 @@ export const buildCashCheckoutResult = async (
     });
 
     const followUps: HandlerFollowUp[] = [
-      { type: 'image', dataUrl: qrDataUrl },
+      ...(!externalDeliveryEnabled ? [{ type: 'image' as const, dataUrl: qrDataUrl }] : []),
       {
         type: 'text',
         message: buildOrderDispatchThanksMessage(),

@@ -6,7 +6,7 @@
  *   - /api/auth, /api/admin, /api/super-admin, /checkin, /api/public
  *   - Socket.IO panel admin (attachAdminSocket)
  *
- * Worker `processDraftOrderTimeouts` se ejecuta cada 60s.
+ * Worker `processDraftOrderTimeouts` solo si ENABLE_DRAFT_ORDER_WORKER=true.
  */
 
 import 'dotenv/config';
@@ -29,12 +29,19 @@ import { processDraftOrderTimeouts } from './workers/draftOrders';
 import type { WhatsAppWebhookPayload } from './controllers/webhook/types';
 import { mercadoPagoWebhookHandler } from './controllers/payments/mercadoPagoWebhook.controller';
 
-const DRAFT_ORDER_TICK_MS = 60_000;
-setInterval(() => {
-  void processDraftOrderTimeouts().catch((err) => {
-    console.error('[worker:draftOrders] tick error', err);
-  });
-}, DRAFT_ORDER_TICK_MS);
+if (env.ENABLE_DRAFT_ORDER_WORKER) {
+  const DRAFT_ORDER_TICK_MS = 60_000;
+  setInterval(() => {
+    void processDraftOrderTimeouts().catch((err) => {
+      console.error('[worker:draftOrders] tick error', err);
+    });
+  }, DRAFT_ORDER_TICK_MS);
+  console.log('[worker:draftOrders] enabled (tick every 60s)');
+} else {
+  console.log(
+    '[worker:draftOrders] disabled (set ENABLE_DRAFT_ORDER_WORKER=true to enable)'
+  );
+}
 
 const app = express();
 

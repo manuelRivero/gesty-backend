@@ -41,6 +41,7 @@ const configPatchSchema = z.object({
   humanize_messages: z.boolean().optional(),
   operate_when_closed: z.boolean().optional(),
   orders_when_closed: z.boolean().optional(),
+  external_delivery_enabled: z.boolean().optional(),
   bot_personality_id: z.string().uuid().optional()
 });
 

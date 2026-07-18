@@ -171,7 +171,6 @@ export async function createAdminMenuItem(params: {
   preparation?: string | null;
   servesPeople?: number | null;
   isFeatured?: boolean;
-  image?: string | null;
   isAvailable?: boolean;
   price?: MenuItemPriceInput;
   discount?: DiscountInput | null;
@@ -194,7 +193,6 @@ export async function createAdminMenuItem(params: {
       preparation: params.preparation ?? null,
       serves_people: params.servesPeople ?? null,
       is_featured: params.isFeatured ?? false,
-      image: params.image ?? null,
       is_available: params.isAvailable ?? true,
       discount_type: params.discount?.discountType ?? null,
       discount_value: params.discount?.discountValue ?? null,
@@ -260,7 +258,6 @@ export async function updateAdminMenuItem(params: {
   preparation?: string | null;
   servesPeople?: number | null;
   isFeatured?: boolean;
-  image?: string | null;
   isAvailable?: boolean;
   price?: MenuItemPriceInput;
   discount?: DiscountInput | null;
@@ -298,7 +295,6 @@ export async function updateAdminMenuItem(params: {
       ...(params.preparation !== undefined ? { preparation: params.preparation } : {}),
       ...(params.servesPeople !== undefined ? { serves_people: params.servesPeople } : {}),
       ...(params.isFeatured !== undefined ? { is_featured: params.isFeatured } : {}),
-      ...(params.image !== undefined ? { image: params.image } : {}),
       ...(params.isAvailable !== undefined ? { is_available: params.isAvailable } : {}),
       ...(params.discount !== undefined ? {
         discount_type: params.discount?.discountType ?? null,
@@ -385,6 +381,10 @@ function formatAdminMenuItem(row: AdminMenuItemRow) {
     discount: discountType
       ? { discountType, discountValue }
       : null,
+    /** URL pública (alias estable para el admin). */
+    imageUrl: row.image,
+    /** Key en object storage. */
+    imageKey: row.image_key,
   };
 }
 

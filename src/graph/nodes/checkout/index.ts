@@ -598,7 +598,8 @@ export const checkoutAgentNode = async (
   const conversationId = conversation.id;
   const phone = customer.phone_number ?? ctx.to;
 
-  const deliveryEnabled = businessConfig?.delivery_enabled ?? true;
+  const deliveryEnabled =
+    (businessConfig?.delivery_enabled ?? true) || (businessConfig?.external_delivery_enabled ?? false);
   const takeawayEnabled = businessConfig?.takeaway_enabled ?? false;
 
   // PAY_CASH/PAY_ONLINE: elegir el método NO cobra — ADR-0002, mismo

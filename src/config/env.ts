@@ -91,6 +91,17 @@ const envSchema = z.object({
     .optional()
     .transform((v) => v === 'true' || v === '1'),
 
+  /**
+   * Worker periódico (`processDraftOrderTimeouts`): reminders, expiración de
+   * drafts y cierre de conversaciones por inactividad. Cada tick (~60s) hace
+   * varias queries a Postgres. Default `false` para no quemar cómputo en Neon
+   * hasta tener una estrategia de costos viable. Opt-in explícito: `true`/`1`.
+   */
+  ENABLE_DRAFT_ORDER_WORKER: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true' || v === '1'),
+
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 
   /**
@@ -104,6 +115,23 @@ const envSchema = z.object({
    * Ejemplo: https://mi-servidor.example.com
    */
   MERCADO_PAGO_WEBHOOK_BASE_URL: z.string().optional(),
+
+  /**
+   * Cloudflare R2 (object storage S3-compatible). Opcionales al arrancar;
+   * se validan al usar el storage provider.
+   */
+  R2_ACCOUNT_ID: z.string().optional(),
+  R2_BUCKET: z.string().optional(),
+  R2_ACCESS_KEY_ID: z.string().optional(),
+  R2_SECRET_ACCESS_KEY: z.string().optional(),
+  /** URL pública del bucket / custom domain, sin slash final. Ej: https://cdn.ejemplo.com */
+  R2_PUBLIC_URL: z.string().url().optional(),
+  /**
+   * Override opcional del endpoint S3.
+   * Default: https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com
+   * Jurisdicción EU: https://<R2_ACCOUNT_ID>.eu.r2.cloudflarestorage.com
+   */
+  R2_ENDPOINT: z.string().url().optional(),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

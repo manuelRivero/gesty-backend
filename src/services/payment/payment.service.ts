@@ -10,6 +10,7 @@ import { formatBotUserMessage } from '../productQuery/utils';
 import { computeOrderPricing } from '../pricing.service';
 import { resolveDeliveryContext } from '../deliveryFee.service';
 import { resolvePaymentAdjustment } from '../paymentAdjustment.service';
+import { getBusinessConfig } from '../businessConfig.service';
 
 export interface PaymentLinkResult {
   initPoint: string;
@@ -212,13 +213,16 @@ export const handleApprovedPayment = async (
   // Notificar al cliente
   const phoneId = business.whatsapp_phone_id;
   if (phoneId) {
+    const businessConfig = await getBusinessConfig(business.id);
     const msg = formatBotUserMessage(
       '¡Pago recibido!',
       '✅',
       `Número: #${orderId}\nTotal: $${total}\nEstado: Confirmado`
     );
     await sendTextMessageNoCtx(phoneId, customer.phone_number, msg);
-    await sendImageMessageNoCtx(phoneId, customer.phone_number, qrDataUrl);
+    if (!businessConfig.external_delivery_enabled) {
+      await sendImageMessageNoCtx(phoneId, customer.phone_number, qrDataUrl);
+    }
     await sendTextMessageNoCtx(
       phoneId,
       customer.phone_number,

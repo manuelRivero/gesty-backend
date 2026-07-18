@@ -29,6 +29,7 @@ export type BusinessConfig = {
   humanize_messages: boolean;
   operate_when_closed: boolean;
   orders_when_closed: boolean;
+  external_delivery_enabled: boolean;
   bot_personality_id: string;
 };
 
@@ -56,6 +57,7 @@ const DEFAULT_CONFIG: BusinessConfig = {
   humanize_messages: false,
   operate_when_closed: false,
   orders_when_closed: false,
+  external_delivery_enabled: false,
   bot_personality_id: NEUTRAL_PERSONALITY_ID,
 };
 
@@ -104,9 +106,9 @@ function applyBusinessConfigRules(config: BusinessConfig): BusinessConfig {
     next.orders_when_closed = false;
   }
 
-  if (!next.delivery_enabled && !next.takeaway_enabled) {
+  if (!next.delivery_enabled && !next.takeaway_enabled && !next.external_delivery_enabled) {
     throw new BusinessConfigValidationError(
-      "Al menos uno de delivery_enabled o takeaway_enabled debe ser true"
+      "Al menos uno de delivery_enabled, takeaway_enabled o external_delivery_enabled debe ser true"
     );
   }
 
@@ -143,6 +145,7 @@ async function fetchBusinessConfigRow(
       humanize_messages,
       operate_when_closed,
       orders_when_closed,
+      external_delivery_enabled,
       bot_personality_id
     FROM business_config
     WHERE business_id = ${businessId}::uuid
@@ -201,6 +204,7 @@ export async function upsertBusinessConfig(
       humanize_messages,
       operate_when_closed,
       orders_when_closed,
+      external_delivery_enabled,
       bot_personality_id
     ) VALUES (
       ${businessId}::uuid,
@@ -227,6 +231,7 @@ export async function upsertBusinessConfig(
       ${next.humanize_messages},
       ${next.operate_when_closed},
       ${next.orders_when_closed},
+      ${next.external_delivery_enabled},
       ${next.bot_personality_id}::uuid
     )
     ON CONFLICT (business_id)
@@ -254,6 +259,7 @@ export async function upsertBusinessConfig(
       humanize_messages = EXCLUDED.humanize_messages,
       operate_when_closed = EXCLUDED.operate_when_closed,
       orders_when_closed = EXCLUDED.orders_when_closed,
+      external_delivery_enabled = EXCLUDED.external_delivery_enabled,
       bot_personality_id = EXCLUDED.bot_personality_id
   `;
 

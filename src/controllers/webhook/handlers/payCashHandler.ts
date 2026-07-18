@@ -4,6 +4,7 @@ import { textResponse, noResponse } from '../utils';
 import { buildCashCheckoutResult } from '../../../services/checkout.service';
 import { closeConversation } from '../../../repositories';
 import { prisma } from '../../../lib/prisma';
+import { getBusinessConfig } from '../../../services/businessConfig.service';
 
 export class PayCashHandler implements IntentHandler {
   readonly command = ConversationIntent.PAY_CASH;
@@ -29,7 +30,10 @@ export class PayCashHandler implements IntentHandler {
       data: { payment_method: 'cash' },
     });
 
-    const result = await buildCashCheckoutResult(business, conversation, customer);
+    const businessConfig = await getBusinessConfig(business.id);
+    const result = await buildCashCheckoutResult(business, conversation, customer, {
+      externalDeliveryEnabled: businessConfig.external_delivery_enabled,
+    });
 
     if (result.errorMessage) {
       return textResponse(result.errorMessage);
