@@ -2293,7 +2293,16 @@ const buildResponse = async ({
   // PAYMENT
   // =========================
   if (intent === ConversationIntent.PAYMENT_METHODS) {
-    const messageText = 'Aceptamos efectivo y transferencia.';
+    const { getBusinessConfig } = await import('./businessConfig.service');
+    const { listOfferedPaymentMethods } = await import('./paymentMethods.service');
+    const bizCfg = await getBusinessConfig(business.id);
+    const offered = await listOfferedPaymentMethods(business.id, {
+      externalDeliveryEnabled: bizCfg.external_delivery_enabled,
+    });
+    const messageText =
+      offered.length > 0
+        ? `Aceptamos: ${offered.map((m) => m.label).join(', ')}.`
+        : 'Por ahora no hay métodos de pago disponibles. Pedí ayuda al local.';
     await createConversationMessage(conversation.id, 'ai', messageText, false);
     await updateConversationLastMessageAt(conversation.id);
     return messageText;

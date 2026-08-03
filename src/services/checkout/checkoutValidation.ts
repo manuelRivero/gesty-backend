@@ -19,7 +19,7 @@ import { nextCheckoutStep } from './nextCheckoutStep';
 
 export interface CheckoutValidationState {
   fulfillmentType: 'DELIVERY' | 'TAKE_AWAY' | null;
-  paymentMethod: 'cash' | 'online' | null;
+  paymentMethod: 'cash' | 'online' | 'transfer' | null;
   hasAddress: boolean;
   isInCoverage: boolean;
   customerName: string | null;

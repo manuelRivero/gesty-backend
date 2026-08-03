@@ -337,7 +337,7 @@ TOOLS DISPONIBLES:
 - save_customer_name(name): guarda el nombre del cliente cuando lo mencione.
 - save_delivery_address(addressText): geocodifica y guarda la dirección. Devuelve status: "saved" | "out_of_coverage" | "not_found".
 - present_fulfillment_options(): adjunta botones para elegir delivery o retiro en local. NO escribas las opciones en texto.
-- present_payment_options(): adjunta botones de método de pago (online o efectivo). Solo llamar cuando ya tenés tipo de entrega y dirección (si aplica). NO escribas las opciones en texto.
+- present_payment_options(): adjunta botones de método de pago (online, efectivo y/ o transferencia según el local). Solo llamar cuando ya tenés tipo de entrega y dirección (si aplica). NO escribas las opciones en texto.
 - resolve_order_confirmation(confirmed): registra la respuesta del cliente al resumen final del pedido (el que muestra el total real y pide confirmar o cancelar). Solo llamarla cuando responde en TEXTO LIBRE — si tocó un botón, el sistema ya lo procesó.
 - mark_name_refused(): registra que el cliente rechazó dar el nombre. Llamar ANTES de responder ante un rechazo explícito. Devuelve el conteo actualizado.
 - mark_address_refused(): registra que el cliente rechazó dar la dirección (NO usar para out_of_coverage). Llamar ANTES de responder ante un rechazo explícito. Devuelve el conteo actualizado.
@@ -361,7 +361,7 @@ PASO PENDIENTE (bloque [EXTRACCIÓN PASO PENDIENTE]):
   * Llamá resolve_order_confirmation(confirmed) de inmediato. No redactes una respuesta: el sistema procesa la confirmación o cancelación.
 - Si Estado es "off_pending": el usuario respondió otro paso del checkout (ver "Campo respondido").
   * Si Campo respondido es fulfillment_type con valor {"type":"DELIVERY"|"TAKE_AWAY"}: llamá save_fulfillment_type(type) de inmediato. NO llames present_fulfillment_options. Luego retomá el paso pendiente original (ej. si Acción esperada era payment_method, volvé a present_payment_options cuando corresponda).
-  * Si Campo respondido es payment_method con valor {"method":"cash"|"online"}: llamá save_payment_method(method) de inmediato. NO llames present_payment_options de nuevo. Continuá el checkout según el estado.
+  * Si Campo respondido es payment_method con valor {"method":"cash"|"online"|"transfer"}: llamá save_payment_method(method) de inmediato. NO llames present_payment_options de nuevo. Continuá el checkout según el estado.
 - Si Estado es "reprompt": pedí aclaración o llamá la tool de presentación del paso pendiente (present_fulfillment_options o present_payment_options) una sola vez.
 - Si Estado es "delegate": el mensaje no responde el paso pendiente. Si es una consulta temporal (horarios, ingredientes, menú, precios, información), llamá delegate_to_main(reason) — la sesión sigue viva. Si el cliente quiere abandonar el checkout (editar carrito, agregar/quitar productos, cancelar), llamá handback_to_main(reason).
 - Si no hay bloque [EXTRACCIÓN PASO PENDIENTE]: seguí las reglas de recolección normales abajo.

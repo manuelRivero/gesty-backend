@@ -16,6 +16,9 @@ import { getReactContext } from './_context';
 import { patchConversationMetadata } from '../repositories/conversationState.repository';
 import { prisma } from '../lib/prisma';
 import type { RunnableConfig } from '@langchain/core/runnables';
+import { PAYMENT_METHOD_IDS, type PaymentMethodId } from '../domain/payment/paymentMethods';
+import { isPaymentMethodOffered } from '../services/paymentMethods.service';
+import { getBusinessConfig } from '../services/businessConfig.service';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -27,8 +30,16 @@ const toJson = (data: unknown): string => JSON.stringify(data);
 export const setDraftPaymentMethod = async (
   businessId: string,
   customerPhone: string,
-  method: 'cash' | 'online'
+  method: PaymentMethodId
 ): Promise<{ success: boolean; error?: string }> => {
+  const businessConfig = await getBusinessConfig(businessId);
+  const offered = await isPaymentMethodOffered(businessId, method, {
+    externalDeliveryEnabled: businessConfig.external_delivery_enabled,
+  });
+  if (!offered) {
+    return { success: false, error: 'payment_method_not_offered' };
+  }
+
   const draft = await prisma.draft_order.findFirst({
     where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
     select: { id: true },
@@ -71,15 +82,20 @@ export const getDraftCheckoutState = async (
   customerPhone: string
 ): Promise<{
   fulfillmentType: 'DELIVERY' | 'TAKE_AWAY' | null;
-  paymentMethod: 'cash' | 'online' | null;
+  paymentMethod: PaymentMethodId | null;
 }> => {
   const draft = await prisma.draft_order.findFirst({
     where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
     select: { fulfillment_type: true, payment_method: true },
   });
+  const raw = draft?.payment_method ?? null;
+  const paymentMethod =
+    raw && (PAYMENT_METHOD_IDS as readonly string[]).includes(raw)
+      ? (raw as PaymentMethodId)
+      : null;
   return {
     fulfillmentType: (draft?.fulfillment_type as 'DELIVERY' | 'TAKE_AWAY' | null) ?? null,
-    paymentMethod: (draft?.payment_method as 'cash' | 'online' | null) ?? null,
+    paymentMethod,
   };
 };
 
@@ -174,10 +190,11 @@ export const presentFulfillmentOptionsTool = new DynamicStructuredTool<
 
 const savePaymentMethodSchema = z.object({
   method: z
-    .enum(['cash', 'online'])
+    .enum(PAYMENT_METHOD_IDS)
     .describe(
       'cash = efectivo, en mano, pago al recibir. ' +
-        'online = tarjeta, Mercado Pago, pago online, transferencia digital.'
+        'online = tarjeta, Mercado Pago, pago online. ' +
+        'transfer = transferencia bancaria, CBU, alias.'
     ),
 });
 type SavePaymentMethodInput = z.infer<typeof savePaymentMethodSchema>;
@@ -191,7 +208,8 @@ export const savePaymentMethodTool = new DynamicStructuredTool<
     'Guarda el método de pago elegido por el cliente en texto libre durante el checkout. ' +
     'Llamá esta tool cuando el cliente indique cómo quiere pagar: ' +
     '"efectivo", "en efectivo", "cash" → cash; ' +
-    '"online", "tarjeta", "mercado pago", "con tarjeta" → online. ' +
+    '"online", "tarjeta", "mercado pago", "con tarjeta" → online; ' +
+    '"transferencia", "transfer", "CBU", "alias" → transfer. ' +
     'Solo usar cuando ya están completos tipo de entrega, dirección (si aplica) y nombre. ' +
     'IMPORTANTE: esto NO crea el pedido ni cobra — el sistema le muestra al cliente un resumen ' +
     'con el total real (incluyendo envío y el ajuste del método elegido) para que confirme antes ' +

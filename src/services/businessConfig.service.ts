@@ -4,6 +4,11 @@ import {
   getDefaultNeutralPersonalityId,
   NEUTRAL_PERSONALITY_ID,
 } from "./botPersonality.service";
+import {
+  PaymentMethodCombinationError,
+  assertValidPaymentMethodCombination,
+} from "../domain/payment/paymentMethodRules";
+import { listActivePaymentMethodSnapshots } from "./paymentMethods.service";
 
 export type BusinessConfig = {
   bot_enabled: boolean;
@@ -106,6 +111,13 @@ function applyBusinessConfigRules(config: BusinessConfig): BusinessConfig {
     next.orders_when_closed = false;
   }
 
+  // Delivery propio y delivery externo (PedidosYa / similar) son excluyentes.
+  if (next.delivery_enabled && next.external_delivery_enabled) {
+    throw new BusinessConfigValidationError(
+      "delivery_enabled y external_delivery_enabled son excluyentes: activá solo uno"
+    );
+  }
+
   if (!next.delivery_enabled && !next.takeaway_enabled && !next.external_delivery_enabled) {
     throw new BusinessConfigValidationError(
       "Al menos uno de delivery_enabled, takeaway_enabled o external_delivery_enabled debe ser true"
@@ -177,6 +189,38 @@ export async function upsertBusinessConfig(
     );
   }
   const next = applyBusinessConfigRules(nextRaw);
+
+  // Delivery externo: el rider no puede cobrar efectivo. Seed defaults,
+  // desactivamos cash y exigimos al menos online o transfer activo.
+  const paymentSnapshots = await listActivePaymentMethodSnapshots(businessId);
+  if (next.external_delivery_enabled) {
+    await prisma.payment_method_config.updateMany({
+      where: {
+        business_id: businessId,
+        payment_method: 'cash',
+        is_active: true,
+      },
+      data: { is_active: false, updated_at: new Date() },
+    });
+  }
+
+  try {
+    const snapshotsAfter =
+      next.external_delivery_enabled
+        ? paymentSnapshots.map((m) =>
+            m.paymentMethod === 'cash' ? { ...m, isActive: false } : m
+          )
+        : paymentSnapshots;
+    assertValidPaymentMethodCombination({
+      activeMethods: snapshotsAfter,
+      externalDeliveryEnabled: next.external_delivery_enabled,
+    });
+  } catch (err) {
+    if (err instanceof PaymentMethodCombinationError) {
+      throw new BusinessConfigValidationError(err.message);
+    }
+    throw err;
+  }
 
   await prisma.$executeRaw`
     INSERT INTO business_config (

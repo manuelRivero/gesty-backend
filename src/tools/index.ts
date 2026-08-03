@@ -229,11 +229,21 @@ export const getCartTool = new DynamicStructuredTool<
     const pricing = computeOrderPricing(draft.draft_order_item);
     const itemsTotal = pricing.subtotal - pricing.productDiscounts;
 
-    // Ajustes reales por método de pago (no incluyen el costo de envío).
-    const paymentAdjustments = await listPaymentAdjustmentsForAmount({
-      businessId,
-      baseAmount: itemsTotal,
+    // Ajustes reales por método de pago ofrecido ahora (filtra cash si hay
+    // delivery externo, y online sin Mercado Pago activo).
+    const { getBusinessConfig } = await import('../services/businessConfig.service');
+    const { listOfferedPaymentMethods } = await import('../services/paymentMethods.service');
+    const bizCfg = await getBusinessConfig(businessId);
+    const offeredMethods = await listOfferedPaymentMethods(businessId, {
+      externalDeliveryEnabled: bizCfg.external_delivery_enabled,
     });
+    const offeredIds = new Set(offeredMethods.map((m) => m.id));
+    const paymentAdjustments = (
+      await listPaymentAdjustmentsForAmount({
+        businessId,
+        baseAmount: itemsTotal,
+      })
+    ).filter((a) => offeredIds.has(a.paymentMethod as typeof offeredMethods[number]['id']));
 
     // Costo real de envío: se resuelve por dirección/zona, no por si el
     // cliente ya tocó el botón de "delivery". `resolveDeliveryContext` exige

@@ -24,8 +24,18 @@ import {
 import { AddressService } from '../../../services/address.service';
 import { textResponse } from '../../../controllers/webhook/utils';
 import { buildFulfillmentSelectionMessage } from '../gates/fulfillmentSelection';
-import { PayCashHandler } from '../../../controllers/webhook/handlers/payCashHandler';
+import { executeUnpaidCheckoutForDraftMethod } from '../../../controllers/webhook/handlers/payCashHandler';
 import { PayOnlineHandler } from '../../../controllers/webhook/handlers/payOnlineHandler';
+import {
+  isPaymentMethodId,
+  isUnpaidCollectionKind,
+  getPaymentMethod,
+  parsePayButtonId,
+} from '../../../domain/payment/paymentMethods';
+import { listOfferedPaymentMethods } from '../../../services/paymentMethods.service';
+import { buildPaymentButtonsMessage as buildPaymentButtonsFromMethods } from '../../../services/payment/paymentButtons';
+import { PAYMENT_METHOD_PROMPT_BOT_MESSAGE } from '../../../services/productQuery/botMessages';
+import { getBusinessConfig } from '../../../services/businessConfig.service';
 import { runCheckoutAgent } from '../../../agents/checkoutAgent';
 import type { CheckoutAgentContext } from '../../../agents/checkoutAgent';
 import { runHybridReactAgent } from '../../../agents/reactAgent';
@@ -57,23 +67,32 @@ import { buildDiscardedReentryMessage } from '../session/discardedSignalMessage'
 import { withOrphanPayloadAsText } from '../session/orphanPayload';
 
 // ---------------------------------------------------------------------------
-// Mensaje de botones de pago (sin ajustes de precio en v1)
+// Mensaje de botones de pago (dinámico según config del local)
 // ---------------------------------------------------------------------------
 
-export function buildPaymentButtonsMessage(bodyText: string): WhatsAppInteractiveMessage {
-  return {
-    type: 'interactive',
-    interactive: {
-      type: 'button',
-      body: { text: bodyText },
-      action: {
-        buttons: [
-          { type: 'reply', reply: { id: 'PAY_ONLINE', title: '💳 Pago online' } },
-          { type: 'reply', reply: { id: 'PAY_CASH', title: '💵 Efectivo' } },
-        ],
-      },
-    },
-  } as WhatsAppInteractiveMessage;
+export async function buildPaymentButtonsMessage(
+  businessId: string,
+  bodyText: string,
+  externalDeliveryEnabled: boolean
+): Promise<WhatsAppInteractiveMessage> {
+  const methods = await listOfferedPaymentMethods(businessId, { externalDeliveryEnabled });
+  return buildPaymentButtonsFromMethods(bodyText || PAYMENT_METHOD_PROMPT_BOT_MESSAGE, methods);
+}
+
+const payOnlineHandler = new PayOnlineHandler();
+
+async function executeConfirmedPayment(
+  enrichedCtx: EnrichedContext,
+  paymentMethod: string
+): Promise<HandlerResult | null> {
+  const methodId = isPaymentMethodId(paymentMethod) ? paymentMethod : null;
+  if (!methodId) return null;
+
+  const kind = getPaymentMethod(methodId).collectionKind;
+  if (isUnpaidCollectionKind(kind)) {
+    return executeUnpaidCheckoutForDraftMethod(enrichedCtx, methodId);
+  }
+  return payOnlineHandler.execute(enrichedCtx);
 }
 
 // ---------------------------------------------------------------------------
@@ -415,7 +434,16 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
         return { ...baseResult, content: buildFulfillmentSelectionMessage(combinedBody), isInteractive: true };
       }
       if (resume.checkoutPendingAction === 'payment_method') {
-        return { ...baseResult, content: buildPaymentButtonsMessage(combinedBody), isInteractive: true };
+        const bizCfg = await getBusinessConfig(businessId);
+        return {
+          ...baseResult,
+          content: await buildPaymentButtonsMessage(
+            businessId,
+            combinedBody,
+            bizCfg.external_delivery_enabled
+          ),
+          isInteractive: true,
+        };
       }
     }
 
@@ -429,9 +457,14 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
         message: buildFulfillmentSelectionMessage(resume.text) as WhatsAppInteractiveMessage,
       });
     } else if (resume.checkoutPendingAction === 'payment_method') {
+      const bizCfg = await getBusinessConfig(businessId);
       resumeFollowUps.push({
         type: 'interactive',
-        message: buildPaymentButtonsMessage(resume.text),
+        message: await buildPaymentButtonsMessage(
+          businessId,
+          resume.text,
+          bizCfg.external_delivery_enabled
+        ),
       });
     }
     return {
@@ -486,19 +519,19 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
   // tiene, no hay nada que confirmar y se ignora la señal.
   if (signals.orderConfirmationResolved !== null && draftState.paymentMethod) {
     if (signals.orderConfirmationResolved === true) {
-      const result =
-        draftState.paymentMethod === 'cash'
-          ? await payCashHandler.execute(enrichedCtx)
-          : await payOnlineHandler.execute(enrichedCtx);
+      const result = await executeConfirmedPayment(enrichedCtx, draftState.paymentMethod);
       await clearCheckoutSession(conversationId);
       if (result) {
         return result;
       }
     } else {
       await clearDraftPaymentMethod(businessId, customerPhone);
+      const bizCfg = await getBusinessConfig(businessId);
       return {
-        content: buildPaymentButtonsMessage(
-          'Sin problema, no confirmé nada todavía. ¿Cómo preferís pagar?'
+        content: await buildPaymentButtonsMessage(
+          businessId,
+          'Sin problema, no confirmé nada todavía. ¿Cómo preferís pagar?',
+          bizCfg.external_delivery_enabled
         ),
         isInteractive: true,
         skipBodyHumanization: true,
@@ -547,8 +580,13 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
   }
 
   if (signals.presentPaymentOptions || currentStep === 'payment') {
+    const bizCfg = await getBusinessConfig(businessId);
     return {
-      content: buildPaymentButtonsMessage(safeText),
+      content: await buildPaymentButtonsMessage(
+        businessId,
+        safeText,
+        bizCfg.external_delivery_enabled
+      ),
       isInteractive: true,
       skipBodyHumanization: true,
     };
@@ -582,9 +620,6 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
 // Nodo principal
 // ---------------------------------------------------------------------------
 
-const payCashHandler = new PayCashHandler();
-const payOnlineHandler = new PayOnlineHandler();
-
 export const checkoutAgentNode = async (
   state: AgentState
 ): Promise<AgentStateUpdate> => {
@@ -597,22 +632,21 @@ export const checkoutAgentNode = async (
   const payloadId = ctx.payloadId;
   const conversationId = conversation.id;
   const phone = customer.phone_number ?? ctx.to;
+  const externalDeliveryEnabled = businessConfig?.external_delivery_enabled ?? false;
 
   const deliveryEnabled =
-    (businessConfig?.delivery_enabled ?? true) || (businessConfig?.external_delivery_enabled ?? false);
+    (businessConfig?.delivery_enabled ?? true) || externalDeliveryEnabled;
   const takeawayEnabled = businessConfig?.takeaway_enabled ?? false;
 
-  // PAY_CASH/PAY_ONLINE: elegir el método NO cobra — ADR-0002, mismo
-  // Constraint que la señal `save_payment_method` en `resolveCheckoutAgentHandlerResult`.
-  // Muestra el resumen final con el total real y espera confirmación explícita.
-  if (payloadId === 'PAY_CASH' || payloadId === 'PAY_ONLINE') {
-    const method = payloadId === 'PAY_CASH' ? 'cash' : 'online';
-    await setDraftPaymentMethod(business.id, phone, method);
+  // PAY_*: elegir el método NO cobra — ADR-0002. Muestra resumen y espera confirmación.
+  const payMethod = payloadId ? parsePayButtonId(payloadId) : null;
+  if (payMethod) {
+    await setDraftPaymentMethod(business.id, phone, payMethod);
     const confirmMessage = await buildOrderConfirmationMessage({
       businessId: business.id,
       customerId: customer.id,
       customerPhone: phone,
-      paymentMethod: method,
+      paymentMethod: payMethod,
       currencyCode: business.currency_code ?? null,
     });
     return {
@@ -628,10 +662,10 @@ export const checkoutAgentNode = async (
     if (!draftState.paymentMethod) {
       return { handlerResult: undefined, dataCollectionDelegated: true };
     }
-    const result =
-      draftState.paymentMethod === 'cash'
-        ? await payCashHandler.execute(enrichedBase as EnrichedContext)
-        : await payOnlineHandler.execute(enrichedBase as EnrichedContext);
+    const result = await executeConfirmedPayment(
+      enrichedBase as EnrichedContext,
+      draftState.paymentMethod
+    );
     await clearCheckoutSession(conversationId);
     return {
       handlerResult: result ?? undefined,
@@ -643,8 +677,10 @@ export const checkoutAgentNode = async (
     await clearDraftPaymentMethod(business.id, phone);
     return {
       handlerResult: {
-        content: buildPaymentButtonsMessage(
-          'Sin problema, no confirmé nada todavía. ¿Cómo preferís pagar?'
+        content: await buildPaymentButtonsMessage(
+          business.id,
+          'Sin problema, no confirmé nada todavía. ¿Cómo preferís pagar?',
+          externalDeliveryEnabled
         ),
         isInteractive: true,
         skipBodyHumanization: true,
