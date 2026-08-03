@@ -17,6 +17,10 @@ import {
   removeDeliveryZone
 } from "../controllers/adminDeliveryZones.controller";
 import {
+  getDeliveryZoneCalibrationStatusHandler,
+  postDeliveryZoneCalibrationHandler
+} from "../controllers/adminDeliveryZoneCalibration.controller";
+import {
   getTableById,
   getTables,
   patchTable,
@@ -183,6 +187,16 @@ router.put(
   saveMenuItemAiMetadataHandler
 );
 router.get("/delivery-zones", requireRoles("OWNER", "ADMIN"), getDeliveryZones);
+router.get(
+  "/delivery-zones/calibration/status",
+  requireRoles("OWNER", "ADMIN"),
+  getDeliveryZoneCalibrationStatusHandler
+);
+router.post(
+  "/delivery-zones/calibration",
+  requireRoles("OWNER", "ADMIN"),
+  postDeliveryZoneCalibrationHandler
+);
 router.get(
   "/delivery-zones/:id",
   requireRoles("OWNER", "ADMIN"),
