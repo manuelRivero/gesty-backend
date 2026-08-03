@@ -17,6 +17,10 @@ import {
   removeDeliveryZone
 } from "../controllers/adminDeliveryZones.controller";
 import {
+  getDeliveryZoneCalibrationStatusHandler,
+  postDeliveryZoneCalibrationHandler
+} from "../controllers/adminDeliveryZoneCalibration.controller";
+import {
   getTableById,
   getTables,
   patchTable,
@@ -56,6 +60,11 @@ import {
   getMenuItemAiMetadataHandler,
   saveMenuItemAiMetadataHandler
 } from "../controllers/adminMenuItems.controller";
+import {
+  deleteMenuItemImageHandler,
+  uploadMenuItemImageHandler
+} from "../controllers/adminMenuItemImage.controller";
+import { menuItemImageUploadMiddleware } from "../middleware/upload.middleware";
 import { getDashboardSummary } from "../controllers/adminDashboard.controller";
 import {
   getClientRankingHandler,
@@ -93,6 +102,13 @@ import {
   patchPaymentMethodConfig,
   removePaymentMethodConfig,
 } from "../controllers/adminPaymentMethodConfig.controller";
+import {
+  listAnnouncementsForBusinessHandler,
+  getUnreadCountHandler,
+  getAnnouncementForBusinessHandler,
+  markAnnouncementReadHandler,
+  getReadersForBusinessHandler,
+} from "../controllers/adminAnnouncements.controller";
 import { authenticateJwt, requireRoles } from "../middleware/auth.middleware";
 
 const router = Router();
@@ -145,6 +161,17 @@ router.post("/menu-items", requireRoles("OWNER", "ADMIN"), postMenuItem);
 router.patch("/menu-items/:id", requireRoles("OWNER", "ADMIN"), patchMenuItem);
 router.delete("/menu-items/:id", requireRoles("OWNER", "ADMIN"), removeMenuItem);
 router.post(
+  "/menu-items/:id/image",
+  requireRoles("OWNER", "ADMIN"),
+  menuItemImageUploadMiddleware,
+  uploadMenuItemImageHandler
+);
+router.delete(
+  "/menu-items/:id/image",
+  requireRoles("OWNER", "ADMIN"),
+  deleteMenuItemImageHandler
+);
+router.post(
   "/menu-items/:id/generate-enrichment",
   requireRoles("OWNER", "ADMIN"),
   generateMenuItemEnrichmentHandler
@@ -160,6 +187,16 @@ router.put(
   saveMenuItemAiMetadataHandler
 );
 router.get("/delivery-zones", requireRoles("OWNER", "ADMIN"), getDeliveryZones);
+router.get(
+  "/delivery-zones/calibration/status",
+  requireRoles("OWNER", "ADMIN"),
+  getDeliveryZoneCalibrationStatusHandler
+);
+router.post(
+  "/delivery-zones/calibration",
+  requireRoles("OWNER", "ADMIN"),
+  postDeliveryZoneCalibrationHandler
+);
 router.get(
   "/delivery-zones/:id",
   requireRoles("OWNER", "ADMIN"),
@@ -286,5 +323,12 @@ router.delete(
   requireRoles("OWNER", "ADMIN"),
   removePaymentMethodConfig
 );
+
+// Announcements inbox (business)
+router.get("/announcements", listAnnouncementsForBusinessHandler);
+router.get("/announcements/unread-count", getUnreadCountHandler);
+router.get("/announcements/:id", getAnnouncementForBusinessHandler);
+router.post("/announcements/:id/read", markAnnouncementReadHandler);
+router.get("/announcements/:id/readers", getReadersForBusinessHandler);
 
 export default router;

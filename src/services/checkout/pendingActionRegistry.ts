@@ -8,7 +8,7 @@ import {
 export type CheckoutPendingAction = 'payment_method' | 'fulfillment_type' | 'confirm_order';
 
 export const PaymentMethodPendingSchema = z.object({
-  method: z.enum(['cash', 'online']),
+  method: z.enum(['cash', 'online', 'transfer']),
 });
 
 export type PaymentMethodPendingValue = z.infer<typeof PaymentMethodPendingSchema>;
@@ -32,12 +32,13 @@ const PAYMENT_METHOD_CONFIG: CheckoutPendingActionConfig<PaymentMethodPendingVal
   defaultQuestion: PAYMENT_METHOD_PROMPT_BOT_MESSAGE,
   schema: PaymentMethodPendingSchema,
   valueHints: `{
-  "method": "cash" | "online"
+  "method": "cash" | "online" | "transfer"
 }
 - cash: efectivo, en efectivo, cash, en mano, pago al recibir
-- online: online, tarjeta, mercado pago, digital, transferencia, con tarjeta`,
+- online: online, tarjeta, mercado pago, digital, con tarjeta
+- transfer: transferencia, transfer, CBU, alias, banco`,
   actionDescription:
-    'El usuario debe elegir cómo pagar el pedido: efectivo al recibir o pago online con tarjeta/Mercado Pago.',
+    'El usuario debe elegir cómo pagar el pedido: efectivo, pago online (Mercado Pago) o transferencia bancaria.',
 };
 
 const FULFILLMENT_TYPE_CONFIG: CheckoutPendingActionConfig<FulfillmentTypePendingValue> = {

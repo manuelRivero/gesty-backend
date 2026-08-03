@@ -91,6 +91,17 @@ const envSchema = z.object({
     .optional()
     .transform((v) => v === 'true' || v === '1'),
 
+  /**
+   * Worker periódico (`processDraftOrderTimeouts`): reminders, expiración de
+   * drafts y cierre de conversaciones por inactividad. Cada tick (~60s) hace
+   * varias queries a Postgres. Default `false` para no quemar cómputo en Neon
+   * hasta tener una estrategia de costos viable. Opt-in explícito: `true`/`1`.
+   */
+  ENABLE_DRAFT_ORDER_WORKER: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true' || v === '1'),
+
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 
   /**
@@ -104,6 +115,67 @@ const envSchema = z.object({
    * Ejemplo: https://mi-servidor.example.com
    */
   MERCADO_PAGO_WEBHOOK_BASE_URL: z.string().optional(),
+
+  /**
+   * Cloudflare R2 (object storage S3-compatible). Opcionales al arrancar;
+   * se validan al usar el storage provider.
+   */
+  R2_ACCOUNT_ID: z.string().optional(),
+  R2_BUCKET: z.string().optional(),
+  R2_ACCESS_KEY_ID: z.string().optional(),
+  R2_SECRET_ACCESS_KEY: z.string().optional(),
+  /** URL pública del bucket / custom domain, sin slash final. Ej: https://cdn.ejemplo.com */
+  R2_PUBLIC_URL: z.string().url().optional(),
+  /**
+   * Override opcional del endpoint S3.
+   * Default: https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com
+   * Jurisdicción EU: https://<R2_ACCOUNT_ID>.eu.r2.cloudflarestorage.com
+   */
+  R2_ENDPOINT: z.string().url().optional(),
+
+  // --- PedidosYa Envíos / Courier (experimental / dormido) ---
+  // Calibración de tarifas planas vs cotización. Sin acceso API validado aún.
+  // Opcionales al arrancar: el feature responde 503 hasta configurarlas.
+  /** Base URL Courier API. Default: https://courier-api.pedidosya.com */
+  PEDIDOSYA_COURIER_BASE_URL: z.string().url().optional(),
+  /** Client ID de la cuenta Envíos del SaaS */
+  PEDIDOSYA_CLIENT_ID: z.string().optional(),
+  /** Client Secret de la cuenta Envíos del SaaS */
+  PEDIDOSYA_CLIENT_SECRET: z.string().optional(),
+  /**
+   * Override opcional: token ya emitido (salta el login).
+   * Útil en pruebas o si PedidosYa entrega un token estático.
+   */
+  PEDIDOSYA_ACCESS_TOKEN: z.string().optional(),
+  /** Path de login. Default: /v3/login */
+  PEDIDOSYA_LOGIN_PATH: z.string().optional(),
+  /** Path de estimates. Default: /v3/shippings/estimates */
+  PEDIDOSYA_ESTIMATES_PATH: z.string().optional(),
+  /**
+   * Cómo enviar el Authorization header.
+   * - raw: `Authorization: <token>` (documentación Courier)
+   * - bearer: `Authorization: Bearer <token>`
+   */
+  PEDIDOSYA_AUTH_HEADER_STYLE: z.enum(['raw', 'bearer']).optional(),
+  /** true/1 (default) = estimates en modo test */
+  PEDIDOSYA_IS_TEST: z
+    .string()
+    .optional()
+    .transform((v) => v !== 'false' && v !== '0'),
+  /** Email requerido por algunos entornos PedidosYa en estimates */
+  PEDIDOSYA_NOTIFICATION_EMAIL: z.string().email().optional(),
+  /** Ciudad fallback para waypoints si el negocio no la tiene */
+  PEDIDOSYA_DEFAULT_CITY: z.string().optional(),
+  /** Dirección pickup fallback si business.street_address está vacío */
+  PEDIDOSYA_DEFAULT_PICKUP_ADDRESS: z.string().optional(),
+  /** Teléfono fallback para waypoints */
+  PEDIDOSYA_DEFAULT_PHONE: z.string().optional(),
+  /** Valor declarado del ítem de calibración (no es el fee de envío) */
+  PEDIDOSYA_DEFAULT_ITEM_VALUE: z.coerce.number().positive().optional(),
+  /** Colchón de seguridad sobre el promedio PedidosYa. Default 15 */
+  PEDIDOSYA_SAFETY_BUFFER_PERCENT: z.coerce.number().min(0).max(100).optional(),
+  /** Delay entre cotizaciones para rate limiting. Default 500 */
+  PEDIDOSYA_REQUEST_DELAY_MS: z.coerce.number().int().min(0).optional(),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

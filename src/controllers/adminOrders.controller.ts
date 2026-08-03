@@ -8,6 +8,11 @@ import {
   updateAdminOrderDeliveryStatus,
   updateAdminOrderPaymentStatus
 } from "../services/adminOrders.service";
+import { getBusinessConfig } from "../services/businessConfig.service";
+import {
+  EXTERNAL_DELIVERY_MANAGED_ERROR,
+  isOwnDeliveryBlocked
+} from "../services/externalDeliveryGuard.service";
 
 const listQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -18,10 +23,50 @@ const listQuerySchema = z.object({
   customerPhone: z.string().min(1).optional()
 });
 
+async function rejectIfOwnDeliveryBlocked(
+  req: Request,
+  res: Response,
+  businessId: string
+): Promise<boolean> {
+  if (req.user?.role !== "DELIVERY") return false;
+  const config = await getBusinessConfig(businessId);
+  if (
+    !isOwnDeliveryBlocked({
+      role: req.user?.role,
+      externalDeliveryEnabled: config.external_delivery_enabled
+    })
+  ) {
+    return false;
+  }
+  res.status(409).json({ error: EXTERNAL_DELIVERY_MANAGED_ERROR });
+  return true;
+}
+
 export async function getOrders(req: Request, res: Response) {
   const businessId = req.user?.businessId;
   if (!businessId) {
     return res.status(401).json({ error: "No autenticado" });
+  }
+
+  // El rol DELIVERY usa este endpoint para listar los pedidos que debe entregar.
+  // Con delivery externo activo, ningún pedido es gestionado por el rider propio.
+  if (req.user?.role === "DELIVERY") {
+    const config = await getBusinessConfig(businessId);
+    if (
+      isOwnDeliveryBlocked({
+        role: req.user.role,
+        externalDeliveryEnabled: config.external_delivery_enabled
+      })
+    ) {
+      return res.json({
+        items: [],
+        total: 0,
+        page: 1,
+        pageSize: 20,
+        totalPages: 0,
+        externalDeliveryEnabled: true
+      });
+    }
   }
 
   const parsed = listQuerySchema.safeParse(req.query);
@@ -63,6 +108,8 @@ export async function getOrderById(req: Request, res: Response) {
     return res.status(401).json({ error: "No autenticado" });
   }
 
+  if (await rejectIfOwnDeliveryBlocked(req, res, businessId)) return;
+
   const parsed = idParamSchema.safeParse(req.params);
   if (!parsed.success) {
     return res.status(400).json({ error: "id de orden inválido" });
@@ -89,6 +136,8 @@ export async function patchOrderDeliveryStatus(req: Request, res: Response) {
   if (!businessId) {
     return res.status(401).json({ error: "No autenticado" });
   }
+
+  if (await rejectIfOwnDeliveryBlocked(req, res, businessId)) return;
 
   const paramsParsed = idParamSchema.safeParse(req.params);
   if (!paramsParsed.success) {
@@ -125,6 +174,8 @@ export async function patchOrderPaymentStatus(req: Request, res: Response) {
   if (!businessId) {
     return res.status(401).json({ error: "No autenticado" });
   }
+
+  if (await rejectIfOwnDeliveryBlocked(req, res, businessId)) return;
 
   const paramsParsed = idParamSchema.safeParse(req.params);
   if (!paramsParsed.success) {

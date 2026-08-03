@@ -69,7 +69,7 @@ export const fulfillmentSelectionNode = async (
   const config = state.businessConfig;
   if (!config) return {};
 
-  const deliveryEnabled = config.delivery_enabled;
+  const deliveryEnabled = config.delivery_enabled || config.external_delivery_enabled;
   const takeawayEnabled = config.takeaway_enabled;
 
   // Solo delivery habilitado: flujo actual sin cambios

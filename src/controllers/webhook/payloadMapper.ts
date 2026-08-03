@@ -168,6 +168,9 @@ export const detectIntentFromPayload = (
   if (payloadId === 'PAY_CASH') {
     return buildInteractiveResult(ConversationIntent.PAY_CASH, payloadId);
   }
+  if (payloadId === 'PAY_TRANSFER') {
+    return buildInteractiveResult(ConversationIntent.PAY_TRANSFER, payloadId);
+  }
 
   // IDs estáticos
   const staticMap: Record<string, ConversationIntent> = {

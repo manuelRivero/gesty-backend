@@ -2,13 +2,15 @@ import { WebhookContext, HandlerResult, IntentHandler } from '../types';
 import { ConversationIntent } from '../../../types/conversationIntent';
 import { noResponse, interactiveResponse, textResponse } from '../utils';
 import { prisma } from '../../../lib/prisma';
-import type { WhatsAppInteractiveMessage } from '../../../domain/intent/whatsappTemplates';
 import { getMpBannerDataUrl } from '../../../assets/mpBanner';
 import {
   EMPTY_CART_BOT_MESSAGE,
   PAYMENT_METHOD_PROMPT_BOT_MESSAGE,
 } from '../../../services/productQuery/botMessages';
 import { formatBotUserMessage } from '../../../services/productQuery/utils';
+import { getBusinessConfig } from '../../../services/businessConfig.service';
+import { listOfferedPaymentMethods } from '../../../services/paymentMethods.service';
+import { buildPaymentButtonsMessage } from '../../../services/payment/paymentButtons';
 
 export class CheckoutHandler implements IntentHandler {
   readonly command = ConversationIntent.CHECKOUT;
@@ -35,24 +37,28 @@ export class CheckoutHandler implements IntentHandler {
       return textResponse(EMPTY_CART_BOT_MESSAGE);
     }
 
+    const businessConfig = await getBusinessConfig(business.id);
+    const paymentButtons = await buildOfferedPaymentChoice(
+      business.id,
+      businessConfig.external_delivery_enabled
+    );
+
     // Si ya eligió método de pago, no preguntar de nuevo
-    if (draft.payment_method === 'cash') {
-      // Continúa el flujo cash via PAY_CASH handler (el draft ya tiene el método)
+    if (draft.payment_method === 'cash' || draft.payment_method === 'transfer') {
       return textResponse(
         formatBotUserMessage(
           '¿Cómo querés pagar?',
           '💳',
-          'Ya tenés efectivo seleccionado. Si querés cambiarlo usá los botones de abajo.'
+          'Ya tenés un método de pago seleccionado. Si querés cambiarlo usá los botones de abajo.'
         ),
         [{
           type: 'interactive',
-          message: buildPaymentChoiceMessage(),
+          message: paymentButtons,
         }]
       );
     }
 
     if (draft.payment_method === 'online') {
-      // Reenviar el link de pago existente
       const existingIntent = await prisma.payment_intent.findFirst({
         where: { draft_order_id: draft.id, status: 'pending' },
         orderBy: { created_at: 'desc' },
@@ -69,25 +75,14 @@ export class CheckoutHandler implements IntentHandler {
       }
     }
 
-    // Sin payment_method: mostrar botones de elección
-    return interactiveResponse(buildPaymentChoiceMessage());
+    return interactiveResponse(paymentButtons);
   }
 }
 
-function buildPaymentChoiceMessage(): WhatsAppInteractiveMessage {
-  return {
-    type: 'interactive',
-    interactive: {
-      type: 'button',
-      body: {
-        text: PAYMENT_METHOD_PROMPT_BOT_MESSAGE,
-      },
-      action: {
-        buttons: [
-          { type: 'reply', reply: { id: 'PAY_ONLINE', title: '💳 Pago online' } },
-          { type: 'reply', reply: { id: 'PAY_CASH', title: '💵 Efectivo' } },
-        ],
-      },
-    },
-  } as WhatsAppInteractiveMessage;
+async function buildOfferedPaymentChoice(
+  businessId: string,
+  externalDeliveryEnabled: boolean
+) {
+  const methods = await listOfferedPaymentMethods(businessId, { externalDeliveryEnabled });
+  return buildPaymentButtonsMessage(PAYMENT_METHOD_PROMPT_BOT_MESSAGE, methods);
 }

@@ -183,7 +183,7 @@ const buildCheckoutContextMessage = async (
       hasAddress: checkoutCtx.hasAddress,
       isInCoverage: checkoutCtx.isInCoverage,
       customerName,
-      paymentMethod: snapshotPaymentMethod as 'cash' | 'online' | null,
+      paymentMethod: snapshotPaymentMethod as 'cash' | 'online' | 'transfer' | null,
     },
     { deliveryEnabled: checkoutCtx.deliveryEnabled, takeawayEnabled: checkoutCtx.takeawayEnabled }
   );
@@ -247,7 +247,7 @@ export interface CheckoutAgentSignals {
   delegateToMainReason: string | null;
   handback: boolean;
   handbackReason: string | null;
-  paymentMethod: 'cash' | 'online' | null;
+  paymentMethod: 'cash' | 'online' | 'transfer' | null;
   /** `null` = no se resolvió este turno; `true`/`false` = el cliente confirmó o canceló el pedido. */
   orderConfirmationResolved: boolean | null;
 }
@@ -286,7 +286,11 @@ const extractSignals = (messages: unknown[]): CheckoutAgentSignals => {
         signals.presentPaymentOptions = true;
       }
       if (data.signal === 'payment_method_saved') {
-        if (data.paymentMethod === 'cash' || data.paymentMethod === 'online') {
+        if (
+          data.paymentMethod === 'cash' ||
+          data.paymentMethod === 'online' ||
+          data.paymentMethod === 'transfer'
+        ) {
           signals.paymentMethod = data.paymentMethod;
         }
       }

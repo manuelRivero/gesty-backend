@@ -34,6 +34,7 @@ import { nextCheckoutStep } from '../../../services/checkout/nextCheckoutStep';
 import { resolveCheckoutPendingFromStep } from '../../../services/checkout/checkoutGoal.service';
 import { buildFulfillmentSelectionMessage } from '../gates/fulfillmentSelection';
 import { buildOrderConfirmationMessage } from '../../../services/checkout/orderConfirmationMessage';
+import { getBusinessConfig } from '../../../services/businessConfig.service';
 import type { AgentState, AgentStateUpdate } from '../../state';
 import type { EnrichedContext, HandlerResult } from '../../../controllers/webhook/types';
 
@@ -92,7 +93,15 @@ const buildCheckoutResumeResult = async (params: {
     return { content: buildFulfillmentSelectionMessage(resumeText), isInteractive: true };
   }
   if (pending.action === 'payment_method') {
-    return { content: buildPaymentButtonsMessage(resumeText), isInteractive: true };
+    const bizCfg = await getBusinessConfig(params.businessId);
+    return {
+      content: await buildPaymentButtonsMessage(
+        params.businessId,
+        resumeText,
+        bizCfg.external_delivery_enabled
+      ),
+      isInteractive: true,
+    };
   }
   if (pending.action === 'confirm_order' && draftState.paymentMethod) {
     const confirmMessage = await buildOrderConfirmationMessage({

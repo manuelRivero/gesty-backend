@@ -305,7 +305,9 @@ export const nlpSubgraphNode = async (
         phone: customer.phone_number ?? ctx.to,
         hasAddress: state.hasAddress ?? false,
         isInCoverage: state.isInCoverage ?? false,
-        deliveryEnabled: state.businessConfig?.delivery_enabled ?? true,
+        deliveryEnabled:
+          (state.businessConfig?.delivery_enabled ?? true) ||
+          (state.businessConfig?.external_delivery_enabled ?? false),
         takeawayEnabled: state.businessConfig?.takeaway_enabled ?? false,
       }
     : undefined;
@@ -692,7 +694,9 @@ export const nlpSubgraphNode = async (
       return { handlerResult: emptyCart, detection, dataCollectionDelegated: true };
     }
 
-    const deliveryEnabled = state.businessConfig?.delivery_enabled ?? true;
+    const deliveryEnabled =
+      (state.businessConfig?.delivery_enabled ?? true) ||
+      (state.businessConfig?.external_delivery_enabled ?? false);
     const takeawayEnabled = state.businessConfig?.takeaway_enabled ?? false;
 
     await applyDefaultFulfillmentIfSingleOption({

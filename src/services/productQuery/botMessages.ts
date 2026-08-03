@@ -1,4 +1,8 @@
 import { formatBotUserMessage } from './utils';
+import {
+  buildPaymentButtonsMessage,
+  buildPaymentChoiceBody,
+} from '../payment/paymentButtons';
 
 /** Mensajes compartidos con formato parseable por {@link parseBotUserMessage}. */
 
@@ -133,6 +137,10 @@ export function buildOrderConfirmedCashMessage(params: {
   total: number;
   deliveryFee?: number;
   paymentAdjustment?: number;
+  /** Label del método (efectivo / transferencia / …). */
+  paymentLabel?: string;
+  /** Instrucciones extra (p. ej. CBU) para transferencia. */
+  instructions?: string | null;
 }): string {
   const deliveryLine =
     params.deliveryFee && params.deliveryFee > 0
@@ -142,16 +150,21 @@ export function buildOrderConfirmedCashMessage(params: {
     params.paymentAdjustment !== undefined && params.paymentAdjustment !== 0
       ? `\n${params.paymentAdjustment > 0 ? 'Recargo' : 'Descuento'}: $${Math.abs(params.paymentAdjustment).toFixed(2)}`
       : '';
+  const paymentLabel = params.paymentLabel ?? 'Efectivo al recibir';
+  const instructionsLine =
+    params.instructions && params.instructions.trim()
+      ? `\n\n${params.instructions.trim()}`
+      : '';
   return formatBotUserMessage(
     'Pedido confirmado',
     '✅',
-    `Número: #${params.orderId}${deliveryLine}${adjustmentLine}\nTotal: $${params.total.toFixed(2)}\nPago: Efectivo al recibir`
+    `Número: #${params.orderId}${deliveryLine}${adjustmentLine}\nTotal: $${params.total.toFixed(2)}\nPago: ${paymentLabel}${instructionsLine}`
   );
 }
 
 /**
- * Construye el mensaje interactivo de elección de método de pago.
- * Si hay configuraciones de ajuste, muestra el total final en cada botón.
+ * @deprecated Preferí `buildPaymentButtonsMessage` + `listOfferedPaymentMethods`.
+ * Se mantiene para tests legacy; sin lista de métodos ofrecidos asume cash+online.
  */
 export function buildPaymentChoiceMessage(
   baseTotal: number,
@@ -163,50 +176,30 @@ export function buildPaymentChoiceMessage(
     isSurcharge: boolean;
   }>
 ): object {
-  const adjustmentMap = new Map(adjustments.map((a) => [a.paymentMethod, a]));
-
-  const onlineAdj = adjustmentMap.get('online');
-  const cashAdj = adjustmentMap.get('cash');
-
-  const onlineLabel = onlineAdj
-    ? `💳 Online $${onlineAdj.finalAmount.toFixed(2)}`
-    : '💳 Pago online';
-
-  const cashLabel = cashAdj
-    ? `💵 Efectivo $${cashAdj.finalAmount.toFixed(2)}`
-    : '💵 Efectivo';
-
-  let bodyText = formatBotUserMessage(
-    '¿Cómo querés pagar?',
-    '💳',
-    `Total del pedido: $${baseTotal.toFixed(2)}\n\nElegí el método de pago para confirmar.`
-  );
-
-  if (adjustments.length > 0) {
-    const lines = adjustments.map((a) => {
-      const sign = a.isSurcharge ? '+' : '-';
-      return `• ${a.label}: ${sign}$${Math.abs(a.adjustmentAmount).toFixed(2)}`;
-    });
-    bodyText = formatBotUserMessage(
-      '¿Cómo querés pagar?',
-      '💳',
-      `Total del pedido: $${baseTotal.toFixed(2)}\n\n${lines.join('\n')}\n\nElegí el método de pago para confirmar.`
-    );
-  }
-
-  return {
-    type: 'interactive',
-    interactive: {
-      type: 'button',
-      body: { text: bodyText },
-      action: {
-        buttons: [
-          { type: 'reply', reply: { id: 'PAY_ONLINE', title: onlineLabel.slice(0, 20) } },
-          { type: 'reply', reply: { id: 'PAY_CASH', title: cashLabel.slice(0, 20) } },
-        ],
-      },
+  const bodyText = buildPaymentChoiceBody(baseTotal, adjustments);
+  const fallbackMethods = [
+    {
+      id: 'online' as const,
+      label: 'Pago online',
+      buttonId: 'PAY_ONLINE',
+      buttonTitle: 'Pago online',
+      emoji: '💳',
+      collectionKind: 'online_provider' as const,
+      instructions: null,
+      sortOrder: 1,
     },
-  };
+    {
+      id: 'cash' as const,
+      label: 'Efectivo',
+      buttonId: 'PAY_CASH',
+      buttonTitle: 'Efectivo',
+      emoji: '💵',
+      collectionKind: 'at_delivery' as const,
+      instructions: null,
+      sortOrder: 0,
+    },
+  ];
+  return buildPaymentButtonsMessage(bodyText, fallbackMethods, adjustments);
 }
 
 export function buildMinOrderNotMetMessage(params: {

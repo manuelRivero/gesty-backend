@@ -16,6 +16,7 @@ export const INTENT_ENUM_VALUES = [
   ConversationIntent.CHECKOUT,
   ConversationIntent.PAY_ONLINE,
   ConversationIntent.PAY_CASH,
+  ConversationIntent.PAY_TRANSFER,
   ConversationIntent.CANCEL_ORDER,
   ConversationIntent.END_CONVERSATION,
   ConversationIntent.VIEW_MENU_RETURN,
@@ -73,6 +74,7 @@ export const INTENT_PRIORITY: ConversationIntent[] = [
   ConversationIntent.CHECKOUT,
   ConversationIntent.PAY_ONLINE,
   ConversationIntent.PAY_CASH,
+  ConversationIntent.PAY_TRANSFER,
   ConversationIntent.CANCEL_ORDER,
   ConversationIntent.END_CONVERSATION,
   ConversationIntent.SELECT_CART_ITEM,
@@ -167,6 +169,7 @@ export const normalizeIntent = (value: string): ConversationIntent => {
     case ConversationIntent.UNKNOWN:
     case ConversationIntent.PAY_ONLINE:
     case ConversationIntent.PAY_CASH:
+    case ConversationIntent.PAY_TRANSFER:
       return trimmed as ConversationIntent;
     default:
       return ConversationIntent.UNKNOWN;

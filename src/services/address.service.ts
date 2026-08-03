@@ -13,6 +13,9 @@ import {
   RETRY_ADDRESS_BOT_MESSAGE,
 } from './productQuery/botMessages';
 import { formatBotUserMessage } from './productQuery/utils';
+import { getBusinessConfig } from './businessConfig.service';
+import { listOfferedPaymentMethods } from './paymentMethods.service';
+import { buildPaymentButtonsMessage } from './payment/paymentButtons';
 
 
 /** Claves usadas por `stageAddressForDelegatedConfirmation`/`resolveDelegatedAddressConfirmation`. */
@@ -523,21 +526,14 @@ export class AddressService {
     await this.clearState(ctx);
 
     if (pendingAction === 'CHECKOUT') {
-      return {
-        type: 'interactive',
-        interactive: {
-          type: 'button',
-          body: {
-            text: ADDRESS_SAVED_PAYMENT_PROMPT_BOT_MESSAGE,
-          },
-          action: {
-            buttons: [
-              { type: 'reply', reply: { id: 'PAY_ONLINE', title: '💳 Pago online' } },
-              { type: 'reply', reply: { id: 'PAY_CASH', title: '💵 Efectivo' } },
-            ],
-          },
-        },
-      } as WhatsAppInteractiveMessage;
+      const businessConfig = await getBusinessConfig(ctx.business.id);
+      const methods = await listOfferedPaymentMethods(ctx.business.id, {
+        externalDeliveryEnabled: businessConfig.external_delivery_enabled,
+      });
+      return buildPaymentButtonsMessage(
+        ADDRESS_SAVED_PAYMENT_PROMPT_BOT_MESSAGE,
+        methods
+      );
     }
 
     if (!options?.skipSmallTalkMenu) {

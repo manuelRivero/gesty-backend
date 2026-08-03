@@ -17,10 +17,12 @@ import { resolveDeliveryContext } from '../deliveryFee.service';
 import { resolvePaymentAdjustment } from '../paymentAdjustment.service';
 import { formatBotUserMessage } from '../productQuery/utils';
 import type { WhatsAppInteractiveMessage } from '../../domain/intent/whatsappTemplates';
+import type { PaymentMethodId } from '../../domain/payment/paymentMethods';
 
-const PAYMENT_METHOD_LABEL: Record<'cash' | 'online', string> = {
+const PAYMENT_METHOD_LABEL: Record<PaymentMethodId, string> = {
   cash: 'Efectivo al recibir',
   online: 'Pago online',
+  transfer: 'Transferencia',
 };
 
 export interface OrderConfirmationSummary {
@@ -32,7 +34,7 @@ export const buildOrderConfirmationMessage = async (params: {
   businessId: string;
   customerId: string;
   customerPhone: string;
-  paymentMethod: 'cash' | 'online';
+  paymentMethod: PaymentMethodId;
   currencyCode: string | null;
   /** Texto de una respuesta lateral a anteponer (retomar tras interrupción, H-03). */
   leadingText?: string;

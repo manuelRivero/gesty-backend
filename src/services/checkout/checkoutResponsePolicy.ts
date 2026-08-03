@@ -41,7 +41,7 @@ export interface CheckoutResponsePolicyResponse {
 
 export interface CheckoutResponsePolicyState {
   fulfillmentType: 'DELIVERY' | 'TAKE_AWAY' | null;
-  paymentMethod: 'cash' | 'online' | null;
+  paymentMethod: 'cash' | 'online' | 'transfer' | null;
   /** Evidencia real de que una orden fue creada este turno (viene de `createOrderFromDraft`). */
   orderId: string | null;
 }

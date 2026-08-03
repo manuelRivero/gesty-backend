@@ -68,12 +68,17 @@ function matchFulfillmentType(text: string): FulfillmentTypePendingValue | null 
 
 function matchPaymentMethod(text: string): PaymentMethodPendingValue | null {
   const cashPattern =
-    /^(efectivo|cash|en efectivo|en mano|pago en efectivo|con efectivo)[.!]?$/;
+    /^(efectivo|cash|en efectivo|en mano|pago en efectivo|con efectivo|pago al recibir)[.!]?$/;
   const onlinePattern =
     /^(online|tarjeta|mercado pago|mercadopago|pago online|con tarjeta|digital)[.!]?$/;
+  const transferPattern =
+    /^(transferencia|transfer|transferir|por transferencia|cbu|alias|banco)[.!]?$/;
 
   if (cashPattern.test(text)) {
     return { method: 'cash' };
+  }
+  if (transferPattern.test(text)) {
+    return { method: 'transfer' };
   }
   if (onlinePattern.test(text)) {
     return { method: 'online' };
@@ -110,7 +115,12 @@ function tryCrossFieldExtraction<T>(params: {
         value: payment as T,
         resolvedAction: 'payment_method',
         confidence: 0.95,
-        reason: payment.method === 'cash' ? 'efectivo_explicito' : 'online_explicito',
+        reason:
+          payment.method === 'cash'
+            ? 'efectivo_explicito'
+            : payment.method === 'transfer'
+              ? 'transferencia_explicita'
+              : 'online_explicito',
         source: 'deterministic',
       };
     }
@@ -145,7 +155,12 @@ function tryDeterministicExtraction<T>(params: {
           status: 'fulfilled',
           value: parsed.data,
           confidence: 0.98,
-          reason: payment.method === 'cash' ? 'efectivo_explicito' : 'online_explicito',
+          reason:
+            payment.method === 'cash'
+              ? 'efectivo_explicito'
+              : payment.method === 'transfer'
+                ? 'transferencia_explicita'
+                : 'online_explicito',
           source: 'deterministic',
         };
       }
@@ -339,6 +354,7 @@ export function isPaymentMethodValue(value: unknown): value is PaymentMethodPend
     value !== null &&
     'method' in value &&
     ((value as { method: string }).method === 'cash' ||
-      (value as { method: string }).method === 'online')
+      (value as { method: string }).method === 'online' ||
+      (value as { method: string }).method === 'transfer')
   );
 }

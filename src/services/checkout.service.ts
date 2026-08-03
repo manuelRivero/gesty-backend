@@ -15,13 +15,24 @@ import {
   buildOrderConfirmedCashMessage,
   buildOrderDispatchThanksMessage,
   buildMinOrderNotMetMessage,
-  buildPaymentChoiceMessage,
   EMPTY_CART_BOT_MESSAGE,
 } from './productQuery/botMessages';
 import { listPaymentAdjustmentsForAmount } from './paymentAdjustment.service';
 import { computeOrderPricing, type PricingResult } from './pricing.service';
 import { resolveDeliveryContext } from './deliveryFee.service';
 import { resolvePaymentAdjustment } from './paymentAdjustment.service';
+import { getBusinessConfig } from './businessConfig.service';
+import { listOfferedPaymentMethods } from './paymentMethods.service';
+import {
+  buildPaymentButtonsMessage,
+  buildPaymentChoiceBody,
+} from './payment/paymentButtons';
+import {
+  getPaymentMethod,
+  isPaymentMethodId,
+  paymentMethodLabel,
+  type PaymentMethodId,
+} from '../domain/payment/paymentMethods';
 
 export interface CreateOrderFromDraftParams {
   paymentStatus?: OrderPaymentStatus;
@@ -227,12 +238,23 @@ export const buildCheckoutMessage = async (
     deliveryFee: deliveryCtxForChoice.deliveryFee,
   });
 
+  const businessConfig = await getBusinessConfig(business.id);
+  const offered = await listOfferedPaymentMethods(business.id, {
+    externalDeliveryEnabled: businessConfig.external_delivery_enabled,
+  });
   const adjustments = await listPaymentAdjustmentsForAmount({
     businessId: business.id,
     baseAmount: baseTotal,
   });
+  const offeredAdjustments = adjustments.filter((a) =>
+    offered.some((m) => m.id === a.paymentMethod)
+  );
 
-  const paymentChoiceMessage = buildPaymentChoiceMessage(baseTotal, adjustments);
+  const paymentChoiceMessage = buildPaymentButtonsMessage(
+    buildPaymentChoiceBody(baseTotal, offeredAdjustments),
+    offered,
+    offeredAdjustments
+  );
 
   return { message: 'payment_choice', followUps: [{ type: 'interactive', message: paymentChoiceMessage as any }] };
 };
@@ -271,18 +293,44 @@ export const handleCheckoutFromWebhook = async (
   };
 };
 
-/** Flujo cash: crea la orden inmediatamente y devuelve mensajes de confirmación. */
-export const buildCashCheckoutResult = async (
+/**
+ * Checkout unpaid (efectivo o transferencia): crea la orden y confirma.
+ * Con delivery externo no se envía el QR (rider sin app propia).
+ */
+export const buildUnpaidCheckoutResult = async (
   business: BusinessType,
   conversation: ConversationType,
-  customer: CustomerType
+  customer: CustomerType,
+  options: {
+    paymentMethod: PaymentMethodId;
+    externalDeliveryEnabled?: boolean;
+    instructions?: string | null;
+  }
 ): Promise<CheckoutResult> => {
+  const {
+    paymentMethod,
+    externalDeliveryEnabled = false,
+    instructions = null,
+  } = options;
+
+  if (!isPaymentMethodId(paymentMethod)) {
+    throw new Error(`invalid_payment_method:${paymentMethod}`);
+  }
+
+  const def = getPaymentMethod(paymentMethod);
+  const paymentLabel =
+    paymentMethod === 'cash'
+      ? 'Efectivo al recibir'
+      : paymentMethod === 'transfer'
+        ? 'Transferencia'
+        : paymentMethodLabel(paymentMethod);
+
   try {
     const { orderId, total, pricing, qrDataUrl } = await createOrderFromDraft(
       business,
       conversation,
       customer,
-      { paymentStatus: OrderPaymentStatus.unpaid, paymentMethod: 'cash' }
+      { paymentStatus: OrderPaymentStatus.unpaid, paymentMethod }
     );
 
     await closeConversation(conversation.id);
@@ -292,10 +340,12 @@ export const buildCashCheckoutResult = async (
       total,
       deliveryFee: pricing.deliveryFee > 0 ? pricing.deliveryFee : undefined,
       paymentAdjustment: pricing.paymentAdjustment !== 0 ? pricing.paymentAdjustment : undefined,
+      paymentLabel,
+      instructions: def.collectionKind === 'bank_transfer' ? instructions : null,
     });
 
     const followUps: HandlerFollowUp[] = [
-      { type: 'image', dataUrl: qrDataUrl },
+      ...(!externalDeliveryEnabled ? [{ type: 'image' as const, dataUrl: qrDataUrl }] : []),
       {
         type: 'text',
         message: buildOrderDispatchThanksMessage(),
@@ -313,3 +363,15 @@ export const buildCashCheckoutResult = async (
     throw err;
   }
 };
+
+/** @deprecated Usar `buildUnpaidCheckoutResult` con paymentMethod: 'cash'. */
+export const buildCashCheckoutResult = async (
+  business: BusinessType,
+  conversation: ConversationType,
+  customer: CustomerType,
+  options: { externalDeliveryEnabled?: boolean } = {}
+): Promise<CheckoutResult> =>
+  buildUnpaidCheckoutResult(business, conversation, customer, {
+    paymentMethod: 'cash',
+    externalDeliveryEnabled: options.externalDeliveryEnabled,
+  });

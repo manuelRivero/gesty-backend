@@ -4,6 +4,11 @@ import {
   getDefaultNeutralPersonalityId,
   NEUTRAL_PERSONALITY_ID,
 } from "./botPersonality.service";
+import {
+  PaymentMethodCombinationError,
+  assertValidPaymentMethodCombination,
+} from "../domain/payment/paymentMethodRules";
+import { listActivePaymentMethodSnapshots } from "./paymentMethods.service";
 
 export type BusinessConfig = {
   bot_enabled: boolean;
@@ -29,6 +34,7 @@ export type BusinessConfig = {
   humanize_messages: boolean;
   operate_when_closed: boolean;
   orders_when_closed: boolean;
+  external_delivery_enabled: boolean;
   bot_personality_id: string;
 };
 
@@ -56,6 +62,7 @@ const DEFAULT_CONFIG: BusinessConfig = {
   humanize_messages: false,
   operate_when_closed: false,
   orders_when_closed: false,
+  external_delivery_enabled: false,
   bot_personality_id: NEUTRAL_PERSONALITY_ID,
 };
 
@@ -104,9 +111,16 @@ function applyBusinessConfigRules(config: BusinessConfig): BusinessConfig {
     next.orders_when_closed = false;
   }
 
-  if (!next.delivery_enabled && !next.takeaway_enabled) {
+  // Delivery propio y delivery externo (PedidosYa / similar) son excluyentes.
+  if (next.delivery_enabled && next.external_delivery_enabled) {
     throw new BusinessConfigValidationError(
-      "Al menos uno de delivery_enabled o takeaway_enabled debe ser true"
+      "delivery_enabled y external_delivery_enabled son excluyentes: activá solo uno"
+    );
+  }
+
+  if (!next.delivery_enabled && !next.takeaway_enabled && !next.external_delivery_enabled) {
+    throw new BusinessConfigValidationError(
+      "Al menos uno de delivery_enabled, takeaway_enabled o external_delivery_enabled debe ser true"
     );
   }
 
@@ -143,6 +157,7 @@ async function fetchBusinessConfigRow(
       humanize_messages,
       operate_when_closed,
       orders_when_closed,
+      external_delivery_enabled,
       bot_personality_id
     FROM business_config
     WHERE business_id = ${businessId}::uuid
@@ -175,6 +190,38 @@ export async function upsertBusinessConfig(
   }
   const next = applyBusinessConfigRules(nextRaw);
 
+  // Delivery externo: el rider no puede cobrar efectivo. Seed defaults,
+  // desactivamos cash y exigimos al menos online o transfer activo.
+  const paymentSnapshots = await listActivePaymentMethodSnapshots(businessId);
+  if (next.external_delivery_enabled) {
+    await prisma.payment_method_config.updateMany({
+      where: {
+        business_id: businessId,
+        payment_method: 'cash',
+        is_active: true,
+      },
+      data: { is_active: false, updated_at: new Date() },
+    });
+  }
+
+  try {
+    const snapshotsAfter =
+      next.external_delivery_enabled
+        ? paymentSnapshots.map((m) =>
+            m.paymentMethod === 'cash' ? { ...m, isActive: false } : m
+          )
+        : paymentSnapshots;
+    assertValidPaymentMethodCombination({
+      activeMethods: snapshotsAfter,
+      externalDeliveryEnabled: next.external_delivery_enabled,
+    });
+  } catch (err) {
+    if (err instanceof PaymentMethodCombinationError) {
+      throw new BusinessConfigValidationError(err.message);
+    }
+    throw err;
+  }
+
   await prisma.$executeRaw`
     INSERT INTO business_config (
       business_id,
@@ -201,6 +248,7 @@ export async function upsertBusinessConfig(
       humanize_messages,
       operate_when_closed,
       orders_when_closed,
+      external_delivery_enabled,
       bot_personality_id
     ) VALUES (
       ${businessId}::uuid,
@@ -227,6 +275,7 @@ export async function upsertBusinessConfig(
       ${next.humanize_messages},
       ${next.operate_when_closed},
       ${next.orders_when_closed},
+      ${next.external_delivery_enabled},
       ${next.bot_personality_id}::uuid
     )
     ON CONFLICT (business_id)
@@ -254,6 +303,7 @@ export async function upsertBusinessConfig(
       humanize_messages = EXCLUDED.humanize_messages,
       operate_when_closed = EXCLUDED.operate_when_closed,
       orders_when_closed = EXCLUDED.orders_when_closed,
+      external_delivery_enabled = EXCLUDED.external_delivery_enabled,
       bot_personality_id = EXCLUDED.bot_personality_id
   `;
 

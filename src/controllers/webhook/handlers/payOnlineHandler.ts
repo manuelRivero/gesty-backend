@@ -10,6 +10,9 @@ import {
 } from '../../../services/productQuery/botMessages';
 import { formatBotUserMessage } from '../../../services/productQuery/utils';
 import { getMpBannerDataUrl } from '../../../assets/mpBanner';
+import { getBusinessConfig } from '../../../services/businessConfig.service';
+import { listOfferedPaymentMethods } from '../../../services/paymentMethods.service';
+import { buildPaymentButtonsMessage } from '../../../services/payment/paymentButtons';
 
 export class PayOnlineHandler implements IntentHandler {
   readonly command = ConversationIntent.PAY_ONLINE;
@@ -28,21 +31,9 @@ export class PayOnlineHandler implements IntentHandler {
       const result = await createOnlinePaymentLink(business.id, customer.phone_number);
 
       if (!result) {
-        return textResponse(PAY_ONLINE_UNAVAILABLE_BOT_MESSAGE, [{
-            type: 'interactive',
-            message: {
-              type: 'interactive',
-              interactive: {
-                type: 'button',
-                body: { text: PAY_CASH_OPTION_BOT_MESSAGE },
-                action: {
-                  buttons: [
-                    { type: 'reply', reply: { id: 'PAY_CASH', title: '💵 Efectivo' } },
-                  ],
-                },
-              },
-            } as any,
-          }]
+        return textResponse(
+          PAY_ONLINE_UNAVAILABLE_BOT_MESSAGE,
+          await buildFallbackPaymentFollowUps(business.id, PAY_CASH_OPTION_BOT_MESSAGE)
         );
       }
 
@@ -63,22 +54,31 @@ export class PayOnlineHandler implements IntentHandler {
       ]);
     } catch (err) {
       console.error('[PayOnlineHandler] error:', err);
-      return textResponse(PAY_ONLINE_RETRY_BOT_MESSAGE, [{
-          type: 'interactive',
-          message: {
-            type: 'interactive',
-            interactive: {
-              type: 'button',
-              body: { text: PAY_CASH_ASK_BOT_MESSAGE },
-              action: {
-                buttons: [
-                  { type: 'reply', reply: { id: 'PAY_CASH', title: '💵 Efectivo' } },
-                ],
-              },
-            },
-          } as any,
-        }]
+      return textResponse(
+        PAY_ONLINE_RETRY_BOT_MESSAGE,
+        await buildFallbackPaymentFollowUps(business.id, PAY_CASH_ASK_BOT_MESSAGE)
       );
     }
   }
+}
+
+async function buildFallbackPaymentFollowUps(
+  businessId: string,
+  bodyText: string
+) {
+  const businessConfig = await getBusinessConfig(businessId);
+  const methods = (
+    await listOfferedPaymentMethods(businessId, {
+      externalDeliveryEnabled: businessConfig.external_delivery_enabled,
+    })
+  ).filter((m) => m.id !== 'online');
+
+  if (methods.length === 0) return undefined;
+
+  return [
+    {
+      type: 'interactive' as const,
+      message: buildPaymentButtonsMessage(bodyText, methods),
+    },
+  ];
 }

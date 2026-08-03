@@ -45,6 +45,22 @@ describe('extractPendingTurnResponse — deterministic', () => {
     }
   });
 
+  it('transferencia → fulfilled + transfer', async () => {
+    const result = await extractPendingTurnResponse({
+      userMessage: 'transferencia',
+      pendingAction: paymentConfig.pendingAction,
+      botQuestion: paymentConfig.defaultQuestion,
+      schema: paymentConfig.schema,
+      valueHints: paymentConfig.valueHints,
+      actionDescription: paymentConfig.actionDescription,
+    });
+    expect(result.status).toBe('fulfilled');
+    expect(result.source).toBe('deterministic');
+    if (isPaymentMethodValue(result.value)) {
+      expect(result.value.method).toBe('transfer');
+    }
+  });
+
   it('mensaje vacío → reprompt', async () => {
     const result = await extractPendingTurnResponse({
       userMessage: '   ',
@@ -174,9 +190,10 @@ describe('formatPendingExtractionBlock', () => {
 });
 
 describe('PaymentMethodPendingSchema', () => {
-  it('acepta cash y online', () => {
+  it('acepta cash, online y transfer', () => {
     expect(PaymentMethodPendingSchema.safeParse({ method: 'cash' }).success).toBe(true);
     expect(PaymentMethodPendingSchema.safeParse({ method: 'online' }).success).toBe(true);
+    expect(PaymentMethodPendingSchema.safeParse({ method: 'transfer' }).success).toBe(true);
     expect(PaymentMethodPendingSchema.safeParse({ method: 'bitcoin' }).success).toBe(false);
   });
 });

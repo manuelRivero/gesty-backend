@@ -38,8 +38,10 @@ describe('pendingActionRegistry', () => {
     expect(getCheckoutPendingActionConfig('unknown')).toBeNull();
   });
 
-  it('PaymentMethodPendingSchema rechaza valores inválidos', () => {
+  it('PaymentMethodPendingSchema acepta cash/online/transfer y rechaza inválidos', () => {
     expect(PaymentMethodPendingSchema.safeParse({ method: 'cash' }).success).toBe(true);
+    expect(PaymentMethodPendingSchema.safeParse({ method: 'transfer' }).success).toBe(true);
+    expect(PaymentMethodPendingSchema.safeParse({ method: 'bitcoin' }).success).toBe(false);
     expect(PaymentMethodPendingSchema.safeParse({}).success).toBe(false);
   });
 

@@ -16,7 +16,7 @@ export interface CheckoutStepState {
   hasAddress: boolean;
   isInCoverage: boolean;
   customerName: string | null;
-  paymentMethod: 'cash' | 'online' | null;
+  paymentMethod: 'cash' | 'online' | 'transfer' | null;
 }
 
 export interface CheckoutStepConfig {
