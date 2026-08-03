@@ -1,0 +1,46 @@
+# Postgres local (PostGIS + pgvector) para el VPS.
+# Sustituye Neon: misma red que la app (`proxy-network`) para que
+# DATABASE_URL use el hostname `food-postgres`.
+#
+# En el VPS:
+#   mkdir -p /opt/apps/postgres/backups
+#   cp docker-compose.postgres.yml /opt/apps/postgres/docker-compose.yml
+#   cp .env.postgres.example /opt/apps/postgres/.env   # editar claves
+#   cd /opt/apps/postgres && docker compose up -d
+#
+# Ver DEPLOY.md § "Migrar Neon → Postgres en el VPS".
+
+services:
+  postgres:
+    # Postgres 17 + PostGIS + pgvector (Neon está en 17).
+    # Tag fijo: garapadev no publica 17-stable.
+    image: "${POSTGRES_IMAGE:-datosonline/postgis-pgvector:17-3.5}"
+    container_name: food-postgres
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-food}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-food_service}
+    volumes:
+      - food-pg-data:/var/lib/postgresql/data
+      - ./backups:/backups
+    ports:
+      # Solo localhost del VPS (dump/restore / admin local). La app usa la red Docker.
+      - "127.0.0.1:5432:5432"
+    networks:
+      - proxy-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  food-pg-data:
+
+networks:
+  proxy-network:
+    external: true
