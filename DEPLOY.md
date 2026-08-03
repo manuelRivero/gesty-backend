@@ -55,6 +55,11 @@ son **runtime**: cambiás `.env` en el VPS y `docker compose up -d` sin rebuild.
 | `AUTH_COOKIE_DOMAIN` | Runtime | `.env` del VPS |
 | `PAYMENT_PROVIDER_ENCRYPTION_KEY` | Runtime | `.env` del VPS |
 | `MERCADO_PAGO_WEBHOOK_BASE_URL` | Runtime | `.env` del VPS |
+| `R2_ACCOUNT_ID` | Runtime | `.env` del VPS (imágenes de menú) |
+| `R2_BUCKET` | Runtime | `.env` del VPS |
+| `R2_ACCESS_KEY_ID` | Runtime | `.env` del VPS |
+| `R2_SECRET_ACCESS_KEY` | Runtime | `.env` del VPS |
+| `R2_PUBLIC_URL` | Runtime | `.env` del VPS (CDN / custom domain) |
 
 Plantilla comentada: [`.env.example`](.env.example).
 
@@ -64,7 +69,7 @@ Plantilla comentada: [`.env.example`](.env.example).
 - **Nginx Proxy Manager** corriendo en Docker (red externa `proxy-network`).
 - Dominio con registro **A** apuntando a la IP del VPS (ej. `api.tu-dominio.com` → `138.36.238.15`).
 - No modificar registros de correo (MX, `mail.*`, TXT SPF/DKIM) si el dominio ya tiene hosting compartido.
-- Base de datos Postgres accesible (`DATABASE_URL`) con esquema ya migrado desde `food-service-backend`.
+- Base de datos Postgres accesible (`DATABASE_URL`) con esquema ya migrado desde `food-service-backend` (Neon u Postgres local; ver §8).
 - Cuenta Docker Hub: `manuelrivero`.
 
 ## 1. Build y push de la imagen (máquina local o CI)
@@ -258,6 +263,109 @@ npx prisma migrate deploy
 ```
 
 Aplicar migraciones **antes** de desplegar una versión que dependa de cambios de esquema.
+
+## 8. Migrar Neon → Postgres en el VPS
+
+Pasos **manuales** en el VPS (SSH). Los archivos de ayuda están en el repo:
+
+- [`docker-compose.postgres.yml`](docker-compose.postgres.yml) — Postgres con PostGIS + pgvector
+- [`.env.postgres.example`](.env.postgres.example) — usuario/clave/db
+
+Requisitos: red Docker `proxy-network` ya creada (la usa la app con NPM).
+
+### 8.1 Connection string de Neon
+
+1. [console.neon.tech](https://console.neon.tech) → proyecto → **Connect**.
+2. **Desactivar Connection pooling** (host **sin** `-pooler`).
+3. Neon está en **Postgres 17**. La imagen por defecto del compose es `datosonline/postgis-pgvector:17-3.5`.
+
+### 8.2 Levantar Postgres en el VPS
+
+Desde tu máquina (con el repo) o pegando los archivos en el VPS:
+
+```bash
+ssh user@TU_VPS
+sudo mkdir -p /opt/apps/postgres/backups
+# Copiá docker-compose.postgres.yml → /opt/apps/postgres/docker-compose.yml
+# Copiá .env.postgres.example → /opt/apps/postgres/.env y editá POSTGRES_PASSWORD
+
+cd /opt/apps/postgres
+nano .env   # POSTGRES_IMAGE, POSTGRES_PASSWORD, etc.
+docker compose up -d
+docker compose ps
+docker compose exec postgres psql -U food -d food_service -c \
+  "CREATE EXTENSION IF NOT EXISTS postgis; CREATE EXTENSION IF NOT EXISTS vector;"
+```
+
+### 8.3 Probar Neon desde el VPS
+
+Reemplazá `NEON_URL` por la connection string **sin pooler**:
+
+```bash
+docker run --rm postgres:17 \
+  psql "NEON_URL" -c 'select 1'
+```
+
+Si falla por cuota o auth, no sigas.
+
+### 8.4 Dump desde Neon
+
+```bash
+mkdir -p /opt/apps/postgres/backups
+
+docker run --rm \
+  -v /opt/apps/postgres/backups:/backups \
+  postgres:17 \
+  pg_dump -Fc -v \
+  -d "NEON_URL" \
+  -f /backups/neon.dump
+
+ls -lh /opt/apps/postgres/backups/neon.dump
+```
+
+### 8.5 Restore en el Postgres local
+
+La app y Postgres comparten `proxy-network`; el hostname es `food-postgres`:
+
+```bash
+# Ajustá USER/PASSWORD/DB a tu /opt/apps/postgres/.env
+docker run --rm \
+  --network proxy-network \
+  -v /opt/apps/postgres/backups:/backups \
+  postgres:17 \
+  pg_restore -v --no-owner --no-acl \
+  -d "postgresql://food:TU_PASSWORD@food-postgres:5432/food_service" \
+  /backups/neon.dump
+```
+
+Avisos de roles inexistentes con `--no-owner` suelen ser normales. Si falla por `postgis` / `vector`, la imagen no tiene las extensiones.
+
+Verificar datos:
+
+```bash
+cd /opt/apps/postgres
+docker compose exec postgres psql -U food -d food_service -c '\dt'
+docker compose exec postgres psql -U food -d food_service -c 'select count(*) from business;'
+```
+
+### 8.6 Cutover de la app
+
+En `/opt/apps/food-service-agent/.env`:
+
+```env
+DATABASE_URL=postgresql://food:TU_PASSWORD@food-postgres:5432/food_service
+```
+
+(Sin `sslmode=require` hacia el Postgres del mismo Docker network.)
+
+```bash
+cd /opt/apps/food-service-agent
+docker compose -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.prod.yml logs -f --tail=100
+curl -fsS https://TU_DOMINIO/health
+```
+
+Cuando todo ande: guardá `neon.dump` un tiempo; no borres Neon el mismo día.
 
 ## Notas
 
