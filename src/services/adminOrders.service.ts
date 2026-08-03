@@ -8,6 +8,7 @@ import {
   emitAdminOrderPaymentStatusChanged,
   emitAdminOrderStatusChanged
 } from "../socket/adminSocket";
+import { notifyAmbassadorSaleIfNeeded } from "./ambassador/ambassadorSale.service";
 
 dayjs.extend(utc);
 
@@ -194,6 +195,9 @@ export async function updateAdminOrderDeliveryStatus(
       orderId,
       payment_status: OrderPaymentStatus.paid
     });
+    void notifyAmbassadorSaleIfNeeded(orderId).catch((err) => {
+      console.error("[AdminOrders] Error al notificar venta de embajador (cash):", err);
+    });
   }
 
   const notify = await notifyCustomerOrderStatusFromAdmin({
@@ -247,6 +251,12 @@ export async function updateAdminOrderPaymentStatus(
     orderId,
     payment_status
   });
+
+  if (payment_status === OrderPaymentStatus.paid && existing.payment_status !== OrderPaymentStatus.paid) {
+    void notifyAmbassadorSaleIfNeeded(orderId).catch((err) => {
+      console.error("[AdminOrders] Error al notificar venta de embajador (manual/proof):", err);
+    });
+  }
 
   const order = await getAdminOrderById(businessId, orderId);
   if (!order) {

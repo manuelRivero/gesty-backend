@@ -8,6 +8,7 @@
  * businessOpenInfo (→ closedBusiness → send) → persistUserMessage →
  * subscriptionAccessGate (→ send) → messageTypeGuard (→ send) →
  * escalationGate (→ send) →
+ * ambassadorReferral →
  * buildDetectionContext →
  * { reservationWizard | reservationAgent | onboardingAgent | onboardingByState | addressCapture | checkoutAgent | interactive | nlp } →
  * sendResponse → persistAIMessage → END.
@@ -45,6 +46,7 @@ import { fulfillmentSelectionNode } from './nodes/gates/fulfillmentSelection';
 import { nameCollectionNode } from './nodes/gates/nameCollection';
 import { messageTypeGuardNode } from './nodes/gates/messageTypeGuard';
 import { escalationGateNode } from './nodes/gates/escalation';
+import { ambassadorReferralNode } from './nodes/ambassador';
 import {
   interactiveSubgraphNode,
   nlpSubgraphNode,
@@ -84,6 +86,7 @@ const builder = new StateGraph(AgentStateAnnotation)
   .addNode(NODE.SUBSCRIPTION_GATE, subscriptionAccessGateNode)
   .addNode(NODE.MESSAGE_TYPE_GUARD, messageTypeGuardNode)
   .addNode(NODE.ESCALATION_GATE, escalationGateNode)
+  .addNode(NODE.AMBASSADOR_REFERRAL, ambassadorReferralNode)
   .addNode(NODE.BUILD_DETECTION_CTX, buildDetectionContextNode)
   // @deprecated NODE.RESERVATION = wizard legacy. Ver reservationWizardNode.
   .addNode(NODE.RESERVATION, reservationWizardNode)
@@ -148,9 +151,11 @@ builder.addConditionalEdges(NODE.MESSAGE_TYPE_GUARD, routeAfterMessageTypeGuard,
 
 builder.addConditionalEdges(NODE.ESCALATION_GATE, routeAfterEscalationGate, {
   [NODE.SEND]: NODE.SEND,
-  [NODE.BUILD_DETECTION_CTX]: NODE.BUILD_DETECTION_CTX,
+  [NODE.AMBASSADOR_REFERRAL]: NODE.AMBASSADOR_REFERRAL,
   [END]: END,
 });
+
+builder.addEdge(NODE.AMBASSADOR_REFERRAL, NODE.BUILD_DETECTION_CTX);
 
 builder.addConditionalEdges(
   NODE.BUILD_DETECTION_CTX,

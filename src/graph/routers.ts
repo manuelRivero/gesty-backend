@@ -20,6 +20,7 @@ export const NODE = {
   SUBSCRIPTION_GATE: 'subscriptionAccessGate',
   MESSAGE_TYPE_GUARD: 'messageTypeGuard',
   ESCALATION_GATE: 'escalationGate',
+  AMBASSADOR_REFERRAL: 'ambassadorReferral',
   BUILD_DETECTION_CTX: 'buildDetectionContext',
   RESERVATION: 'reservationWizard',
   RESERVATION_AGENT: 'reservationAgent',
@@ -106,7 +107,7 @@ export const routeAfterEscalationGate = (
 ): NodeName | typeof END => {
   if (state.earlyExit) return END;
   if (state.isHumanHandover) return NODE.SEND;
-  return NODE.BUILD_DETECTION_CTX;
+  return NODE.AMBASSADOR_REFERRAL;
 };
 
 /**

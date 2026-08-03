@@ -33,6 +33,9 @@ import {
   paymentMethodLabel,
   type PaymentMethodId,
 } from '../domain/payment/paymentMethods';
+import { omitConversationMetadataKeys } from '../repositories/conversationState.repository';
+import { normalizeMetadata } from './productQuery/utils';
+import { isAmbassadorRefExpired } from './ambassador/referralCode';
 
 export interface CreateOrderFromDraftParams {
   paymentStatus?: OrderPaymentStatus;
@@ -115,6 +118,19 @@ export const createOrderFromDraft = async (
     paymentAdjustment: payAdjCtx.adjustmentAmount,
   });
 
+  // Referencia TEMPORAL de Embajador (D.S.): solo se adhiere al pedido si sigue
+  // vigente (TTL). Se borra de metadata más abajo para que compras futuras del
+  // mismo chat no comisionen automáticamente (ver ambassador/referralCode.ts).
+  const conversationStateRow = await prisma.conversation_state.findUnique({
+    where: { conversation_id: conversation.id },
+    select: { metadata: true },
+  });
+  const ambassadorRef = normalizeMetadata(conversationStateRow?.metadata).ambassador_ref;
+  const ambassadorPublicCode =
+    ambassadorRef && !isAmbassadorRefExpired(ambassadorRef.validatedAt)
+      ? ambassadorRef.code
+      : null;
+
   const order = await prisma.orders.create({
     data: {
       business_id: business.id,
@@ -126,6 +142,7 @@ export const createOrderFromDraft = async (
       total_amount: pricing.total,
       delivery_fee: deliveryCtx.deliveryFee > 0 ? deliveryCtx.deliveryFee : null,
       payment_adjustment: payAdjCtx.hasAdjustment ? payAdjCtx.adjustmentAmount : null,
+      ambassador_public_code: ambassadorPublicCode,
       order_item: {
         create: draft.draft_order_item.map((item) => ({
           menu_item_id: item.product_id!,
@@ -157,6 +174,12 @@ export const createOrderFromDraft = async (
     total: String(pricing.total),
     currency: business.currency_code ?? 'ARS',
   });
+
+  if (ambassadorRef) {
+    await omitConversationMetadataKeys(conversation.id, ['ambassador_ref']).catch((err) => {
+      console.error('[Checkout] Error al limpiar ambassador_ref de metadata:', err);
+    });
+  }
 
   const qrDataUrl = await QRCode.toDataURL(order.id, {
     errorCorrectionLevel: 'M',

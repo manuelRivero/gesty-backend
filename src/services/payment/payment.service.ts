@@ -11,6 +11,7 @@ import { computeOrderPricing } from '../pricing.service';
 import { resolveDeliveryContext } from '../deliveryFee.service';
 import { resolvePaymentAdjustment } from '../paymentAdjustment.service';
 import { getBusinessConfig } from '../businessConfig.service';
+import { notifyAmbassadorSaleIfNeeded } from '../ambassador/ambassadorSale.service';
 
 export interface PaymentLinkResult {
   initPoint: string;
@@ -208,6 +209,11 @@ export const handleApprovedPayment = async (
     });
 
     return { orderId, total, qrDataUrl };
+  });
+
+  // Fire-and-forget: nunca debe bloquear ni romper la confirmación de pago online.
+  void notifyAmbassadorSaleIfNeeded(orderId).catch((err) => {
+    console.error('[Payment] Error al notificar venta de embajador (online):', err);
   });
 
   // Notificar al cliente
