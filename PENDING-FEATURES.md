@@ -61,7 +61,7 @@ Desde el **15 de enero de 2026**, Meta prohíbe explícitamente los chatbots de 
 | Feature mercado | Estado | Notas |
 |-----------------|--------|--------|
 | Integración pasarela (MercadoPago / Stripe / WhatsApp Pay) | No implementado | `OrderPaymentStatus` solo `unpaid` / `paid`; toggle manual desde admin; sin link de pago ni webhook de pasarela |
-| Confirmación de pago en chat | No | Flujo termina con orden `unpaid`; no se cierra ciclo de pago |
+| Confirmación de pago en chat | Parcial | Transferencia bancaria: el cliente manda el comprobante por WhatsApp, el bot lo asocia a la orden (`payment_proof`) y el admin aprueba/rechaza desde el panel (`PLAN-ACCION-COMPROBANTES-TRANSFERENCIA.md`, Fases 1-5). Sin extracción por visión (Fase 6, no iniciada) ni pasarela con webhook automático (MercadoPago/Stripe) |
 | Comprobantes / facturas digitales | No | Sin generación PDF/comprobante |
 
 **Gap principal Latam (Argentina):** MercadoPago como estándar. Diseño mínimo sugerido:
@@ -93,7 +93,7 @@ Desde el **15 de enero de 2026**, Meta prohíbe explícitamente los chatbots de 
 | Feature mercado | Estado |
 |-----------------|--------|
 | Recibir audio (transcripción → orden) | No — orquestador solo `text` e `interactive`; audio cae a `[unknown]` (`orchestrator.ts` ~434) |
-| Recibir imagen (menú impreso, comprobante) | No |
+| Recibir imagen (menú impreso, comprobante) | Parcial — comprobante de transferencia aceptado solo cuando hay una orden `transfer`/`unpaid` reciente (gate por Fact de dominio, no flag de sesión; ver D1 en `PLAN-ACCION-COMPROBANTES-TRANSFERENCIA.md`). Cualquier otra imagen (menú impreso, foto libre) sigue rechazada con el aviso genérico |
 | Recibir ubicación del cliente (delivery) | Parcial — extractor reconoce `message.type === 'location'` para logging; no resuelve dirección |
 | Enviar imagen | Cumplido para QR (`sendImageFromDataUrl`) |
 | Enviar video / documento (PDF menú o factura) | No |

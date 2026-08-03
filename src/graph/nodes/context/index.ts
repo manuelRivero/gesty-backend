@@ -330,7 +330,13 @@ export const buildDetectionContextNode = async (
         ctx.payloadId === 'ONBOARDING_EDIT_ADDRESS' ||
         (wsMeta.awaiting_address === true && ctx.message?.type === 'text'));
 
-    if (isPendingDelegatedAddressConfirmation) {
+    // Comprobante de transferencia (D1): prioridad máxima. Una imagen nunca
+    // es un turno de checkout/onboarding/reserva normal, así que no compite
+    // con esas ramas. El guard (`messageTypeGuardNode`) ya calculó y cacheó
+    // la orden candidata; acá solo la leemos.
+    if (state.awaitingTransferProofOrder) {
+      contextRoute = 'payment_proof';
+    } else if (isPendingDelegatedAddressConfirmation) {
       contextRoute = 'delegated_address_confirmation';
     } else if (reservationStep && !reservationPaused) {
       contextRoute = 'reservation_wizard';

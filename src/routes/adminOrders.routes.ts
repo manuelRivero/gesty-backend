@@ -10,6 +10,10 @@ import {
   getReservations
 } from "../controllers/adminReservations.controller";
 import {
+  getOrderPaymentProofs,
+  postOrderPaymentProofReview
+} from "../controllers/adminPaymentProof.controller";
+import {
   getDeliveryZoneById,
   getDeliveryZones,
   patchDeliveryZone,
@@ -119,6 +123,16 @@ router.get("/orders", getOrders);
 router.get("/orders/:id", getOrderById);
 router.patch("/orders/:id/status", patchOrderDeliveryStatus);
 router.patch("/orders/:id/payment-status", patchOrderPaymentStatus);
+router.get(
+  "/orders/:id/payment-proofs",
+  requireRoles("OWNER", "ADMIN"),
+  getOrderPaymentProofs
+);
+router.post(
+  "/orders/:id/payment-proofs/:proofId/review",
+  requireRoles("OWNER", "ADMIN"),
+  postOrderPaymentProofReview
+);
 router.get("/dashboard/summary", getDashboardSummary);
 router.get("/analytics/order-volume", getOrderVolumeHandler);
 router.get("/analytics/client-ranking", getClientRankingHandler);

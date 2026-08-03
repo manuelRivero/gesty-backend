@@ -176,6 +176,13 @@ const envSchema = z.object({
   PEDIDOSYA_SAFETY_BUFFER_PERCENT: z.coerce.number().min(0).max(100).optional(),
   /** Delay entre cotizaciones para rate limiting. Default 500 */
   PEDIDOSYA_REQUEST_DELAY_MS: z.coerce.number().int().min(0).optional(),
+
+  /**
+   * Ventana de tiempo (en horas) dentro de la cual se acepta un comprobante
+   * de transferencia asociado a una orden `payment_method='transfer'` y
+   * `payment_status='unpaid'`. Default 24.
+   */
+  TRANSFER_PROOF_WINDOW_HOURS: z.coerce.number().positive().default(24),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

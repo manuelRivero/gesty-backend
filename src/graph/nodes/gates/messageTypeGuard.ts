@@ -13,17 +13,24 @@
  *   el formato más natural de responder, era fricción exactamente en el paso
  *   de conversión). Fuera de esos contextos, la ubicación —incluida la
  *   ubicación en tiempo real— se rechaza.
+ * - Imagen (`image`) únicamente cuando el cliente tiene una orden reciente con
+ *   `payment_method='transfer'` y `payment_status='unpaid'` (D1, ver
+ *   PLAN-ACCION-COMPROBANTES-TRANSFERENCIA.md): es un Fact del dominio, no un
+ *   flag de sesión — sobrevive al cierre de la conversación y a esperas de
+ *   horas/días. Fuera de ese contexto, la imagen se rechaza igual que
+ *   cualquier otro adjunto.
  *
- * Para cualquier otro tipo (imagen, audio, video, contactos, documentos,
- * stickers, reacciones, etc.) se devuelve un `HandlerResult` interactivo con
- * un mensaje amable invitando a escribir la consulta y un único reply button
- * que permite al usuario pedir ayuda (payload `SUPPORT`). El motivo por el que
- * existe el botón —p. ej. clientes que no pueden escribir— se omite
- * intencionalmente del cuerpo del mensaje.
+ * Para cualquier otro tipo (audio, video, contactos, documentos, stickers,
+ * reacciones, o imagen sin orden pendiente, etc.) se devuelve un
+ * `HandlerResult` interactivo con un mensaje amable invitando a escribir la
+ * consulta y un único reply button que permite al usuario pedir ayuda
+ * (payload `SUPPORT`). El motivo por el que existe el botón —p. ej. clientes
+ * que no pueden escribir— se omite intencionalmente del cuerpo del mensaje.
  */
 
 import { findOrCreateConversationState } from '../../../repositories';
 import { normalizeMetadata } from '../../../services/productQuery/utils';
+import { findOrderAwaitingTransferProof } from '../../../services/payment/transferProof.service';
 import { ConversationIntent } from '../../../types/conversationIntent';
 import type { WhatsAppInteractiveMessage } from '../../../domain/intent/whatsappTemplates';
 import type { AgentState, AgentStateUpdate } from '../../state';
@@ -88,6 +95,32 @@ const isWithinAddressCaptureFlow = async (
   );
 };
 
+/**
+ * ¿Este cliente tiene una orden reciente de transferencia sin cobrar (D1)?
+ * Defensivo: cualquier error se loguea y se trata como "no" — nunca abre el
+ * guard por una falla de infraestructura.
+ */
+const isAwaitingTransferProof = async (
+  state: AgentState
+): ReturnType<typeof findOrderAwaitingTransferProof> => {
+  const business = state.business;
+  const customer = state.customer;
+  if (!business || !customer) return null;
+
+  try {
+    return await findOrderAwaitingTransferProof({
+      businessId: business.id,
+      customerId: customer.id,
+    });
+  } catch (error) {
+    console.error(
+      '[MessageTypeGuard] Error checking awaiting transfer proof order',
+      error
+    );
+    return null;
+  }
+};
+
 export const messageTypeGuardNode = async (
   state: AgentState
 ): Promise<AgentStateUpdate> => {
@@ -105,6 +138,13 @@ export const messageTypeGuardNode = async (
 
   if (type === 'location' && (await isWithinAddressCaptureFlow(state))) {
     return {};
+  }
+
+  if (type === 'image') {
+    const awaitingTransferProofOrder = await isAwaitingTransferProof(state);
+    if (awaitingTransferProofOrder) {
+      return { awaitingTransferProofOrder };
+    }
   }
 
   console.log('[MessageTypeGuard] Unsupported message type, replying with notice:', {

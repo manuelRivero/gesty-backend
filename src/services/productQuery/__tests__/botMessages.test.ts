@@ -20,4 +20,31 @@ describe('botMessages', () => {
       expect(parseBotUserMessage(message)).not.toBeNull();
     }
   });
+
+  describe('buildOrderConfirmedCashMessage — variante transferencia (Tarea 4.2)', () => {
+    it('incluye la invitación a mandar el comprobante cuando isBankTransfer es true', () => {
+      const message = buildOrderConfirmedCashMessage({
+        orderId: 'abc-123',
+        total: 1500,
+        paymentLabel: 'Transferencia',
+        isBankTransfer: true,
+      });
+
+      expect(parseBotUserMessage(message)).not.toBeNull();
+      expect(message).toContain('mandame la foto o captura del comprobante');
+    });
+
+    it('no incluye la invitación para efectivo (isBankTransfer ausente/false)', () => {
+      const cash = buildOrderConfirmedCashMessage({ orderId: 'abc-123', total: 1500 });
+      expect(cash).not.toContain('mandame la foto o captura del comprobante');
+
+      const online = buildOrderConfirmedCashMessage({
+        orderId: 'abc-123',
+        total: 1500,
+        paymentLabel: 'Pago online',
+        isBankTransfer: false,
+      });
+      expect(online).not.toContain('mandame la foto o captura del comprobante');
+    });
+  });
 });

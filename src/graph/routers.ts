@@ -30,6 +30,7 @@ export const NODE = {
   INTERACTIVE: 'interactiveSubgraph',
   NLP: 'nlpSubgraph',
   CHECKOUT_AGENT: 'checkoutAgent',
+  PAYMENT_PROOF: 'paymentProof',
   ADDRESS_COLLECTION: 'addressCollection',
   FULFILLMENT_SELECTION: 'fulfillmentSelection',
   NAME_COLLECTION: 'nameCollection',
@@ -134,6 +135,8 @@ export const routeAfterDetectionContext = (
       return NODE.DELEGATED_ADDRESS_CONFIRMATION;
     case 'checkout':
       return NODE.CHECKOUT_AGENT;
+    case 'payment_proof':
+      return NODE.PAYMENT_PROOF;
     case 'interactive':
       return NODE.INTERACTIVE;
     case 'nlp':

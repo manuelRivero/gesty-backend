@@ -50,6 +50,7 @@ import {
   nlpSubgraphNode,
 } from './nodes/dispatch';
 import { checkoutAgentNode } from './nodes/checkout';
+import { paymentProofNode } from './nodes/paymentProof';
 import { delegatedAddressConfirmationNode } from './nodes/session/delegatedAddressConfirmation';
 import { reservationAgentNode } from './nodes/reservation';
 import { onboardingAgentNode } from './nodes/onboarding';
@@ -93,6 +94,7 @@ const builder = new StateGraph(AgentStateAnnotation)
   .addNode(NODE.INTERACTIVE, interactiveSubgraphNode)
   .addNode(NODE.NLP, nlpSubgraphNode)
   .addNode(NODE.CHECKOUT_AGENT, checkoutAgentNode)
+  .addNode(NODE.PAYMENT_PROOF, paymentProofNode)
   .addNode(NODE.RESERVATION_AGENT, reservationAgentNode)
   .addNode(NODE.FULFILLMENT_SELECTION, fulfillmentSelectionNode)
   .addNode(NODE.ADDRESS_COLLECTION, addressCollectionNode)
@@ -161,6 +163,7 @@ builder.addConditionalEdges(
     [NODE.ADDRESS_CAPTURE]: NODE.ADDRESS_CAPTURE,
     [NODE.DELEGATED_ADDRESS_CONFIRMATION]: NODE.DELEGATED_ADDRESS_CONFIRMATION,
     [NODE.CHECKOUT_AGENT]: NODE.CHECKOUT_AGENT,
+    [NODE.PAYMENT_PROOF]: NODE.PAYMENT_PROOF,
     [NODE.INTERACTIVE]: NODE.INTERACTIVE,
     [NODE.NLP]: NODE.NLP,
     [END]: END,
@@ -175,6 +178,7 @@ for (const node of [
   NODE.INTERACTIVE,
   NODE.NLP,
   NODE.CHECKOUT_AGENT,
+  NODE.PAYMENT_PROOF,
   NODE.RESERVATION_AGENT,
 ] as const) {
   builder.addConditionalEdges(node, routeAfterHandlerOrSubflow, {

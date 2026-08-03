@@ -27,6 +27,7 @@ import type {
 import type { getBusinessOpenInfo } from '../services/businessHours.service';
 import type { BusinessConfig } from '../services/businessConfig.service';
 import type { ConversationIntent } from '../types/conversationIntent';
+import type { OrderAwaitingTransferProof } from '../services/payment/transferProof.service';
 
 export type BusinessOpenInfo = Awaited<ReturnType<typeof getBusinessOpenInfo>>;
 
@@ -61,7 +62,8 @@ export type ContextRoute =
   | 'delegated_address_confirmation'
   | 'interactive'
   | 'nlp'
-  | 'checkout';
+  | 'checkout'
+  | 'payment_proof';
 
 /** Decisión de routing tras NLP / payload mapping. */
 export type IntentRoute =
@@ -236,6 +238,18 @@ export const AgentStateAnnotation = Annotation.Root({
   reservationResumed: Annotation<boolean>({
     reducer: (_prev, next) => next,
     default: () => false,
+  }),
+
+  /**
+   * Orden que este cliente tiene esperando comprobante de transferencia
+   * (D1, ver PLAN-ACCION-COMPROBANTES-TRANSFERENCIA.md). La calcula
+   * `messageTypeGuardNode` una sola vez por turno cuando el mensaje es
+   * `image`; `buildDetectionContextNode` y `paymentProofNode` reutilizan el
+   * valor cacheado en vez de volver a consultar Prisma.
+   */
+  awaitingTransferProofOrder: Annotation<OrderAwaitingTransferProof | null>({
+    reducer: (_prev, next) => next,
+    default: () => null,
   }),
 });
 

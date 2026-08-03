@@ -279,6 +279,13 @@ export type AdminOrderRealtimePayload =
       orderId: string;
       payment_status: string;
       at: string;
+    }
+  | {
+      type: "order.payment_proof_received";
+      businessId: string;
+      orderId: string;
+      proofId: string;
+      at: string;
     };
 
 function emitAdminOrderChannel(
@@ -354,6 +361,23 @@ export function emitAdminOrderPaymentStatusChanged(
       at: new Date().toISOString()
     },
     "payment_status_changed"
+  );
+}
+
+export function emitAdminOrderPaymentProofReceived(
+  businessId: string,
+  payload: { orderId: string; proofId: string }
+): void {
+  emitAdminOrderChannel(
+    businessId,
+    {
+      type: "order.payment_proof_received",
+      businessId,
+      orderId: payload.orderId,
+      proofId: payload.proofId,
+      at: new Date().toISOString()
+    },
+    "payment_proof_received"
   );
 }
 

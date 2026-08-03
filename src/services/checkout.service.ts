@@ -342,6 +342,7 @@ export const buildUnpaidCheckoutResult = async (
       paymentAdjustment: pricing.paymentAdjustment !== 0 ? pricing.paymentAdjustment : undefined,
       paymentLabel,
       instructions: def.collectionKind === 'bank_transfer' ? instructions : null,
+      isBankTransfer: def.collectionKind === 'bank_transfer',
     });
 
     const followUps: HandlerFollowUp[] = [

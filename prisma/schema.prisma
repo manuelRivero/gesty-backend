@@ -48,6 +48,7 @@ model business {
   orders                    orders[]
   payment_intent            payment_intent[]
   payment_method_config     payment_method_config[]
+  payment_proof             payment_proof[]
   reservation               reservation[]
   reservation_block         reservation_block[]
   reservation_config        reservation_config?
@@ -100,6 +101,7 @@ model conversation {
   conversation_message    conversation_message[]
   conversation_state      conversation_state?
   orders                  orders[]
+  payment_proof           payment_proof[]
   reservation             reservation[]
 
   @@index([last_message_at], map: "idx_conversation_last_message_at", where: raw("(status = 'open'::text)"))
@@ -155,6 +157,7 @@ model customer {
   currency           currency?          @relation(fields: [preferred_currency], references: [code], onDelete: NoAction, onUpdate: NoAction)
   customer_address   customer_address[]
   orders             orders[]
+  payment_proof      payment_proof[]
   reservation        reservation[]
 
   @@unique([business_id, phone_number])
@@ -313,6 +316,7 @@ model orders {
   customer_address          customer_address?  @relation(fields: [customer_address_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   customer                  customer           @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   payment_intent            payment_intent[]
+  payment_proof             payment_proof[]
 
   @@index([customer_address_id], map: "idx_orders_customer_address")
 }
@@ -720,6 +724,40 @@ model menu_item_ai_metadata {
   menu_item           menu_item @relation(fields: [menu_item_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([menu_item_id])
+}
+
+/// Comprobante de transferencia bancaria mandado por el cliente vía WhatsApp.
+/// El admin lo revisa desde el panel y aprueba o rechaza; `status` es propio
+/// de esta tabla, no del enum OrderPaymentStatus (ver ADR-0005/0006).
+model payment_proof {
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id     String        @db.Uuid
+  order_id        String        @db.Uuid
+  customer_id     String        @db.Uuid
+  conversation_id String?       @db.Uuid
+  media_key       String
+  media_url       String
+  media_mime      String
+  media_sha256    String?
+  /// Hash perceptual (8x8 grises); índice normal, no único (ver D6 del plan).
+  perceptual_hash String?
+  /// received | auto_checked | approved | rejected
+  status          String        @default("received")
+  extracted       Json?
+  checks          Json?
+  reviewed_by     String?       @db.Uuid
+  reviewed_at     DateTime?     @db.Timestamptz(6)
+  review_note     String?
+  created_at      DateTime      @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime      @default(now()) @updatedAt @db.Timestamptz(6)
+  business        business      @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  orders          orders        @relation(fields: [order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  customer        customer      @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  conversation    conversation? @relation(fields: [conversation_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([business_id, order_id], map: "idx_payment_proof_business_order")
+  @@index([business_id, status], map: "idx_payment_proof_business_status")
+  @@index([business_id, perceptual_hash], map: "idx_payment_proof_business_perceptual_hash")
 }
 
 /// Flujo operativo del pedido (logística). No indica si ya se cobró — ver `payment_status`.

@@ -108,6 +108,27 @@ export const PAY_CASH_ASK_BOT_MESSAGE = formatBotUserMessage(
   '¿Querés pagar en efectivo?'
 );
 
+/**
+ * Confirmación de recepción de un comprobante de transferencia. D3: nunca
+ * afirma que el pago quedó confirmado — un humano lo aprueba desde el panel.
+ */
+export const PAYMENT_PROOF_RECEIVED_BOT_MESSAGE = formatBotUserMessage(
+  'Comprobante recibido',
+  '🧾',
+  'Recibimos tu comprobante, lo estamos verificando y te avisamos apenas quede confirmado.'
+);
+
+/**
+ * Degradación suave (Tarea 4.1): si falla la descarga del adjunto o la subida
+ * a storage, el cliente igual recibe una respuesta neutra — nunca queda sin
+ * respuesta ni se crea un `payment_proof` huérfano.
+ */
+export const PAYMENT_PROOF_FALLBACK_BOT_MESSAGE = formatBotUserMessage(
+  'Comprobante recibido',
+  '🧾',
+  'Recibimos tu mensaje. Estamos teniendo un problema para procesar la imagen; nuestro equipo lo revisa igual, no te preocupes.'
+);
+
 export function buildCartItemNotFoundMessage(itemIdentifier: string): string {
   return formatBotUserMessage(
     'Producto no encontrado',
@@ -132,6 +153,15 @@ export function buildProvideNameThanksMessage(name: string): string {
   );
 }
 
+/**
+ * Invitación a mandar el comprobante por el mismo chat cuando el método es
+ * transferencia. Va en el builder (no en `instructions`, texto libre cargado
+ * por cada dueño de negocio) para no depender de que cada local se acuerde
+ * de mencionarlo — ver Tarea 4.2 del plan de comprobantes de transferencia.
+ */
+const TRANSFER_PROOF_INVITATION =
+  'Cuando hagas la transferencia, mandame la foto o captura del comprobante por este mismo chat y la reviso.';
+
 export function buildOrderConfirmedCashMessage(params: {
   orderId: string;
   total: number;
@@ -141,6 +171,8 @@ export function buildOrderConfirmedCashMessage(params: {
   paymentLabel?: string;
   /** Instrucciones extra (p. ej. CBU) para transferencia. */
   instructions?: string | null;
+  /** `true` cuando el método es transferencia bancaria (`collectionKind === 'bank_transfer'`). */
+  isBankTransfer?: boolean;
 }): string {
   const deliveryLine =
     params.deliveryFee && params.deliveryFee > 0
@@ -155,10 +187,13 @@ export function buildOrderConfirmedCashMessage(params: {
     params.instructions && params.instructions.trim()
       ? `\n\n${params.instructions.trim()}`
       : '';
+  const transferProofInvitationLine = params.isBankTransfer
+    ? `\n\n${TRANSFER_PROOF_INVITATION}`
+    : '';
   return formatBotUserMessage(
     'Pedido confirmado',
     '✅',
-    `Número: #${params.orderId}${deliveryLine}${adjustmentLine}\nTotal: $${params.total.toFixed(2)}\nPago: ${paymentLabel}${instructionsLine}`
+    `Número: #${params.orderId}${deliveryLine}${adjustmentLine}\nTotal: $${params.total.toFixed(2)}\nPago: ${paymentLabel}${instructionsLine}${transferProofInvitationLine}`
   );
 }
 
