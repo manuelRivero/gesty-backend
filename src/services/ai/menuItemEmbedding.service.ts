@@ -70,7 +70,8 @@ export async function buildMenuItemEmbeddingText(
     `Disponible: ${item.is_available ? 'sí' : 'no'}`,
     `Categoría: ${item.menu_category?.name ?? ''}`,
     `Categoría descripción: ${item.menu_category?.description ?? ''}`,
-    `Precio: ${priceText}`
+    `Precio: ${priceText}`,
+    `Variaciones: ${item.variations.join(', ')}`
   ];
 
   // Metadatos AI enriquecidos — opcionales, nunca sobreescriben los primarios.

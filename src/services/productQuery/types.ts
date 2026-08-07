@@ -211,6 +211,19 @@ export type ConversationMetadata = {
       lastSurfacedAt?: string | null;
     };
   };
+
+  /**
+   * Referencia TEMPORAL de un código de Embajador de Domingo Sabrosón
+   * (`DS_REF=AMB-...`) validado en esta conversación. Vive solo mientras no
+   * exista un pedido: `createOrderFromDraft` la copia a `orders.ambassador_public_code`
+   * y borra esta clave (nunca queda asociada permanentemente al chat, así
+   * compras futuras del mismo cliente no comisionan automáticamente).
+   * Expira sola tras `AMBASSADOR_REF_TTL_MS` (ver ambassador/referralCode.ts).
+   */
+  ambassador_ref?: {
+    code: string;
+    validatedAt: string;
+  } | null;
 };
 
 export type ConversationMode = 'GLOBAL' | 'FILTER_SET' | 'PRODUCT_FOCUS';

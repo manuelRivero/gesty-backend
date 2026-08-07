@@ -36,6 +36,7 @@ export type BusinessConfig = {
   orders_when_closed: boolean;
   external_delivery_enabled: boolean;
   bot_personality_id: string;
+  ambassadors_enabled: boolean;
 };
 
 const DEFAULT_CONFIG: BusinessConfig = {
@@ -64,6 +65,7 @@ const DEFAULT_CONFIG: BusinessConfig = {
   orders_when_closed: false,
   external_delivery_enabled: false,
   bot_personality_id: NEUTRAL_PERSONALITY_ID,
+  ambassadors_enabled: false,
 };
 
 export type BusinessConfigPatch = Partial<BusinessConfig>;
@@ -158,7 +160,8 @@ async function fetchBusinessConfigRow(
       operate_when_closed,
       orders_when_closed,
       external_delivery_enabled,
-      bot_personality_id
+      bot_personality_id,
+      ambassadors_enabled
     FROM business_config
     WHERE business_id = ${businessId}::uuid
     LIMIT 1
@@ -249,7 +252,8 @@ export async function upsertBusinessConfig(
       operate_when_closed,
       orders_when_closed,
       external_delivery_enabled,
-      bot_personality_id
+      bot_personality_id,
+      ambassadors_enabled
     ) VALUES (
       ${businessId}::uuid,
       ${next.bot_enabled},
@@ -276,7 +280,8 @@ export async function upsertBusinessConfig(
       ${next.operate_when_closed},
       ${next.orders_when_closed},
       ${next.external_delivery_enabled},
-      ${next.bot_personality_id}::uuid
+      ${next.bot_personality_id}::uuid,
+      ${next.ambassadors_enabled}
     )
     ON CONFLICT (business_id)
     DO UPDATE SET
@@ -304,7 +309,8 @@ export async function upsertBusinessConfig(
       operate_when_closed = EXCLUDED.operate_when_closed,
       orders_when_closed = EXCLUDED.orders_when_closed,
       external_delivery_enabled = EXCLUDED.external_delivery_enabled,
-      bot_personality_id = EXCLUDED.bot_personality_id
+      bot_personality_id = EXCLUDED.bot_personality_id,
+      ambassadors_enabled = EXCLUDED.ambassadors_enabled
   `;
 
   return next;

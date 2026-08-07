@@ -112,6 +112,7 @@ export const generateProductAwareResponse = async (params: {
       amount: unknown;
       currency_code: string;
     } | null;
+    variations?: string[] | null;
   };
   userQuestion: string;
   /** Contexto de sesión: personas/comensales mencionados antes en el flujo (ej. "para 3"). */

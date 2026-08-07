@@ -48,6 +48,8 @@ import {
   syncOrderCoverageToConversationState,
 } from "./orderPortionCoverage";
 import { MENU_SUGGESTION_ORDER } from "../helpers/complementaryMenu.helper";
+import { truncateTitle } from "../whatsappBuilders";
+import { hasVariations } from "./menu/menuItemVariations";
 
 const SECTION_TITLE: Record<MenuCategoryTag, string> = {
   STARTER: "Entradas",
@@ -67,6 +69,7 @@ const ORDER_SECTION_TAGS: MenuCategoryTag[] = [
 type DraftLineForSection = {
   quantity: number;
   notes?: string | null;
+  variation?: string | null;
   menu_item: {
     name: string | null;
     menu_category: {
@@ -106,8 +109,11 @@ function formatDraftOrderSectionsForWhatsApp(
     if (!buckets.has(key)) {
       buckets.set(key, { title, lines: [] });
     }
+    // La variación es parte de la identidad de la línea (D4): sin mostrarla,
+    // el cliente no puede distinguir sus dos pizzas de sabores distintos.
+    const variationSuffix = row.variation?.trim() ? ` (${row.variation.trim()})` : "";
     const noteSuffix = row.notes?.trim() ? ` _(${row.notes.trim()})_` : "";
-    buckets.get(key)!.lines.push(`${q}× ${name}${noteSuffix}`);
+    buckets.get(key)!.lines.push(`${q}× ${name}${variationSuffix}${noteSuffix}`);
   }
 
   const parts: string[] = [heading];
@@ -153,6 +159,50 @@ async function clearLastListSuggestedQuantityFromConversation(
   await updateConversationState(conversationId, {
     metadata: buildMetadataValue(rest),
   });
+}
+
+/**
+ * Lista de WhatsApp para que el cliente elija la variación de un platillo
+ * antes de agregarlo (D7: listas, no botones, porque un menú de pizzas se
+ * pasa de 3 opciones al instante). Cada fila viaja como
+ * `ADD_ITEM:<uuid>:<qty>:v<index>`, que `parseAddItemButtonPayload` resuelve.
+ *
+ * Respeta el límite de 10 filas de una lista de WhatsApp sin paginado (D8):
+ * si por datos legacy hubiera más, trunca y loguea, no falla en silencio.
+ */
+export function buildVariationPickerList(
+  item: { id: string; name: string | null; variations: string[] },
+  qty: number
+): WhatsAppListMessage {
+  const name = item.name?.trim() || "Este platillo";
+  let variations = item.variations;
+  if (variations.length > 10) {
+    console.warn(
+      `[buildVariationPickerList] ${item.id} tiene ${variations.length} variaciones, truncando a 10 (D8)`
+    );
+    variations = variations.slice(0, 10);
+  }
+
+  return {
+    type: "list",
+    header: { type: "text", text: truncateTitle(name) },
+    body: {
+      text: `*${name}* viene en varias variedades. ¿Cuál querés?`,
+    },
+    footer: { text: "Elegí una opción" },
+    action: {
+      button: "Elegir variedad",
+      sections: [
+        {
+          title: "Variedades",
+          rows: variations.map((variation, index) => ({
+            id: `ADD_ITEM:${item.id}:${qty}:v${index}`,
+            title: truncateTitle(variation),
+          })),
+        },
+      ],
+    },
+  };
 }
 
 /** Respuesta de agregar ítem: texto de confirmación + lista de gestión del pedido. */
@@ -236,7 +286,9 @@ export const buildAddItemMessage = async (
    * queden 2"), que antes se trataban como aditivas por error (MODIFY_QUANTITY
    * llamaba esta misma función sin distinguir el modo).
    */
-  mode: 'add' | 'set' = 'add'
+  mode: 'add' | 'set' = 'add',
+  /** Variación elegida por el cliente (D4/D3); `null` para platillos sin variaciones. */
+  variation: string | null = null
 ): Promise<AddItemMessageResult> => {
   const qty = Math.min(99, Math.max(1, Math.floor(addQuantity)));
 
@@ -270,8 +322,10 @@ export const buildAddItemMessage = async (
   const resolved = resolveEffectivePrice(item);
   const unitDec = resolved.finalPrice;
 
+  // La variación es parte de la identidad de la línea (D4): una pizza
+  // especial y una de roquefort son dos líneas, no una con cantidad 2.
   const existingItem = await prisma.draft_order_item.findFirst({
-    where: { draft_order_id: cart.id, product_id: item.id }
+    where: { draft_order_id: cart.id, product_id: item.id, variation }
   });
 
   if (existingItem) {
@@ -296,6 +350,7 @@ export const buildAddItemMessage = async (
         total_price: unitDec.mul(qty),
         list_price: resolved.hasDiscount ? resolved.listPrice : null,
         discount_amount: resolved.hasDiscount ? resolved.discountAmount : null,
+        variation,
       },
     });
   }
@@ -365,10 +420,11 @@ export const buildAddItemMessage = async (
   const discountLine = resolved.hasDiscount
     ? ` ✨ *¡Precio con descuento!* ${priceLine}`
     : '';
+  const variationLine = variation ? ` (${variation})` : '';
   const actionLine =
     mode === 'set'
-      ? `Ahora tenés ${qtyLine}*${item.name}* en tu pedido.`
-      : `${qtyLine}*${item.name}* sumado a tu pedido.`;
+      ? `Ahora tenés ${qtyLine}*${item.name}*${variationLine} en tu pedido.`
+      : `${qtyLine}*${item.name}*${variationLine} sumado a tu pedido.`;
   const mainInner =
     `${actionLine}${discountLine}\n\n${orderSectionsBlock}${guidanceSuffix}` +
     `Total: $${total._sum.total_price || 0}${addressLine}\n\n` +
@@ -405,7 +461,8 @@ export const handleAddItemFromWebhook = async (
   payload: WhatsAppWebhookPayload,
   menuItemId: string,
   addQuantity: number = 1,
-  mode: 'add' | 'set' = 'add'
+  mode: 'add' | 'set' = 'add',
+  variation: string | null = null
 ): Promise<AddItemMessageResult | null> => {
 
   const entry = payload.entry?.[0];
@@ -433,7 +490,8 @@ export const handleAddItemFromWebhook = async (
     menuItemId,
     customer,
     addQuantity,
-    mode
+    mode,
+    variation
   );
   if (
     typeof result === 'object' &&

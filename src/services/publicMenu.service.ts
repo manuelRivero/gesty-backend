@@ -84,6 +84,7 @@ function mapPublicMenuItem(row: {
   is_featured: boolean;
   discount_type: string | null;
   discount_value: import("@prisma/client").Prisma.Decimal | null;
+  variations: string[];
   menu_category: {
     id: string;
     name: string;
@@ -124,6 +125,8 @@ function mapPublicMenuItem(row: {
           finalPrice: resolved.finalPrice.toFixed(2),
         }
       : null,
+    // [] ≡ null ≡ "sin variaciones" (D1).
+    variations: row.variations.length > 0 ? row.variations : null,
   };
 }
 
@@ -152,6 +155,7 @@ export async function listFeaturedMenuItems(params: {
       is_featured: true,
       discount_type: true,
       discount_value: true,
+      variations: true,
       menu_category: {
         select: {
           id: true,
@@ -189,6 +193,7 @@ export async function getPublicMenuItemById(params: {
       is_featured: true,
       discount_type: true,
       discount_value: true,
+      variations: true,
       menu_category: {
         select: {
           id: true,

@@ -42,7 +42,8 @@ const configPatchSchema = z.object({
   operate_when_closed: z.boolean().optional(),
   orders_when_closed: z.boolean().optional(),
   external_delivery_enabled: z.boolean().optional(),
-  bot_personality_id: z.string().uuid().optional()
+  bot_personality_id: z.string().uuid().optional(),
+  ambassadors_enabled: z.boolean().optional()
 });
 
 export async function getAdminBusinessConfig(req: Request, res: Response) {

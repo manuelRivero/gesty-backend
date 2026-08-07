@@ -183,6 +183,29 @@ const envSchema = z.object({
    * `payment_status='unpaid'`. Default 24.
    */
   TRANSFER_PROOF_WINDOW_HOURS: z.coerce.number().positive().default(24),
+
+  /**
+   * Cuántos comprobantes con al menos un check en `fail` puede acumular una
+   * orden antes de escalar la conversación a un humano (Fase 8). Los checks
+   * en `unknown` no cuentan: un comprobante ilegible o un local que no cargó
+   * sus datos bancarios no acercan a nadie al escalamiento.
+   *
+   * No es un tope de comprobantes correctos: un comprobante que pasa los
+   * checks es plata entrando y nunca se rechaza. Default 3.
+   */
+  TRANSFER_PROOF_MAX_FAILED: z.coerce.number().int().positive().default(3),
+
+  // --- Embajadores (Domingo Sabrosón) ---
+  // Feature en sí controlada por business_config.ambassadors_enabled; estas
+  // vars son la config global de acceso al servicio (compartida entre negocios).
+  /** Base URL del servicio de Embajadores. Sin ella, el feature es un no-op. */
+  AMBASSADORS_API_BASE_URL: z.string().url().optional(),
+  /** Credencial de integración (Bearer o x-api-key según AMBASSADORS_AUTH_HEADER). */
+  AMBASSADORS_API_KEY: z.string().optional(),
+  /** Cómo enviar la credencial en register-sale. Default: bearer. */
+  AMBASSADORS_AUTH_HEADER: z.enum(['bearer', 'api_key']).default('bearer'),
+  /** Timeout de las requests salientes. Default 5000ms. */
+  AMBASSADORS_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;
@@ -234,3 +257,11 @@ export const isHybridCtaEnabledForBusiness = (businessId: string): boolean => {
     .map((s) => s.trim())
     .includes(businessId);
 };
+
+/**
+ * Config global del servicio de Embajadores configurada (URL base presente).
+ * No confundir con el flag por negocio `business_config.ambassadors_enabled`:
+ * ambas condiciones deben cumplirse para que el feature esté activo.
+ */
+export const isAmbassadorsConfigured = (): boolean =>
+  Boolean(env.AMBASSADORS_API_BASE_URL && env.AMBASSADORS_API_BASE_URL.trim());

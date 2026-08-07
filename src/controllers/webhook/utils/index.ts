@@ -6,20 +6,35 @@ export const parseProductId = (payloadId: string): string => {
 };
 
 /**
- * `ADD_ITEM:<productId>` (legacy, sin cantidad explícita) o `ADD_ITEM:<productId>:<qty>` (qty 1–99).
- * Con UUID estándar: parts[1]=id, parts[2]=qty. La cantidad es el último segmento numérico.
+ * `ADD_ITEM:<productId>` (legacy, sin cantidad explícita), `ADD_ITEM:<productId>:<qty>`
+ * (qty 1–99), o `ADD_ITEM:<productId>:<qty>:v<index>` cuando el platillo tiene variaciones
+ * y el cliente eligió una fila del picker (`buildVariationPickerList`).
+ * El sufijo `:v<n>` se reconoce y se descarta **antes** de aplicar la lógica de cantidad
+ * existente, así los formatos viejos siguen funcionando igual.
  */
 export function parseAddItemButtonPayload(payloadId: string): {
   productId: string;
   quantityFromPayload: number | null;
+  variationIndex: number | null;
 } {
   if (!payloadId.startsWith('ADD_ITEM:')) {
-    return { productId: '', quantityFromPayload: null };
+    return { productId: '', quantityFromPayload: null, variationIndex: null };
   }
-  const rest = payloadId.slice('ADD_ITEM:'.length);
+  let rest = payloadId.slice('ADD_ITEM:'.length);
+
+  let variationIndex: number | null = null;
+  const variationColon = rest.lastIndexOf(':');
+  if (variationColon > 0) {
+    const variationMatch = /^v(\d{1,2})$/.exec(rest.slice(variationColon + 1).trim());
+    if (variationMatch) {
+      variationIndex = parseInt(variationMatch[1], 10);
+      rest = rest.slice(0, variationColon);
+    }
+  }
+
   const lastColon = rest.lastIndexOf(':');
   if (lastColon <= 0) {
-    return { productId: rest.trim(), quantityFromPayload: null };
+    return { productId: rest.trim(), quantityFromPayload: null, variationIndex };
   }
   const tail = rest.slice(lastColon + 1).trim();
   if (/^\d{1,2}$/.test(tail)) {
@@ -28,10 +43,11 @@ export function parseAddItemButtonPayload(payloadId: string): {
       return {
         productId: rest.slice(0, lastColon).trim(),
         quantityFromPayload: n,
+        variationIndex,
       };
     }
   }
-  return { productId: rest.trim(), quantityFromPayload: null };
+  return { productId: rest.trim(), quantityFromPayload: null, variationIndex };
 }
 
 export const parseQuantity = (payload: string): number | null => {

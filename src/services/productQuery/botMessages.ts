@@ -3,6 +3,7 @@ import {
   buildPaymentButtonsMessage,
   buildPaymentChoiceBody,
 } from '../payment/paymentButtons';
+import { shortOrderRef } from '../orderStatusNotification.service';
 
 /** Mensajes compartidos con formato parseable por {@link parseBotUserMessage}. */
 
@@ -128,6 +129,58 @@ export const PAYMENT_PROOF_FALLBACK_BOT_MESSAGE = formatBotUserMessage(
   '🧾',
   'Recibimos tu mensaje. Estamos teniendo un problema para procesar la imagen; nuestro equipo lo revisa igual, no te preocupes.'
 );
+
+/**
+ * Comprobante repetido (Fase 8): la misma imagen ya asociada a esta orden. No
+ * se vuelve a procesar ni se llama a visión, pero se le contesta igual para
+ * que el cliente sepa que está en curso.
+ */
+export const PAYMENT_PROOF_DUPLICATE_BOT_MESSAGE = formatBotUserMessage(
+  'Ya lo tenemos',
+  '🧾',
+  'Este comprobante ya nos había llegado y lo estamos verificando. Te avisamos apenas quede confirmado.'
+);
+
+/**
+ * Escalamiento a humano (Fase 8): la orden acumuló varios comprobantes cuyos
+ * datos no coinciden con el pedido. El bot deja de procesar imágenes y una
+ * persona del local sigue la conversación. No se le detalla al cliente qué
+ * check falló: esa información le sirve a quien quiera calibrar un intento
+ * siguiente, y a un cliente honesto lo confunde.
+ */
+export const PAYMENT_PROOF_ESCALATED_BOT_MESSAGE = formatBotUserMessage(
+  'Lo revisamos con vos',
+  '🎧',
+  'Recibimos varios comprobantes y necesitamos verificarlos con más detalle. Una persona del local va a seguir esta conversación y te contacta a la brevedad.'
+);
+
+/**
+ * Cierre del ciclo (Fase 9, D9): el bot le prometió al cliente "te avisamos
+ * apenas quede confirmado" al recibir el comprobante — este es ese aviso.
+ * Nunca se manda solo, siempre a través de `paymentProofNotification.service.ts`.
+ */
+export function buildPaymentProofApprovedMessage(orderId: string): string {
+  const ref = shortOrderRef(orderId);
+  return formatBotUserMessage(
+    'Pago confirmado',
+    '✅',
+    `Pedido *#${ref}*\n\nConfirmamos tu pago. ¡Gracias! Ya estamos preparando tu pedido.`
+  );
+}
+
+/**
+ * Rechazo (Fase 9, D9): neutro a propósito. No menciona qué falló ni incluye
+ * la `review_note` del admin — esa información le sirve a quien quiera
+ * calibrar el intento siguiente, y a un cliente honesto lo confunde.
+ */
+export function buildPaymentProofRejectedMessage(orderId: string): string {
+  const ref = shortOrderRef(orderId);
+  return formatBotUserMessage(
+    'Revisá tu comprobante',
+    '🧾',
+    `Pedido *#${ref}*\n\nNo pudimos confirmar el pago con el comprobante que enviaste. ¿Podés revisarlo y volver a mandarlo?`
+  );
+}
 
 export function buildCartItemNotFoundMessage(itemIdentifier: string): string {
   return formatBotUserMessage(

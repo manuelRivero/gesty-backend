@@ -43,6 +43,14 @@ const discountSchema = z
   .nullable()
   .optional();
 
+// D8 — máximo 10 variaciones: es el límite de filas de una lista de
+// WhatsApp sin paginado (ver PLAN-ACCION-VARIACIONES-PLATILLOS.md).
+const variationsSchema = z
+  .array(z.string().trim().min(1).max(60))
+  .max(10)
+  .nullable()
+  .optional();
+
 const createSchema = z.object({
   categoryId: z.string().uuid().optional(),
   categoryTag: z.nativeEnum(MenuCategoryTag).optional(),
@@ -55,7 +63,8 @@ const createSchema = z.object({
   isFeatured: z.boolean().optional(),
   isAvailable: z.boolean().optional(),
   price: menuItemPriceSchema.optional(),
-  discount: discountSchema
+  discount: discountSchema,
+  variations: variationsSchema
 }).refine((data) => Boolean(data.categoryId || data.categoryTag || data.sectionId), {
   message: "Debe enviar categoryId o categoryTag/sectionId",
   path: ["categoryId"]
@@ -77,7 +86,8 @@ const updateSchema = z.object({
   isFeatured: z.boolean().optional(),
   isAvailable: z.boolean().optional(),
   price: menuItemPriceSchema.optional(),
-  discount: discountSchema
+  discount: discountSchema,
+  variations: variationsSchema
 });
 
 export async function getMenuItems(req: Request, res: Response) {

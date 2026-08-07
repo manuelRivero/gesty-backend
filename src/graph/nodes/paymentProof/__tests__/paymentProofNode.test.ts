@@ -30,6 +30,14 @@ vi.mock('../../../../services/payment/transferProof.service', () => ({
 
 vi.mock('../../../../socket/adminSocket', () => ({
   emitAdminOrderPaymentProofReceived: vi.fn(),
+  emitAdminOrderPaymentProofChecked: vi.fn(),
+}));
+
+// El auto-chequeo de la Fase 7 corre en background tras crear el proof; acá
+// se mockea para aislar el comportamiento de la Fase 4 (y para que ningún
+// test pueda disparar una llamada real a OpenAI).
+vi.mock('../../../../services/ai/paymentProofVision.service', () => ({
+  extractPaymentProofWithVision: vi.fn().mockResolvedValue(null),
 }));
 
 // sharp real: opera sobre un buffer PNG válido generado en el propio test.
@@ -142,7 +150,11 @@ describe('paymentProofNode', () => {
       sha256: 'abc123',
       sizeBytes: buffer.length,
     });
-    mockedFindFirst.mockResolvedValueOnce({ order_id: 'order-old' });
+    // Dos consultas seguidas a `payment_proof.findFirst`: primero el dedupe
+    // contra la misma orden (Fase 8), después el reuso en otra orden (D6).
+    mockedFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ order_id: 'order-old' });
     mockedCreate.mockResolvedValueOnce({ id: 'proof-2' });
 
     const result = await paymentProofNode(baseState());

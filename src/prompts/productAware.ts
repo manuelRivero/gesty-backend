@@ -11,6 +11,7 @@ export const buildProductAwareUserPrompt = (params: {
     serves_people?: number | null;
     is_available: boolean;
     price?: { amount: unknown; currency_code: string } | null;
+    variations?: string[] | null;
   };
   userQuestion: string;
   requestedPartySize?: number | null;
@@ -32,7 +33,8 @@ Available: ${product.is_available ? 'yes' : 'no'}
 Price: ${priceText}
 Serves people: ${product.serves_people ?? 'N/A'}
 Description: ${product.description ?? 'N/A'}
-Ingredients: ${product.ingredients ?? 'N/A'}${sessionPartyBlock}
+Ingredients: ${product.ingredients ?? 'N/A'}
+Variaciones disponibles: ${product.variations?.length ? product.variations.join(', ') : 'N/A'}${sessionPartyBlock}
 
 USER QUESTION:
 ${userQuestion}`;

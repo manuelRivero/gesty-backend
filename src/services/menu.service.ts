@@ -42,6 +42,8 @@ export type MenuItemSearchResult = {
   category_id?: string | null;
   category_name?: string | null;
   category_tag?: string | null;
+  /** Variaciones de nombre del platillo (D1: `[]`/`null` ≡ sin variaciones). */
+  variations?: string[] | null;
 };
 
 export type FeaturedMenuItemsPageResult = {
@@ -286,6 +288,7 @@ export class MenuService {
     m.serves_people,
     m.is_available,
     m.image,
+    m.variations,
     (m.embedding <=> ${queryEmbeddingString}::vector) AS distance,
     mc.id   AS category_id,
     mc.name AS category_name,
@@ -367,6 +370,7 @@ export class MenuService {
         ingredients: true,
         serves_people: true,
         is_available: true,
+        variations: true,
         menu_item_price: {
           where: priceWhere,
           orderBy: { valid_from: 'desc' },
@@ -406,6 +410,7 @@ export class MenuService {
         ingredients: true,
         serves_people: true,
         is_available: true,
+        variations: true,
         menu_item_price: {
           where: priceWhere,
           orderBy: { valid_from: 'desc' },
@@ -461,6 +466,7 @@ export class MenuService {
         ingredients: true,
         serves_people: true,
         is_available: true,
+        variations: true,
         menu_item_price: {
           where: priceWhere,
           orderBy: { valid_from: 'desc' },

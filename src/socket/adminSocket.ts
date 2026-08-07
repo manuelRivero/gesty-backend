@@ -286,6 +286,13 @@ export type AdminOrderRealtimePayload =
       orderId: string;
       proofId: string;
       at: string;
+    }
+  | {
+      type: "order.payment_proof_checked";
+      businessId: string;
+      orderId: string;
+      proofId: string;
+      at: string;
     };
 
 function emitAdminOrderChannel(
@@ -378,6 +385,28 @@ export function emitAdminOrderPaymentProofReceived(
       at: new Date().toISOString()
     },
     "payment_proof_received"
+  );
+}
+
+/**
+ * Emitido cuando termina el auto-chequeo con visión (Fase 7, fire-and-forget
+ * tras la respuesta al cliente) para que el panel se refresque solo sin
+ * hacer polling.
+ */
+export function emitAdminOrderPaymentProofChecked(
+  businessId: string,
+  payload: { orderId: string; proofId: string }
+): void {
+  emitAdminOrderChannel(
+    businessId,
+    {
+      type: "order.payment_proof_checked",
+      businessId,
+      orderId: payload.orderId,
+      proofId: payload.proofId,
+      at: new Date().toISOString()
+    },
+    "payment_proof_checked"
   );
 }
 
