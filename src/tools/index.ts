@@ -59,6 +59,7 @@ import {
   ORDER_STATUS_LABEL_ES,
   ORDER_PAYMENT_STATUS_LABEL_ES,
 } from '../constants/orderWorkflow';
+import { hasVariations, matchVariation } from '../services/menu/menuItemVariations';
 
 const toJson = (data: unknown): string => {
   try {
@@ -79,6 +80,7 @@ const toShortlistItem = (item: {
   is_featured?: boolean;
   menu_category?: { id: string; name: string; category_tag: string | null } | null;
   menu_item_price?: Array<{ amount: Prisma.Decimal; currency_code: string }> | null;
+  variations?: string[] | null;
 }) => {
   const firstPrice = item.menu_item_price?.[0];
   return {
@@ -99,6 +101,9 @@ const toShortlistItem = (item: {
           currency: firstPrice.currency_code,
         }
       : null,
+    // Se omite la clave cuando no hay variaciones para no gastar tokens con
+    // "variations": [] en cada producto del catálogo (D1, Fase 5 Tarea 5.1).
+    ...(item.variations?.length ? { variations: item.variations } : {}),
   };
 };
 
@@ -271,6 +276,9 @@ export const getCartTool = new DynamicStructuredTool<
         id: it.id,
         productId: it.product_id,
         menuItemName: it.menu_item?.name ?? null,
+        // La variación es parte de la identidad de la línea (D4): sin esto el
+        // agente describe dos "Pizza" idénticas en vez de Especial/Roquefort.
+        variation: it.variation ?? null,
         quantity: it.quantity,
         unitPrice: it.unit_price.toString(),
         totalPrice: it.total_price.toString(),
@@ -410,6 +418,7 @@ export const getFeaturedProductsTool = new DynamicStructuredTool<
           amount: p.amount.toString(),
           currency: p.currency_code,
         })),
+        ...(item.variations?.length ? { variations: item.variations } : {}),
       })),
     });
   },
@@ -570,6 +579,7 @@ export const findProductsByFilterTool = new DynamicStructuredTool<
           name: true,
           serves_people: true,
           is_featured: true,
+          variations: true,
           menu_category: { select: { id: true, name: true, category_tag: true } },
           menu_item_price: {
             where: priceWhere,
@@ -658,6 +668,7 @@ export const getProductsDetailsByIdsTool = new DynamicStructuredTool<
         serves_people: true,
         is_available: true,
         is_featured: true,
+        variations: true,
         menu_category: { select: { id: true, name: true, category_tag: true } },
         menu_item_price: {
           where: priceWhere,
@@ -688,6 +699,7 @@ export const getProductsDetailsByIdsTool = new DynamicStructuredTool<
           amount: p.amount.toString(),
           currency: p.currency_code,
         })),
+        ...(item.variations.length ? { variations: item.variations } : {}),
       })),
     });
   },
@@ -1011,6 +1023,15 @@ const addCartItemSchema = z.object({
     .max(99)
     .default(1)
     .describe('Cantidad a agregar. Por defecto 1.'),
+  variation: z
+    .string()
+    .optional()
+    .describe(
+      'Variedad elegida por el cliente (ej. "Roquefort") cuando el producto tiene variaciones ' +
+      '(ver el campo variations devuelto por search_products/find_products_by_filter/get_products_details_by_ids). ' +
+      'Obligatorio si el producto tiene variaciones: si no la tenés, preguntale al cliente cuál quiere ' +
+      'antes de llamar a esta tool. Tiene que ser una de las listadas en variations, nunca inventada.'
+    ),
 });
 type AddCartItemInput = z.infer<typeof addCartItemSchema>;
 
@@ -1023,12 +1044,18 @@ export const addCartItemTool = new DynamicStructuredTool<
     'Agrega (o aumenta) un producto al carrito activo del cliente. ' +
     'Usá este tool cuando el cliente confirme que quiere agregar un plato en texto libre: ' +
     '"sí, agregalo", "quiero uno de eso", "ponelo", "dale", "sumá 2 pizzas", etc. ' +
-    'Si el producto ya está en el carrito, suma la cantidad indicada. ' +
+    'Si el producto ya está en el carrito con la misma variación, suma la cantidad indicada; ' +
+    'variaciones distintas del mismo producto son líneas separadas. ' +
     'Antes de llamar necesitás el productId: si ya lo tenés del contexto úsalo; ' +
-    'si no, llamá search_products primero. ' +
+    'si no, llamá search_products primero. Si el producto tiene variaciones y no sabés cuál quiere ' +
+    'el cliente, preguntale antes de llamar (esta tool rechaza el llamado si falta y el producto la requiere). ' +
     'Devuelve el estado actualizado del carrito para que puedas confirmarle al cliente.',
   schema: addCartItemSchema,
-  func: async ({ productId, quantity }: AddCartItemInput, _runManager, config?: RunnableConfig) => {
+  func: async (
+    { productId, quantity, variation }: AddCartItemInput,
+    _runManager,
+    config?: RunnableConfig
+  ) => {
     const { businessId, customerPhone, conversationId } = getReactContext(config);
     const qty = Math.min(99, Math.max(1, Math.floor(quantity)));
 
@@ -1075,11 +1102,40 @@ export const addCartItemTool = new DynamicStructuredTool<
       return toJson({ success: false, error: 'product_not_found_or_unavailable' });
     }
 
+    // D5 — el agente híbrido no adivina la variación: la tool lo obliga a
+    // preguntar. Se resuelve ANTES de tocar draft_order_item, para que un
+    // llamado sin variación (o con una inválida) no escriba nada.
+    let resolvedVariation: string | null = null;
+    if (hasVariations(item)) {
+      if (!variation) {
+        return toJson({
+          success: false,
+          error: 'variation_required',
+          productName: item.name,
+          variations: item.variations,
+        });
+      }
+      const match = matchVariation(variation, item.variations);
+      if (match.status !== 'ok') {
+        return toJson({
+          success: false,
+          error: 'variation_invalid',
+          variations: item.variations,
+          ...(match.status === 'ambiguous' ? { candidates: match.candidates } : {}),
+        });
+      }
+      resolvedVariation = match.value;
+    }
+    // Producto sin variaciones: si el modelo mandó una de todos modos, se
+    // ignora (no es un error; el modelo a veces manda campos de más).
+
     const resolved = resolveEffectivePrice(item);
     const unitPrice = resolved.finalPrice;
 
+    // La variación es parte de la identidad de la línea (D4): una pizza
+    // especial y una de roquefort son dos líneas, no una con cantidad 2.
     const existing = await prisma.draft_order_item.findFirst({
-      where: { draft_order_id: draft.id, product_id: productId },
+      where: { draft_order_id: draft.id, product_id: productId, variation: resolvedVariation },
     });
 
     let newQty: number;
@@ -1106,6 +1162,7 @@ export const addCartItemTool = new DynamicStructuredTool<
           total_price: unitPrice.mul(newQty),
           list_price: resolved.hasDiscount ? resolved.listPrice : null,
           discount_amount: resolved.hasDiscount ? resolved.discountAmount : null,
+          variation: resolvedVariation,
         },
       });
     }
@@ -1149,6 +1206,7 @@ export const addCartItemTool = new DynamicStructuredTool<
       success: true,
       added: {
         itemName: item.name,
+        variation: resolvedVariation,
         quantity: qty,
         unitPrice: unitPrice.toString(),
         ...(resolved.hasDiscount && {
@@ -1162,6 +1220,7 @@ export const addCartItemTool = new DynamicStructuredTool<
         items: updatedItems.map((it) => ({
           productId: it.product_id,
           name: it.menu_item?.name ?? null,
+          variation: it.variation ?? null,
           quantity: it.quantity,
           notes: it.notes ?? null,
         })),

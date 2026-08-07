@@ -7,6 +7,7 @@
 import { OrderPaymentStatus } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { updateAdminOrderPaymentStatus } from "./adminOrders.service";
+import { notifyCustomerPaymentProofReviewed } from "./paymentProofNotification.service";
 
 export async function listAdminPaymentProofs(businessId: string, orderId: string) {
   const order = await prisma.orders.findFirst({
@@ -72,6 +73,15 @@ export async function reviewAdminPaymentProof(params: {
 
   if (decision === "approve") {
     await updateAdminOrderPaymentStatus(businessId, orderId, OrderPaymentStatus.paid);
+  }
+
+  // D9: el aviso al cliente nunca revierte la aprobación/rechazo — ya está
+  // persistido arriba. Un fallo de envío (p. ej. fuera de la ventana de 24 h
+  // de WhatsApp) se loguea, no se tapa.
+  try {
+    await notifyCustomerPaymentProofReviewed({ businessId, orderId, decision });
+  } catch (error) {
+    console.error("[AdminPaymentProof] Error al avisar al cliente:", error);
   }
 
   return { outcome: "ok", proof };

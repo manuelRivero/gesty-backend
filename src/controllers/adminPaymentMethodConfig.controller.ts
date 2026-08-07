@@ -23,6 +23,9 @@ const createSchema = z.object({
   isActive: z.boolean().optional(),
   instructions: z.string().max(2000).nullable().optional(),
   sortOrder: z.number().int().min(0).max(1000).optional(),
+  bankAlias: z.string().max(255).nullable().optional(),
+  bankCbu: z.string().max(50).nullable().optional(),
+  bankHolder: z.string().max(255).nullable().optional(),
 }).refine(
   (v) => !(v.adjustmentType === 'PERCENT' && v.adjustmentValue > 100),
   { message: 'El porcentaje no puede superar el 100%', path: ['adjustmentValue'] }
@@ -37,6 +40,9 @@ const updateSchema = z.object({
   isActive: z.boolean().optional(),
   instructions: z.string().max(2000).nullable().optional(),
   sortOrder: z.number().int().min(0).max(1000).optional(),
+  bankAlias: z.string().max(255).nullable().optional(),
+  bankCbu: z.string().max(50).nullable().optional(),
+  bankHolder: z.string().max(255).nullable().optional(),
 }).refine(
   (v) => !(v.adjustmentType === 'PERCENT' && v.adjustmentValue !== undefined && v.adjustmentValue > 100),
   { message: 'El porcentaje no puede superar el 100%', path: ['adjustmentValue'] }

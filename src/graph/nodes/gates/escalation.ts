@@ -9,23 +9,15 @@
  * excepción de sesión.
  *
  * Reutiliza la semántica de `SupportHandler` (mismo mensaje, mismo efecto:
- * `is_human_handled` + evento de socket al admin) para no duplicar el
- * significado de "escalado a humano" en dos lugares.
+ * `is_human_handled` + evento de socket al admin) a través de
+ * `humanHandover.service`, para no duplicar el significado de "escalado a
+ * humano" en varios lugares.
  */
 
-import {
-  findOrCreateConversationState,
-  updateConversationState,
-} from '../../../repositories/conversationState.repository';
-import { emitAdminWhatsappSupportRequested } from '../../../socket/adminSocket';
+import { SUPPORT_MESSAGE, handOverToHuman } from '../../../services/humanHandover.service';
 import { ConversationIntent } from '../../../types/conversationIntent';
 import { textResponse } from '../../../controllers/webhook/utils';
 import type { AgentState, AgentStateUpdate } from '../../state';
-
-const SUPPORT_MESSAGE =
-  '🤖\n\n*Tu consulta fue derivada a nuestro equipo* 🎧\n\n' +
-  'En breve, uno de nuestros asesores te atenderá con mucho gusto y resolverá todas tus dudas.\n\n' +
-  'Espero poder acompañarte de nuevo en una próxima oportunidad. ¡Hasta pronto! 👋';
 
 /**
  * Frases inequívocas de pedido de un humano. Deliberadamente conservador:
@@ -65,31 +57,12 @@ export const escalationGateNode = async (
   const conversationId = state.conversationId;
   if (!conversationId) return {};
 
-  try {
-    // Garantiza la fila antes de actualizarla: en este punto del pipeline
-    // (antes de `buildDetectionContextNode`) todavía puede no existir.
-    await findOrCreateConversationState(conversationId);
-    await updateConversationState(conversationId, { is_human_handled: true });
-    console.log('[EscalationGate] Conversation handed over to human (deterministic):', {
-      conversationId,
-      trigger: isSupportButton ? 'support_button' : 'text_pattern',
-    });
-    const businessId = state.business?.id;
-    if (typeof businessId === 'string' && businessId.length > 0) {
-      const customer = state.customer as
-        | { id?: string; phone_number?: string | null; name?: string | null }
-        | null;
-      emitAdminWhatsappSupportRequested(businessId, {
-        conversationId,
-        customerId: typeof customer?.id === 'string' ? customer.id : null,
-        customerPhone:
-          typeof customer?.phone_number === 'string' ? customer.phone_number : null,
-        customerName: typeof customer?.name === 'string' ? customer.name : null,
-      });
-    }
-  } catch (error) {
-    console.error('[EscalationGate] Failed to set is_human_handled:', error);
-  }
+  await handOverToHuman({
+    conversationId,
+    businessId: state.business?.id,
+    customer: state.customer,
+    reason: isSupportButton ? 'escalation_gate:support_button' : 'escalation_gate:text_pattern',
+  });
 
   return {
     handlerResult: textResponse(SUPPORT_MESSAGE),

@@ -184,6 +184,17 @@ const envSchema = z.object({
    */
   TRANSFER_PROOF_WINDOW_HOURS: z.coerce.number().positive().default(24),
 
+  /**
+   * Cuántos comprobantes con al menos un check en `fail` puede acumular una
+   * orden antes de escalar la conversación a un humano (Fase 8). Los checks
+   * en `unknown` no cuentan: un comprobante ilegible o un local que no cargó
+   * sus datos bancarios no acercan a nadie al escalamiento.
+   *
+   * No es un tope de comprobantes correctos: un comprobante que pasa los
+   * checks es plata entrando y nunca se rechaza. Default 3.
+   */
+  TRANSFER_PROOF_MAX_FAILED: z.coerce.number().int().positive().default(3),
+
   // --- Embajadores (Domingo Sabrosón) ---
   // Feature en sí controlada por business_config.ambassadors_enabled; estas
   // vars son la config global de acceso al servicio (compartida entre negocios).

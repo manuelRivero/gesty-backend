@@ -22,6 +22,9 @@ export interface PaymentMethodConfigInput {
   isActive?: boolean;
   instructions?: string | null;
   sortOrder?: number;
+  bankAlias?: string | null;
+  bankCbu?: string | null;
+  bankHolder?: string | null;
 }
 
 export interface PaymentMethodConfigDTO {
@@ -34,8 +37,39 @@ export interface PaymentMethodConfigDTO {
   isActive: boolean;
   instructions: string | null;
   sortOrder: number;
+  bankAlias: string | null;
+  bankCbu: string | null;
+  bankHolder: string | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+/**
+ * Normalización de datos bancarios (Fase 6, Tarea 6.2): saca espacios/guiones
+ * del CBU y baja el alias a minúsculas, para que la comparación de
+ * `destination_matches` (paymentProofChecks.ts) no falle por cosmética.
+ * No valida formato ni dígito verificador — hay locales que cobran a cuentas
+ * de terceros o usan CVU, y rechazar en el formulario es desproporcionado.
+ */
+function normalizeBankAlias(value: string | null | undefined): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? null : trimmed.toLowerCase();
+}
+
+function normalizeBankCbu(value: string | null | undefined): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  const cleaned = value.replace(/[\s-]/g, '');
+  return cleaned.length === 0 ? null : cleaned;
+}
+
+function normalizeBankHolder(value: string | null | undefined): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? null : trimmed;
 }
 
 function toDTO(row: {
@@ -48,6 +82,9 @@ function toDTO(row: {
   is_active: boolean;
   instructions: string | null;
   sort_order: number;
+  bank_alias: string | null;
+  bank_cbu: string | null;
+  bank_holder: string | null;
   created_at: Date;
   updated_at: Date;
 }): PaymentMethodConfigDTO {
@@ -61,6 +98,9 @@ function toDTO(row: {
     isActive: row.is_active,
     instructions: row.instructions,
     sortOrder: row.sort_order,
+    bankAlias: row.bank_alias,
+    bankCbu: row.bank_cbu,
+    bankHolder: row.bank_holder,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -140,6 +180,9 @@ export async function createAdminPaymentMethodConfig(
       is_active: isActive,
       instructions: input.instructions ?? null,
       sort_order: input.sortOrder ?? 0,
+      bank_alias: normalizeBankAlias(input.bankAlias) ?? null,
+      bank_cbu: normalizeBankCbu(input.bankCbu) ?? null,
+      bank_holder: normalizeBankHolder(input.bankHolder) ?? null,
     },
   });
   return toDTO(row);
@@ -198,6 +241,9 @@ export async function updateAdminPaymentMethodConfig(
       ...(input.isActive !== undefined && { is_active: input.isActive }),
       ...(input.instructions !== undefined && { instructions: input.instructions }),
       ...(input.sortOrder !== undefined && { sort_order: input.sortOrder }),
+      ...(input.bankAlias !== undefined && { bank_alias: normalizeBankAlias(input.bankAlias) }),
+      ...(input.bankCbu !== undefined && { bank_cbu: normalizeBankCbu(input.bankCbu) }),
+      ...(input.bankHolder !== undefined && { bank_holder: normalizeBankHolder(input.bankHolder) }),
       updated_at: new Date(),
     },
   });

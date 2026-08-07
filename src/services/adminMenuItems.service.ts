@@ -8,6 +8,7 @@ import {
 } from "../helpers/menuItemPrice.helper";
 import { prisma } from "../lib/prisma";
 import { refreshMenuItemEmbedding } from "./ai/menuItemEmbedding.service";
+import { normalizeVariationsInput } from "./menu/menuItemVariations";
 
 /**
  * Campos que componen el texto embebido en `menu_item.embedding`. Si el admin
@@ -21,7 +22,8 @@ const EMBEDDING_AFFECTING_FIELDS = [
   "servesPeople",
   "isAvailable",
   "categoryId",
-  "categoryTag"
+  "categoryTag",
+  "variations"
 ] as const;
 type EmbeddingAffectingField = (typeof EMBEDDING_AFFECTING_FIELDS)[number];
 
@@ -174,6 +176,7 @@ export async function createAdminMenuItem(params: {
   isAvailable?: boolean;
   price?: MenuItemPriceInput;
   discount?: DiscountInput | null;
+  variations?: string[] | null;
 }) {
   const resolvedCategoryId = await resolveCategoryId(params.businessId, {
     categoryId: params.categoryId,
@@ -196,6 +199,7 @@ export async function createAdminMenuItem(params: {
       is_available: params.isAvailable ?? true,
       discount_type: params.discount?.discountType ?? null,
       discount_value: params.discount?.discountValue ?? null,
+      variations: normalizeVariationsInput(params.variations),
     }
   });
 
@@ -261,6 +265,7 @@ export async function updateAdminMenuItem(params: {
   isAvailable?: boolean;
   price?: MenuItemPriceInput;
   discount?: DiscountInput | null;
+  variations?: string[] | null;
 }) {
   const existing = await prisma.menu_item.findFirst({
     where: {
@@ -299,6 +304,9 @@ export async function updateAdminMenuItem(params: {
       ...(params.discount !== undefined ? {
         discount_type: params.discount?.discountType ?? null,
         discount_value: params.discount?.discountValue ?? null,
+      } : {}),
+      ...(params.variations !== undefined ? {
+        variations: normalizeVariationsInput(params.variations)
       } : {})
     }
   });
@@ -385,6 +393,8 @@ function formatAdminMenuItem(row: AdminMenuItemRow) {
     imageUrl: row.image,
     /** Key en object storage. */
     imageKey: row.image_key,
+    // [] ≡ null ≡ "sin variaciones" (D1); el panel espera null cuando no hay.
+    variations: row.variations.length > 0 ? row.variations : null,
   };
 }
 

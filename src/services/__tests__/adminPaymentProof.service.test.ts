@@ -15,8 +15,13 @@ vi.mock('../adminOrders.service', () => ({
   updateAdminOrderPaymentStatus: vi.fn(),
 }));
 
+vi.mock('../paymentProofNotification.service', () => ({
+  notifyCustomerPaymentProofReviewed: vi.fn(),
+}));
+
 import { prisma } from '../../lib/prisma';
 import { updateAdminOrderPaymentStatus } from '../adminOrders.service';
+import { notifyCustomerPaymentProofReviewed } from '../paymentProofNotification.service';
 import { listAdminPaymentProofs, reviewAdminPaymentProof } from '../adminPaymentProof.service';
 
 const mockedOrdersFindFirst = prisma.orders.findFirst as unknown as ReturnType<typeof vi.fn>;
@@ -24,10 +29,12 @@ const mockedFindMany = prisma.payment_proof.findMany as unknown as ReturnType<ty
 const mockedFindFirst = prisma.payment_proof.findFirst as unknown as ReturnType<typeof vi.fn>;
 const mockedUpdate = prisma.payment_proof.update as unknown as ReturnType<typeof vi.fn>;
 const mockedUpdatePaymentStatus = updateAdminOrderPaymentStatus as unknown as ReturnType<typeof vi.fn>;
+const mockedNotifyReviewed = notifyCustomerPaymentProofReviewed as unknown as ReturnType<typeof vi.fn>;
 
 describe('adminPaymentProof.service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedNotifyReviewed.mockResolvedValue({ sent: true });
   });
 
   describe('listAdminPaymentProofs', () => {
@@ -103,6 +110,66 @@ describe('adminPaymentProof.service', () => {
       expect(result).toEqual({ outcome: 'not_found' });
       expect(mockedUpdate).not.toHaveBeenCalled();
       expect(mockedUpdatePaymentStatus).not.toHaveBeenCalled();
+    });
+
+    describe('aviso al cliente (Fase 9, D9)', () => {
+      it('aprobar dispara el aviso al cliente y deja la orden paid', async () => {
+        mockedFindFirst.mockResolvedValueOnce({ id: 'proof-1' });
+        mockedUpdate.mockResolvedValueOnce({ id: 'proof-1', status: 'approved' });
+
+        const result = await reviewAdminPaymentProof({
+          businessId: 'biz-1',
+          orderId: 'order-1',
+          proofId: 'proof-1',
+          decision: 'approve',
+          reviewedBy: 'admin-1',
+        });
+
+        expect(mockedNotifyReviewed).toHaveBeenCalledWith({
+          businessId: 'biz-1',
+          orderId: 'order-1',
+          decision: 'approve',
+        });
+        expect(mockedUpdatePaymentStatus).toHaveBeenCalledWith('biz-1', 'order-1', 'paid');
+        expect(result).toEqual({ outcome: 'ok', proof: { id: 'proof-1', status: 'approved' } });
+      });
+
+      it('si el aviso al cliente falla, la orden queda paid igual (no revierte la aprobación)', async () => {
+        mockedFindFirst.mockResolvedValueOnce({ id: 'proof-1' });
+        mockedUpdate.mockResolvedValueOnce({ id: 'proof-1', status: 'approved' });
+        mockedNotifyReviewed.mockRejectedValueOnce(new Error('fuera de ventana de 24h'));
+
+        const result = await reviewAdminPaymentProof({
+          businessId: 'biz-1',
+          orderId: 'order-1',
+          proofId: 'proof-1',
+          decision: 'approve',
+          reviewedBy: 'admin-1',
+        });
+
+        expect(mockedUpdatePaymentStatus).toHaveBeenCalledWith('biz-1', 'order-1', 'paid');
+        expect(result).toEqual({ outcome: 'ok', proof: { id: 'proof-1', status: 'approved' } });
+      });
+
+      it('rechazar también dispara el aviso al cliente', async () => {
+        mockedFindFirst.mockResolvedValueOnce({ id: 'proof-1' });
+        mockedUpdate.mockResolvedValueOnce({ id: 'proof-1', status: 'rejected' });
+
+        await reviewAdminPaymentProof({
+          businessId: 'biz-1',
+          orderId: 'order-1',
+          proofId: 'proof-1',
+          decision: 'reject',
+          reviewedBy: 'admin-1',
+          note: 'Monto no coincide',
+        });
+
+        expect(mockedNotifyReviewed).toHaveBeenCalledWith({
+          businessId: 'biz-1',
+          orderId: 'order-1',
+          decision: 'reject',
+        });
+      });
     });
   });
 });

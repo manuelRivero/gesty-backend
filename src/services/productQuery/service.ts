@@ -257,6 +257,7 @@ export async function executeProductQuery(
             currency_code: activePrice.currency_code,
           }
         : null,
+      variations: matchedItem.variations,
     },
     userQuestion: userMessage,
     requestedPartySize: partySizeSingle,

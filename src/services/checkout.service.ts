@@ -151,6 +151,9 @@ export const createOrderFromDraft = async (
           list_price: item.list_price ?? undefined,
           discount_amount: item.discount_amount ?? undefined,
           notes: item.notes ?? undefined,
+          // Sin esto la variación se pierde justo en el paso que importa: la
+          // cocina recibe "1 Pizza" en vez de "1 Pizza (Roquefort)" (D3).
+          variation: item.variation ?? undefined,
         })),
       },
       currency_code: business.currency_code ?? 'ARS',
