@@ -52,6 +52,7 @@ import {
 } from '../../../services/payment/paymentProofChecks';
 import { handOverToHuman } from '../../../services/humanHandover.service';
 import { sendResponseNoContext } from '../../../controllers/webhook/sender';
+import { shortOrderRef } from '../../../services/orderStatusNotification.service';
 import { env } from '../../../config/env';
 import type { AgentState, AgentStateUpdate } from '../../state';
 import type { business as Business } from '@prisma/client';
@@ -69,6 +70,18 @@ const logEvent = (event: string, data: Record<string, unknown>): void => {
 const logError = (event: string, data: Record<string, unknown>): void => {
   console.error(JSON.stringify({ event: `[payment-proof] ${event}`, ...data }));
 };
+
+/** Toast/notificación del panel cuando termina el auto-chequeo del comprobante. */
+function buildAdminPaymentProofCheckedNotify(orderId: string): {
+  orderRef: string;
+  message: string;
+} {
+  const orderRef = shortOrderRef(orderId);
+  return {
+    orderRef,
+    message: `Llegó un comprobante de transferencia para el pedido #${orderRef}`,
+  };
+}
 
 /**
  * Hash perceptual simple (average hash): escala de grises 8x8, promedio de
@@ -216,56 +229,66 @@ export async function runPaymentProofAutoCheck(params: {
     extracted = await extractPaymentProofWithVision({ business, imageBuffer, mimeType });
   } catch (error) {
     logError('auto_check_vision_failed', { orderId: order.id, proofId, error: String(error) });
-    return;
   }
 
-  if (!extracted) {
-    logEvent('auto_check_skipped_no_extraction', { orderId: order.id, proofId });
-    return;
-  }
-
-  try {
-    const bankConfig = await prisma.payment_method_config.findFirst({
-      where: { business_id: business.id, payment_method: 'transfer' },
-      select: { bank_alias: true, bank_cbu: true },
-    });
-
-    let operationNumberAlreadyUsed = false;
-    if (extracted.operation_number) {
-      const duplicate = await prisma.payment_proof.findFirst({
-        where: {
-          business_id: business.id,
-          id: { not: proofId },
-          extracted: { path: ['operation_number'], equals: extracted.operation_number },
-        },
-        select: { id: true },
+  let persistedAutoCheck = false;
+  if (extracted) {
+    try {
+      const bankConfig = await prisma.payment_method_config.findFirst({
+        where: { business_id: business.id, payment_method: 'transfer' },
+        select: { bank_alias: true, bank_cbu: true },
       });
-      operationNumberAlreadyUsed = duplicate !== null;
+
+      let operationNumberAlreadyUsed = false;
+      if (extracted.operation_number) {
+        const duplicate = await prisma.payment_proof.findFirst({
+          where: {
+            business_id: business.id,
+            id: { not: proofId },
+            extracted: { path: ['operation_number'], equals: extracted.operation_number },
+          },
+          select: { id: true },
+        });
+        operationNumberAlreadyUsed = duplicate !== null;
+      }
+
+      const checks = computePaymentProofChecks({
+        extracted,
+        order: { total_amount: order.total_amount, created_at: order.created_at },
+        bankConfig,
+        operationNumberAlreadyUsed,
+        imageReusedInOrderId,
+      });
+
+      await prisma.payment_proof.update({
+        where: { id: proofId },
+        data: {
+          status: 'auto_checked',
+          extracted: extracted as unknown as Prisma.InputJsonValue,
+          checks: checks as unknown as Prisma.InputJsonValue,
+        },
+      });
+
+      persistedAutoCheck = true;
+      logEvent('auto_checked', { orderId: order.id, proofId });
+    } catch (error) {
+      logError('auto_check_persist_failed', { orderId: order.id, proofId, error: String(error) });
     }
-
-    const checks = computePaymentProofChecks({
-      extracted,
-      order: { total_amount: order.total_amount, created_at: order.created_at },
-      bankConfig,
-      operationNumberAlreadyUsed,
-      imageReusedInOrderId,
-    });
-
-    await prisma.payment_proof.update({
-      where: { id: proofId },
-      data: {
-        status: 'auto_checked',
-        extracted: extracted as unknown as Prisma.InputJsonValue,
-        checks: checks as unknown as Prisma.InputJsonValue,
-      },
-    });
-
-    emitAdminOrderPaymentProofChecked(business.id, { orderId: order.id, proofId });
-    logEvent('auto_checked', { orderId: order.id, proofId });
-  } catch (error) {
-    logError('auto_check_persist_failed', { orderId: order.id, proofId, error: String(error) });
-    return;
+  } else {
+    logEvent('auto_check_skipped_no_extraction', { orderId: order.id, proofId });
   }
+
+  // El admin siempre se entera: si visión falló, igual hay comprobante ligado
+  // al pedido para contrastar en el banco.
+  const notify = buildAdminPaymentProofCheckedNotify(order.id);
+  emitAdminOrderPaymentProofChecked(business.id, {
+    orderId: order.id,
+    orderRef: notify.orderRef,
+    proofId,
+    message: notify.message,
+  });
+
+  if (!persistedAutoCheck) return;
 
   try {
     await escalateIfTooManyFailedProofs({ business, customer, conversationId, order });

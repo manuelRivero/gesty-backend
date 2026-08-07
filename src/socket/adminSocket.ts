@@ -291,7 +291,11 @@ export type AdminOrderRealtimePayload =
       type: "order.payment_proof_checked";
       businessId: string;
       orderId: string;
+      /** Referencia corta del pedido (8 chars) para UI / toast. */
+      orderRef: string;
       proofId: string;
+      /** Texto listo para toast/notificación en el panel. */
+      message: string;
       at: string;
     };
 
@@ -390,12 +394,14 @@ export function emitAdminOrderPaymentProofReceived(
 
 /**
  * Emitido cuando termina el auto-chequeo con visión (Fase 7, fire-and-forget
- * tras la respuesta al cliente) para que el panel se refresque solo sin
- * hacer polling.
+ * tras la respuesta al cliente). El panel usa `message` + `orderRef` /
+ * `orderId` para toast y navegar al pedido (`proofId` para abrir el
+ * comprobante). Se emite también si visión falló: el admin igual debe
+ * revisar a mano.
  */
 export function emitAdminOrderPaymentProofChecked(
   businessId: string,
-  payload: { orderId: string; proofId: string }
+  payload: { orderId: string; orderRef: string; proofId: string; message: string }
 ): void {
   emitAdminOrderChannel(
     businessId,
@@ -403,7 +409,9 @@ export function emitAdminOrderPaymentProofChecked(
       type: "order.payment_proof_checked",
       businessId,
       orderId: payload.orderId,
+      orderRef: payload.orderRef,
       proofId: payload.proofId,
+      message: payload.message,
       at: new Date().toISOString()
     },
     "payment_proof_checked"

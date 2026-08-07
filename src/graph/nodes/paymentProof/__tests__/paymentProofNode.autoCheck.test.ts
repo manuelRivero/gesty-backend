@@ -140,24 +140,38 @@ describe('runPaymentProofAutoCheck', () => {
         }),
       })
     );
-    expect(mockedEmitChecked).toHaveBeenCalledWith('biz-1', { orderId: 'order-1', proofId: 'proof-1' });
+    expect(mockedEmitChecked).toHaveBeenCalledWith('biz-1', {
+      orderId: 'order-1',
+      orderRef: 'ORDER1',
+      proofId: 'proof-1',
+      message: 'Llegó un comprobante de transferencia para el pedido #ORDER1',
+    });
   });
 
-  it('visión devuelve null: el proof queda en received (no actualiza nada)', async () => {
+  it('visión devuelve null: el proof queda en received, igual avisa al admin', async () => {
     mockedExtractVision.mockResolvedValueOnce(null);
 
     await runPaymentProofAutoCheck(autoCheckArgs());
 
     expect(mockedProofUpdate).not.toHaveBeenCalled();
-    expect(mockedEmitChecked).not.toHaveBeenCalled();
+    expect(mockedEmitChecked).toHaveBeenCalledWith('biz-1', {
+      orderId: 'order-1',
+      orderRef: 'ORDER1',
+      proofId: 'proof-1',
+      message: 'Llegó un comprobante de transferencia para el pedido #ORDER1',
+    });
   });
 
-  it('visión lanza: se degrada sin romper (no actualiza, no lanza)', async () => {
+  it('visión lanza: se degrada sin romper y avisa al admin igual', async () => {
     mockedExtractVision.mockRejectedValueOnce(new Error('boom'));
 
     await expect(runPaymentProofAutoCheck(autoCheckArgs())).resolves.toBeUndefined();
 
     expect(mockedProofUpdate).not.toHaveBeenCalled();
+    expect(mockedEmitChecked).toHaveBeenCalledWith(
+      'biz-1',
+      expect.objectContaining({ orderId: 'order-1', proofId: 'proof-1', orderRef: 'ORDER1' })
+    );
   });
 });
 
