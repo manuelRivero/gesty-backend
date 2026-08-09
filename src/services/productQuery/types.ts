@@ -5,6 +5,25 @@ import type {
 import type { IntentDetectionResult } from '../ai/detection.service';
 import type { ConversationIntent } from '../../types/conversationIntent';
 
+/**
+ * Entrada base del Ledger de la familia Intent (ADR-0007).
+ * Extensiones tipadas por IntentType viven en `intentLedger` abajo.
+ */
+export type IntentLedgerEntryBase = {
+  /** El cliente pidió explícitamente que no insistamos (solo Goals). */
+  abandonment?: boolean;
+  /** Veces que se planteó el Intent esta "vida". */
+  surfaceCount?: number;
+  /** ISO timestamp del último planteo (cooldown). */
+  lastSurfacedAt?: string | null;
+  /** Alerts de cierre por emisión. */
+  emitted?: boolean;
+  /** Nacimiento del Intent (decay / TTL). */
+  openedAt?: string | null;
+  /** Expiración explícita (ISO); si falta, se deriva de openedAt + catálogo. */
+  expiresAt?: string | null;
+};
+
 export type ConversationMetadata = {
   pendingProductSelection?: boolean;
   pendingQuestion?: string;
@@ -158,15 +177,14 @@ export type ConversationMetadata = {
   checkout_active?: boolean;
 
   /**
-   * Cantidad de veces que el cliente rechazó explícitamente dar su nombre
-   * durante la sesión de checkout activa. Se resetea al limpiar la sesión.
+   * @deprecated Fase B.1 — vive en `intentLedger.OBTENER_NOMBRE.refusalCount`.
+   * Se limpia al leer/escribir vía `intentRefusal.service`.
    */
   name_refusal_count?: number;
 
   /**
-   * Cantidad de veces que el cliente rechazó dar su dirección de entrega
-   * (rechazo explícito o dirección no encontrada repetidamente) durante
-   * la sesión de checkout activa. Se resetea al limpiar la sesión.
+   * @deprecated Fase B.1 — vive en `intentLedger.OBTENER_DIRECCION.refusalCount`.
+   * Se limpia al leer/escribir vía `intentRefusal.service`.
    */
   address_refusal_count?: number;
 
@@ -200,24 +218,36 @@ export type ConversationMetadata = {
    * Ledger de la familia Intent (ADR-0007): memoria del comportamiento del
    * sistema sobre cada Goal/Opportunity/Alert, indexada por tipo. Nunca
    * datos del negocio — si se borra entero, solo cambia el tono del bot.
+   * Forma base reutilizable; campos específicos por IntentType se agregan
+   * como extensión tipada, no como bag libre.
    */
   intentLedger?: {
-    COMPLETAR_PEDIDO?: {
-      /** El cliente pidió explícitamente que no insistamos (ADR-0005). */
-      abandonment?: boolean;
-      /** Veces que se planteó el Goal esta "vida" del pedido (ADR-0008: 3 → enmudece). */
-      surfaceCount?: number;
-      /** ISO timestamp del último planteo, para el cooldown. */
-      lastSurfacedAt?: string | null;
+    COMPLETAR_PEDIDO?: IntentLedgerEntryBase;
+    COMPLETAR_RESERVA?: IntentLedgerEntryBase;
+    OBTENER_NOMBRE?: IntentLedgerEntryBase & { refusalCount?: number };
+    OBTENER_DIRECCION?: IntentLedgerEntryBase & { refusalCount?: number };
+    CONFIRMAR_OFERTA?: IntentLedgerEntryBase & {
+      productId?: string;
+      productName?: string;
+      suggestedQuantity?: number;
+      source?: string;
     };
-    COMPLETAR_RESERVA?: {
-      /** El cliente pidió explícitamente que no insistamos con la reserva (ADR-0005). */
-      abandonment?: boolean;
-      /** Veces que se planteó el Goal esta "vida" del borrador (ADR-0008: 3 → enmudece). */
-      surfaceCount?: number;
-      /** ISO timestamp del último planteo, para el cooldown. */
-      lastSurfacedAt?: string | null;
-    };
+    SUGERIR_COMPLEMENTO?: IntentLedgerEntryBase;
+    SUGERIR_DIRECCION?: IntentLedgerEntryBase;
+    OFRECER_PROMOCION?: IntentLedgerEntryBase;
+    RECOLECTAR_PARTY_SIZE?: IntentLedgerEntryBase;
+    PEDIDO_POR_EXPIRAR?: IntentLedgerEntryBase & { emitted?: boolean };
+    NEGOCIO_POR_CERRAR?: IntentLedgerEntryBase & { emitted?: boolean };
+    FUERA_DE_COBERTURA?: IntentLedgerEntryBase & { emitted?: boolean };
+    ITEM_SIN_STOCK?: IntentLedgerEntryBase & { emitted?: boolean };
+    PAGO_RECHAZADO?: IntentLedgerEntryBase & { emitted?: boolean };
+    RESERVA_PROXIMA?: IntentLedgerEntryBase & { emitted?: boolean };
+    CONFIRMAR_PAGO_ONLINE?: IntentLedgerEntryBase;
+    DESBLOQUEAR_PEDIDO_CERRADO?: IntentLedgerEntryBase;
+    RETOMAR_TAREA_INTERRUMPIDA?: IntentLedgerEntryBase;
+    RESPONDER_CONSULTA_PENDIENTE?: IntentLedgerEntryBase;
+    DESAMBIGUAR_PRODUCTO?: IntentLedgerEntryBase;
+    CONFIRMAR_ELIMINACION?: IntentLedgerEntryBase;
   };
 
   /**

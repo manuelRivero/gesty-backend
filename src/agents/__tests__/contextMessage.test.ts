@@ -14,11 +14,25 @@ vi.mock('../../lib/prisma', () => ({
     draft_order: {
       findFirst: vi.fn(),
     },
+    payment_intent: {
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
+    conversation_state: {
+      findUnique: vi.fn().mockResolvedValue({ metadata: {} }),
+    },
   },
 }));
 
 vi.mock('../../repositories/reservation.repository', () => ({
   findActiveEnvironmentsByBusinessId: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock('../../repositories', () => ({
+  patchConversationMetadata: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('../../helpers/complementaryMenu.helper', () => ({
+  collectCategoryTagsInDraftCart: vi.fn().mockResolvedValue(new Set()),
 }));
 
 import { buildContextMessage } from '../contextMessage';
@@ -57,7 +71,9 @@ describe('buildContextMessage', () => {
 
   it('carrito vacío (draft activo sin ítems): no menciona "Carrito"', async () => {
     findFirstMock.mockResolvedValue({
+      id: 'draft-1',
       fulfillment_type: null,
+      expires_at: null,
       _count: { draft_order_item: 0 },
     });
     const msg = await buildContextMessage(makeCtx());
@@ -66,7 +82,9 @@ describe('buildContextMessage', () => {
 
   it('carrito con ítems: menciona "Carrito" con la cantidad', async () => {
     findFirstMock.mockResolvedValue({
+      id: 'draft-1',
       fulfillment_type: null,
+      expires_at: null,
       _count: { draft_order_item: 2 },
     });
     const msg = await buildContextMessage(makeCtx());
@@ -110,5 +128,27 @@ describe('buildContextMessage', () => {
     findFirstMock.mockResolvedValue(null);
     const msg = await buildContextMessage(makeCtx({ userMsg: '¿Cómo estás?' }));
     expect(msg.endsWith('¿Cómo estás?')).toBe(true);
+  });
+
+  it('ambos Goals abiertos: inyecta UNA sola línea de Goal (pedido gana) — A.4 / ADR-0009', async () => {
+    findFirstMock.mockResolvedValue({
+      id: 'draft-1',
+      fulfillment_type: null,
+      expires_at: null,
+      _count: { draft_order_item: 1 },
+    });
+    const msg = await buildContextMessage(
+      makeCtx({
+        metadata: {
+          reservation_draft: { date: '10/08/2026', partySize: 2 },
+        },
+      })
+    );
+    expect(msg).toContain('COMPLETAR_PEDIDO');
+    expect(msg).not.toContain('COMPLETAR_RESERVA');
+    const goalLines = msg
+      .split('\n')
+      .filter((l) => l.includes('Objetivo abierto'));
+    expect(goalLines).toHaveLength(1);
   });
 });

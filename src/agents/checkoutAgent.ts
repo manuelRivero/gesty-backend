@@ -36,6 +36,7 @@ import {
   logCheckoutGoal,
 } from '../services/checkout/checkoutGoal.service';
 import type { ConversationMetadata } from '../services/productQuery/types';
+import { getRefusalCount } from '../services/intent/intentRefusal.service';
 
 // ---------------------------------------------------------------------------
 // Cache de agentes por personalidad (mismo patrón que reactAgent.ts)
@@ -145,8 +146,8 @@ const buildCheckoutContextMessage = async (
     });
     if (cs && typeof cs.metadata === 'object' && cs.metadata !== null) {
       conversationMeta = normalizeMetadata(cs.metadata) as ConversationMetadata;
-      nameRefusalCount = conversationMeta.name_refusal_count ?? 0;
-      addressRefusalCount = conversationMeta.address_refusal_count ?? 0;
+      nameRefusalCount = getRefusalCount(conversationMeta, 'OBTENER_NOMBRE');
+      addressRefusalCount = getRefusalCount(conversationMeta, 'OBTENER_DIRECCION');
     }
   } catch {
     // Si falla, usar 0 — no es crítico
