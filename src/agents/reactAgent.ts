@@ -22,11 +22,12 @@ import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { HumanMessage } from '@langchain/core/messages';
 import { getReactReasonerLlm } from '../config/llm';
 import { buildAgentHistoryMessages } from './conversationHistory';
+import { buildContextMessage } from './contextMessage';
 import { buildHybridAgentSystemPrompt } from '../prompts/botPersonality';
 import { resolvePersonalityForBusiness } from '../services/botPersonality.service';
 import { allReactTools } from '../tools';
 import type { EnrichedContext, HandlerFollowUp, HandlerResult } from '../controllers/webhook/types';
-import { buildListMessage, formatBotUserMessage, getRequestedPartySize, normalizeMetadata } from '../services/productQuery/utils';
+import { buildListMessage, formatBotUserMessage, normalizeMetadata } from '../services/productQuery/utils';
 import { prisma } from '../lib/prisma';
 import {
   isHybridCtaEnabled,
@@ -46,27 +47,10 @@ import { startCheckoutSessionTool } from '../tools/checkout';
 import { MenuService } from '../services/menu.service';
 import { truncateDescription, truncateTitle } from '../whatsappBuilders';
 import type { CtaPlannerInput, CtaPlan } from './types';
-import {
-  buildLastOfferContextLines,
-  persistLastOffer,
-} from '../services/lastOffer.service';
+import { persistLastOffer } from '../services/lastOffer.service';
 import { buildCartSummaryMessage } from '../services/cart.service';
 import { AddressService } from '../services/address.service';
 import { buildSmallTalkMenu } from '../services/smallTalk.service';
-import {
-  buildOrderCompletionContextLines,
-  getOrderCompletionLedger,
-  deriveOrderCompletionGoal,
-  computeOrderCompletionPermission,
-} from '../services/orderCompletionGoal.service';
-import {
-  buildReservationCompletionContextLines,
-  getReservationCompletionLedger,
-  hasReservationDraftInProgress,
-  deriveReservationCompletionGoal,
-  computeReservationCompletionPermission,
-} from '../services/reservationCompletionGoal.service';
-import { findActiveEnvironmentsByBusinessId } from '../repositories/reservation.repository';
 
 const markHybridResult = (result: HandlerResult): HandlerResult => ({
   ...result,
@@ -114,123 +98,6 @@ const buildAgent = (personalityId: string, personalityPrompt: string) => {
 /** Solo para uso en tests: resetea el cache del ReAct agent. */
 export const resetAgentCacheForTesting = (): void => {
   cachedAgents = new Map();
-};
-
-const buildContextMessage = async (ctx: EnrichedContext): Promise<string> => {
-  const userMsg = ctx.message?.text?.body ?? '';
-  const meta = normalizeMetadata(ctx.conversationState?.metadata);
-  const partySize = getRequestedPartySize(meta);
-  const checkoutActive = meta.checkout_active === true;
-
-  const businessId =
-    typeof ctx.business === 'object' && ctx.business
-      ? (ctx.business as { id: string }).id
-      : '';
-  const customerPhone =
-    typeof ctx.customer === 'object' && ctx.customer
-      ? (ctx.customer as { phone_number?: string }).phone_number ?? ctx.to
-      : ctx.to;
-
-  let cartSummary = 'sin pedido activo';
-  let fulfillmentType = 'no aplica (checkout gestiona entrega al finalizar)';
-  let hasItems = false;
-
-  if (businessId && customerPhone) {
-    try {
-      const draft = await prisma.draft_order.findFirst({
-        where: {
-          business_id: businessId,
-          customer_phone: customerPhone,
-          status: 'active',
-        },
-        select: {
-          fulfillment_type: true,
-          _count: { select: { draft_order_item: true } },
-        },
-      });
-      if (draft) {
-        const count = draft._count.draft_order_item;
-        hasItems = count > 0;
-        cartSummary = count > 0 ? `${count} ítem(s) en carrito` : 'carrito vacío';
-        fulfillmentType = draft.fulfillment_type
-          ? `${draft.fulfillment_type} (solo checkout puede cambiarlo)`
-          : 'sin elegir — se define al finalizar en checkout';
-      }
-    } catch {
-      /* el agente puede usar get_cart */
-    }
-  }
-
-  const reservationDraft = meta.reservation_draft;
-  const reservationAgentActive = meta.reservation_agent_active === true;
-  const hasReservationDraft = hasReservationDraftInProgress(reservationDraft);
-  let hasEnvironments = false;
-  if (hasReservationDraft && businessId) {
-    try {
-      const environments = await findActiveEnvironmentsByBusinessId(businessId);
-      hasEnvironments = environments.length > 0;
-    } catch {
-      /* si falla, se asume sin ambientes — solo afecta el texto del hint */
-    }
-  }
-
-  const partySizeLine = partySize
-    ? `${partySize} (guía de cantidad a pedir, NO filtro de serves_people)`
-    : 'no informado — preguntar solo si el cliente consulta platos o pide comida en este turno';
-
-  const detection = ctx.detection;
-  const nlpHint = detection
-    ? {
-        intent: String(detection.intent),
-        detectedProductName: detection.detectedProductName ?? null,
-        quantity: detection.quantity ?? null,
-      }
-    : null;
-
-  // ADR-0009: a lo sumo un Intent activo por turno. Con dos Goals derivados
-  // (Fase 0 y Fase 1b) hace falta un arbitraje explícito: se calcula el
-  // permiso puro de cada uno primero, y si ambos ganarían el turno, se
-  // suprime uno antes de construir las líneas (evita consumir presupuesto
-  // de ambos y mostrarle al modelo dos objetivos a la vez). Empate entre
-  // Goals de igual presión ("reanudable"): gana COMPLETAR_PEDIDO — un pago
-  // pendiente es más urgente que una reserva a futuro.
-  const orderLedger = getOrderCompletionLedger(meta);
-  const orderGoal = deriveOrderCompletionGoal({ hasItems, checkoutActive }, orderLedger);
-  const orderPermission = computeOrderCompletionPermission(orderGoal, orderLedger);
-
-  const reservationLedger = getReservationCompletionLedger(meta);
-  const reservationGoal = deriveReservationCompletionGoal(
-    { hasDraft: hasReservationDraft, reservationAgentActive },
-    reservationLedger
-  );
-  const reservationPermission = computeReservationCompletionPermission(
-    reservationGoal,
-    reservationLedger
-  );
-  const suppressReservation = orderPermission.granted && reservationPermission.granted;
-
-  const lines = [
-    `- Personas para el pedido: ${partySizeLine}`,
-    `- Carrito: ${cartSummary}`,
-    `- Tipo de entrega: ${fulfillmentType}`,
-    `- Sesión de checkout: ${checkoutActive ? 'activa' : 'inactiva'}`,
-    ...buildLastOfferContextLines(meta, nlpHint),
-    ...buildOrderCompletionContextLines({
-      facts: { hasItems, checkoutActive },
-      ledger: orderLedger,
-      conversationId: ctx.conversationId,
-    }),
-    ...buildReservationCompletionContextLines({
-      facts: { hasDraft: hasReservationDraft, reservationAgentActive },
-      ledger: reservationLedger,
-      conversationId: ctx.conversationId,
-      suppressedBySaliency: suppressReservation,
-      draft: reservationDraft,
-      hasEnvironments,
-    }),
-  ];
-
-  return `[ESTADO DEL CLIENTE]\n${lines.join('\n')}\n\n${userMsg}`;
 };
 
 const persistLastOfferFromCtaPlan = async (

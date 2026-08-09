@@ -316,6 +316,91 @@ export const getCartTool = new DynamicStructuredTool<
 });
 
 // ---------------------------------------------------------------------------
+// get_payment_methods
+// ---------------------------------------------------------------------------
+
+const getPaymentMethodsSchema = z.object({});
+type GetPaymentMethodsInput = z.infer<typeof getPaymentMethodsSchema>;
+
+export const getPaymentMethodsTool = new DynamicStructuredTool<
+  typeof getPaymentMethodsSchema,
+  GetPaymentMethodsInput
+>({
+  name: 'get_payment_methods',
+  description:
+    'Devuelve las formas de pago que ofrece el negocio y los ajustes configurados (descuento/recargo), ' +
+    'SIN depender de que haya un carrito activo. Usala para "¿aceptan transferencia?", "¿qué formas de pago tienen?", ' +
+    '"¿hay descuento por efectivo?" y preguntas similares aunque el cliente todavía no haya armado un pedido. ' +
+    'Si hay carrito activo, los ajustes vienen con el monto real calculado sobre el total; si no, vienen como regla ' +
+    '(tipo y valor) sin monto final.',
+  schema: getPaymentMethodsSchema,
+  func: async (_input: GetPaymentMethodsInput, _runManager, config?: RunnableConfig) => {
+    const { businessId, customerPhone } = getReactContext(config);
+    const { getBusinessConfig } = await import('../services/businessConfig.service');
+    const { listOfferedPaymentMethods } = await import('../services/paymentMethods.service');
+
+    const bizCfg = await getBusinessConfig(businessId);
+    const offeredMethods = await listOfferedPaymentMethods(businessId, {
+      externalDeliveryEnabled: bizCfg.external_delivery_enabled,
+    });
+    const offeredIds = new Set(offeredMethods.map((m) => m.id));
+    const methods = offeredMethods.map((m) => ({ id: m.id, label: m.label }));
+
+    const draft = await prisma.draft_order.findFirst({
+      where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
+      include: { draft_order_item: true },
+    });
+
+    if (draft && draft.draft_order_item.length > 0) {
+      const pricing = computeOrderPricing(draft.draft_order_item);
+      const itemsTotal = pricing.subtotal - pricing.productDiscounts;
+      const adjustments = (
+        await listPaymentAdjustmentsForAmount({ businessId, baseAmount: itemsTotal })
+      ).filter((a) => offeredIds.has(a.paymentMethod as typeof offeredMethods[number]['id']));
+
+      return toJson({
+        methods,
+        adjustments: adjustments.map((a) => ({
+          method: a.paymentMethod,
+          label: a.label,
+          adjustment: a.adjustmentAmount.toFixed(2),
+          finalAmount: a.finalAmount.toFixed(2),
+          isSurcharge: a.isSurcharge,
+        })),
+        note: null,
+      });
+    }
+
+    // Sin carrito activo no hay un total sobre el cual calcular el monto: se
+    // devuelve la regla configurada (D4), no un número inventado.
+    const configs = await prisma.payment_method_config.findMany({
+      where: { business_id: businessId, is_active: true },
+    });
+    const adjustments = configs
+      .filter(
+        (c) => offeredIds.has(c.payment_method as typeof offeredMethods[number]['id']) &&
+          Number(c.adjustment_value) > 0
+      )
+      .map((c) => ({
+        method: c.payment_method,
+        label: c.label,
+        type: c.adjustment_type,
+        value: Number(c.adjustment_value),
+        isSurcharge: c.is_surcharge,
+      }));
+
+    return toJson({
+      methods,
+      adjustments,
+      note:
+        adjustments.length > 0
+          ? 'El monto final se calcula sobre el total del pedido al cerrarlo — todavía no hay carrito activo.'
+          : null,
+    });
+  },
+});
+
+// ---------------------------------------------------------------------------
 // get_business_hours
 // ---------------------------------------------------------------------------
 
@@ -419,6 +504,51 @@ export const getFeaturedProductsTool = new DynamicStructuredTool<
           currency: p.currency_code,
         })),
         ...(item.variations?.length ? { variations: item.variations } : {}),
+      })),
+    });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// get_popular_products
+// ---------------------------------------------------------------------------
+
+const getPopularProductsSchema = z.object({
+  currencyCode: z.string().nullable().optional(),
+  limit: z.number().int().positive().max(20).default(5),
+});
+type GetPopularProductsInput = z.infer<typeof getPopularProductsSchema>;
+
+export const getPopularProductsTool = new DynamicStructuredTool<
+  typeof getPopularProductsSchema,
+  GetPopularProductsInput
+>({
+  name: 'get_popular_products',
+  description:
+    'Devuelve los productos más pedidos en base a ventas reales de los últimos 30 días. ' +
+    'Usala para "¿qué es lo más pedido?", "¿qué pide más la gente?", "¿cuál es el más popular?" y "¿qué me recomendás?". ' +
+    'Si "significant" es false, no hay suficientes datos todavía — NO inventes un ranking ni digas que algo es lo más pedido.',
+  schema: getPopularProductsSchema,
+  func: async (
+    { currencyCode, limit }: GetPopularProductsInput,
+    _runManager,
+    config?: RunnableConfig
+  ) => {
+    const { businessId } = getReactContext(config);
+    const { getPopularMenuItems } = await import('../services/popularProducts.service');
+    const { significant, items } = await getPopularMenuItems({
+      businessId,
+      currencyCode: currencyCode ?? null,
+      limit,
+    });
+    return toJson({
+      significant,
+      count: items.length,
+      items: items.map((item) => ({
+        id: item.id,
+        name: item.name,
+        orderCount: item.orderCount,
+        prices: item.prices,
       })),
     });
   },
@@ -1844,6 +1974,8 @@ export const allReactTools = [
   getCategoriesTool,
   getMenuByCategoryTool,
   getCartTool,
+  getPaymentMethodsTool,
+  getPopularProductsTool,
   getBusinessHoursTool,
   getRecentMessagesTool,
   findProductsByFilterTool,

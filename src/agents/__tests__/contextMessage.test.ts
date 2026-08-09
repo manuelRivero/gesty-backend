@@ -1,0 +1,114 @@
+/**
+ * Tests de `buildContextMessage` (Tarea 1.3 de PLAN-ACCION-CALIDAD-CONVERSACIONAL.md).
+ *
+ * Cubre los casos de tabla del plan: carrito inexistente, carrito vacío,
+ * carrito con ítems, checkout activo y oferta activa. En todos los casos sin
+ * motivo para hablar del carrito, la línea "- Carrito:" no debe aparecer
+ * (síntoma 1: repetición del estado del carrito).
+ */
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+vi.mock('../../lib/prisma', () => ({
+  prisma: {
+    draft_order: {
+      findFirst: vi.fn(),
+    },
+  },
+}));
+
+vi.mock('../../repositories/reservation.repository', () => ({
+  findActiveEnvironmentsByBusinessId: vi.fn().mockResolvedValue([]),
+}));
+
+import { buildContextMessage } from '../contextMessage';
+import { prisma } from '../../lib/prisma';
+import type { EnrichedContext } from '../../controllers/webhook/types';
+
+const findFirstMock = prisma.draft_order.findFirst as unknown as ReturnType<typeof vi.fn>;
+
+const makeCtx = (
+  overrides: {
+    metadata?: Record<string, unknown>;
+    userMsg?: string;
+  } = {}
+): EnrichedContext =>
+  ({
+    business: { id: 'biz-1' },
+    customer: { id: 'cust-1', phone_number: '51999000000' },
+    conversation: { id: 'conv-1', started_at: new Date() },
+    conversationState: { metadata: overrides.metadata ?? {} },
+    conversationId: 'conv-1',
+    message: { text: { body: overrides.userMsg ?? '¿Tienen descuentos?' }, type: 'text' },
+    to: '51999000000',
+    detection: null,
+  }) as unknown as EnrichedContext;
+
+describe('buildContextMessage', () => {
+  beforeEach(() => {
+    findFirstMock.mockReset();
+  });
+
+  it('carrito inexistente: no menciona "Carrito"', async () => {
+    findFirstMock.mockResolvedValue(null);
+    const msg = await buildContextMessage(makeCtx());
+    expect(msg).not.toContain('Carrito');
+  });
+
+  it('carrito vacío (draft activo sin ítems): no menciona "Carrito"', async () => {
+    findFirstMock.mockResolvedValue({
+      fulfillment_type: null,
+      _count: { draft_order_item: 0 },
+    });
+    const msg = await buildContextMessage(makeCtx());
+    expect(msg).not.toContain('Carrito');
+  });
+
+  it('carrito con ítems: menciona "Carrito" con la cantidad', async () => {
+    findFirstMock.mockResolvedValue({
+      fulfillment_type: null,
+      _count: { draft_order_item: 2 },
+    });
+    const msg = await buildContextMessage(makeCtx());
+    expect(msg).toContain('- Carrito: 2 ítem(s) en carrito');
+  });
+
+  it('checkout activo sin ítems: menciona "Carrito" y "Sesión de checkout: activa"', async () => {
+    findFirstMock.mockResolvedValue(null);
+    const msg = await buildContextMessage(makeCtx({ metadata: { checkout_active: true } }));
+    expect(msg).toContain('- Carrito:');
+    expect(msg).toContain('- Sesión de checkout: activa');
+  });
+
+  it('oferta activa sin carrito: menciona "Carrito" por la oferta pendiente', async () => {
+    findFirstMock.mockResolvedValue(null);
+    const msg = await buildContextMessage(
+      makeCtx({
+        metadata: {
+          lastOffer: {
+            kind: 'ADD_ITEM',
+            productId: 'prod-1',
+            productName: 'Ceviche',
+            suggestedQuantity: 1,
+            offeredAt: new Date().toISOString(),
+            source: 'product_focus',
+          },
+        },
+      })
+    );
+    expect(msg).toContain('- Carrito:');
+    expect(msg).toContain('Oferta activa');
+  });
+
+  it('sin checkout activo, no incluye la línea de "Sesión de checkout"', async () => {
+    findFirstMock.mockResolvedValue(null);
+    const msg = await buildContextMessage(makeCtx());
+    expect(msg).not.toContain('Sesión de checkout');
+  });
+
+  it('siempre incluye el mensaje del usuario al final', async () => {
+    findFirstMock.mockResolvedValue(null);
+    const msg = await buildContextMessage(makeCtx({ userMsg: '¿Cómo estás?' }));
+    expect(msg.endsWith('¿Cómo estás?')).toBe(true);
+  });
+});
