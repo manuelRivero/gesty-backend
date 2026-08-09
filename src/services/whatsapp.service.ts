@@ -508,7 +508,8 @@ export const handleProductSelectionFromWebhook = async (
       ingredients: true,
       serves_people: true,
       is_available: true,
-      image: true
+      image: true,
+      variations: true,
     }
   });
 
@@ -627,6 +628,7 @@ export const handleProductSelectionFromWebhook = async (
       ingredients: item.ingredients,
       serves_people: item.serves_people,
       is_available: item.is_available,
+      variations: item.variations?.length ? item.variations : null,
       price: {
         amount: activePrice.amount,
         currency_code: activePrice.currency_code

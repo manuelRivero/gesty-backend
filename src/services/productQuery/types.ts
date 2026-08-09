@@ -143,6 +143,14 @@ export type ConversationMetadata = {
   /** Payload ADD_ITEM pendiente de confirmación cuando el negocio está cerrado con orders_when_closed=true. */
   pending_closed_add_item?: string | null;
   /**
+   * Timestamp ISO de cuando el cliente aceptó pedir fuera de horario. Dura
+   * toda la conversación (D5 de PLAN-ACCION-CALIDAD-CONVERSACIONAL.md): una
+   * vez confirmado, los ADD_ITEM siguientes de la misma conversación no
+   * vuelven a pedir esta confirmación. Se limpia solo al resetear el estado
+   * de la conversación por inactividad (conversación nueva → confirmación nueva).
+   */
+  closed_order_confirmed_at?: string | null;
+  /**
    * `true` mientras el cliente está en una sesión activa del agente de checkout.
    * Se activa al tocar el botón CHECKOUT (con CHECKOUT_AGENT_ENABLED=true) y se
    * limpia al finalizar el pago, cancelar, hacer handback o expirar el draft.

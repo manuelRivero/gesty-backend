@@ -12,6 +12,9 @@
  */
 
 import { dispatchIntent, dispatchInteractive } from '../../../controllers/webhook/dispachers';
+import { parseAddItemButtonPayload } from '../../../controllers/webhook/utils';
+import { prisma } from '../../../lib/prisma';
+import { hasVariations } from '../../../services/menu/menuItemVariations';
 import { findActiveEnvironmentsByBusinessId } from '../../../repositories/reservation.repository';
 import { buildListMessageFromButtons } from '../../../whatsappBuilders';
 import { runReservationAgent } from '../../../agents/reservationAgent';
@@ -235,6 +238,9 @@ export const interactiveSubgraphNode = async (
     const businessConfig = state.businessConfig;
     const ordersWhenClosed = businessConfig?.orders_when_closed ?? false;
     const payloadId = ctx.payloadId;
+    const alreadyConfirmedClosedOrder = Boolean(
+      normalizeMetadata(enrichedBase.conversationState?.metadata).closed_order_confirmed_at
+    );
 
     if (payloadId.startsWith('ADD_ITEM:')) {
       if (!ordersWhenClosed) {
@@ -245,6 +251,37 @@ export const interactiveSubgraphNode = async (
           },
         };
       }
+
+      // D5 — el cliente ya aceptó pedir fuera de horario en esta conversación:
+      // no volver a preguntar, dejar pasar directo al dispatch normal.
+      if (alreadyConfirmedClosedOrder) {
+        const result = await dispatchInteractive(enrichedBase);
+        if (!result) {
+          return { earlyExit: 'interactive_no_payload' };
+        }
+        return { handlerResult: result };
+      }
+
+      // D7 — si el platillo tiene variaciones y el payload todavía no trae
+      // una elegida, hay que mostrar el picker ANTES de pedir la confirmación
+      // de horario cerrado: si no, el cliente confirma un pedido que todavía
+      // no terminó de definir, y al elegir la variedad se genera un payload
+      // nuevo que dispara una segunda confirmación (síntoma 2 del plan).
+      const { productId, variationIndex } = parseAddItemButtonPayload(payloadId);
+      if (productId && variationIndex == null) {
+        const item = await prisma.menu_item.findFirst({
+          where: { id: productId, business_id: state.business!.id },
+          select: { variations: true },
+        });
+        if (item && hasVariations(item)) {
+          const result = await dispatchInteractive(enrichedBase);
+          if (!result) {
+            return { earlyExit: 'interactive_no_payload' };
+          }
+          return { handlerResult: result };
+        }
+      }
+
       // orders_when_closed=true → pedir confirmación explícita
       await patchConversationMetadata(conversation.id, { pending_closed_add_item: payloadId });
       const confirmation = buildClosedOrderConfirmationMessage(state.businessStatus?.nextOpenText ?? null);
@@ -257,6 +294,9 @@ export const interactiveSubgraphNode = async (
       if (!pending) {
         return { handlerResult: { content: NO_PENDING_CLOSED_ORDER_BOT_MESSAGE, isInteractive: false } };
       }
+      await patchConversationMetadata(conversation.id, {
+        closed_order_confirmed_at: new Date().toISOString(),
+      });
       await omitConversationMetadataKeys(conversation.id, ['pending_closed_add_item']);
       const pendingCtx = { ...enrichedBase, payloadId: pending } as unknown as EnrichedContext;
       const pendingResult = await dispatchInteractive(pendingCtx);
@@ -352,6 +392,9 @@ export const nlpSubgraphNode = async (
     const isNegative = /^(no|nop|nope|cancelar?|mejor no|no gracias|not|negativo|cancelo)$/i.test(userMessage.trim());
 
     if (isAffirmative) {
+      await patchConversationMetadata(conversation.id, {
+        closed_order_confirmed_at: new Date().toISOString(),
+      });
       await omitConversationMetadataKeys(conversation.id, ['pending_closed_add_item']);
       const pendingCtx = { ...enrichedBase, payloadId: pending } as unknown as EnrichedContext;
       const pendingResult = await dispatchInteractive(pendingCtx);

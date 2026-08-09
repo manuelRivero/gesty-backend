@@ -3,6 +3,7 @@ import {
   BOT_PERSONALITY_PROMPT,
   buildHumanizeSystemPrompt,
   buildHybridAgentSystemPrompt,
+  buildProductAwareSystemPrompt,
 } from '../botPersonality';
 
 const FRIENDLY_PROMPT = 'PERSONALIDAD AMIGUERA DE PRUEBA';
@@ -32,6 +33,26 @@ describe('botPersonality', () => {
   it('hybrid incluye reglas operativas de tools', () => {
     expect(buildHybridAgentSystemPrompt()).toMatch(/search_products/i);
     expect(buildHybridAgentSystemPrompt()).toMatch(/ANTI-MULTI-PRODUCTO/i);
+  });
+
+  it('hybrid declara el bloque de estado como contexto interno no narrable', () => {
+    const hybrid = buildHybridAgentSystemPrompt();
+    expect(hybrid).toMatch(/ESTADO DEL CLIENTE ES CONTEXTO INTERNO/i);
+    expect(hybrid).toMatch(/NUNCA se parafrasea/i);
+    expect(hybrid).toMatch(/no lo repitas/i);
+  });
+
+  it('hybrid incluye get_popular_products y la regla de no inventar ranking', () => {
+    const hybrid = buildHybridAgentSystemPrompt();
+    expect(hybrid).toMatch(/get_popular_products/i);
+    expect(hybrid).toMatch(/significant/i);
+    expect(hybrid).toMatch(/no inventes un ranking/i);
+  });
+
+  it('product-aware prohíbe negar variaciones sin revisar la lista', () => {
+    const prompt = buildProductAwareSystemPrompt();
+    expect(prompt).toMatch(/Variaciones disponibles/i);
+    expect(prompt).toMatch(/Nunca afirmes que no existe una variedad/i);
   });
 
   it('desalienta frases plantilla robóticas', () => {
