@@ -90,8 +90,12 @@ export class AddItemHandler implements IntentHandler {
     );
     if (result === null) return noResponse();
     if (typeof result === 'string') return textResponse(result);
-    return textResponse(result.main, [
-      { type: 'list' as const, listMessage: result.mainFollowUpList },
-    ]);
+    return {
+      ...textResponse(result.main, [
+        { type: 'list' as const, listMessage: result.mainFollowUpList },
+      ]),
+      // Conserva negritas de palabras clave en "Gestión de pedido".
+      skipBodyHumanization: true,
+    };
   }
 }

@@ -25,7 +25,10 @@ import { createOrGetOpenConversation } from "../repositories/conversation.reposi
 import { WhatsAppWebhookPayload } from "../controllers/webhook/types";
 import { WhatsAppInteractiveMessage, WhatsAppListMessage } from "../domain/intent/whatsappTemplates";
 import { buildListMessageFromButtons } from '../whatsappBuilders';
-import { buildAddItemShortcutsFollowUpList } from './complementSuggestions.service';
+import {
+  buildAddItemShortcutsFollowUpBody,
+  buildAddItemShortcutsFollowUpList,
+} from './complementSuggestions.service';
 import { formatBotUserMessage } from './productQuery';
 import { clearLastOffer } from './lastOffer.service';
 import {
@@ -439,17 +442,13 @@ export const buildAddItemMessage = async (
   await createConversationMessage(conversation.id, 'ai', mainText, false);
   await updateConversationLastMessageAt(conversation.id);
 
-  let followUpBody =
-    'Elegí una opción para gestionar tu pedido:\n\n' +
-    '• Ver el *menú completo* o solo una *zona* (entradas, principales, bebidas o postres).\n' +
-    '• *Modificar* cantidades o ítems, o *finalizar* la compra cuando quieras.';
-  if (fulfillmentType === 'DELIVERY' && hasDeliveryAddress) {
-    followUpBody +=
-      '\n\nTambién podés *actualizar la dirección de entrega* si la necesitás.';
-  }
+  const includeAddress = fulfillmentType === 'DELIVERY' && hasDeliveryAddress;
+  const followUpBody = buildAddItemShortcutsFollowUpBody({
+    includeEditAddressHint: includeAddress,
+  });
 
   const mainFollowUpList = buildAddItemShortcutsFollowUpList(followUpBody, {
-    includeEditAddressRow: fulfillmentType === 'DELIVERY' && hasDeliveryAddress,
+    includeEditAddressRow: includeAddress,
   });
   await createConversationMessage(conversation.id, 'ai', followUpBody, false);
   await updateConversationLastMessageAt(conversation.id);

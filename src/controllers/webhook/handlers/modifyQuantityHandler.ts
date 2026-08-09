@@ -64,9 +64,12 @@ export class ModifyQuantityHandler implements IntentHandler {
       const result = await handleAddItemFromWebhook(ctx.payload, productId, target, 'set');
       if (result === null) return noResponse();
       if (typeof result === 'string') return textResponse(result);
-      return textResponse(result.main, [
-        { type: 'list' as const, listMessage: result.mainFollowUpList },
-      ]);
+      return {
+        ...textResponse(result.main, [
+          { type: 'list' as const, listMessage: result.mainFollowUpList },
+        ]),
+        skipBodyHumanization: true,
+      };
     }
 
     // MODIFY_QUANTITY absoluto ("quiero solamente 1 de X", "que queden 2") —
@@ -76,8 +79,11 @@ export class ModifyQuantityHandler implements IntentHandler {
     const result = await handleAddItemFromWebhook(ctx.payload, productId, quantity, 'set');
     if (result === null) return noResponse();
     if (typeof result === 'string') return textResponse(result);
-    return textResponse(result.main, [
-      { type: 'list' as const, listMessage: result.mainFollowUpList },
-    ]);
+    return {
+      ...textResponse(result.main, [
+        { type: 'list' as const, listMessage: result.mainFollowUpList },
+      ]),
+      skipBodyHumanization: true,
+    };
   }
 }
