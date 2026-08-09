@@ -38,6 +38,7 @@ import { PAYMENT_METHOD_PROMPT_BOT_MESSAGE } from '../../../services/productQuer
 import { getBusinessConfig } from '../../../services/businessConfig.service';
 import { runCheckoutAgent } from '../../../agents/checkoutAgent';
 import type { CheckoutAgentContext } from '../../../agents/checkoutAgent';
+import { clearCaptureRefusalLedger } from '../../../services/intent/intentRefusal.service';
 import { runHybridReactAgent } from '../../../agents/reactAgent';
 import { delegateToMainWithDetection } from '../session/delegateToMain';
 import { detectIntentWithConfidence } from '../../../services/ai/detection.service';
@@ -100,10 +101,9 @@ async function executeConfirmedPayment(
 // ---------------------------------------------------------------------------
 
 export const clearCheckoutSession = async (conversationId: string): Promise<void> => {
+  await clearCaptureRefusalLedger(conversationId);
   await omitConversationMetadataKeys(conversationId, [
     'checkout_active',
-    'name_refusal_count',
-    'address_refusal_count',
     'pending_fulfillment_action',
   ]);
 };

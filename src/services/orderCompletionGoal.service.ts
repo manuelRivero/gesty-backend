@@ -132,7 +132,7 @@ export const reviveOrderCompletionIfAbandoned = async (
  * Cierra la "vida" del Ledger cuando el pedido deja de existir (carrito
  * vacío): un pedido nuevo más adelante empieza con presupuesto fresco.
  */
-const resetLedgerIfCartEmpty = async (
+export const resetOrderCompletionLedgerIfCartEmpty = async (
   conversationId: string,
   facts: OrderCompletionFacts,
   ledger: OrderCompletionLedger
@@ -175,7 +175,7 @@ export const buildOrderCompletionContextLines = (params: {
     })
   );
 
-  void resetLedgerIfCartEmpty(conversationId, facts, ledger).catch((err) =>
+  void resetOrderCompletionLedgerIfCartEmpty(conversationId, facts, ledger).catch((err) =>
     console.error('[goal] failed to reset order completion ledger:', err)
   );
 

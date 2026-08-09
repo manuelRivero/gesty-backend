@@ -2,35 +2,64 @@
  * Construcción del `[ESTADO DEL CLIENTE]` que precede al mensaje del cliente
  * en cada turno del agente ReAct principal (ver `reactAgent.ts`).
  *
- * Extraído a su propio módulo para poder testearlo sin levantar el agente
- * completo (Tarea 1.3 de PLAN-ACCION-CALIDAD-CONVERSACIONAL.md).
- *
- * D3: las líneas del bloque son condicionales — solo se incluyen cuando
- * aportan algo al turno actual. Con criterio conservador: ante la duda, se
- * incluyen. Esto evita que el modelo narre estado que no viene al caso
- * (síntoma 1 del plan de calidad conversacional).
+ * Familia Intent (ADR-0008/0009): un solo Intent activo por turno lo decide
+ * `rankActiveIntent` — nunca el LLM.
  */
 
+import type { MenuCategoryTag } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import type { EnrichedContext } from '../controllers/webhook/types';
 import { getRequestedPartySize, normalizeMetadata } from '../services/productQuery/utils';
 import {
-  buildLastOfferContextLines,
+  deriveConfirmOfferCandidate,
+  getConfirmOfferLedgerEntry,
+  getLastOffer,
+  recordConfirmOfferSurfaced,
 } from '../services/lastOffer.service';
 import {
-  buildOrderCompletionContextLines,
   getOrderCompletionLedger,
-  deriveOrderCompletionGoal,
-  computeOrderCompletionPermission,
+  recordOrderCompletionSurfaced,
+  resetOrderCompletionLedgerIfCartEmpty,
 } from '../services/orderCompletionGoal.service';
 import {
-  buildReservationCompletionContextLines,
   getReservationCompletionLedger,
   hasReservationDraftInProgress,
-  deriveReservationCompletionGoal,
-  computeReservationCompletionPermission,
+  recordReservationCompletionSurfaced,
 } from '../services/reservationCompletionGoal.service';
 import { findActiveEnvironmentsByBusinessId } from '../repositories/reservation.repository';
+import {
+  buildIntentLedgerView,
+  deriveIntentCandidates,
+  rankActiveIntent,
+  type IntentLedgerView,
+} from '../services/intent/activeIntent.service';
+import {
+  deriveCollectPartySizeCandidate,
+  deriveSuggestAddressCandidate,
+  deriveSuggestComplementCandidate,
+  recordOpportunitySurfaced,
+} from '../services/intent/opportunities.service';
+import {
+  deriveFueraDeCoberturaCandidate,
+  derivePedidoPorExpirarCandidate,
+  recordAlertEmitted,
+  recordResolutionAlertSurfaced,
+} from '../services/intent/alerts.service';
+import {
+  deriveConfirmarPagoOnlineCandidate,
+  deriveDesbloquearPedidoCerradoCandidate,
+  deriveRetomarTareaCandidate,
+  recordCatalogGoalSurfaced,
+} from '../services/intent/catalogGoals.service';
+import { collectCategoryTagsInDraftCart } from '../helpers/complementaryMenu.helper';
+
+const FOOD_RELATED_INTENTS = new Set([
+  'ORDER_FOOD',
+  'PRODUCT_QUERY',
+  'ADD_ITEM',
+  'VIEW_MENU',
+  'MODIFY_QUANTITY',
+]);
 
 export const buildContextMessage = async (ctx: EnrichedContext): Promise<string> => {
   const userMsg = ctx.message?.text?.body ?? '';
@@ -51,6 +80,9 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
   let fulfillmentType: string | null = null;
   let hasItems = false;
   let hasActiveDraft = false;
+  let draftOrderId: string | null = null;
+  let draftExpiresAt: Date | null = null;
+  let cartTags = new Set<MenuCategoryTag>();
 
   if (businessId && customerPhone) {
     try {
@@ -61,12 +93,16 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
           status: 'active',
         },
         select: {
+          id: true,
           fulfillment_type: true,
+          expires_at: true,
           _count: { select: { draft_order_item: true } },
         },
       });
       if (draft) {
         hasActiveDraft = true;
+        draftOrderId = draft.id;
+        draftExpiresAt = draft.expires_at;
         const count = draft._count.draft_order_item;
         hasItems = count > 0;
         cartSummary = count > 0 ? `${count} ítem(s) en carrito` : 'carrito vacío';
@@ -76,6 +112,14 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
       }
     } catch {
       /* el agente puede usar get_cart */
+    }
+  }
+
+  if (draftOrderId && businessId && hasItems && !checkoutActive) {
+    try {
+      cartTags = await collectCategoryTagsInDraftCart(draftOrderId, businessId);
+    } catch {
+      /* sin tags, SUGERIR_COMPLEMENTO no se deriva */
     }
   }
 
@@ -105,58 +149,194 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
       }
     : null;
 
-  // ADR-0009: a lo sumo un Intent activo por turno. Con dos Goals derivados
-  // (Fase 0 y Fase 1b) hace falta un arbitraje explícito: se calcula el
-  // permiso puro de cada uno primero, y si ambos ganarían el turno, se
-  // suprime uno antes de construir las líneas (evita consumir presupuesto
-  // de ambos y mostrarle al modelo dos objetivos a la vez). Empate entre
-  // Goals de igual presión ("reanudable"): gana COMPLETAR_PEDIDO — un pago
-  // pendiente es más urgente que una reserva a futuro.
   const orderLedger = getOrderCompletionLedger(meta);
-  const orderGoal = deriveOrderCompletionGoal({ hasItems, checkoutActive }, orderLedger);
-  const orderPermission = computeOrderCompletionPermission(orderGoal, orderLedger);
-
   const reservationLedger = getReservationCompletionLedger(meta);
-  const reservationGoal = deriveReservationCompletionGoal(
-    { hasDraft: hasReservationDraft, reservationAgentActive },
-    reservationLedger
-  );
-  const reservationPermission = computeReservationCompletionPermission(
-    reservationGoal,
-    reservationLedger
-  );
-  const suppressReservation = orderPermission.granted && reservationPermission.granted;
 
-  const lastOfferLines = buildLastOfferContextLines(meta, nlpHint);
-  const hasActiveOffer = lastOfferLines.length > 0;
+  void resetOrderCompletionLedgerIfCartEmpty(
+    ctx.conversationId,
+    { hasItems, checkoutActive },
+    orderLedger
+  ).catch((err) => console.error('[goal] failed to reset order completion ledger:', err));
+
+  const confirmOfferCandidate = deriveConfirmOfferCandidate(meta);
+  const confirmOfferLedger = getConfirmOfferLedgerEntry(meta);
+
+  const hasAddress = ctx.hasAddress === true;
+  const blockingAddressIntent =
+    checkoutActive ||
+    meta.awaiting_address === true ||
+    meta.onboarding_agent_active === true;
+
+  const foodRelatedTurn = Boolean(
+    detection && FOOD_RELATED_INTENTS.has(String(detection.intent))
+  );
+
+  const isInCoverage = ctx.isInCoverage === true;
+
+  let paymentLinkEmitted = false;
+  if (draftOrderId) {
+    try {
+      const pendingIntent = await prisma.payment_intent.findFirst({
+        where: {
+          draft_order_id: draftOrderId,
+          status: 'pending',
+          init_point: { not: null },
+        },
+        select: { id: true },
+      });
+      paymentLinkEmitted = Boolean(pendingIntent);
+    } catch {
+      /* sin pago online pendiente */
+    }
+  }
+
+  const extras = [
+    deriveFueraDeCoberturaCandidate(
+      { hasAddress, isInCoverage },
+      meta.intentLedger?.FUERA_DE_COBERTURA
+    ),
+    derivePedidoPorExpirarCandidate(
+      { hasItems, expiresAt: draftExpiresAt },
+      meta.intentLedger?.PEDIDO_POR_EXPIRAR
+    ),
+    deriveConfirmarPagoOnlineCandidate(
+      { paymentLinkEmitted, paymentAccredited: false },
+      meta.intentLedger?.CONFIRMAR_PAGO_ONLINE
+    ),
+    deriveDesbloquearPedidoCerradoCandidate(
+      { pendingClosedAddItem: Boolean(meta.pending_closed_add_item) },
+      meta.intentLedger?.DESBLOQUEAR_PEDIDO_CERRADO
+    ),
+    deriveRetomarTareaCandidate(
+      { hasInterruptedTask: Boolean(meta.peopleCountResume) },
+      meta.intentLedger?.RETOMAR_TAREA_INTERRUMPIDA
+    ),
+    deriveSuggestComplementCandidate(
+      { cartTags, checkoutActive },
+      meta.intentLedger?.SUGERIR_COMPLEMENTO
+    ),
+    deriveSuggestAddressCandidate(
+      { hasAddress, blockingAddressIntent },
+      meta.intentLedger?.SUGERIR_DIRECCION
+    ),
+    deriveCollectPartySizeCandidate(
+      { foodRelatedTurn, partySize: partySize ?? null, checkoutActive },
+      meta.intentLedger?.RECOLECTAR_PARTY_SIZE
+    ),
+    confirmOfferCandidate,
+  ].filter((c): c is NonNullable<typeof c> => c != null);
+
+  const candidates = deriveIntentCandidates({
+    order: {
+      facts: { hasItems, checkoutActive },
+      ledger: orderLedger,
+    },
+    reservation: {
+      facts: { hasDraft: hasReservationDraft, reservationAgentActive },
+      ledger: reservationLedger,
+      draft: reservationDraft,
+      hasEnvironments,
+    },
+    extras,
+  });
+
+  const extrasLedger: IntentLedgerView = {};
+  if (confirmOfferLedger) extrasLedger.CONFIRMAR_OFERTA = confirmOfferLedger;
+  if (meta.intentLedger?.SUGERIR_COMPLEMENTO) {
+    extrasLedger.SUGERIR_COMPLEMENTO = meta.intentLedger.SUGERIR_COMPLEMENTO;
+  }
+  if (meta.intentLedger?.SUGERIR_DIRECCION) {
+    extrasLedger.SUGERIR_DIRECCION = meta.intentLedger.SUGERIR_DIRECCION;
+  }
+  if (meta.intentLedger?.RECOLECTAR_PARTY_SIZE) {
+    extrasLedger.RECOLECTAR_PARTY_SIZE = meta.intentLedger.RECOLECTAR_PARTY_SIZE;
+  }
+  if (meta.intentLedger?.PEDIDO_POR_EXPIRAR) {
+    extrasLedger.PEDIDO_POR_EXPIRAR = meta.intentLedger.PEDIDO_POR_EXPIRAR;
+  }
+  if (meta.intentLedger?.FUERA_DE_COBERTURA) {
+    extrasLedger.FUERA_DE_COBERTURA = meta.intentLedger.FUERA_DE_COBERTURA;
+  }
+  if (meta.intentLedger?.CONFIRMAR_PAGO_ONLINE) {
+    extrasLedger.CONFIRMAR_PAGO_ONLINE = meta.intentLedger.CONFIRMAR_PAGO_ONLINE;
+  }
+  if (meta.intentLedger?.DESBLOQUEAR_PEDIDO_CERRADO) {
+    extrasLedger.DESBLOQUEAR_PEDIDO_CERRADO = meta.intentLedger.DESBLOQUEAR_PEDIDO_CERRADO;
+  }
+  if (meta.intentLedger?.RETOMAR_TAREA_INTERRUMPIDA) {
+    extrasLedger.RETOMAR_TAREA_INTERRUMPIDA = meta.intentLedger.RETOMAR_TAREA_INTERRUMPIDA;
+  }
+
+  const ledgerView = buildIntentLedgerView({
+    order: orderLedger,
+    reservation: reservationLedger,
+    extras: extrasLedger,
+  });
+  const ranked = rankActiveIntent(candidates, ledgerView, {
+    conversationId: ctx.conversationId,
+  });
+
+  if (ranked.active?.type === 'COMPLETAR_PEDIDO') {
+    void recordOrderCompletionSurfaced(ctx.conversationId, orderLedger).catch((err) =>
+      console.error('[goal] failed to record order completion surfaced:', err)
+    );
+  } else if (ranked.active?.type === 'COMPLETAR_RESERVA') {
+    void recordReservationCompletionSurfaced(ctx.conversationId, reservationLedger).catch(
+      (err) => console.error('[goal] failed to record reservation completion surfaced:', err)
+    );
+  } else if (ranked.active?.type === 'CONFIRMAR_OFERTA') {
+    void recordConfirmOfferSurfaced(ctx.conversationId, meta).catch((err) =>
+      console.error('[intent] failed to record CONFIRMAR_OFERTA surfaced:', err)
+    );
+  } else if (
+    ranked.active?.type === 'SUGERIR_COMPLEMENTO' ||
+    ranked.active?.type === 'SUGERIR_DIRECCION' ||
+    ranked.active?.type === 'RECOLECTAR_PARTY_SIZE'
+  ) {
+    void recordOpportunitySurfaced(ctx.conversationId, ranked.active.type, meta).catch(
+      (err) => console.error('[intent] failed to record opportunity surfaced:', err)
+    );
+  } else if (ranked.active?.type === 'PEDIDO_POR_EXPIRAR') {
+    void recordAlertEmitted(ctx.conversationId, 'PEDIDO_POR_EXPIRAR', meta).catch((err) =>
+      console.error('[intent] failed to record PEDIDO_POR_EXPIRAR emitted:', err)
+    );
+  } else if (ranked.active?.type === 'FUERA_DE_COBERTURA') {
+    void recordResolutionAlertSurfaced(ctx.conversationId, 'FUERA_DE_COBERTURA', meta).catch(
+      (err) => console.error('[intent] failed to record FUERA_DE_COBERTURA surfaced:', err)
+    );
+  } else if (
+    ranked.active?.type === 'CONFIRMAR_PAGO_ONLINE' ||
+    ranked.active?.type === 'DESBLOQUEAR_PEDIDO_CERRADO' ||
+    ranked.active?.type === 'RETOMAR_TAREA_INTERRUMPIDA'
+  ) {
+    void recordCatalogGoalSurfaced(ctx.conversationId, ranked.active.type, meta).catch((err) =>
+      console.error('[intent] failed to record catalog goal surfaced:', err)
+    );
+  }
+
+  const offerStillAlive = Boolean(getLastOffer(meta) && confirmOfferCandidate);
+  const intentLines =
+    ranked.active && ranked.permission.granted
+      ? ranked.active.hint.split('\n')
+      : [];
+
+  const nlpLines = nlpHint
+    ? [
+        `- Hint NLP (secundario, no vinculante): intent=${nlpHint.intent}, ` +
+          `producto=${nlpHint.detectedProductName ?? 'ninguno'}, ` +
+          `cantidad=${nlpHint.quantity ?? 'ninguna'}`,
+      ]
+    : [];
 
   const lines = [
     `- Personas para el pedido: ${partySizeLine}`,
-    // D3: la línea del carrito solo aporta cuando hay algo que decir sobre
-    // él (ítems, checkout en curso u oferta activa pendiente de respuesta).
-    hasItems || checkoutActive || hasActiveOffer
+    hasItems || checkoutActive || offerStillAlive
       ? `- Carrito: ${cartSummary ?? 'sin pedido activo'}`
       : null,
-    // Con fulfillment definido en el draft hay algo real que informar; en el
-    // resto de los casos ("no aplica", "sin elegir") es ruido en cada turno.
     hasActiveDraft && fulfillmentType ? `- Tipo de entrega: ${fulfillmentType}` : null,
-    // El caso informativo para el modelo es "activa" (cambia cómo debe
-    // comportarse ese turno); "inactiva" es el estado por defecto.
     checkoutActive ? '- Sesión de checkout: activa' : null,
-    ...lastOfferLines,
-    ...buildOrderCompletionContextLines({
-      facts: { hasItems, checkoutActive },
-      ledger: orderLedger,
-      conversationId: ctx.conversationId,
-    }),
-    ...buildReservationCompletionContextLines({
-      facts: { hasDraft: hasReservationDraft, reservationAgentActive },
-      ledger: reservationLedger,
-      conversationId: ctx.conversationId,
-      suppressedBySaliency: suppressReservation,
-      draft: reservationDraft,
-      hasEnvironments,
-    }),
+    ...intentLines,
+    ...nlpLines,
   ].filter((line): line is string => line !== null);
 
   if (lines.length === 0) {

@@ -15,13 +15,10 @@
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { getReactContext } from './_context';
-import {
-  omitConversationMetadataKeys,
-  patchConversationMetadata,
-} from '../repositories/conversationState.repository';
+import { omitConversationMetadataKeys } from '../repositories/conversationState.repository';
 import { AddressService } from '../services/address.service';
-import { prisma } from '../lib/prisma';
 import type { RunnableConfig } from '@langchain/core/runnables';
+import { incrementRefusalCount } from '../services/intent/intentRefusal.service';
 
 const toJson = (data: unknown): string => JSON.stringify(data);
 
@@ -168,15 +165,7 @@ export const finishOnboardingTool = new DynamicStructuredTool<
     const { conversationId } = getReactContext(config);
 
     if (outcome === 'address_refused') {
-      const cs = await prisma.conversation_state.findFirst({
-        where: { conversation_id: conversationId },
-        select: { metadata: true },
-      });
-      const current =
-        cs && typeof cs.metadata === 'object' && cs.metadata !== null
-          ? ((cs.metadata as Record<string, unknown>).address_refusal_count as number | undefined) ?? 0
-          : 0;
-      await patchConversationMetadata(conversationId, { address_refusal_count: current + 1 });
+      await incrementRefusalCount(conversationId, 'OBTENER_DIRECCION');
     }
 
     await omitConversationMetadataKeys(conversationId, [

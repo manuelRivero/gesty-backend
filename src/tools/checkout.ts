@@ -19,6 +19,7 @@ import type { RunnableConfig } from '@langchain/core/runnables';
 import { PAYMENT_METHOD_IDS, type PaymentMethodId } from '../domain/payment/paymentMethods';
 import { isPaymentMethodOffered } from '../services/paymentMethods.service';
 import { getBusinessConfig } from '../services/businessConfig.service';
+import { incrementRefusalCount } from '../services/intent/intentRefusal.service';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -315,17 +316,8 @@ export const markNameRefusedTool = new DynamicStructuredTool<
   schema: markNameRefusedSchema,
   func: async (_input: MarkNameRefusedInput, _runManager, config?: RunnableConfig) => {
     const { conversationId } = getReactContext(config);
-    const cs = await prisma.conversation_state.findFirst({
-      where: { conversation_id: conversationId },
-      select: { metadata: true },
-    });
-    const current =
-      cs && typeof cs.metadata === 'object' && cs.metadata !== null
-        ? ((cs.metadata as Record<string, unknown>).name_refusal_count as number | undefined) ?? 0
-        : 0;
-    const next = current + 1;
-    await patchConversationMetadata(conversationId, { name_refusal_count: next });
-    return toJson({ name_refusal_count: next });
+    const next = await incrementRefusalCount(conversationId, 'OBTENER_NOMBRE');
+    return toJson({ name_refusal_count: next, refusalCount: next });
   },
 });
 
@@ -355,17 +347,8 @@ export const markAddressRefusedTool = new DynamicStructuredTool<
   schema: markAddressRefusedSchema,
   func: async (_input: MarkAddressRefusedInput, _runManager, config?: RunnableConfig) => {
     const { conversationId } = getReactContext(config);
-    const cs = await prisma.conversation_state.findFirst({
-      where: { conversation_id: conversationId },
-      select: { metadata: true },
-    });
-    const current =
-      cs && typeof cs.metadata === 'object' && cs.metadata !== null
-        ? ((cs.metadata as Record<string, unknown>).address_refusal_count as number | undefined) ?? 0
-        : 0;
-    const next = current + 1;
-    await patchConversationMetadata(conversationId, { address_refusal_count: next });
-    return toJson({ address_refusal_count: next });
+    const next = await incrementRefusalCount(conversationId, 'OBTENER_DIRECCION');
+    return toJson({ address_refusal_count: next, refusalCount: next });
   },
 });
 
