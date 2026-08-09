@@ -14,6 +14,6 @@ export class CancelOrderHandler implements IntentHandler {
   async execute(ctx: WebhookContext): Promise<HandlerResult | null> {
     const result = await handleCancelOrderFromWebhook(ctx.payload);
     if (result === null) return noResponse();
-    return textResponse(result);
+    return { ...textResponse(result), skipBodyHumanization: true };
   }
 }

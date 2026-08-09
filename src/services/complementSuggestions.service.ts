@@ -37,6 +37,27 @@ export type AddItemFollowUpListOptions = {
 };
 
 /**
+ * Cuerpo de "Gestión de pedido": negrita solo en palabras clave de acción
+ * (sesgo para texto libre que el clasificador/agente reconoce rápido).
+ */
+export function buildAddItemShortcutsFollowUpBody(options?: {
+  includeEditAddressHint?: boolean;
+}): string {
+  const lines = [
+    'Elegí una opción de la lista, o escribí en texto libre:',
+    '',
+    '• *Menú* — ver el completo o una zona (entradas, principales, bebidas, postres)',
+    '• *Modificar* — cambiar cantidades o sacar ítems',
+    '• *Finalizar* — cerrar la compra cuando quieras',
+    '• *Petición especial* — si un plato necesita algo puntual (poca sal, extra cebolla, bien cocido…), anotalo acá',
+  ];
+  if (options?.includeEditAddressHint) {
+    lines.push('• *Dirección* — actualizar la de entrega si la necesitás');
+  }
+  return lines.join('\n');
+}
+
+/**
  * Segundo mensaje tras agregar al carrito: gestión del pedido (menú, carrito, checkout, zonas por tag).
  * Cabecera: 🤖 + *Gestión de pedido*; el cuerpo va aparte (solo texto descriptivo, sin repetir título).
  */

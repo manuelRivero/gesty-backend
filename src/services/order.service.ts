@@ -1,4 +1,5 @@
 // services/orderService.ts
+import { Prisma, OrderStatus, business, conversation, customer, draft_order } from '@prisma/client';
 import { emitAdminOrderStatusChanged } from '../socket/adminSocket';
 import { prisma } from '../lib/prisma';
 import {
@@ -7,15 +8,16 @@ import {
   createOrGetOpenConversation,
   findOrCreateConversationState,
   createConversationMessage,
-  updateConversationLastMessageAt
+  updateConversationLastMessageAt,
+  omitConversationMetadataKeys,
+  patchConversationMetadata,
 } from '../repositories';
 import { refreshDraftOrderTimeout } from './draftOrderTimeout.service';
 import { buildOrderSearchListMessage } from '../whatsappBuilders'; // Tu ruta: root/whatsappBuilders
 import { normalizeMetadata } from './utils'; // Ajusta ruta si es diferente
 import type { WhatsAppWebhookPayload } from '../types/whatsapp'; // Ajusta ruta
 import { WhatsAppListMessage } from '../domain/intent/whatsappTemplates';
-import { OrderStatus, business, conversation, customer } from '@prisma/client';
-import { draft_order } from '@prisma/client';
+import { formatBotUserMessage } from './productQuery/utils';
 
 export const handleOrderSearchPageFromWebhook = async (
   payload: WhatsAppWebhookPayload,
@@ -82,36 +84,78 @@ export const handleOrderSearchPageFromWebhook = async (
 // services/orderService.ts
 
 export const buildCancelOrderMessage = async (
-  conversation: conversation
+  conversation: conversation,
+  businessId: string,
+  customerPhone: string
 ): Promise<string | null> => {
-
   const pendingOrder = await prisma.orders.findFirst({
     where: {
       conversation_id: conversation.id,
       status: {
-        in: [OrderStatus.placed, OrderStatus.preparing]
-      }
-    }
+        in: [OrderStatus.placed, OrderStatus.preparing],
+      },
+    },
   });
 
-  if (!pendingOrder) {
-    const errorText = 'No tenés pedidos pendientes para cancelar.';
+  const draftOrder = await prisma.draft_order.findFirst({
+    where: {
+      business_id: businessId,
+      customer_phone: customerPhone,
+      status: 'active',
+    },
+  });
+
+  if (!pendingOrder && !draftOrder) {
+    const errorText = formatBotUserMessage(
+      'Nada para cancelar',
+      'ℹ️',
+      'No tenés un pedido en curso para cancelar. Cuando quieras, pedime el menú y armamos uno nuevo.'
+    );
     await createConversationMessage(conversation.id, 'ai', errorText, false);
     await updateConversationLastMessageAt(conversation.id);
     return errorText;
   }
 
-  await prisma.orders.update({
-    where: { id: pendingOrder.id },
-    data: { status: OrderStatus.cancelled }
-  });
+  if (draftOrder) {
+    await prisma.$transaction(async (tx) => {
+      await tx.draft_order_item.deleteMany({
+        where: { draft_order_id: draftOrder.id },
+      });
+      await tx.draft_order.update({
+        where: { id: draftOrder.id },
+        data: {
+          status: 'cancelled',
+          total_amount: new Prisma.Decimal(0),
+        },
+      });
+    });
+  }
 
-  emitAdminOrderStatusChanged(pendingOrder.business_id, {
-    orderId: pendingOrder.id,
-    status: OrderStatus.cancelled
-  });
+  if (pendingOrder) {
+    await prisma.orders.update({
+      where: { id: pendingOrder.id },
+      data: { status: OrderStatus.cancelled },
+    });
 
-  const messageText = `❌ Pedido #${pendingOrder.id} cancelado correctamente.`;
+    emitAdminOrderStatusChanged(pendingOrder.business_id, {
+      orderId: pendingOrder.id,
+      status: OrderStatus.cancelled,
+    });
+  }
+
+  // Evita que gates/Goals de la sesión a medias sigan empujando party size / checkout.
+  await patchConversationMetadata(conversation.id, {
+    checkout_active: false,
+    awaitingPartySize: false,
+    awaitingPeopleCount: false,
+  });
+  await omitConversationMetadataKeys(conversation.id, ['peopleCountResume']);
+
+  const messageText = formatBotUserMessage(
+    'Pedido cancelado',
+    '❌',
+    'Tu pedido fue cancelado. Cuando quieras, armamos uno nuevo.'
+  );
   await createConversationMessage(conversation.id, 'ai', messageText, false);
   await updateConversationLastMessageAt(conversation.id);
 
@@ -138,7 +182,7 @@ export const handleCancelOrderFromWebhook = async (
   const conversation = await createOrGetOpenConversation(business.id, customer.id);
   await findOrCreateConversationState(conversation.id);
 
-  return await buildCancelOrderMessage(conversation);
+  return await buildCancelOrderMessage(conversation, business.id, customer.phone_number);
 };
 
 export const handleDraftOrder = async (
