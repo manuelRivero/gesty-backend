@@ -1,11 +1,13 @@
 /**
- * Tipos del contrato de salida del sistema CTA híbrido.
+ * Tipos del contrato de CTA híbrido.
  *
- * Flujo:
- *  runHybridReactAgent → texto ReAct
- *  → ctaPlanner (LLM, CtaPlannerRaw)
- *  → ctaResolver (determinístico, CtaPlan resuelto)
- *  → buildHybridCtaInteractive (HandlerResult interactivo)
+ * Flujo actual:
+ *  agente ReAct llama `present_product_cta` (opcional)
+ *  → ctaResolver valida/resuelve productIds
+ *  → buildHybridCtaInteractive
+ *
+ * `CtaPlannerRaw` se reutiliza como forma intermedia del payload de la tool
+ * (el LLM planner post-proceso ya no es dueño del turno).
  */
 
 import { z } from 'zod';

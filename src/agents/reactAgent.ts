@@ -14,8 +14,8 @@
  * (último `AIMessage`) se traduce a un `HandlerResult` plano (texto), igual a
  * lo que produciría `FallbackHandler` en modo determinístico.
  *
- * Pipeline CTA (cuando HYBRID_CTA_ENABLED=true):
- *  texto ReAct → ctaPlanner (LLM) → ctaResolver (determinístico) → buildHybridCtaInteractive
+ * CTA de producto: el agente llama `present_product_cta` si quiere botones/lista.
+ * El runtime valida IDs y arma el interactive (sin CTA Planner post-proceso).
  */
 
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
@@ -27,15 +27,13 @@ import { buildHybridAgentSystemPrompt } from '../prompts/botPersonality';
 import { resolvePersonalityForBusiness } from '../services/botPersonality.service';
 import { allReactTools } from '../tools';
 import type { EnrichedContext, HandlerFollowUp, HandlerResult } from '../controllers/webhook/types';
-import { buildListMessage, formatBotUserMessage, normalizeMetadata } from '../services/productQuery/utils';
+import { buildListMessage, formatBotUserMessage } from '../services/productQuery/utils';
 import { prisma } from '../lib/prisma';
 import {
   isHybridCtaEnabled,
-  getHybridCtaTargetIntents,
   isHybridCtaEnabledForBusiness,
   isCheckoutAgentEnabled,
 } from '../config/env';
-import { planCta } from './ctaPlanner';
 import { resolveCta } from './ctaResolver';
 import {
   buildHybridCtaInteractive,
@@ -44,9 +42,8 @@ import {
 } from '../whatsappBuilders/hybridCta';
 import { patchConversationMetadata } from '../repositories';
 import { startCheckoutSessionTool } from '../tools/checkout';
-import { MenuService } from '../services/menu.service';
 import { truncateDescription, truncateTitle } from '../whatsappBuilders';
-import type { CtaPlannerInput, CtaPlan } from './types';
+import type { CtaPlan, CtaPlannerRaw } from './types';
 import { persistLastOffer } from '../services/lastOffer.service';
 import { buildCartSummaryMessage } from '../services/cart.service';
 import { AddressService } from '../services/address.service';
@@ -57,23 +54,19 @@ const markHybridResult = (result: HandlerResult): HandlerResult => ({
   skipBodyHumanization: true,
 });
 
-// ---------------------------------------------------------------------------
-// Constantes
-// ---------------------------------------------------------------------------
-
-/** Mínima confianza de detección para intentar mostrar CTA. */
-const MIN_CTA_CONFIDENCE = 0.6;
-
-/** Ventana de cooldown en ms (5 minutos = 1-2 turnos típicos). */
-const CTA_COOLDOWN_MS = 5 * 60 * 1000;
-
-/** Máximo de caracteres en el texto del bot para mostrar CTA. */
-const MAX_TEXT_FOR_CTA = 600;
-
-/** Número de productos del menú a precargar como contexto para el planner. */
-const TOP_MENU_PRODUCTS_FOR_PLANNER = 5;
-
 let cachedAgents = new Map<string, ReturnType<typeof createReactAgent>>();
+
+/** Payload que emite la tool `present_product_cta`. */
+export type PresentProductCtaSignal = {
+  primaryKind: CtaPlannerRaw['primaryKind'];
+  productHint: string | null;
+  productHints: string[] | null;
+  productId: string | null;
+  quantity: number;
+  primaryLabel: string | null;
+  secondaryKind: CtaPlannerRaw['secondaryKind'];
+  secondaryLabel: string | null;
+};
 
 const buildAgent = (personalityId: string, personalityPrompt: string) => {
   const checkoutDelegation = isCheckoutAgentEnabled();
@@ -146,11 +139,56 @@ export interface HybridAgentSignals {
   stagedAddressText: string | null;
   presentWelcomeOptions: boolean;
   welcomeBodyText: string | null;
+  /** CTA de producto pedido explícitamente por el agente (tool present_product_cta). */
+  presentProductCta: PresentProductCtaSignal | null;
 }
 
 export type HybridAgentRunResult =
   | { kind: 'response'; handlerResult: HandlerResult }
   | { kind: 'delegate_checkout'; reason: string | null };
+
+const PRIMARY_KINDS = new Set(['ADD_ITEM', 'SELECT_FROM_LIST', 'VIEW_MENU', 'VIEW_FEATURED']);
+
+const parsePresentProductCtaSignal = (data: Record<string, unknown>): PresentProductCtaSignal | null => {
+  const primaryKind = data.primaryKind;
+  if (typeof primaryKind !== 'string' || !PRIMARY_KINDS.has(primaryKind)) return null;
+
+  const productHints = Array.isArray(data.productHints)
+    ? data.productHints.filter((h): h is string => typeof h === 'string' && h.trim().length > 0)
+    : null;
+
+  return {
+    primaryKind: primaryKind as PresentProductCtaSignal['primaryKind'],
+    productHint: typeof data.productHint === 'string' ? data.productHint : null,
+    productHints: productHints && productHints.length > 0 ? productHints : null,
+    productId: typeof data.productId === 'string' ? data.productId : null,
+    quantity:
+      typeof data.quantity === 'number' && Number.isFinite(data.quantity)
+        ? Math.min(99, Math.max(1, Math.trunc(data.quantity)))
+        : 1,
+    primaryLabel: typeof data.primaryLabel === 'string' ? data.primaryLabel : null,
+    secondaryKind:
+      data.secondaryKind === 'VIEW_MENU' || data.secondaryKind === 'VIEW_FEATURED'
+        ? data.secondaryKind
+        : data.secondaryKind === null
+          ? null
+          : 'VIEW_FEATURED',
+    secondaryLabel: typeof data.secondaryLabel === 'string' ? data.secondaryLabel : null,
+  };
+};
+
+const defaultPrimaryLabel = (kind: PresentProductCtaSignal['primaryKind']): string => {
+  switch (kind) {
+    case 'ADD_ITEM':
+      return 'Agregar 🛒';
+    case 'SELECT_FROM_LIST':
+      return 'Elegir uno 👇';
+    case 'VIEW_FEATURED':
+      return 'Ver destacados';
+    default:
+      return 'Ver menú';
+  }
+};
 
 const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
   const signals: HybridAgentSignals = {
@@ -161,6 +199,7 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
     stagedAddressText: null,
     presentWelcomeOptions: false,
     welcomeBodyText: null,
+    presentProductCta: null,
   };
 
   for (const msg of messages) {
@@ -172,7 +211,7 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
     if (!rawContent) continue;
 
     try {
-      const data = JSON.parse(rawContent) as {
+      const data = JSON.parse(rawContent) as Record<string, unknown> & {
         signal?: string;
         reason?: string;
         status?: string;
@@ -181,7 +220,7 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
       };
       if (data.signal === 'start_checkout_session') {
         signals.startCheckoutSession = true;
-        signals.startCheckoutReason = data.reason ?? null;
+        signals.startCheckoutReason = typeof data.reason === 'string' ? data.reason : null;
       }
       if (data.signal === 'present_cart') {
         signals.presentCart = true;
@@ -190,11 +229,15 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
         signals.presentAddressConfirmation = true;
       }
       if (m.name === 'stage_delivery_address' && data.status === 'in_coverage' && data.formattedAddress) {
-        signals.stagedAddressText = data.formattedAddress;
+        signals.stagedAddressText = String(data.formattedAddress);
       }
       if (data.signal === 'present_welcome_options') {
         signals.presentWelcomeOptions = true;
-        signals.welcomeBodyText = data.bodyText ?? null;
+        signals.welcomeBodyText = typeof data.bodyText === 'string' ? data.bodyText : null;
+      }
+      if (data.signal === 'present_product_cta') {
+        const parsed = parsePresentProductCtaSignal(data);
+        if (parsed) signals.presentProductCta = parsed;
       }
     } catch {
       /* ignorar mensajes no-JSON */
@@ -249,60 +292,6 @@ const guardJsonRegression = (rawText: string, conversationId: string): void => {
     );
   } catch {
     /* not JSON — all good */
-  }
-};
-
-// ---------------------------------------------------------------------------
-// Cooldown helpers
-// ---------------------------------------------------------------------------
-
-const isCtaCooldownActive = (metadata: ReturnType<typeof normalizeMetadata>): boolean => {
-  const shownAt = metadata.lastCtaShownAt;
-  if (!shownAt) return false;
-  const elapsed = Date.now() - new Date(shownAt).getTime();
-  return elapsed < CTA_COOLDOWN_MS;
-};
-
-// ---------------------------------------------------------------------------
-// CTA pipeline pre-checks
-// ---------------------------------------------------------------------------
-
-/** Devuelve la razón por la que NO se debe mostrar CTA, o `null` si puede proceder. */
-const ctaSkipReason = (params: {
-  text: string;
-  intent: string;
-  confidence: number;
-  metadata: ReturnType<typeof normalizeMetadata>;
-  businessId: string;
-}): string | null => {
-  const { text, intent, confidence, metadata, businessId } = params;
-
-  if (!isHybridCtaEnabled()) return 'feature_off';
-  if (!isHybridCtaEnabledForBusiness(businessId)) return 'feature_off';
-  if (!getHybridCtaTargetIntents().has(intent)) return 'intent_not_target';
-  if (confidence < MIN_CTA_CONFIDENCE) return 'low_confidence';
-  if (text.length > MAX_TEXT_FOR_CTA) return 'text_too_long';
-  if (isCtaCooldownActive(metadata)) return 'cooldown';
-  return null;
-};
-
-// ---------------------------------------------------------------------------
-// Menu pre-fetch for planner context
-// ---------------------------------------------------------------------------
-
-const prefetchTopMenuProducts = async (params: {
-  businessId: string;
-  keyword: string | null;
-}): Promise<string[]> => {
-  if (!params.keyword || !params.keyword.trim()) return [];
-  try {
-    const results = await MenuService.searchMenuItemsByKeyword({
-      businessId: params.businessId,
-      keyword: params.keyword,
-    });
-    return results.slice(0, TOP_MENU_PRODUCTS_FOR_PLANNER).map((r) => r.name);
-  } catch {
-    return [];
   }
 };
 
@@ -548,154 +537,142 @@ export const runHybridReactAgent = async (
     };
   }
 
-  // --- CTA pipeline ---
-  // Sin `detection` (turno delegado desde una sesión sin re-detección previa)
-  // no hay intent/confidence confiables para planear un CTA: se degrada a
-  // texto plano en vez de crashear (H-01).
-  if (!ctx.detection) {
+  // CTA solo si el agente pidió present_product_cta (sin planner post-proceso).
+  if (
+    signals.presentProductCta &&
+    isHybridCtaEnabled() &&
+    isHybridCtaEnabledForBusiness(businessId)
+  ) {
+    const ctaReq = signals.presentProductCta;
+    const detectedProductName = ctx.detection?.detectedProductName ?? null;
+    const lastReferencedProductId =
+      (ctx.conversation as { lastReferencedProductId?: string | null }).lastReferencedProductId ??
+      null;
+
+    let resolvedPlan: CtaPlan | null = null;
+
+    if (ctaReq.primaryKind === 'ADD_ITEM' && ctaReq.productId) {
+      try {
+        const row = await prisma.menu_item.findFirst({
+          where: { id: ctaReq.productId, business_id: businessId, is_available: true },
+          select: { id: true, name: true },
+        });
+        if (row) {
+          resolvedPlan = {
+            productHint: ctaReq.productHint ?? row.name,
+            primary: {
+              kind: 'ADD_ITEM',
+              productId: row.id,
+              quantity: ctaReq.quantity,
+              label: (ctaReq.primaryLabel ?? defaultPrimaryLabel('ADD_ITEM')).slice(0, 20),
+            },
+            secondary: {
+              kind: ctaReq.secondaryKind === 'VIEW_MENU' ? 'VIEW_MENU' : 'VIEW_FEATURED',
+              label: (
+                ctaReq.secondaryLabel ??
+                (ctaReq.secondaryKind === 'VIEW_MENU' ? 'Ver menú' : 'Ver destacados')
+              ).slice(0, 20),
+            },
+          };
+        }
+      } catch (err) {
+        console.error('[hybrid-cta] productId lookup failed:', err);
+      }
+    }
+
+    if (!resolvedPlan) {
+      const plannerRaw: CtaPlannerRaw = {
+        shouldShowCta: true,
+        productHint: ctaReq.productHint,
+        productHints: ctaReq.productHints,
+        primaryKind: ctaReq.primaryKind,
+        primaryLabel: ctaReq.primaryLabel ?? defaultPrimaryLabel(ctaReq.primaryKind),
+        secondaryKind:
+          ctaReq.secondaryKind ??
+          (ctaReq.primaryKind === 'ADD_ITEM' ? 'VIEW_FEATURED' : null),
+        secondaryLabel:
+          ctaReq.secondaryLabel ??
+          (ctaReq.secondaryKind === 'VIEW_MENU' ? 'Ver menú' : 'Ver destacados'),
+      };
+
+      resolvedPlan = await resolveCta({
+        plannerRaw,
+        businessId,
+        lastReferencedProductId,
+        detectedProductName: detectedProductName ?? ctaReq.productHint,
+        botResponseText: formattedText,
+        detectionQuantity: ctx.detection?.quantity ?? ctaReq.quantity,
+        userMessage,
+      });
+    }
+
+    const handlerResult = buildHybridCtaInteractive(formattedText, resolvedPlan);
+    if (handlerResult) {
+      const primaryPayload = extractPrimaryPayload(resolvedPlan);
+      const primaryProductId = extractPrimaryProductId(resolvedPlan);
+      const selectListCandidateIds =
+        resolvedPlan.primary.kind === 'SELECT_FROM_LIST'
+          ? resolvedPlan.primary.candidates.map((c) => c.productId)
+          : null;
+
+      try {
+        await patchConversationMetadata(conversationId, {
+          lastCtaShownAt: new Date().toISOString(),
+          ...(primaryProductId ? { lastCtaProductId: primaryProductId } : {}),
+          ...(primaryPayload ? { lastCtaPayload: primaryPayload } : {}),
+          ...(selectListCandidateIds
+            ? {
+                pendingProductSelection: true,
+                pendingQuestion: userMessage,
+                candidateProductIds: selectListCandidateIds,
+              }
+            : {}),
+        });
+        await persistLastOfferFromCtaPlan(
+          conversationId,
+          resolvedPlan,
+          ctaReq.productHint ?? detectedProductName
+        );
+      } catch (err) {
+        console.error('[hybrid-cta] patchConversationMetadata failed:', err);
+      }
+
+      console.log(
+        JSON.stringify({
+          event: '[hybrid-cta] cta_shown',
+          source: 'agent_tool',
+          primaryKind: resolvedPlan.primary.kind,
+          productId: primaryProductId,
+          hadSecondary: !!resolvedPlan.secondary,
+          conversationId,
+        })
+      );
+
+      return { kind: 'response', handlerResult: markHybridResult(handlerResult) };
+    }
+
     console.log(
-      JSON.stringify({ event: '[hybrid-cta] cta_skipped', reason: 'no_detection', conversationId: ctx.conversationId })
+      JSON.stringify({
+        event: '[hybrid-cta] cta_skipped',
+        reason: 'agent_tool_build_failed',
+        conversationId,
+      })
     );
-    return {
-      kind: 'response',
-      handlerResult: markHybridResult({
-        content: formattedText,
-        isInteractive: false,
-        ...(productFollowUp ? { followUps: [productFollowUp] } : {}),
-      }),
-    };
+  } else if (signals.presentProductCta) {
+    console.log(
+      JSON.stringify({
+        event: '[hybrid-cta] cta_skipped',
+        reason: 'feature_off',
+        conversationId,
+      })
+    );
   }
 
-  const intent = ctx.detection.intent as string;
-  const confidence = ctx.detection.confidence;
-  const detectedProductName = ctx.detection.detectedProductName;
-  const lastReferencedProductId =
-    (ctx.conversation as { lastReferencedProductId?: string | null }).lastReferencedProductId ??
-    null;
-
-  const metadata = normalizeMetadata(ctx.conversationState?.metadata);
-
-  const skipReason = ctaSkipReason({ text: formattedText, intent, confidence, metadata, businessId });
-
-  if (skipReason) {
-    console.log(
-      JSON.stringify({ event: '[hybrid-cta] cta_skipped', intent, reason: skipReason, conversationId })
-    );
-    return {
-      kind: 'response',
-      handlerResult: markHybridResult({
-        content: formattedText,
-        isInteractive: false,
-        ...(productFollowUp ? { followUps: [productFollowUp] } : {}),
-      }),
-    };
-  }
-
-  const topMenuProductNames = await prefetchTopMenuProducts({
-    businessId,
-    keyword: detectedProductName,
-  });
-
-  const lastReferencedProductName = metadata.lastReferencedProductName ?? null;
-
-  const plannerInput: CtaPlannerInput = {
-    botResponseText: formattedText,
-    intent,
-    detectedProductName,
-    lastReferencedProductName,
-    userMessage,
-    topMenuProductNames,
-    listedProductNames: foundProducts.map((p) => p.name),
+  return {
+    kind: 'response',
+    handlerResult: markHybridResult({
+      content: formattedText,
+      isInteractive: false,
+    }),
   };
-
-  const plannerStart = Date.now();
-  const plannerRaw = await planCta(plannerInput);
-  const plannerLatencyMs = Date.now() - plannerStart;
-
-  console.log(
-    JSON.stringify({
-      event: '[hybrid-cta] cta_evaluated',
-      intent,
-      hadText: true,
-      plannerResult: plannerRaw ? 'plan' : 'null',
-      plannerLatencyMs,
-      conversationId,
-    })
-  );
-
-  if (!plannerRaw) {
-    return {
-      kind: 'response',
-      handlerResult: markHybridResult({
-        content: formattedText,
-        isInteractive: false,
-        ...(productFollowUp ? { followUps: [productFollowUp] } : {}),
-      }),
-    };
-  }
-
-  const resolvedPlan = await resolveCta({
-    plannerRaw,
-    businessId,
-    lastReferencedProductId,
-    detectedProductName,
-    botResponseText: formattedText,
-    detectionQuantity: ctx.detection.quantity,
-    userMessage,
-  });
-
-  const handlerResult = buildHybridCtaInteractive(formattedText, resolvedPlan);
-
-  if (!handlerResult) {
-    return {
-      kind: 'response',
-      handlerResult: markHybridResult({
-        content: formattedText,
-        isInteractive: false,
-        ...(productFollowUp ? { followUps: [productFollowUp] } : {}),
-      }),
-    };
-  }
-
-  const primaryPayload = extractPrimaryPayload(resolvedPlan);
-  const primaryProductId = extractPrimaryProductId(resolvedPlan);
-  const selectListCandidateIds =
-    resolvedPlan.primary.kind === 'SELECT_FROM_LIST'
-      ? resolvedPlan.primary.candidates.map((c) => c.productId)
-      : null;
-
-  try {
-    await patchConversationMetadata(conversationId, {
-      lastCtaShownAt: new Date().toISOString(),
-      ...(primaryProductId ? { lastCtaProductId: primaryProductId } : {}),
-      ...(primaryPayload ? { lastCtaPayload: primaryPayload } : {}),
-      ...(selectListCandidateIds
-        ? {
-            pendingProductSelection: true,
-            pendingQuestion: userMessage,
-            candidateProductIds: selectListCandidateIds,
-          }
-        : {}),
-    });
-    await persistLastOfferFromCtaPlan(
-      conversationId,
-      resolvedPlan,
-      detectedProductName
-    );
-  } catch (err) {
-    console.error('[hybrid-cta] patchConversationMetadata failed:', err);
-  }
-
-  console.log(
-    JSON.stringify({
-      event: '[hybrid-cta] cta_shown',
-      intent,
-      primaryKind: resolvedPlan.primary.kind,
-      productId: primaryProductId,
-      hadSecondary: !!resolvedPlan.secondary,
-      conversationId,
-    })
-  );
-
-  return { kind: 'response', handlerResult: markHybridResult(handlerResult) };
 };

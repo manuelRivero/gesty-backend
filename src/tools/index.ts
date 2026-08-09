@@ -1842,6 +1842,83 @@ export const presentWelcomeOptionsTool = new DynamicStructuredTool<
 });
 
 // ---------------------------------------------------------------------------
+// present_product_cta (señal-UI — el agente decide si ofrecer botones/lista)
+// ---------------------------------------------------------------------------
+
+const presentProductCtaSchema = z.object({
+  primaryKind: z
+    .enum(['ADD_ITEM', 'SELECT_FROM_LIST', 'VIEW_MENU', 'VIEW_FEATURED'])
+    .describe(
+      'ADD_ITEM: un solo producto para sumar. SELECT_FROM_LIST: 2+ productos para elegir. ' +
+        'VIEW_MENU / VIEW_FEATURED: explorar sin producto concreto.'
+    ),
+  productHint: z
+    .string()
+    .nullable()
+    .optional()
+    .describe('Nombre del producto para ADD_ITEM (si no tenés productId).'),
+  productHints: z
+    .array(z.string())
+    .nullable()
+    .optional()
+    .describe('Nombres exactos (2–5) para SELECT_FROM_LIST.'),
+  productId: z
+    .string()
+    .uuid()
+    .nullable()
+    .optional()
+    .describe('UUID del menu_item si ya lo tenés (preferido para ADD_ITEM).'),
+  quantity: z
+    .number()
+    .int()
+    .min(1)
+    .max(99)
+    .optional()
+    .describe('Cantidad para ADD_ITEM (default 1).'),
+  primaryLabel: z
+    .string()
+    .max(20)
+    .optional()
+    .describe('Texto del botón primario (máx 20). Ej: "Agregar 🛒", "Ver menú".'),
+  secondaryKind: z
+    .enum(['VIEW_MENU', 'VIEW_FEATURED'])
+    .nullable()
+    .optional()
+    .describe('Botón de escape. Obligatorio en la práctica con ADD_ITEM.'),
+  secondaryLabel: z.string().max(20).nullable().optional(),
+});
+type PresentProductCtaInput = z.infer<typeof presentProductCtaSchema>;
+
+export const presentProductCtaTool = new DynamicStructuredTool<
+  typeof presentProductCtaSchema,
+  PresentProductCtaInput
+>({
+  name: 'present_product_cta',
+  description:
+    'Adjunta botones o una lista de productos a TU respuesta de texto. ' +
+    'Llamala SOLO cuando quieras ofrecer una acción de producto (sumar, elegir entre opciones, ver menú/destacados). ' +
+    'NO la uses si ya resolviste el pedido del cliente sin necesidad de UI ' +
+    '(ej.: anotaste una nota con update_item_note, quitaste un ítem, solo confirmaste algo del carrito, ' +
+    'o estás cerrando con "¿algo más?"). ' +
+    'Escribí primero el texto de respuesta; esta tool solo decide si se muestran botones/lista.',
+  schema: presentProductCtaSchema,
+  func: async (input: PresentProductCtaInput, _runManager, config?: RunnableConfig) => {
+    getReactContext(config);
+    return toJson({
+      signal: 'present_product_cta',
+      primaryKind: input.primaryKind,
+      productHint: input.productHint ?? null,
+      productHints: input.productHints ?? null,
+      productId: input.productId ?? null,
+      quantity: input.quantity ?? 1,
+      primaryLabel: input.primaryLabel ?? null,
+      secondaryKind: input.secondaryKind ?? null,
+      secondaryLabel: input.secondaryLabel ?? null,
+    });
+  },
+});
+
+// ---------------------------------------------------------------------------
 // get_order_status (híbrido — seguimiento de un pedido YA creado)
 // ---------------------------------------------------------------------------
 
@@ -1988,6 +2065,7 @@ export const allReactTools = [
   savePartySizeTool,
   presentCartTool,
   presentWelcomeOptionsTool,
+  presentProductCtaTool,
   abandonPendingOrderTool,
   abandonPendingReservationTool,
   stageDeliveryAddressTool,

@@ -1,20 +1,10 @@
 /**
  * Tests de integración para runHybridReactAgent.
  *
- * Mockea: createReactAgent, ctaPlanner, ctaResolver, whatsappBuilders/hybridCta,
- *         repositories (patchConversationMetadata), MenuService.
- *
- * Escenarios:
- *  1. Flag off → texto plano (comportamiento actual).
- *  2. Producto resoluble → HandlerResult interactivo con ADD_ITEM.
- *  3. Respuesta sin producto → CTA VIEW_MENU.
- *  4. Cooldown activo → texto plano.
- *  5. Planner devuelve null → texto plano.
+ * CTA: el agente pide `present_product_cta` (signal). Ya no corre ctaPlanner post-proceso.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-// ---- Mocks de módulos externos ----
 
 vi.mock('@langchain/langgraph/prebuilt', () => ({
   createReactAgent: vi.fn(),
@@ -60,7 +50,34 @@ vi.mock('../../config/llm', () => ({
   getReactReasonerLlm: vi.fn(() => ({})),
 }));
 
-// ---- Imports bajo test ----
+vi.mock('../../services/botPersonality.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../services/botPersonality.service')>();
+  return {
+    ...actual,
+    resolvePersonalityForBusiness: vi.fn().mockResolvedValue({
+      id: 'personality-1',
+      promptText: 'test personality',
+    }),
+  };
+});
+
+vi.mock('../contextMessage', () => ({
+  buildContextMessage: vi.fn().mockResolvedValue('ctx'),
+}));
+
+vi.mock('../conversationHistory', () => ({
+  buildAgentHistoryMessages: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock('../../lib/prisma', () => ({
+  prisma: {
+    $queryRaw: vi.fn().mockResolvedValue([]),
+    menu_item: {
+      findFirst: vi.fn().mockResolvedValue({ id: 'prod-1', name: 'Ceviche Clásico' }),
+      findUnique: vi.fn().mockResolvedValue({ name: 'Ceviche Clásico' }),
+    },
+  },
+}));
 
 import { runHybridReactAgent, resetAgentCacheForTesting } from '../reactAgent';
 import type { HybridAgentRunResult } from '../reactAgent';
@@ -70,10 +87,6 @@ import { planCta } from '../ctaPlanner';
 import { resolveCta } from '../ctaResolver';
 import { buildHybridCtaInteractive } from '../../whatsappBuilders/hybridCta';
 import { patchConversationMetadata } from '../../repositories';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 const BOT_TEXT = '🤖\n\n*Ceviche Clásico* 🐟\n\nEs levemente picante.';
 
@@ -95,6 +108,33 @@ const makeAgentInvokeWithProductSearch = (
         tool_call_id: 'tc-search-1',
         name: 'search_products',
         content: JSON.stringify({ count: items.length, items }),
+      },
+      { content: text },
+    ],
+  });
+
+const makeAgentInvokeWithPresentCta = (
+  text: string,
+  cta: Record<string, unknown>
+) =>
+  vi.fn().mockResolvedValue({
+    messages: [
+      {
+        tool_call_id: 'tc-cta-1',
+        name: 'present_product_cta',
+        content: JSON.stringify({ signal: 'present_product_cta', ...cta }),
+      },
+      { content: text },
+    ],
+  });
+
+const makeAgentInvokeWithNote = (text: string) =>
+  vi.fn().mockResolvedValue({
+    messages: [
+      {
+        tool_call_id: 'tc-note-1',
+        name: 'update_item_note',
+        content: JSON.stringify({ success: true, itemName: 'Lomo saltado', note: 'poca sal' }),
       },
       { content: text },
     ],
@@ -123,25 +163,18 @@ const makeCtx = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe('runHybridReactAgent', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Resetear el singleton del agente ReAct para que el mock de createReactAgent
-    // sea tomado en cada test.
     resetAgentCacheForTesting();
-    // ReAct agent mock por defecto devuelve texto del bot
     vi.mocked(createReactAgent).mockReturnValue({
       invoke: makeAgentInvoke(BOT_TEXT),
     } as any);
   });
 
-  it('Escenario 1: flag off → retorna texto plano sin CTA', async () => {
-    vi.mocked(isHybridCtaEnabled).mockReturnValue(false);
-    vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(false);
+  it('sin present_product_cta → texto plano y planCta no corre', async () => {
+    vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
+    vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
 
     const result = unwrap(await runHybridReactAgent(makeCtx() as any));
 
@@ -149,23 +182,23 @@ describe('runHybridReactAgent', () => {
     expect(result!.isInteractive).toBe(false);
     expect(typeof result!.content).toBe('string');
     expect(planCta).not.toHaveBeenCalled();
+    expect(buildHybridCtaInteractive).not.toHaveBeenCalled();
   });
 
-  it('Escenario 2: flag on + producto resoluble → HandlerResult interactivo ADD_ITEM', async () => {
+  it('present_product_cta ADD_ITEM con productId → interactive sin planCta', async () => {
     vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
     vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
-    vi.mocked(planCta).mockResolvedValue({
-      shouldShowCta: true,
-      productHint: 'ceviche',
-      primaryKind: 'ADD_ITEM',
-      primaryLabel: 'Agregar 🛒',
-      secondaryKind: 'VIEW_FEATURED',
-      secondaryLabel: 'Ver destacados',
-    });
-    vi.mocked(resolveCta).mockResolvedValue({
-      primary: { kind: 'ADD_ITEM', productId: 'prod-1', quantity: 1, label: 'Agregar 🛒' },
-      secondary: { kind: 'VIEW_FEATURED', label: 'Ver destacados' },
-    });
+    vi.mocked(createReactAgent).mockReturnValue({
+      invoke: makeAgentInvokeWithPresentCta(BOT_TEXT, {
+        primaryKind: 'ADD_ITEM',
+        productId: 'prod-1',
+        productHint: 'ceviche',
+        quantity: 1,
+        primaryLabel: 'Agregar 🛒',
+        secondaryKind: 'VIEW_FEATURED',
+        secondaryLabel: 'Ver destacados',
+      }),
+    } as any);
     vi.mocked(buildHybridCtaInteractive).mockReturnValue({
       content: { type: 'interactive', interactive: {} },
       isInteractive: true,
@@ -174,76 +207,78 @@ describe('runHybridReactAgent', () => {
     const result = unwrap(await runHybridReactAgent(makeCtx() as any));
 
     expect(result!.isInteractive).toBe(true);
-    expect(planCta).toHaveBeenCalledOnce();
-    expect(resolveCta).toHaveBeenCalledOnce();
+    expect(planCta).not.toHaveBeenCalled();
+    expect(resolveCta).not.toHaveBeenCalled();
     expect(buildHybridCtaInteractive).toHaveBeenCalledOnce();
     expect(patchConversationMetadata).toHaveBeenCalledOnce();
   });
 
-  it('Escenario 3: planner retorna VIEW_MENU → CTA VIEW_MENU', async () => {
+  it('present_product_cta SELECT_FROM_LIST → resolveCta + interactive', async () => {
     vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
     vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
-    vi.mocked(planCta).mockResolvedValue({
-      shouldShowCta: true,
-      productHint: null,
-      primaryKind: 'VIEW_MENU',
-      primaryLabel: 'Ver menú',
-      secondaryKind: 'VIEW_FEATURED',
-      secondaryLabel: 'Ver destacados',
-    });
+    vi.mocked(createReactAgent).mockReturnValue({
+      invoke: makeAgentInvokeWithPresentCta(BOT_TEXT, {
+        primaryKind: 'SELECT_FROM_LIST',
+        productHints: ['Ceviche clásico', 'Ceviche mixto'],
+        primaryLabel: 'Elegir uno',
+        secondaryKind: 'VIEW_MENU',
+        secondaryLabel: 'Ver menú',
+      }),
+    } as any);
     vi.mocked(resolveCta).mockResolvedValue({
-      primary: { kind: 'VIEW_MENU', label: 'Ver menú' },
-      secondary: { kind: 'VIEW_FEATURED', label: 'Ver destacados' },
+      primary: {
+        kind: 'SELECT_FROM_LIST',
+        candidates: [
+          { productId: 'a', title: 'Ceviche clásico' },
+          { productId: 'b', title: 'Ceviche mixto' },
+        ],
+        bodyText: BOT_TEXT,
+      },
+      secondary: { kind: 'VIEW_MENU', label: 'Ver menú' },
     });
     vi.mocked(buildHybridCtaInteractive).mockReturnValue({
-      content: { type: 'interactive', interactive: {} },
+      content: { type: 'list' },
       isInteractive: true,
     });
+
+    const result = unwrap(await runHybridReactAgent(makeCtx() as any));
+
+    expect(result!.isInteractive).toBe(true);
+    expect(planCta).not.toHaveBeenCalled();
+    expect(resolveCta).toHaveBeenCalledOnce();
+  });
+
+  it('update_item_note sin present_product_cta → texto solo (caso poca sal)', async () => {
+    vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
+    vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
+    vi.mocked(createReactAgent).mockReturnValue({
+      invoke: makeAgentInvokeWithNote(
+        '🤖\n\n*Respuesta* 💬\n\n¡Anotado! El lomo va con poca sal.'
+      ),
+    } as any);
 
     const result = unwrap(
       await runHybridReactAgent(
         makeCtx({
-          detection: {
-            intent: 'PRODUCT_QUERY',
-            confidence: 0.9,
-            detectedProductName: null,
-            quantity: null,
-            candidates: [],
-            raw: null,
-          },
+          message: { text: { body: 'Quiero que tenga poca sal' }, type: 'text' },
         }) as any
       )
     );
 
-    expect(result!.isInteractive).toBe(true);
-    expect(resolveCta).toHaveBeenCalledOnce();
-  });
-
-  it('Escenario 4: cooldown activo → texto plano', async () => {
-    vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
-    vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
-
-    const recentCta = new Date(Date.now() - 60_000).toISOString(); // hace 1 minuto
-    const ctxWithCooldown = makeCtx({
-      conversationState: {
-        metadata: {
-          lastCtaShownAt: recentCta,
-          lastCtaProductId: 'old-prod',
-          lastCtaPayload: 'ADD_ITEM:old-prod:1',
-        },
-      },
-    });
-
-    const result = unwrap(await runHybridReactAgent(ctxWithCooldown as any));
-
     expect(result!.isInteractive).toBe(false);
     expect(planCta).not.toHaveBeenCalled();
+    expect(buildHybridCtaInteractive).not.toHaveBeenCalled();
   });
 
-  it('Escenario 5: planner retorna null → texto plano', async () => {
-    vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
-    vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
-    vi.mocked(planCta).mockResolvedValue(null);
+  it('flag CTA off + present_product_cta → texto plano', async () => {
+    vi.mocked(isHybridCtaEnabled).mockReturnValue(false);
+    vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(false);
+    vi.mocked(createReactAgent).mockReturnValue({
+      invoke: makeAgentInvokeWithPresentCta(BOT_TEXT, {
+        primaryKind: 'ADD_ITEM',
+        productId: 'prod-1',
+      }),
+    } as any);
 
     const result = unwrap(await runHybridReactAgent(makeCtx() as any));
 
@@ -260,30 +295,7 @@ describe('runHybridReactAgent', () => {
     expect(result).toBeNull();
   });
 
-  it('baja confianza → texto plano (skip CTA)', async () => {
-    vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
-    vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
-
-    const result = unwrap(
-      await runHybridReactAgent(
-        makeCtx({
-          detection: {
-            intent: 'PRODUCT_ATTRIBUTE_QUESTION',
-            confidence: 0.4, // < MIN_CTA_CONFIDENCE
-            detectedProductName: 'ceviche',
-            quantity: null,
-            candidates: [],
-            raw: null,
-          },
-        }) as any
-      )
-    );
-
-    expect(result!.isInteractive).toBe(false);
-    expect(planCta).not.toHaveBeenCalled();
-  });
-
-  it('shortlist de tools ≥2 → followUp lista y sin pipeline CTA (evita IDs desalineados)', async () => {
+  it('shortlist de tools ≥2 → followUp lista (sin planCta)', async () => {
     vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
     vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
 
