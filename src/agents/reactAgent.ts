@@ -312,6 +312,121 @@ const guardJsonRegression = (rawText: string, conversationId: string): void => {
   }
 };
 
+/** SELECT_FROM_LIST desde IDs verificados en BD (body = intro del agente). */
+const buildSelectFromListPlanFromIds = async (params: {
+  productIds: string[];
+  businessId: string;
+  bodyText: string;
+  secondaryLabel?: string | null;
+  productHint?: string | null;
+}): Promise<CtaPlan | null> => {
+  const { productIds, businessId, bodyText, secondaryLabel, productHint } = params;
+  if (productIds.length < 2) return null;
+
+  try {
+    const rows = await prisma.menu_item.findMany({
+      where: {
+        id: { in: productIds },
+        business_id: businessId,
+        is_available: true,
+      },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        menu_item_price: {
+          orderBy: { valid_from: 'desc' },
+          take: 1,
+          select: { amount: true },
+        },
+      },
+    });
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const ordered = productIds
+      .map((id) => byId.get(id))
+      .filter((r): r is NonNullable<typeof r> => !!r);
+
+    if (ordered.length < 2) return null;
+
+    return {
+      productHint: productHint ?? undefined,
+      primary: {
+        kind: 'SELECT_FROM_LIST',
+        candidates: ordered.slice(0, 10).map((r) => {
+          const amount = r.menu_item_price[0]?.amount;
+          const priceStr =
+            amount != null ? `$${Number(amount).toLocaleString('es-AR')}` : undefined;
+          return {
+            productId: r.id,
+            title: r.name,
+            description: priceStr ?? r.description ?? undefined,
+          };
+        }),
+        bodyText,
+      },
+      secondary: {
+        kind: 'VIEW_MENU' as const,
+        label: (secondaryLabel ?? 'Ver menú').slice(0, 20),
+      },
+    };
+  } catch (err) {
+    console.error('[hybrid-cta] buildSelectFromListPlanFromIds failed:', err);
+    return null;
+  }
+};
+
+const emitHybridCtaResult = async (params: {
+  conversationId: string;
+  userMessage: string;
+  formattedText: string;
+  resolvedPlan: CtaPlan;
+  source: string;
+  productHintForOffer?: string | null;
+}): Promise<HandlerResult | null> => {
+  const { conversationId, userMessage, formattedText, resolvedPlan, source, productHintForOffer } =
+    params;
+  const handlerResult = buildHybridCtaInteractive(formattedText, resolvedPlan);
+  if (!handlerResult) return null;
+
+  const primaryPayload = extractPrimaryPayload(resolvedPlan);
+  const primaryProductId = extractPrimaryProductId(resolvedPlan);
+  const selectListCandidateIds =
+    resolvedPlan.primary.kind === 'SELECT_FROM_LIST'
+      ? resolvedPlan.primary.candidates.map((c) => c.productId)
+      : null;
+
+  try {
+    await patchConversationMetadata(conversationId, {
+      lastCtaShownAt: new Date().toISOString(),
+      ...(primaryProductId ? { lastCtaProductId: primaryProductId } : {}),
+      ...(primaryPayload ? { lastCtaPayload: primaryPayload } : {}),
+      ...(selectListCandidateIds
+        ? {
+            pendingProductSelection: true,
+            pendingQuestion: userMessage,
+            candidateProductIds: selectListCandidateIds,
+          }
+        : {}),
+    });
+    await persistLastOfferFromCtaPlan(conversationId, resolvedPlan, productHintForOffer ?? null);
+  } catch (err) {
+    console.error('[hybrid-cta] patchConversationMetadata failed:', err);
+  }
+
+  console.log(
+    JSON.stringify({
+      event: '[hybrid-cta] cta_shown',
+      source,
+      primaryKind: resolvedPlan.primary.kind,
+      productId: primaryProductId,
+      hadSecondary: !!resolvedPlan.secondary,
+      conversationId,
+    })
+  );
+
+  return handlerResult;
+};
+
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
@@ -479,77 +594,31 @@ export const runHybridReactAgent = async (
   const formattedText = ensureWhatsAppBotFormat(rawText);
   const userMessage = ctx.message?.text?.body ?? '';
 
-  // CTA / lista: solo si el agente pidió present_product_cta (sin follow-up automático).
-  if (
-    signals.presentProductCta &&
-    isHybridCtaEnabled() &&
-    isHybridCtaEnabledForBusiness(businessId)
-  ) {
+  const detectedProductName = ctx.detection?.detectedProductName ?? null;
+  const ctaFeatureOn =
+    isHybridCtaEnabled() && isHybridCtaEnabledForBusiness(businessId);
+
+  // CTA / lista: preferido si el agente pidió present_product_cta.
+  if (signals.presentProductCta && ctaFeatureOn) {
     const ctaReq = signals.presentProductCta;
-    const detectedProductName = ctx.detection?.detectedProductName ?? null;
     const lastReferencedProductId =
       (ctx.conversation as { lastReferencedProductId?: string | null }).lastReferencedProductId ??
       null;
 
     let resolvedPlan: CtaPlan | null = null;
 
-    // Shortlist autoritativo: IDs de search/find → lista en el mismo mensaje (body = intro del agente).
     if (
       ctaReq.primaryKind === 'SELECT_FROM_LIST' &&
       ctaReq.productIds &&
       ctaReq.productIds.length >= 2
     ) {
-      try {
-        const rows = await prisma.menu_item.findMany({
-          where: {
-            id: { in: ctaReq.productIds },
-            business_id: businessId,
-            is_available: true,
-          },
-          select: {
-            id: true,
-            name: true,
-            description: true,
-            menu_item_price: {
-              orderBy: { valid_from: 'desc' },
-              take: 1,
-              select: { amount: true },
-            },
-          },
-        });
-        const byId = new Map(rows.map((r) => [r.id, r]));
-        const ordered = ctaReq.productIds
-          .map((id) => byId.get(id))
-          .filter((r): r is NonNullable<typeof r> => !!r);
-
-        if (ordered.length >= 2) {
-          resolvedPlan = {
-            productHint: ctaReq.productHint ?? undefined,
-            primary: {
-              kind: 'SELECT_FROM_LIST',
-              candidates: ordered.slice(0, 10).map((r) => {
-                const amount = r.menu_item_price[0]?.amount;
-                const priceStr =
-                  amount != null
-                    ? `$${Number(amount).toLocaleString('es-AR')}`
-                    : undefined;
-                return {
-                  productId: r.id,
-                  title: r.name,
-                  description: priceStr ?? r.description ?? undefined,
-                };
-              }),
-              bodyText: formattedText,
-            },
-            secondary: {
-              kind: 'VIEW_MENU' as const,
-              label: (ctaReq.secondaryLabel ?? 'Ver menú').slice(0, 20),
-            },
-          };
-        }
-      } catch (err) {
-        console.error('[hybrid-cta] productIds lookup failed:', err);
-      }
+      resolvedPlan = await buildSelectFromListPlanFromIds({
+        productIds: ctaReq.productIds,
+        businessId,
+        bodyText: formattedText,
+        secondaryLabel: ctaReq.secondaryLabel,
+        productHint: ctaReq.productHint,
+      });
     }
 
     if (ctaReq.primaryKind === 'ADD_ITEM' && ctaReq.productId) {
@@ -607,49 +676,18 @@ export const runHybridReactAgent = async (
       });
     }
 
-    const handlerResult = buildHybridCtaInteractive(formattedText, resolvedPlan);
-    if (handlerResult) {
-      const primaryPayload = extractPrimaryPayload(resolvedPlan);
-      const primaryProductId = extractPrimaryProductId(resolvedPlan);
-      const selectListCandidateIds =
-        resolvedPlan.primary.kind === 'SELECT_FROM_LIST'
-          ? resolvedPlan.primary.candidates.map((c) => c.productId)
-          : null;
-
-      try {
-        await patchConversationMetadata(conversationId, {
-          lastCtaShownAt: new Date().toISOString(),
-          ...(primaryProductId ? { lastCtaProductId: primaryProductId } : {}),
-          ...(primaryPayload ? { lastCtaPayload: primaryPayload } : {}),
-          ...(selectListCandidateIds
-            ? {
-                pendingProductSelection: true,
-                pendingQuestion: userMessage,
-                candidateProductIds: selectListCandidateIds,
-              }
-            : {}),
-        });
-        await persistLastOfferFromCtaPlan(
-          conversationId,
-          resolvedPlan,
-          ctaReq.productHint ?? detectedProductName
-        );
-      } catch (err) {
-        console.error('[hybrid-cta] patchConversationMetadata failed:', err);
+    if (resolvedPlan) {
+      const handlerResult = await emitHybridCtaResult({
+        conversationId,
+        userMessage,
+        formattedText,
+        resolvedPlan,
+        source: 'agent_tool',
+        productHintForOffer: ctaReq.productHint ?? detectedProductName,
+      });
+      if (handlerResult) {
+        return { kind: 'response', handlerResult: markHybridResult(handlerResult) };
       }
-
-      console.log(
-        JSON.stringify({
-          event: '[hybrid-cta] cta_shown',
-          source: 'agent_tool',
-          primaryKind: resolvedPlan.primary.kind,
-          productId: primaryProductId,
-          hadSecondary: !!resolvedPlan.secondary,
-          conversationId,
-        })
-      );
-
-      return { kind: 'response', handlerResult: markHybridResult(handlerResult) };
     }
 
     console.log(
