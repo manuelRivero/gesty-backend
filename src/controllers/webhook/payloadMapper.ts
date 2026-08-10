@@ -177,6 +177,8 @@ export const detectIntentFromPayload = (
     ORDER_SEARCH_PAGE: ConversationIntent.ORDER_SEARCH_PAGE,
     CHECKOUT: ConversationIntent.CHECKOUT,
     CANCEL_ORDER: ConversationIntent.CANCEL_ORDER,
+    'CANCEL_TARGET:draft': ConversationIntent.CANCEL_ORDER,
+    'CANCEL_TARGET:order': ConversationIntent.CANCEL_ORDER,
     END_CONVERSATION: ConversationIntent.END_CONVERSATION,
     VIEW_MENU_RETURN: ConversationIntent.VIEW_MENU_RETURN,
     VIEW_MENU: ConversationIntent.VIEW_MENU,

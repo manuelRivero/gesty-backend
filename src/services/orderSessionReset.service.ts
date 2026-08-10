@@ -36,6 +36,7 @@ const ORDER_SESSION_OMIT_KEYS = [
   'lastOffer',
   'lastReferencedProductName',
   'pending_fulfillment_action',
+  'pending_cancel_disambiguation',
   'pending_closed_add_item',
   'closed_order_confirmed_at',
   'pending_address_action',

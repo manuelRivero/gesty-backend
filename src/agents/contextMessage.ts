@@ -378,6 +378,18 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
 
   const pendingSelectionLines = await buildPendingProductSelectionLines(meta, businessId);
 
+  const pendingCancel = meta.pending_cancel_disambiguation;
+  const pendingCancelLines =
+    pendingCancel &&
+    typeof pendingCancel === 'object' &&
+    typeof pendingCancel.orderRef === 'string'
+      ? [
+          `- Cancelación pendiente de desambiguar: hay carrito en armado Y pedido confirmado #${pendingCancel.orderRef}. ` +
+            `Si el cliente elige, llamá cancel_order(target: "draft") para el carrito o cancel_order(target: "order") para el pedido creado. ` +
+            `No inventes el cancelado en prosa.`,
+        ]
+      : [];
+
   const lines = [
     `- Personas para el pedido: ${partySizeLine}`,
     hasItems || checkoutActive || offerStillAlive
@@ -386,6 +398,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     hasActiveDraft && fulfillmentType ? `- Tipo de entrega: ${fulfillmentType}` : null,
     checkoutActive ? '- Sesión de checkout: activa' : null,
     ...pendingSelectionLines,
+    ...pendingCancelLines,
     ...intentLines,
     ...optionalComplementLines,
     ...nlpLines,

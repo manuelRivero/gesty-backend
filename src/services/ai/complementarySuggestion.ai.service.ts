@@ -43,7 +43,7 @@ function buildFallbackBridgeMessage(
       ? hints[0] ?? 'opciones'
       : `${hints.slice(0, -1).join(', ')} y ${hints[hints.length - 1]}`;
   return (
-    `¡Genial! Ya sumaste *${lastItemName}*. Si querés seguir armando el pedido, tengo sugerencias de ${hintLabel} que combinan *muy bien* con lo que pediste. ¿Las miramos?`
+    `¡Genial! Ya sumaste *${lastItemName}*. Si querés, sumá ${hintLabel} que combinan bien.`
   );
 }
 

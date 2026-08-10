@@ -160,7 +160,7 @@ export type ComplementSuggestionListItem = {
 
 /**
  * Lista WA de sugerencias de complemento + filas mínimas de gestión.
- * Body = bridge (post-add) o pitch (materialización diferida).
+ * Body = intro (bridge/pitch) + atajos en negrita (platos / gestión) + alternativa lista.
  */
 export function buildComplementSuggestionsListMessage(params: {
   title: string;
@@ -172,10 +172,26 @@ export function buildComplementSuggestionsListMessage(params: {
   includeManagementRows?: boolean;
 }): WhatsAppListMessage {
   const { title, titleEmoji, bodyPlain, items, includeManagementRows = false } = params;
+
+  const bullets = items
+    .map((row) => row.name.trim())
+    .filter(Boolean)
+    .map((name) => shortcutBullet(name));
+
+  if (includeManagementRows) {
+    bullets.push(
+      shortcutBullet('Menú'),
+      shortcutBullet('Modificar', 'pedido'),
+      shortcutBullet('Finalizar', 'pedido')
+    );
+  } else {
+    bullets.push(shortcutBullet('Menú'));
+  }
+
   const suggestionBody = formatBotUserMessage(
     title,
     titleEmoji,
-    `${bodyPlain.trim()}\n\nTocá el botón y elegí 👇`
+    buildShortcutsThenListBody(bodyPlain.trim(), bullets)
   );
 
   const suggestionButtons = items.map((row) => ({
@@ -319,6 +335,12 @@ export async function materializeComplementSuggestionsList(
     })),
   });
 
+  await patchConversationMetadata(ctx.conversation.id, {
+    pendingProductSelection: true,
+    pendingQuestion: snapshot.title || 'sugerencia de complemento',
+    candidateProductIds: ordered.map((row) => row.id),
+  });
+
   await clearComplementSuggestionSnapshot(ctx.conversation.id);
   await createConversationMessage(ctx.conversation.id, 'ai', listMessage.body.text, true);
   await updateConversationLastMessageAt(ctx.conversation.id);
@@ -344,6 +366,13 @@ export async function presentComplementSuggestionBundle(params: {
 
   await persistComplementSuggestionSnapshot(conversationId, bundle.snapshot);
 
+  const candidateIds = bundle.items.map((i) => i.id);
+  await patchConversationMetadata(conversationId, {
+    pendingProductSelection: true,
+    pendingQuestion: bundle.snapshot.title || 'sugerencia de complemento',
+    candidateProductIds: candidateIds,
+  });
+
   const listMessage = buildComplementSuggestionsListMessage({
     title: bundle.snapshot.title,
     titleEmoji: bundle.snapshot.titleEmoji,
@@ -353,7 +382,7 @@ export async function presentComplementSuggestionBundle(params: {
   });
 
   await recordOpportunitySurfaced(conversationId, 'SUGERIR_COMPLEMENTO', metadata, {
-    offeredProductIds: bundle.items.map((i) => i.id),
+    offeredProductIds: candidateIds,
   });
   await clearComplementSuggestionSnapshot(conversationId);
   await createConversationMessage(conversationId, 'ai', listMessage.body.text, true);

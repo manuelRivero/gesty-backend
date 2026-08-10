@@ -50,6 +50,7 @@ describe('botPersonality', () => {
     expect(hybrid).toMatch(/PROHIBIDO \(upsell vacío\)/i);
     expect(hybrid).toMatch(/Sugerir sin esta tool está prohibido/i);
     expect(hybrid).toMatch(/opportunity.*nextAction|nextAction present_complement/i);
+    expect(hybrid).toMatch(/único mensaje al cliente/i);
   });
 
   it('hybrid instruye a resolver Selección de producto pendiente contra candidatos', () => {
@@ -58,10 +59,18 @@ describe('botPersonality', () => {
     expect(hybrid).toMatch(/Selección de producto pendiente/i);
   });
 
-  it('complementary prompt permite omitir con skip', () => {
+  it('complementary prompt pide intro corta sin listar platos', () => {
     const prompt = buildComplementarySuggestionSystemPrompt();
     expect(prompt).toMatch(/"skip"\s*:\s*true/);
     expect(prompt).toMatch(/omitir/i);
+    expect(prompt).toMatch(/1 a 2 oraciones/i);
+    expect(prompt).toMatch(/No listes platos/i);
+  });
+
+  it('hybrid incluye cancel_order para cancelación real', () => {
+    const hybrid = buildHybridAgentSystemPrompt();
+    expect(hybrid).toMatch(/cancel_order/i);
+    expect(hybrid).toMatch(/CANCELAR PEDIDO/i);
   });
 
   it('hybrid declara el bloque de estado como contexto interno no narrable', () => {

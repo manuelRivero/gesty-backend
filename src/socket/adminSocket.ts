@@ -271,6 +271,9 @@ export type AdminOrderRealtimePayload =
       businessId: string;
       orderId: string;
       status: string;
+      /** Presente p. ej. cuando el cliente cancela: texto para toast en el panel. */
+      message?: string;
+      orderRef?: string;
       at: string;
     }
   | {
@@ -343,7 +346,13 @@ export function emitAdminOrderCreated(
 
 export function emitAdminOrderStatusChanged(
   businessId: string,
-  payload: { orderId: string; status: string }
+  payload: {
+    orderId: string;
+    status: string;
+    /** Texto listo para toast cuando el cambio es relevante (p. ej. cancelado por el cliente). */
+    message?: string;
+    orderRef?: string;
+  }
 ): void {
   emitAdminOrderChannel(
     businessId,
@@ -352,6 +361,8 @@ export function emitAdminOrderStatusChanged(
       businessId,
       orderId: payload.orderId,
       status: payload.status,
+      ...(payload.message ? { message: payload.message } : {}),
+      ...(payload.orderRef ? { orderRef: payload.orderRef } : {}),
       at: new Date().toISOString()
     },
     "status_changed"

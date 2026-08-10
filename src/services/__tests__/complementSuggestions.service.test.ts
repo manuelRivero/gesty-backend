@@ -91,11 +91,11 @@ describe('canSurfaceComplementOpportunity', () => {
 });
 
 describe('buildComplementSuggestionsListMessage', () => {
-  it('incluye productos y filas de gestión cuando se pide', () => {
+  it('incluye productos, filas de gestión y atajos tipables en el body', () => {
     const list = buildComplementSuggestionsListMessage({
       title: 'Algo dulce',
       titleEmoji: '🍰',
-      bodyPlain: 'Si querés un postre, mirá la lista.',
+      bodyPlain: 'Si querés un postre, mirá estas opciones.',
       items: [
         { id: 'p1', name: 'Flan', categoryName: 'Postres' },
         { id: 'p2', name: 'Brownie', categoryName: 'Postres' },
@@ -109,6 +109,12 @@ describe('buildComplementSuggestionsListMessage', () => {
     expect(rows.some((r) => r.id === 'VIEW_CART_FOR_EDITION')).toBe(true);
     expect(rows.some((r) => r.id === 'VIEW_MENU')).toBe(true);
     expect(list.body.text).toMatch(/postre/i);
+    expect(list.body.text).toContain('• *Flan*');
+    expect(list.body.text).toContain('• *Brownie*');
+    expect(list.body.text).toContain('• *Modificar* pedido');
+    expect(list.body.text).toContain('• *Finalizar* pedido');
+    expect(list.body.text).toMatch(/O elegí de la lista/i);
+    expect(list.body.text).not.toMatch(/Tocá el botón/i);
   });
 });
 
@@ -117,7 +123,9 @@ describe('presentComplementSuggestionBundle', () => {
     vi.clearAllMocks();
   });
 
-  it('registra SUGERIR_COMPLEMENTO en el ledger', async () => {
+  it('registra SUGERIR_COMPLEMENTO y deja selección pendiente tipable', async () => {
+    const { patchConversationMetadata } = await import('../../repositories');
+    const productId = '33333333-3333-3333-3333-333333333333';
     const list = await presentComplementSuggestionBundle({
       conversationId: 'conv-1',
       metadata: {},
@@ -126,23 +134,31 @@ describe('presentComplementSuggestionBundle', () => {
           v: 1,
           draftOrderId: '11111111-1111-1111-1111-111111111111',
           businessId: '22222222-2222-2222-2222-222222222222',
-          orderedItemIds: ['33333333-3333-3333-3333-333333333333'],
+          orderedItemIds: [productId],
           pitchBody: 'Probá un postre.',
           title: 'Algo dulce',
           titleEmoji: '🍰',
           createdAtIso: new Date().toISOString(),
         },
         bridgeMessagePlain: 'Ya sumaste la milanesa. ¿Un postre?',
-        items: [{ id: '33333333-3333-3333-3333-333333333333', name: 'Flan', categoryName: 'Postres' }],
+        items: [{ id: productId, name: 'Flan', categoryName: 'Postres' }],
       },
     });
 
     expect(list).not.toBeNull();
+    expect(list!.body.text).toContain('• *Flan*');
     expect(recordOpportunitySurfaced).toHaveBeenCalledWith(
       'conv-1',
       'SUGERIR_COMPLEMENTO',
       expect.anything(),
-      { offeredProductIds: ['33333333-3333-3333-3333-333333333333'] }
+      { offeredProductIds: [productId] }
+    );
+    expect(patchConversationMetadata).toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({
+        pendingProductSelection: true,
+        candidateProductIds: [productId],
+      })
     );
   });
 });

@@ -1835,6 +1835,42 @@ export const presentCartTool = new DynamicStructuredTool<
 });
 
 // ---------------------------------------------------------------------------
+// cancel_order (señal-UI — cancela draft y/o orden creada)
+// ---------------------------------------------------------------------------
+
+const cancelOrderSchema = z.object({
+  target: z
+    .enum(['draft', 'order'])
+    .optional()
+    .describe(
+      'Opcional. "draft" = solo el carrito en armado; "order" = solo el pedido ya creado. ' +
+        'Si hay ambos y no sabés cuál, omití target: el sistema desambigua con botones.'
+    ),
+});
+type CancelOrderInput = z.infer<typeof cancelOrderSchema>;
+
+export const cancelOrderTool = new DynamicStructuredTool<
+  typeof cancelOrderSchema,
+  CancelOrderInput
+>({
+  name: 'cancel_order',
+  description:
+    'Cancela el carrito (draft) y/o un pedido YA CREADO (previo a entregado). ' +
+    'Usala cuando el cliente diga "cancela el pedido", "borrá el carrito", "no quiero el pedido", etc. ' +
+    'NO inventes un mensaje de cancelado en prosa: esta tool ejecuta la cancelación real. ' +
+    'Si hay carrito Y pedido confirmado a la vez, omití target para que el sistema pregunte cuál. ' +
+    'Si [ESTADO DEL CLIENTE] pide elegir carrito vs pedido, llamá con target draft u order.',
+  schema: cancelOrderSchema,
+  func: async ({ target }: CancelOrderInput, _runManager, config?: RunnableConfig) => {
+    getReactContext(config);
+    return toJson({
+      signal: 'cancel_order',
+      ...(target ? { target } : {}),
+    });
+  },
+});
+
+// ---------------------------------------------------------------------------
 // present_complement_suggestions (señal-UI — upsell model-led)
 // ---------------------------------------------------------------------------
 
@@ -2104,7 +2140,14 @@ export const getOrderStatusTool = new DynamicStructuredTool<
 });
 
 // ---------------------------------------------------------------------------
-// abandon_pending_order (Ledger — Tool de la familia Intent, ADR-0005/0007/0008)
+// abandon_pending_order (Ledger — ADR-0005/0007/0008)
+//
+// DESCONECTADA del agente (2026-08): queda el código por si se retoma.
+// Motivo: sin vencimiento de carrito, un draft "abandonado" (bot deja de
+// insistir pero el carrito sigue) no aporta y genera zombies. El anti-
+// cansancio del Goal queda en presupuesto/cooldown; cancelar pedido = cancel
+// real (draft/orden), no esta tool.
+// NO está en `allReactTools`.
 // ---------------------------------------------------------------------------
 
 const abandonPendingOrderSchema = z.object({});
@@ -2116,11 +2159,8 @@ export const abandonPendingOrderTool = new DynamicStructuredTool<
 >({
   name: 'abandon_pending_order',
   description:
-    'Registrá que el cliente pidió explícitamente que dejes de insistir con el pedido pendiente ' +
-    '("dejalo", "no me sigas preguntando por el pedido", "olvidate de eso", "no quiero seguir con eso"). ' +
-    'NO borra el carrito ni sus ítems — el pedido sigue ahí por si el cliente vuelve más tarde. ' +
-    'Solo silencia los recordatorios del sistema sobre ese pedido. Si el cliente agrega otro ítem ' +
-    'después, el silencio se levanta solo.',
+    'DESCONECTADA — no exponer al agente. Registraba que el cliente pidió dejar de insistir ' +
+    'con el pedido pendiente sin borrar el carrito (solo silenciaba COMPLETAR_PEDIDO).',
   schema: abandonPendingOrderSchema,
   func: async (_input: AbandonPendingOrderInput, _runManager, config?: RunnableConfig) => {
     const { conversationId } = getReactContext(config);
@@ -2184,12 +2224,13 @@ export const allReactTools = [
   updateItemNoteTool,
   savePartySizeTool,
   presentCartTool,
+  cancelOrderTool,
   presentComplementSuggestionsTool,
   markComplementRefusedTool,
   presentCategoryTool,
   presentWelcomeOptionsTool,
   presentProductCtaTool,
-  abandonPendingOrderTool,
+  // abandonPendingOrderTool — desconectada a propósito (ver comentario arriba)
   abandonPendingReservationTool,
   stageDeliveryAddressTool,
   presentAddressConfirmationTool,

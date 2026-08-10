@@ -45,6 +45,7 @@ import { startCheckoutSessionTool } from '../tools/checkout';
 import type { CtaPlan, CtaPlannerRaw } from './types';
 import { persistLastOffer } from '../services/lastOffer.service';
 import { buildCartSummaryMessage } from '../services/cart.service';
+import { buildCancelOrderMessage } from '../services/order.service';
 import { tryPresentComplementSuggestions } from '../services/complementSuggestions.service';
 import { buildCategoryProductListMessage } from '../services/category.service';
 import { findOrCreateConversationState } from '../repositories';
@@ -138,6 +139,9 @@ export interface HybridAgentSignals {
   startCheckoutSession: boolean;
   startCheckoutReason: string | null;
   presentCart: boolean;
+  /** Cancela draft y/o orden creada (tool cancel_order). */
+  cancelOrder: boolean;
+  cancelOrderTarget: 'draft' | 'order' | null;
   /** Upsell de complemento (bebida/postre/etc.); productId opcional del último add. */
   presentComplementSuggestions: boolean;
   complementProductId: string | null;
@@ -209,6 +213,8 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
     startCheckoutSession: false,
     startCheckoutReason: null,
     presentCart: false,
+    cancelOrder: false,
+    cancelOrderTarget: null,
     presentComplementSuggestions: false,
     complementProductId: null,
     presentCategoryId: null,
@@ -235,6 +241,7 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
         formattedAddress?: string;
         bodyText?: string;
         productId?: string;
+        target?: string;
       };
       if (data.signal === 'start_checkout_session') {
         signals.startCheckoutSession = true;
@@ -242,6 +249,12 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
       }
       if (data.signal === 'present_cart') {
         signals.presentCart = true;
+      }
+      if (data.signal === 'cancel_order') {
+        signals.cancelOrder = true;
+        if (data.target === 'draft' || data.target === 'order') {
+          signals.cancelOrderTarget = data.target;
+        }
       }
       if (data.signal === 'present_complement_suggestions') {
         signals.presentComplementSuggestions = true;
@@ -543,23 +556,13 @@ export const runHybridReactAgent = async (
           maxItems: 5,
         });
         if (listMsg) {
-          const agentText = extractFinalText(out);
           console.log(
             JSON.stringify({
               event: '[hybrid-agent] present_complement_suggestions_signal',
               conversationId,
             })
           );
-          if (agentText?.trim()) {
-            return {
-              kind: 'response',
-              handlerResult: markHybridResult({
-                content: agentText,
-                isInteractive: false,
-                followUps: [{ type: 'list', listMessage: listMsg }],
-              }),
-            };
-          }
+          // Un solo mensaje: la lista ya trae bridge + atajos tipables (sin prosa + followUp).
           return {
             kind: 'response',
             handlerResult: markHybridResult({ content: listMsg, isInteractive: true }),
@@ -568,6 +571,47 @@ export const runHybridReactAgent = async (
       }
     } catch (err) {
       console.error('[hybrid-agent] present_complement_suggestions failed, falling through', err);
+    }
+  }
+
+  if (signals.cancelOrder) {
+    try {
+      const conversation = ctx.conversation as { id: string };
+      const result = await buildCancelOrderMessage(
+        conversation as Parameters<typeof buildCancelOrderMessage>[0],
+        businessId,
+        customerPhone,
+        {
+          target: signals.cancelOrderTarget ?? undefined,
+        }
+      );
+      if (result) {
+        console.log(
+          JSON.stringify({
+            event: '[hybrid-agent] cancel_order_signal',
+            conversationId,
+            target: signals.cancelOrderTarget,
+          })
+        );
+        if (typeof result === 'string') {
+          return {
+            kind: 'response',
+            handlerResult: markHybridResult({
+              content: result,
+              isInteractive: false,
+            }),
+          };
+        }
+        return {
+          kind: 'response',
+          handlerResult: markHybridResult({
+            content: result,
+            isInteractive: true,
+          }),
+        };
+      }
+    } catch (err) {
+      console.error('[hybrid-agent] cancel_order failed, falling through', err);
     }
   }
 

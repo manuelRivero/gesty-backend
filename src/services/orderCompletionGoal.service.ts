@@ -189,7 +189,8 @@ export const buildOrderCompletionContextLines = (params: {
     '- Objetivo abierto (COMPLETAR_PEDIDO): el cliente tiene un pedido sin cerrar. ' +
       'Si es natural en este turno —después de responder lo que preguntó, y solo si tu ' +
       'respuesta no deja una pregunta abierta— podés ofrecerle continuar con el pedido o ' +
-      'preguntarle si seguimos. No lo menciones si no viene al caso. Si el cliente pide ' +
-      'explícitamente que no insistas más, usá la tool `abandon_pending_order` (no borra el carrito).',
+      'preguntarle si seguimos. No lo menciones si no viene al caso. ' +
+      'Si el cliente quiere cancelar / borrar el pedido, eso es cancelación real (intent CANCEL_ORDER), ' +
+      'no un silencio del Goal.',
   ];
 };

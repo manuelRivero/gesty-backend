@@ -42,6 +42,8 @@ export function humanizeInteractivePayloadId(payloadId: string): string {
     VIEW_ORDER: 'Ver pedido',
     CHECKOUT: 'Finalizar pedido',
     CANCEL_ORDER: 'Cancelar pedido',
+    'CANCEL_TARGET:draft': 'Cancelar carrito',
+    'CANCEL_TARGET:order': 'Cancelar pedido creado',
     END_CONVERSATION: 'Terminar conversacion',
     ASK_QUESTION: 'Hacer una pregunta',
     RESERVATION_CONFIRM: 'Confirmar reserva',

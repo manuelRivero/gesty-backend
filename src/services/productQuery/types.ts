@@ -169,6 +169,17 @@ export type ConversationMetadata = {
   pending_address_zone_id?: string | null;
   /** Intent de carrito que quedó pendiente mientras el usuario elige delivery vs take-away. */
   pending_fulfillment_action?: string | null;
+  /**
+   * Desambiguación de cancel: hay draft activo Y orden creada cancelable.
+   * El cliente elige con botones CANCEL_TARGET:draft | CANCEL_TARGET:order
+   * o la tool cancel_order(target).
+   */
+  pending_cancel_disambiguation?: {
+    orderId: string;
+    orderRef: string;
+    askedAt: string;
+  } | null;
+
   /** Payload ADD_ITEM pendiente de confirmación cuando el negocio está cerrado con orders_when_closed=true. */
   pending_closed_add_item?: string | null;
   /**
