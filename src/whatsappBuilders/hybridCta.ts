@@ -17,6 +17,7 @@ import type { CtaPlan } from '../agents/types';
 
 const MAX_BUTTON_TITLE = 20;
 const MAX_PAYLOAD_LENGTH = 255;
+const MAX_ROW_DESCRIPTION = 72;
 
 const safeTitle = (label: string): string =>
   label.slice(0, MAX_BUTTON_TITLE);
@@ -38,21 +39,80 @@ const simpleActionToPayload = (action: { kind: 'VIEW_MENU' | 'VIEW_FEATURED' }):
   return 'FEATURED_PAGE:1';
 };
 
+export type SelectListCandidateMeta = {
+  servesPeople?: number | null;
+  priceAmount?: number | string | null;
+};
+
+/**
+ * Meta tipable bajo el atajo: "sirve 2 · $11.000".
+ * El nombre en negrita queda aparte para reconocimiento por texto.
+ */
+export const formatSelectListCandidateMeta = (
+  params: SelectListCandidateMeta
+): string | undefined => {
+  const parts: string[] = [];
+  const serves = params.servesPeople;
+  if (typeof serves === 'number' && Number.isFinite(serves) && serves > 0) {
+    parts.push(serves === 1 ? 'sirve 1' : `sirve ${Math.floor(serves)}`);
+  }
+  if (params.priceAmount != null && params.priceAmount !== '') {
+    const n = Number(params.priceAmount);
+    if (Number.isFinite(n)) {
+      parts.push(`$${n.toLocaleString('es-AR')}`);
+    }
+  }
+  return parts.length > 0 ? parts.join(' · ') : undefined;
+};
+
+/**
+ * Si el modelo listó platos en prosa, nos quedamos con la intro hasta la
+ * primera viñeta/numeración (el builder aporta los atajos con meta).
+ */
+export const sanitizeSelectFromListIntro = (raw: string): string => {
+  const lines = raw
+    .split(/\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const kept: string[] = [];
+  for (const line of lines) {
+    if (/^(\d+[\).\:]|[-•*])\s/.test(line)) break;
+    if (/^\*\*[^*]+\*\*/.test(line) && kept.length > 0) break;
+    // Línea que es casi solo un producto en negrita WA (*Nombre*)
+    if (/^\*[^*]+\*\s*(\([^)]*\))?$/.test(line) && kept.length > 0) break;
+    kept.push(line);
+    if (kept.join(' ').length > 320) break;
+  }
+  const out = kept.join('\n').trim();
+  return out || 'Decime cuál te gusta y lo sumamos.';
+};
+
+export type SelectListBodyCandidate = {
+  title: string;
+  /** Porciones / precio u otra meta corta (va después del nombre en negrita). */
+  description?: string;
+};
+
 /**
  * Intro del agente + opciones en negrita (atajos) + alternativa lista WA.
+ * description se muestra como sufijo tipable: • *Nombre* — sirve 2 · $11.000
  */
 export const buildSelectFromListBodyText = (
   intro: string,
-  candidates: Array<{ title: string }>,
+  candidates: SelectListBodyCandidate[],
   maxItems = 5
 ): string => {
   const bullets = candidates
     .slice(0, maxItems)
-    .map((c) => c.title.trim())
-    .filter(Boolean)
-    .map((name) => shortcutBullet(name));
+    .map((c) => {
+      const name = c.title.trim();
+      if (!name) return '';
+      const meta = c.description?.trim();
+      return meta ? shortcutBullet(name, `— ${meta}`) : shortcutBullet(name);
+    })
+    .filter(Boolean);
 
-  return buildShortcutsThenListBody(intro, bullets);
+  return buildShortcutsThenListBody(sanitizeSelectFromListIntro(intro), bullets);
 };
 
 /**
@@ -73,7 +133,7 @@ export const buildHybridCtaInteractive = (
         title: truncateTitle(c.title, MAX_BUTTON_TITLE),
         payload: safePayload(`SELECT_PRODUCT:${c.productId}`),
         description: c.description
-          ? c.description.slice(0, 60)
+          ? c.description.slice(0, MAX_ROW_DESCRIPTION)
           : 'Seleccioná este producto',
         sectionTitle: 'Opciones disponibles',
       }));
@@ -139,23 +199,19 @@ export const buildHybridCtaInteractive = (
   }
 };
 
-/**
- * Extrae el payload del botón primario de un CtaPlan para guardar en metadata
- * (usado para correlacionar cta_clicked).
- */
+/** Payload del botón primario (metadata / cta_clicked). */
 export const extractPrimaryPayload = (plan: CtaPlan): string | null => {
   const { primary } = plan;
-  if (primary.kind === 'ADD_ITEM') return `ADD_ITEM:${primary.productId}:${primary.quantity}`;
+  if (primary.kind === 'ADD_ITEM') {
+    return `ADD_ITEM:${primary.productId}:${primary.quantity}`;
+  }
   if (primary.kind === 'VIEW_MENU') return 'VIEW_MENU';
   if (primary.kind === 'VIEW_FEATURED') return 'FEATURED_PAGE:1';
   return null;
 };
 
-/**
- * Extrae el productId del plan primario si es ADD_ITEM.
- */
+/** productId del plan primario si es ADD_ITEM. */
 export const extractPrimaryProductId = (plan: CtaPlan): string | null => {
-  const { primary } = plan;
-  if (primary.kind === 'ADD_ITEM') return primary.productId;
+  if (plan.primary.kind === 'ADD_ITEM') return plan.primary.productId;
   return null;
 };

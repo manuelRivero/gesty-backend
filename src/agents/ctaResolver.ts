@@ -18,6 +18,7 @@
  */
 
 import { MenuService, type MenuItemSearchResult } from '../services/menu.service';
+import { formatSelectListCandidateMeta } from '../whatsappBuilders/hybridCta';
 import { prisma } from '../lib/prisma';
 import type { CtaPlannerRaw, CtaPlan, CtaAction, CtaActionSimple, CtaResolverInput } from './types';
 
@@ -83,11 +84,18 @@ const buildSelectFromList = (
 ): CtaPlan => ({
   primary: {
     kind: 'SELECT_FROM_LIST',
-    candidates: candidates.slice(0, 5).map((c) => ({
-      productId: c.id,
-      title: c.name,
-      description: c.description ?? c.ingredients ?? undefined,
-    })),
+    candidates: candidates.slice(0, 5).map((c) => {
+      const amount = c.menu_item_price?.[0]?.amount;
+      const meta = formatSelectListCandidateMeta({
+        servesPeople: c.serves_people,
+        priceAmount: amount != null ? Number(amount) : null,
+      });
+      return {
+        productId: c.id,
+        title: c.name,
+        description: meta ?? c.description ?? c.ingredients ?? undefined,
+      };
+    }),
     bodyText,
   },
   secondary: secondaryLabel ? viewMenuAction(secondaryLabel) : viewMenuAction(),

@@ -9,8 +9,29 @@ import {
   buildHybridCtaInteractive,
   extractPrimaryPayload,
   extractPrimaryProductId,
+  formatSelectListCandidateMeta,
+  sanitizeSelectFromListIntro,
 } from '../../whatsappBuilders/hybridCta';
 import type { CtaPlan } from '../types';
+
+describe('formatSelectListCandidateMeta', () => {
+  it('arma sirve N · $precio', () => {
+    expect(formatSelectListCandidateMeta({ servesPeople: 2, priceAmount: 25000 })).toBe(
+      'sirve 2 · $25.000'
+    );
+    expect(formatSelectListCandidateMeta({ servesPeople: 1, priceAmount: null })).toBe('sirve 1');
+    expect(formatSelectListCandidateMeta({ servesPeople: null, priceAmount: 11000 })).toBe(
+      '$11.000'
+    );
+  });
+});
+
+describe('sanitizeSelectFromListIntro', () => {
+  it('corta antes de la lista numerada', () => {
+    const raw = 'Genial, tengo opciones.\n1. *Ceviche*\n2. *Otro*';
+    expect(sanitizeSelectFromListIntro(raw)).toBe('Genial, tengo opciones.');
+  });
+});
 
 // ---------------------------------------------------------------------------
 // buildHybridCtaInteractive
@@ -96,13 +117,13 @@ describe('buildHybridCtaInteractive', () => {
   });
 
   describe('SELECT_FROM_LIST plan', () => {
-    it('devuelve lista interactiva con filas SELECT_PRODUCT', () => {
+    it('devuelve lista interactiva con filas SELECT_PRODUCT y meta en atajos', () => {
       const plan: CtaPlan = {
         primary: {
           kind: 'SELECT_FROM_LIST',
           candidates: [
-            { productId: 'p1', title: 'Ceviche Clásico', description: 'Con limón y ají' },
-            { productId: 'p2', title: 'Ceviche Mixto', description: 'Con mariscos' },
+            { productId: 'p1', title: 'Ceviche Clásico', description: 'sirve 2 · $25.000' },
+            { productId: 'p2', title: 'Ceviche Mixto', description: 'sirve 1 · $11.000' },
           ],
           bodyText: TEXT,
         },
@@ -120,9 +141,35 @@ describe('buildHybridCtaInteractive', () => {
       expect(allRowIds).toContain('SELECT_PRODUCT:p1');
       expect(allRowIds).toContain('SELECT_PRODUCT:p2');
       expect(allRowIds).toContain('VIEW_MENU');
-      expect(listMsg.body.text).toContain('• *Ceviche Clásico*');
-      expect(listMsg.body.text).toContain('• *Ceviche Mixto*');
+      expect(listMsg.body.text).toContain('• *Ceviche Clásico* — sirve 2 · $25.000');
+      expect(listMsg.body.text).toContain('• *Ceviche Mixto* — sirve 1 · $11.000');
       expect(listMsg.body.text).toMatch(/O elegí de la lista/i);
+    });
+
+    it('sanitiza intro que trae lista numerada y deja solo la prosa previa', () => {
+      const dirtyIntro = [
+        '¡Perfecto! Vamos con el ceviche!',
+        'Tenés varias opciones:',
+        '1. *Ceviche Clásico* (sirve 2)',
+        '2. *Ceviche mixto* (sirve 1)',
+      ].join('\n');
+
+      const plan: CtaPlan = {
+        primary: {
+          kind: 'SELECT_FROM_LIST',
+          candidates: [
+            { productId: 'p1', title: 'Ceviche Clásico', description: 'sirve 2 · $25.000' },
+            { productId: 'p2', title: 'Ceviche Mixto', description: 'sirve 1 · $11.000' },
+          ],
+          bodyText: dirtyIntro,
+        },
+      };
+
+      const result = buildHybridCtaInteractive(dirtyIntro, plan);
+      const body = (result!.content as any).body.text as string;
+      expect(body).toMatch(/Perfecto/i);
+      expect(body).not.toMatch(/1\.\s*\*Ceviche/);
+      expect(body).toContain('• *Ceviche Clásico* — sirve 2 · $25.000');
     });
 
     it('limita a 5 candidatos máximo', () => {

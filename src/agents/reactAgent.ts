@@ -39,6 +39,7 @@ import {
   buildHybridCtaInteractive,
   extractPrimaryPayload,
   extractPrimaryProductId,
+  formatSelectListCandidateMeta,
 } from '../whatsappBuilders/hybridCta';
 import { patchConversationMetadata } from '../repositories';
 import { startCheckoutSessionTool } from '../tools/checkout';
@@ -47,6 +48,7 @@ import { persistLastOffer } from '../services/lastOffer.service';
 import { buildCartSummaryMessage } from '../services/cart.service';
 import { buildCancelOrderMessage } from '../services/order.service';
 import { tryPresentComplementSuggestions } from '../services/complementSuggestions.service';
+import { tryHandlePendingVariationHybrid } from '../services/pendingVariation.service';
 import { buildCategoryProductListMessage } from '../services/category.service';
 import { findOrCreateConversationState } from '../repositories';
 import { AddressService } from '../services/address.service';
@@ -361,6 +363,7 @@ const buildSelectFromListPlanFromIds = async (params: {
         id: true,
         name: true,
         description: true,
+        serves_people: true,
         menu_item_price: {
           orderBy: { valid_from: 'desc' },
           take: 1,
@@ -381,12 +384,14 @@ const buildSelectFromListPlanFromIds = async (params: {
         kind: 'SELECT_FROM_LIST',
         candidates: ordered.slice(0, 10).map((r) => {
           const amount = r.menu_item_price[0]?.amount;
-          const priceStr =
-            amount != null ? `$${Number(amount).toLocaleString('es-AR')}` : undefined;
+          const meta = formatSelectListCandidateMeta({
+            servesPeople: r.serves_people,
+            priceAmount: amount != null ? Number(amount) : null,
+          });
           return {
             productId: r.id,
             title: r.name,
-            description: priceStr ?? r.description ?? undefined,
+            description: meta ?? r.description ?? undefined,
           };
         }),
         bodyText,
@@ -473,6 +478,25 @@ export const runHybridReactAgent = async (
       ? (ctx.business as { id: string }).id
       : '';
   if (!businessId) return null;
+
+  // Variación pendiente: resolver en texto libre antes del ReAct (evita relistar).
+  try {
+    const pendingHandled = await tryHandlePendingVariationHybrid(ctx);
+    if (pendingHandled) {
+      console.log(
+        JSON.stringify({
+          event: '[hybrid-agent] pending_variation_resolved',
+          conversationId: ctx.conversationId,
+        })
+      );
+      return {
+        kind: 'response',
+        handlerResult: markHybridResult(pendingHandled),
+      };
+    }
+  } catch (err) {
+    console.error('[hybrid-agent] pending_variation resolve failed', err);
+  }
 
   const { id: personalityId, promptText } =
     await resolvePersonalityForBusiness(businessId);

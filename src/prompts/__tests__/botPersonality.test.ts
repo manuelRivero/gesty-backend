@@ -67,6 +67,13 @@ describe('botPersonality', () => {
     expect(prompt).toMatch(/No listes platos/i);
   });
 
+  it('hybrid ANTI-MULTI-PRODUCTO prohíbe listar platos/porciones/precios en prosa', () => {
+    const hybrid = buildHybridAgentSystemPrompt();
+    expect(hybrid).toMatch(/ANTI-MULTI-PRODUCTO/i);
+    expect(hybrid).toMatch(/PROHIBIDO en tu texto/i);
+    expect(hybrid).toMatch(/porciones y precio/i);
+  });
+
   it('hybrid incluye cancel_order para cancelación real', () => {
     const hybrid = buildHybridAgentSystemPrompt();
     expect(hybrid).toMatch(/cancel_order/i);

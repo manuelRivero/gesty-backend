@@ -45,6 +45,11 @@ vi.mock('../../services/lastOffer.service', () => ({
   clearLastOffer: vi.fn(),
 }));
 
+vi.mock('../../services/pendingVariation.service', () => ({
+  setPendingVariation: vi.fn(),
+  clearPendingVariation: vi.fn(),
+}));
+
 vi.mock('../../services/orderCompletionGoal.service', () => ({
   getOrderCompletionLedger: vi.fn(),
   recordOrderCompletionAbandonment: vi.fn(),

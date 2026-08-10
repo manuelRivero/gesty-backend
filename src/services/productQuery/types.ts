@@ -39,6 +39,17 @@ export type ConversationMetadata = {
   pendingQuestion?: string;
   candidateProductIds?: string[];
   /**
+   * Variación pendiente tras `add_cart_item` → variation_required / invalid.
+   * El híbrido (o el resolver determinista) completa con el texto del cliente.
+   */
+  pendingVariation?: {
+    productId: string;
+    productName: string;
+    variations: string[];
+    quantity: number;
+    askedAt: string;
+  } | null;
+  /**
    * Confirmación pendiente sobre un ítem del carrito (`cart.service.ts`).
    * `CONFIRM_REMOVE` es el Constraint de borde de `remove_cart_item`
    * (ADR-0002): fuente única, compartida entre el flujo determinístico de

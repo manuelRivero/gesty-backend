@@ -51,6 +51,7 @@ import {
   recordCatalogGoalSurfaced,
 } from '../services/intent/catalogGoals.service';
 import { collectCategoryTagsInDraftCart } from '../helpers/complementaryMenu.helper';
+import { buildPendingVariationContextLines } from '../services/pendingVariation.service';
 
 /** Hint interno cuando hay shortlist pendiente (SELECT_FROM_LIST / product query). */
 export async function buildPendingProductSelectionLines(
@@ -390,6 +391,8 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
         ]
       : [];
 
+  const pendingVariationLines = buildPendingVariationContextLines(meta);
+
   const lines = [
     `- Personas para el pedido: ${partySizeLine}`,
     hasItems || checkoutActive || offerStillAlive
@@ -398,6 +401,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     hasActiveDraft && fulfillmentType ? `- Tipo de entrega: ${fulfillmentType}` : null,
     checkoutActive ? '- Sesión de checkout: activa' : null,
     ...pendingSelectionLines,
+    ...pendingVariationLines,
     ...pendingCancelLines,
     ...intentLines,
     ...optionalComplementLines,

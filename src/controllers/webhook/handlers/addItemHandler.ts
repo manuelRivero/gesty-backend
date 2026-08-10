@@ -18,6 +18,7 @@ import {
 } from '../../../services/productQuery/utils';
 import { prisma } from '../../../lib/prisma';
 import { hasVariations, variationByIndex } from '../../../services/menu/menuItemVariations';
+import { clearPendingVariation } from '../../../services/pendingVariation.service';
 
 function resolveAddItemQuantity(params: {
   payloadId: string;
@@ -89,6 +90,8 @@ export class AddItemHandler implements IntentHandler {
       resolvedVariation
     );
     if (result === null) return noResponse();
+    // Si había pendingVariation por un intento híbrido previo, el botón la cierra.
+    await clearPendingVariation(ctx.conversation.id);
     if (typeof result === 'string') return textResponse(result);
     return textResponse(result.main, [
       { type: 'list' as const, listMessage: result.mainFollowUpList },

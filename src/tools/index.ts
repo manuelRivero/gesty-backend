@@ -50,6 +50,10 @@ import {
   type PostAddComplementOpportunity,
 } from '../services/intent/opportunities.service';
 import {
+  setPendingVariation,
+  clearPendingVariation,
+} from '../services/pendingVariation.service';
+import {
   getOrderCompletionLedger,
   recordOrderCompletionAbandonment,
   reviveOrderCompletionIfAbandoned,
@@ -1254,19 +1258,39 @@ export const addCartItemTool = new DynamicStructuredTool<
     let resolvedVariation: string | null = null;
     if (hasVariations(item)) {
       if (!variation) {
+        if (conversationId) {
+          await setPendingVariation({
+            conversationId,
+            productId,
+            productName: item.name,
+            variations: item.variations,
+            quantity: qty,
+          });
+        }
         return toJson({
           success: false,
           error: 'variation_required',
           productName: item.name,
           variations: item.variations,
+          pendingVariation: true,
         });
       }
       const match = matchVariation(variation, item.variations);
       if (match.status !== 'ok') {
+        if (conversationId) {
+          await setPendingVariation({
+            conversationId,
+            productId,
+            productName: item.name,
+            variations: item.variations,
+            quantity: qty,
+          });
+        }
         return toJson({
           success: false,
           error: 'variation_invalid',
           variations: item.variations,
+          pendingVariation: true,
           ...(match.status === 'ambiguous' ? { candidates: match.candidates } : {}),
         });
       }
@@ -1328,6 +1352,7 @@ export const addCartItemTool = new DynamicStructuredTool<
 
     let postAddOpportunity: PostAddComplementOpportunity | null = null;
     if (conversationId) {
+      await clearPendingVariation(conversationId);
       await clearLastOffer(conversationId);
       await markComplementEngagedIfOffered(conversationId, productId);
       // Revival del Goal COMPLETAR_PEDIDO (ADR-0005, corolario): si el
@@ -2054,7 +2079,8 @@ export const presentProductCtaTool = new DynamicStructuredTool<
   description:
     'Adjunta botones o una lista de productos a TU respuesta de texto (un solo mensaje). ' +
     'Tras search_products/find_products_by_filter con count ≥ 2: primaryKind=SELECT_FROM_LIST y ' +
-    'productIds = los id del shortlist; tu texto es la intro (sin listar platos). ' +
+    'productIds = los id del shortlist; tu texto es SOLO la intro (sin listar platos, porciones ni precios: ' +
+    'el sistema los pone en los atajos tipables). ' +
     'NO la uses si ya resolviste sin UI (nota, quitar ítem, cierre "¿algo más?").',
   schema: presentProductCtaSchema,
   func: async (input: PresentProductCtaInput, _runManager, config?: RunnableConfig) => {
