@@ -31,6 +31,7 @@ import {
   tryPresentComplementSuggestions,
 } from './complementSuggestions.service';
 import { formatBotUserMessage } from './productQuery';
+import { wrapWhatsAppBold } from '../utils/whatsappBold';
 import { clearLastOffer } from './lastOffer.service';
 import {
   buildCartItemNotFoundMessage,
@@ -397,9 +398,9 @@ export const buildAddItemMessage = async (
       if (business.address_notes) {
         addressLine += ` — ${business.address_notes}`;
       }
-      addressLine += '\n📦 Modalidad: *Take Away*';
+      addressLine += '\n📦 Modalidad: *Retiro en el local*';
     } else {
-      addressLine = '\n\n📦 Modalidad: *Take Away* (retiro en local)';
+      addressLine = '\n\n📦 Modalidad: *Retiro en el local*';
     }
   } else if (fulfillmentType === 'DELIVERY') {
     const defaultAddress = await prisma.customer_address.findFirst({
@@ -420,16 +421,17 @@ export const buildAddItemMessage = async (
   const guidanceBlock = formatCartGuidanceBlock(coverage).trim();
   const guidanceSuffix = guidanceBlock ? `\n\n${guidanceBlock}\n\n` : '\n\n';
 
-  const qtyLine = qty > 1 ? `*${qty}* × ` : '';
+  const qtyLine = qty > 1 ? `${wrapWhatsAppBold(String(qty))} × ` : '';
   const priceLine = formatItemPriceForChat(resolved);
   const discountLine = resolved.hasDiscount
-    ? ` ✨ *¡Precio con descuento!* ${priceLine}`
+    ? ` ✨ ${wrapWhatsAppBold('¡Precio con descuento!')} ${priceLine}`
     : '';
   const variationLine = variation ? ` (${variation})` : '';
+  const itemBold = wrapWhatsAppBold(item.name);
   const actionLine =
     mode === 'set'
-      ? `Ahora tenés ${qtyLine}*${item.name}*${variationLine} en tu pedido.`
-      : `${qtyLine}*${item.name}*${variationLine} sumado a tu pedido.`;
+      ? `Ahora tenés ${qtyLine}${itemBold}${variationLine} en tu pedido.`
+      : `${qtyLine}${itemBold}${variationLine} sumado a tu pedido.`;
   const mainInner =
     `${actionLine}${discountLine}\n\n${orderSectionsBlock}${guidanceSuffix}` +
     `Total: $${total._sum.total_price || 0}${addressLine}\n\n` +
@@ -962,7 +964,7 @@ export const buildCartSummaryMessage = async (params: {
   if (fulfillmentType === 'TAKE_AWAY') {
     deliveryLine = businessStreetAddress
       ? `\n🏪 *Retiro en local:* ${businessStreetAddress}`
-      : '\n📦 *Modalidad:* Take Away';
+      : '\n📦 *Modalidad:* Retiro en el local';
   } else if (fulfillmentType === 'DELIVERY') {
     const defaultAddress = await prisma.customer_address.findFirst({
       where: { customer_id: customerId, is_default: true },

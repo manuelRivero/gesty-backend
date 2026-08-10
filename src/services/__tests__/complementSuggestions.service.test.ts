@@ -105,16 +105,30 @@ describe('buildComplementSuggestionsListMessage', () => {
 
     const rows = list.action.sections.flatMap((s) => s.rows);
     expect(rows.some((r) => r.id === 'ADD_ITEM:p1:1')).toBe(true);
+    expect(rows.some((r) => r.id === 'VIEW_CART')).toBe(true);
     expect(rows.some((r) => r.id === 'CHECKOUT')).toBe(true);
     expect(rows.some((r) => r.id === 'VIEW_CART_FOR_EDITION')).toBe(true);
     expect(rows.some((r) => r.id === 'VIEW_MENU')).toBe(true);
     expect(list.body.text).toMatch(/postre/i);
     expect(list.body.text).toContain('• *Flan*');
     expect(list.body.text).toContain('• *Brownie*');
+    expect(list.body.text).toContain('• *Ver* pedido');
     expect(list.body.text).toContain('• *Modificar* pedido');
     expect(list.body.text).toContain('• *Finalizar* pedido');
+    expect(list.body.text).toContain('• *Nota* del pedido');
+    expect(list.body.text).toMatch(/gestión de tu pedido/i);
     expect(list.body.text).toMatch(/O elegí de la lista/i);
     expect(list.body.text).not.toMatch(/Tocá el botón/i);
+    // Sugerencias y gestión no van en un solo bloque continuo de viñetas.
+    const body = list.body.text;
+    const flanIdx = body.indexOf('• *Flan*');
+    const mgmtIdx = body.search(/gestión de tu pedido/i);
+    const verIdx = body.indexOf('• *Ver* pedido');
+    const modIdx = body.indexOf('• *Modificar* pedido');
+    expect(flanIdx).toBeGreaterThan(-1);
+    expect(mgmtIdx).toBeGreaterThan(flanIdx);
+    expect(verIdx).toBeGreaterThan(mgmtIdx);
+    expect(modIdx).toBeGreaterThan(verIdx);
   });
 });
 

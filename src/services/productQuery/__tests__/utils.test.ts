@@ -24,15 +24,9 @@ describe('parseBotUserMessage', () => {
     expect(parseBotUserMessage('Hola, ¿en qué te ayudo?')).toBeNull();
   });
 
-  it('rebuildBotUserMessage conserva título y emoji', () => {
-    const rebuilt = rebuildBotUserMessage(
-      'Reserva',
-      '📋',
-      'Contame para cuántos van a ser.'
-    );
-
-    expect(rebuilt).toBe(
-      '🤖\n\n*Reserva* 📋\n\nContame para cuántos van a ser.'
-    );
+  it('formatBotUserMessage no dobla asteriscos en el título', () => {
+    const message = formatBotUserMessage('*Tu pedido*', '🛒', 'probá **pizza**');
+    expect(message).toBe('🤖\n\n*Tu pedido* 🛒\n\nprobá *pizza*');
+    expect(parseBotUserMessage(message)?.title).toBe('Tu pedido');
   });
 });

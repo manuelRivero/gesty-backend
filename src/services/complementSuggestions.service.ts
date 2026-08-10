@@ -25,6 +25,7 @@ import type { ConversationMetadata } from './productQuery/types';
 import { buildListMessageFromButtons, truncateDescription, truncateTitle } from '../whatsappBuilders';
 import {
   buildShortcutsThenListBody,
+  buildSuggestionsThenManagementThenListBody,
   shortcutBullet,
 } from '../whatsappBuilders/listShortcutsBody';
 
@@ -160,7 +161,7 @@ export type ComplementSuggestionListItem = {
 
 /**
  * Lista WA de sugerencias de complemento + filas mínimas de gestión.
- * Body = intro (bridge/pitch) + atajos en negrita (platos / gestión) + alternativa lista.
+ * Body = intro (bridge/pitch) → platos sugeridos → bloque de gestión → alternativa lista.
  */
 export function buildComplementSuggestionsListMessage(params: {
   title: string;
@@ -173,25 +174,29 @@ export function buildComplementSuggestionsListMessage(params: {
 }): WhatsAppListMessage {
   const { title, titleEmoji, bodyPlain, items, includeManagementRows = false } = params;
 
-  const bullets = items
+  const suggestionBullets = items
     .map((row) => row.name.trim())
     .filter(Boolean)
     .map((name) => shortcutBullet(name));
 
-  if (includeManagementRows) {
-    bullets.push(
-      shortcutBullet('Menú'),
-      shortcutBullet('Modificar', 'pedido'),
-      shortcutBullet('Finalizar', 'pedido')
-    );
-  } else {
-    bullets.push(shortcutBullet('Menú'));
-  }
+  const managementBullets = includeManagementRows
+    ? [
+        shortcutBullet('Menú'),
+        shortcutBullet('Ver', 'pedido'),
+        shortcutBullet('Modificar', 'pedido'),
+        shortcutBullet('Finalizar', 'pedido'),
+        shortcutBullet('Nota', 'del pedido'),
+      ]
+    : [shortcutBullet('Menú')];
 
   const suggestionBody = formatBotUserMessage(
     title,
     titleEmoji,
-    buildShortcutsThenListBody(bodyPlain.trim(), bullets)
+    buildSuggestionsThenManagementThenListBody({
+      intro: bodyPlain.trim(),
+      suggestionBullets,
+      managementBullets,
+    })
   );
 
   const suggestionButtons = items.map((row) => ({
@@ -204,6 +209,12 @@ export function buildComplementSuggestionsListMessage(params: {
 
   if (includeManagementRows) {
     suggestionButtons.push(
+      {
+        title: 'Ver pedido',
+        payload: 'VIEW_CART',
+        description: 'Detalle y total del carrito',
+        sectionTitle: 'Pedido',
+      },
       {
         title: 'Modificar pedido',
         payload: 'VIEW_CART_FOR_EDITION',

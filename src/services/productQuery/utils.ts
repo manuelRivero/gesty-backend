@@ -2,6 +2,10 @@ import { Prisma } from '@prisma/client';
 import type { WhatsAppListMessage } from '../../domain/intent/whatsappTemplates';
 import { prisma } from '../../lib/prisma';
 import type { ConversationMetadata } from './types';
+import {
+  normalizeWhatsAppBoldMarkers,
+  stripWhatsAppBoldMarkers,
+} from '../../utils/whatsappBold';
 
 /** Formato estándar: 🤖, título en negrita + emoji, cuerpo. */
 export function formatBotUserMessage(
@@ -9,7 +13,9 @@ export function formatBotUserMessage(
   emoji: string,
   body: string
 ): string {
-  return `🤖\n\n*${boldTitle}* ${emoji}\n\n${body.trim()}`;
+  const title = stripWhatsAppBoldMarkers(boldTitle);
+  const safeBody = normalizeWhatsAppBoldMarkers(body.trim());
+  return `🤖\n\n*${title}* ${emoji}\n\n${safeBody}`;
 }
 
 export type ParsedBotUserMessage = {

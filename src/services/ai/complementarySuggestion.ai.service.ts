@@ -14,6 +14,7 @@ import { prisma } from '../../lib/prisma';
 import { generateAIResponse } from './openai.service';
 import { resolvePersonalityForBusiness } from '../botPersonality.service';
 import { buildComplementarySuggestionSystemPrompt } from '../../prompts/botPersonality';
+import { normalizeWhatsAppBoldMarkers, wrapWhatsAppBold } from '../../utils/whatsappBold';
 
 const TAG_LABELS: Record<MenuCategoryTag, { title: string; emoji: string }> = {
   STARTER: { title: 'Podés sumar una entrada', emoji: '🥗' },
@@ -43,7 +44,7 @@ function buildFallbackBridgeMessage(
       ? hints[0] ?? 'opciones'
       : `${hints.slice(0, -1).join(', ')} y ${hints[hints.length - 1]}`;
   return (
-    `¡Genial! Ya sumaste *${lastItemName}*. Si querés, sumá ${hintLabel} que combinan bien.`
+    `¡Genial! Ya sumaste ${wrapWhatsAppBold(lastItemName)}. Si querés, sumá ${hintLabel} que combinan bien.`
   );
 }
 
@@ -65,13 +66,6 @@ function parseJsonObject(raw: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
-}
-
-/** WhatsApp usa *una* pareja de asteriscos para negrita (*así*). El modelo a veces devuelve Markdown (**así**). */
-function normalizeWhatsappBoldMarkers(text: string): string {
-  return text
-    .replace(/\*\*([^*]+)\*\*/g, '*$1*')
-    .replace(/\*\*+/g, '*');
 }
 
 const MEANINGFUL_TAG_SET = new Set<string>(['STARTER', 'MAIN', 'SIDE', 'DRINK', 'DESSERT']);
@@ -279,11 +273,11 @@ ${catalogLines}`;
   if (!nextTags || typeof pitch !== 'string') {
     return null;
   }
-  const pitchTrim = normalizeWhatsappBoldMarkers(pitch.trim());
+  const pitchTrim = normalizeWhatsAppBoldMarkers(pitch.trim());
   if (pitchTrim.length < 10) return null;
 
   let bridgeTrim =
-    typeof bridgeRaw === 'string' ? normalizeWhatsappBoldMarkers(bridgeRaw.trim()) : '';
+    typeof bridgeRaw === 'string' ? normalizeWhatsAppBoldMarkers(bridgeRaw.trim()) : '';
   if (bridgeTrim.length < 25 || bridgeTrim.length > 600) {
     bridgeTrim = buildFallbackBridgeMessage(lastItemName, nextTags);
   }

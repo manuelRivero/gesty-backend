@@ -14,6 +14,7 @@ import {
   parseBotUserMessage,
   rebuildBotUserMessage,
 } from '../productQuery/utils';
+import { normalizeWhatsAppBoldMarkers } from '../../utils/whatsappBold';
 
 const HUMANIZE_TIMEOUT_MS = 1500;
 
@@ -62,11 +63,11 @@ export async function humanizeBotBody(
               .join('')
           : '';
 
-    const rewritten = content.trim();
+    const rewritten = normalizeWhatsAppBoldMarkers(content.trim() || trimmed);
     return rewritten || trimmed;
   } catch (err) {
     console.warn('[humanizeBotBody] fallback to original body:', err);
-    return trimmed;
+    return normalizeWhatsAppBoldMarkers(trimmed);
   }
 }
 

@@ -28,6 +28,8 @@ import { resolvePersonalityForBusiness } from '../services/botPersonality.servic
 import { allReactTools } from '../tools';
 import type { EnrichedContext, HandlerResult } from '../controllers/webhook/types';
 import { formatBotUserMessage } from '../services/productQuery/utils';
+import { normalizeWhatsAppBoldMarkers } from '../utils/whatsappBold';
+
 import { prisma } from '../lib/prisma';
 import {
   isHybridCtaEnabled,
@@ -317,7 +319,7 @@ const extractFinalText = (result: unknown): string | null => {
 };
 
 const ensureWhatsAppBotFormat = (text: string): string => {
-  const normalized = text.trim();
+  const normalized = normalizeWhatsAppBoldMarkers(text.trim());
   if (!normalized) return normalized;
   if (normalized.startsWith('🤖')) return normalized;
   return formatBotUserMessage('Respuesta', '💬', normalized);

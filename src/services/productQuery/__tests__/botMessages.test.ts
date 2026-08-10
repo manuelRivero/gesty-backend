@@ -6,6 +6,7 @@ import {
   EMPTY_CART_BOT_MESSAGE,
   buildOrderConfirmedCashMessage,
   buildProvideNameThanksMessage,
+  localizeFulfillmentOptionLabels,
 } from '../botMessages';
 
 describe('botMessages', () => {
@@ -19,6 +20,23 @@ describe('botMessages', () => {
     ]) {
       expect(parseBotUserMessage(message)).not.toBeNull();
     }
+  });
+
+  it('localizeFulfillmentOptionLabels pasa Delivery/Take Away a español', () => {
+    const raw = [
+      'Genial, ahora elige cómo querés recibir tu pedido 📦:',
+      '',
+      '- *Delivery* (a domicilio)',
+      '- *Take Away* (retiro en el local)',
+      '',
+      'Decime cuál preferís y seguimos con el cierre. 😊',
+    ].join('\n');
+
+    const localized = localizeFulfillmentOptionLabels(raw);
+    expect(localized).toContain('*Envío a domicilio*');
+    expect(localized).toContain('*Retiro en el local*');
+    expect(localized).not.toMatch(/Delivery/i);
+    expect(localized).not.toMatch(/Take\s*Away/i);
   });
 
   describe('buildOrderConfirmedCashMessage — variante transferencia (Tarea 4.2)', () => {

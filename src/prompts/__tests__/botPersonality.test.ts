@@ -33,6 +33,7 @@ describe('botPersonality', () => {
     expect(humanize).toMatch(/Estructura sagrada/i);
     expect(humanize).toMatch(/viñetas/i);
     expect(humanize).toMatch(/negrita/i);
+    expect(humanize).toMatch(/NO agregues un segundo par/i);
   });
 
   it('hybrid incluye reglas operativas de tools', () => {

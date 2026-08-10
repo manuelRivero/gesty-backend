@@ -71,7 +71,25 @@ export const FULFILLMENT_TYPE_PROMPT_BOT_MESSAGE =
  * producía un texto pegado y duplicado: "Volviendo a tu pedido: 🤖\n\n*¿Cómo
  * querés recibir tu pedido?*..." (ver conversación de la Tarea 4.1).
  */
-export const FULFILLMENT_TYPE_SHORT_QUESTION = '¿Delivery o retiro en el local?';
+export const FULFILLMENT_TYPE_SHORT_QUESTION =
+  '¿Envío a domicilio o retiro en el local?';
+
+/**
+ * El LLM a veces lista "Delivery" / "Take Away" en el body. WhatsApp y el
+ * cliente deben ver solo español (alineado a los botones del gate).
+ */
+export function localizeFulfillmentOptionLabels(text: string): string {
+  return text
+    .replace(/\*?Delivery\*?\s*\(\s*a domicilio\s*\)/gi, '*Envío a domicilio*')
+    .replace(
+      /\*?Take[\s-]?Away\*?\s*\(\s*retiro en el local\s*\)/gi,
+      '*Retiro en el local*'
+    )
+    .replace(/\*Delivery\*/gi, '*Envío a domicilio*')
+    .replace(/\*Take[\s-]?Away\*/gi, '*Retiro en el local*')
+    .replace(/\bTake[\s-]?Away\b/gi, 'Retiro en el local')
+    .replace(/\bDelivery\b/gi, 'Envío a domicilio');
+}
 
 /** Ver `FULFILLMENT_TYPE_SHORT_QUESTION`. */
 export const PAYMENT_METHOD_SHORT_QUESTION = '¿Efectivo o pago online?';

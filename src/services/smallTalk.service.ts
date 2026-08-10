@@ -5,6 +5,10 @@ import type { WhatsAppListMessage } from '../domain/intent/whatsappTemplates';
 import { formatBotUserMessage } from './productQuery/utils';
 import { getBusinessConfig } from './businessConfig.service';
 import { isReservationAgentEnabled } from '../config/env';
+import {
+  buildShortcutsThenListBody,
+  shortcutBullet,
+} from '../whatsappBuilders/listShortcutsBody';
 
 const baseButtons = [
   {
@@ -26,6 +30,41 @@ const baseButtons = [
     sectionTitle: 'Opciones'
   }
 ];
+
+/** Atajo tipable en negrita alineado al payload / título de la fila WA. */
+export function welcomeShortcutBullet(button: {
+  title: string;
+  payload: string;
+}): string {
+  switch (button.payload) {
+    case 'VIEW_MENU':
+      return shortcutBullet('Menú');
+    case 'BUSINESS_HOURS':
+      return shortcutBullet('Horarios');
+    case 'ASK_QUESTION':
+      return shortcutBullet('Consulta');
+    case 'VIEW_ORDER':
+      return shortcutBullet('Ver', 'pedido');
+    case 'VIEW_RESERVATION':
+      return shortcutBullet('Reservar', 'mesa');
+    case 'EDIT_ADDRESS':
+      return shortcutBullet('Editar', 'dirección');
+    default: {
+      const parts = button.title.trim().split(/\s+/).filter(Boolean);
+      if (parts.length === 0) return '';
+      const [first, ...rest] = parts;
+      return rest.length > 0
+        ? shortcutBullet(first!, rest.join(' '))
+        : shortcutBullet(first!);
+    }
+  }
+}
+
+export function buildWelcomeShortcutBullets(
+  buttons: Array<{ title: string; payload: string }>
+): string[] {
+  return buttons.map(welcomeShortcutBullet).filter(Boolean);
+}
 
 export const buildSmallTalkButtons = async (ctx: EnrichedContext) => {
   const business = await prisma.business.findFirst({
@@ -102,20 +141,21 @@ export const buildSmallTalkMenu = async (
   const businessName = business?.name ?? businessNameFromCtx;
   const buttons = await buildSmallTalkButtons(ctx);
 
-  const headerText = ``;
-  const bodyText = customBodyText?.trim()
-    ? formatBotUserMessage(`Bienvenido a ${businessName}`, '👋', customBodyText.trim())
-    : formatBotUserMessage(
-        `Bienvenido a ${businessName}`,
-        '👋',
-        `¡Hola! Soy el asistente de IA de *${businessName}*.\n\n¿En qué te puedo ayudar?`
-      );
+  const intro =
+    customBodyText?.trim() ||
+    `¡Hola! Soy el asistente de *${businessName}*.\n\n¿En qué te puedo ayudar?`;
+
+  const bodyText = formatBotUserMessage(
+    `Bienvenido a ${businessName}`,
+    '👋',
+    buildShortcutsThenListBody(intro, buildWelcomeShortcutBullets(buttons))
+  );
 
   return buildListMessageFromButtons(
     bodyText,
     buttons,
     'Ver opciones',
-    headerText,
-    'Seleccioná una opción para continuar'
+    '',
+    'Elegí o escribí'
   );
 };

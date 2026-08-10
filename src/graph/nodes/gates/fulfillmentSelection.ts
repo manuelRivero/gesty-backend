@@ -4,7 +4,7 @@ import { normalizeMetadata } from '../../../services/productQuery/utils';
 import { detectIntentFromPayload } from '../../../controllers/webhook/payloadMapper';
 import { isHybridAgentMode } from '../../../config/env';
 import { ConversationIntent } from '../../../types/conversationIntent';
-import { FULFILLMENT_TYPE_PROMPT_BOT_MESSAGE } from '../../../services/productQuery/botMessages';
+import { FULFILLMENT_TYPE_PROMPT_BOT_MESSAGE, localizeFulfillmentOptionLabels } from '../../../services/productQuery/botMessages';
 import type { WhatsAppInteractiveMessage } from '../../../domain/intent/whatsappTemplates';
 import type { AgentState, AgentStateUpdate } from '../../state';
 
@@ -31,13 +31,14 @@ export const CART_FULFILLMENT_INTENTS = new Set<string>([
  * legacy del gate post-carrito) mantiene la constante fija.
  */
 export function buildFulfillmentSelectionMessage(bodyText?: string): WhatsAppInteractiveMessage {
+  const rawBody = bodyText ?? FULFILLMENT_TYPE_PROMPT_BOT_MESSAGE;
   return {
     type: 'interactive',
     interactive: {
       type: 'button',
       header: { type: 'text', text: '' },
       body: {
-        text: bodyText ?? FULFILLMENT_TYPE_PROMPT_BOT_MESSAGE
+        text: localizeFulfillmentOptionLabels(rawBody),
       },
       footer: { text: 'Seleccioná una opción' },
       action: {
