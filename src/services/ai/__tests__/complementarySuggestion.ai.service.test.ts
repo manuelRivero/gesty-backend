@@ -97,11 +97,11 @@ describe('buildComplementarySuggestionsWithLlm', () => {
     expect(result).toBeNull();
   });
 
-  it('con IA y nextTag DESSERT → bundle con postre', async () => {
+  it('con IA y nextTags DESSERT → bundle con postre', async () => {
     vi.mocked(generateAIResponse).mockResolvedValue({
       content: JSON.stringify({
         skip: false,
-        nextTag: 'DESSERT',
+        nextTags: ['DESSERT'],
         pitch: 'Si querés algo dulce para cerrar, mirá estas opciones.',
         bridgeMessage:
           '¡Genial! Ya sumaste *Milanesa*. Si querés, tengo postres que van muy bien.',
@@ -121,16 +121,72 @@ describe('buildComplementarySuggestionsWithLlm', () => {
     expect(result!.bridgeMessagePlain).toMatch(/Milanesa/);
   });
 
-  it('sin IA → usa fallback del primer tag faltante con catálogo', async () => {
+  it('con IA y nextTags DRINK+DESSERT → hasta 2 categorías en la lista', async () => {
+    vi.mocked(generateAIResponse).mockResolvedValue({
+      content: JSON.stringify({
+        skip: false,
+        nextTags: ['DRINK', 'DESSERT'],
+        pitch: 'Podés sumar bebida o algo dulce.',
+        bridgeMessage:
+          '¡Genial! Ya sumaste *Milanesa*. Si querés, mirá bebidas y postres que van muy bien.',
+        orderedIds: [DRINK_ID, DESSERT_ID],
+      }),
+    } as never);
+
+    const result = await buildComplementarySuggestionsWithLlm(business, {
+      businessId: 'biz-1',
+      draftOrderId: 'draft-1',
+      lastAddedMenuItemId: 'main-1',
+    });
+
+    expect(result).not.toBeNull();
+    const tags = new Set(result!.items.map((i) => i.categoryTag));
+    expect(tags.has('DRINK')).toBe(true);
+    expect(tags.has('DESSERT')).toBe(true);
+  });
+
+  it('compat: nextTag legacy único sigue funcionando', async () => {
+    vi.mocked(generateAIResponse).mockResolvedValue({
+      content: JSON.stringify({
+        skip: false,
+        nextTag: 'DRINK',
+        pitch: 'Una bebida fresca queda genial con tu plato.',
+        bridgeMessage:
+          '¡Genial! Ya sumaste *Milanesa*. Si querés, tengo bebidas que van muy bien.',
+        orderedIds: [DRINK_ID],
+      }),
+    } as never);
+
+    const result = await buildComplementarySuggestionsWithLlm(business, {
+      businessId: 'biz-1',
+      draftOrderId: 'draft-1',
+      lastAddedMenuItemId: 'main-1',
+    });
+
+    expect(result!.items.map((i) => i.categoryTag)).toEqual(['DRINK']);
+  });
+
+  it('sin IA → fallback de hasta 2 tags faltantes (STARTER+DRINK si solo MAIN)', async () => {
     const noAiBusiness = {
       id: 'biz-1',
       openai_active: false,
       ai_blocked: false,
     } as never;
-    // MAIN+STARTER+SIDE cubiertos → primer faltante = DRINK
-    vi.mocked(collectCategoryTagsInDraftCart).mockResolvedValue(
-      new Set(['MAIN', 'STARTER', 'SIDE'])
-    );
+    vi.mocked(collectCategoryTagsInDraftCart).mockResolvedValue(new Set(['MAIN']));
+
+    const starterId = '44444444-4444-4444-4444-444444444444';
+    vi.mocked(fetchComplementaryMenuItems).mockImplementation(async ({ tags }) => {
+      const all = [
+        ...catalogDrinkDessert(),
+        {
+          id: starterId,
+          name: 'Empanada',
+          categoryTag: 'STARTER' as MenuCategoryTag,
+          categoryName: 'Entradas',
+        },
+      ];
+      return all.filter((i) => tags.includes(i.categoryTag));
+    });
 
     const result = await buildComplementarySuggestionsWithLlm(noAiBusiness, {
       businessId: 'biz-1',
@@ -140,6 +196,38 @@ describe('buildComplementarySuggestionsWithLlm', () => {
 
     expect(generateAIResponse).not.toHaveBeenCalled();
     expect(result).not.toBeNull();
-    expect(result!.items.map((i) => i.categoryTag)).toEqual(['DRINK']);
+    const tags = new Set(result!.items.map((i) => i.categoryTag));
+    // Orden MENU_COMPLETE: STARTER, MAIN, DRINK, DESSERT → faltan STARTER+DRINK primero
+    expect(tags.has('STARTER')).toBe(true);
+    expect(tags.has('DRINK')).toBe(true);
+  });
+
+  it('solo postre en carrito → puede ofrecer hacia MAIN/entrada', async () => {
+    vi.mocked(collectCategoryTagsInDraftCart).mockResolvedValue(new Set(['DESSERT']));
+    vi.mocked(getMenuItemCategoryTag).mockResolvedValue('DESSERT');
+    const mainId = '55555555-5555-5555-5555-555555555555';
+    vi.mocked(fetchComplementaryMenuItems).mockResolvedValue([
+      {
+        id: mainId,
+        name: 'Bife',
+        categoryTag: 'MAIN',
+        categoryName: 'Principales',
+      },
+    ]);
+
+    const noAiBusiness = {
+      id: 'biz-1',
+      openai_active: false,
+      ai_blocked: false,
+    } as never;
+
+    const result = await buildComplementarySuggestionsWithLlm(noAiBusiness, {
+      businessId: 'biz-1',
+      draftOrderId: 'draft-1',
+      lastAddedMenuItemId: 'dessert-1',
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.items.some((i) => i.categoryTag === 'MAIN')).toBe(true);
   });
 });

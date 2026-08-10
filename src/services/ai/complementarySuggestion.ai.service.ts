@@ -7,8 +7,8 @@ import {
   collectCategoryTagsInDraftCart,
   fetchComplementaryMenuItems,
   getMenuItemCategoryTag,
-  getMissingMenuTags,
-  pickFallbackNextTag,
+  getMissingMenuCompleteTags,
+  pickFallbackNextTags,
 } from '../../helpers/complementaryMenu.helper';
 import { prisma } from '../../lib/prisma';
 import { generateAIResponse } from './openai.service';
@@ -35,12 +35,27 @@ const TAG_BRIDGE_HINT: Record<MenuCategoryTag, string> = {
 
 function buildFallbackBridgeMessage(
   lastItemName: string,
-  nextTag: MenuCategoryTag
+  nextTags: MenuCategoryTag[]
 ): string {
-  const hint = TAG_BRIDGE_HINT[nextTag] ?? 'opciones';
+  const hints = nextTags.map((t) => TAG_BRIDGE_HINT[t] ?? 'opciones');
+  const hintLabel =
+    hints.length <= 1
+      ? hints[0] ?? 'opciones'
+      : `${hints.slice(0, -1).join(', ')} y ${hints[hints.length - 1]}`;
   return (
-    `¡Genial! Ya sumaste *${lastItemName}*. Si querés seguir armando el pedido, tengo sugerencias de ${hint} que combinan *muy bien* con lo que pediste. ¿Las miramos?`
+    `¡Genial! Ya sumaste *${lastItemName}*. Si querés seguir armando el pedido, tengo sugerencias de ${hintLabel} que combinan *muy bien* con lo que pediste. ¿Las miramos?`
   );
+}
+
+function buildMultiTagTitle(nextTags: MenuCategoryTag[]): { title: string; emoji: string } {
+  if (nextTags.length === 1) {
+    const only = nextTags[0]!;
+    return TAG_LABELS[only];
+  }
+  return {
+    title: 'Podés seguir armando',
+    emoji: TAG_LABELS[nextTags[0]!]?.emoji ?? '✨',
+  };
 }
 
 function parseJsonObject(raw: string): Record<string, unknown> | null {
@@ -174,14 +189,34 @@ export type LlmMenuStepResult =
   | { skip: true; reason?: string }
   | {
       skip: false;
-      nextTag: MenuCategoryTag;
+      nextTags: MenuCategoryTag[];
       pitch: string;
       orderedIds: string[];
       bridgeMessage: string;
     };
 
+const MAX_OFFER_TAGS = 2;
+
+function parseNextTags(
+  obj: Record<string, unknown>,
+  missingOrdered: MenuCategoryTag[]
+): MenuCategoryTag[] | null {
+  const fromArray = Array.isArray(obj.nextTags) ? obj.nextTags : null;
+  // Compat: respuestas viejas con nextTag único.
+  const legacy = obj.nextTag;
+  const raw: unknown[] = fromArray ?? (legacy != null ? [legacy] : []);
+  const tags: MenuCategoryTag[] = [];
+  for (const t of raw) {
+    if (!isMenuCategoryTag(t) || t === 'OTHER' || t === 'SIDE') continue;
+    if (!missingOrdered.includes(t)) continue;
+    if (!tags.includes(t)) tags.push(t);
+    if (tags.length >= MAX_OFFER_TAGS) break;
+  }
+  return tags.length > 0 ? tags : null;
+}
+
 /**
- * Una sola llamada: decide omitir o elegir el siguiente tag, pitch y orden de productos.
+ * Una sola llamada: decide omitir o elegir hasta 2 tags, pitch y orden de productos.
  */
 async function llmMenuStepUnified(params: {
   business: Business;
@@ -202,7 +237,7 @@ async function llmMenuStepUnified(params: {
   const { promptText } = await resolvePersonalityForBusiness(business.id);
   const system = `${buildComplementarySuggestionSystemPrompt(promptText)}
 
-Tags permitidos en este turno: [${allowed}]
+Tags permitidos en este turno (máx 2 en nextTags): [${allowed}]
 
 Último producto agregado por el cliente: "${lastItemName}"${lastItemTag ? ` (tag categoría: ${lastItemTag})` : ''}`;
 
@@ -211,7 +246,7 @@ ${cartSummary}
 
 Último producto agregado: "${lastItemName}"${lastItemTag ? ` (tag categoría: ${lastItemTag})` : ''}
 
-Tags aún no cubiertos (si ofrecés, elegí uno como nextTag; si no encaja, skip): ${allowed}
+Tags aún no cubiertos (elegí hasta 2 como nextTags; si no encaja, skip): ${allowed}
 
 Catálogo candidato (id | tag | nombre):
 ${catalogLines}`;
@@ -232,19 +267,16 @@ ${catalogLines}`;
   const obj = parseJsonObject(content);
   if (!obj) return null;
 
-  if (obj.skip === true || obj.nextTag === null) {
+  if (obj.skip === true) {
     const reason = typeof obj.reason === 'string' ? obj.reason.trim().slice(0, 200) : undefined;
     return { skip: true, ...(reason ? { reason } : {}) };
   }
 
-  const nextTag = obj.nextTag;
+  const nextTags = parseNextTags(obj, missingOrdered);
   const pitch = obj.pitch;
   const bridgeRaw = obj.bridgeMessage;
   const orderedIdsRaw = obj.orderedIds;
-  if (!isMenuCategoryTag(nextTag) || nextTag === 'OTHER' || typeof pitch !== 'string') {
-    return null;
-  }
-  if (!missingOrdered.includes(nextTag)) {
+  if (!nextTags || typeof pitch !== 'string') {
     return null;
   }
   const pitchTrim = normalizeWhatsappBoldMarkers(pitch.trim());
@@ -253,10 +285,11 @@ ${catalogLines}`;
   let bridgeTrim =
     typeof bridgeRaw === 'string' ? normalizeWhatsappBoldMarkers(bridgeRaw.trim()) : '';
   if (bridgeTrim.length < 25 || bridgeTrim.length > 600) {
-    bridgeTrim = buildFallbackBridgeMessage(lastItemName, nextTag);
+    bridgeTrim = buildFallbackBridgeMessage(lastItemName, nextTags);
   }
 
-  const tagPool = catalog.filter((i) => i.categoryTag === nextTag);
+  const tagSet = new Set(nextTags);
+  const tagPool = catalog.filter((i) => tagSet.has(i.categoryTag));
   if (tagPool.length === 0) return null;
 
   let orderedIds: string[] = [];
@@ -270,7 +303,7 @@ ${catalogLines}`;
 
   return {
     skip: false,
-    nextTag,
+    nextTags,
     pitch: pitchTrim.slice(0, 500),
     bridgeMessage: bridgeTrim.slice(0, 600),
     orderedIds: ordered.map((i) => i.id),
@@ -285,13 +318,13 @@ export type ComplementSuggestionBundle = {
 };
 
 /**
- * Un tag por mensaje: IA en un solo prompt elige tag, pitch y orden de productos (si IA disponible).
+ * Hasta 2 tags por ola: IA elige nextTags, pitch y orden (si IA disponible).
  */
 export async function buildComplementarySuggestionsWithLlm(
   business: Business,
   params: BuildComplementarySuggestionsParams & { poolSize?: number }
 ): Promise<ComplementSuggestionBundle | null> {
-  const { businessId, draftOrderId, lastAddedMenuItemId, maxItems = 5, poolSize = 12 } =
+  const { businessId, draftOrderId, lastAddedMenuItemId, maxItems = 6, poolSize = 12 } =
     params;
 
   const [lastTag, cartTags, lineSummaries] = await Promise.all([
@@ -306,7 +339,7 @@ export async function buildComplementarySuggestionsWithLlm(
   });
   const lastItemName = lastItem?.name ?? 'Producto';
 
-  const missingOrdered = getMissingMenuTags(cartTags);
+  const missingOrdered = getMissingMenuCompleteTags(cartTags);
   if (missingOrdered.length === 0) {
     return null;
   }
@@ -314,12 +347,15 @@ export async function buildComplementarySuggestionsWithLlm(
   const excludeProductIds = await loadExcludeProductIds(draftOrderId);
   const cartSummary = buildCartSummaryForPrompt(lineSummaries);
 
-  const fallbackTag = pickFallbackNextTag(missingOrdered);
-  if (!fallbackTag) {
+  const fallbackTags = pickFallbackNextTags(missingOrdered, MAX_OFFER_TAGS);
+  if (fallbackTags.length === 0) {
     return null;
   }
 
-  const perTagLimit = Math.min(5, Math.max(2, Math.ceil(poolSize / Math.max(1, missingOrdered.length))));
+  const perTagLimit = Math.min(
+    4,
+    Math.max(2, Math.ceil(poolSize / Math.max(1, missingOrdered.length)))
+  );
   const multiPool = await fetchMultiTagCandidatePool({
     businessId,
     tags: missingOrdered,
@@ -333,7 +369,7 @@ export async function buildComplementarySuggestionsWithLlm(
 
   const useAi = business.openai_active !== false && !business.ai_blocked;
 
-  let nextTag: MenuCategoryTag;
+  let nextTags: MenuCategoryTag[];
   let pitch: string;
   let bridgePlain: string;
   let ordered: ComplementaryMenuItemSummary[];
@@ -355,29 +391,31 @@ export async function buildComplementarySuggestionsWithLlm(
     if (!unified || unified.skip) {
       return null;
     }
-    nextTag = unified.nextTag;
+    nextTags = unified.nextTags;
     pitch = unified.pitch;
     bridgePlain = unified.bridgeMessage;
-    const tagPool = multiPool.filter((i) => i.categoryTag === nextTag);
+    const tagSet = new Set(nextTags);
+    const tagPool = multiPool.filter((i) => tagSet.has(i.categoryTag));
     ordered =
       tagPool.length > 0
         ? applyOrderedIdsToPool(tagPool, unified.orderedIds)
         : await fetchComplementaryMenuItems({
             businessId,
-            tags: [nextTag],
+            tags: nextTags,
             excludeProductIds,
             limit: poolSize,
           });
   } else {
-    nextTag = fallbackTag;
+    nextTags = fallbackTags;
     pitch =
       'Si querés, podés mirar la lista: son opciones que van bien con lo que ya elegiste 👇';
-    bridgePlain = buildFallbackBridgeMessage(lastItemName, nextTag);
-    ordered = multiPool.filter((i) => i.categoryTag === nextTag);
+    bridgePlain = buildFallbackBridgeMessage(lastItemName, nextTags);
+    const tagSet = new Set(nextTags);
+    ordered = multiPool.filter((i) => tagSet.has(i.categoryTag));
     if (ordered.length === 0) {
       ordered = await fetchComplementaryMenuItems({
         businessId,
-        tags: [nextTag],
+        tags: nextTags,
         excludeProductIds,
         limit: poolSize,
       });
@@ -388,8 +426,25 @@ export async function buildComplementarySuggestionsWithLlm(
     return null;
   }
 
-  const items = ordered.slice(0, maxItems);
-  const label = TAG_LABELS[nextTag];
+  // Intercalar por tag para que ambas secciones tengan filas (límite WA ~10 filas).
+  const perTagCap = Math.max(2, Math.floor(maxItems / Math.max(1, nextTags.length)));
+  const byTag = new Map<MenuCategoryTag, ComplementaryMenuItemSummary[]>();
+  for (const item of ordered) {
+    const list = byTag.get(item.categoryTag) ?? [];
+    if (list.length < perTagCap) {
+      list.push(item);
+      byTag.set(item.categoryTag, list);
+    }
+  }
+  const items: ComplementaryMenuItemSummary[] = [];
+  for (const tag of nextTags) {
+    items.push(...(byTag.get(tag) ?? []));
+  }
+  if (items.length === 0) {
+    return null;
+  }
+
+  const label = buildMultiTagTitle(nextTags);
   const orderedItemIds = items.map((i) => i.id);
 
   const snapshot: ComplementSuggestionSnapshot = {

@@ -16,9 +16,13 @@ vi.mock('../../repositories', () => ({
   updateConversationLastMessageAt: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('../intent/opportunities.service', () => ({
-  recordOpportunitySurfaced: vi.fn().mockResolvedValue(undefined),
-}));
+vi.mock('../intent/opportunities.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../intent/opportunities.service')>();
+  return {
+    ...actual,
+    recordOpportunitySurfaced: vi.fn().mockResolvedValue(undefined),
+  };
+});
 
 vi.mock('../ai/complementarySuggestion.ai.service', () => ({
   buildComplementarySuggestionsWithLlm: vi.fn(),
@@ -47,7 +51,7 @@ describe('canSurfaceComplementOpportunity', () => {
     expect(canSurfaceComplementOpportunity({})).toBe(true);
   });
 
-  it('false si surfaceCount >= 1', () => {
+  it('false tras 1ª ola sin engaged', () => {
     expect(
       canSurfaceComplementOpportunity({
         intentLedger: {
@@ -58,6 +62,31 @@ describe('canSurfaceComplementOpportunity', () => {
         },
       })
     ).toBe(false);
+  });
+
+  it('false si refused', () => {
+    expect(
+      canSurfaceComplementOpportunity({
+        intentLedger: {
+          SUGERIR_COMPLEMENTO: { refused: true, surfaceCount: 0 },
+        },
+      })
+    ).toBe(false);
+  });
+
+  it('true si engaged y cooldown vencido', () => {
+    const old = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    expect(
+      canSurfaceComplementOpportunity({
+        intentLedger: {
+          SUGERIR_COMPLEMENTO: {
+            surfaceCount: 1,
+            engaged: true,
+            lastSurfacedAt: old,
+          },
+        },
+      })
+    ).toBe(true);
   });
 });
 
@@ -112,7 +141,8 @@ describe('presentComplementSuggestionBundle', () => {
     expect(recordOpportunitySurfaced).toHaveBeenCalledWith(
       'conv-1',
       'SUGERIR_COMPLEMENTO',
-      expect.anything()
+      expect.anything(),
+      { offeredProductIds: ['33333333-3333-3333-3333-333333333333'] }
     );
   });
 });

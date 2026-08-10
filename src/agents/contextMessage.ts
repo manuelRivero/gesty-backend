@@ -51,19 +51,7 @@ import {
   deriveRetomarTareaCandidate,
   recordCatalogGoalSurfaced,
 } from '../services/intent/catalogGoals.service';
-import {
-  collectCategoryTagsInDraftCart,
-  getMissingMenuTags,
-} from '../helpers/complementaryMenu.helper';
-import { canSurfaceComplementOpportunity } from '../services/complementSuggestions.service';
-
-const MENU_GAP_LABELS: Partial<Record<MenuCategoryTag, string>> = {
-  STARTER: 'entrada',
-  MAIN: 'plato principal',
-  DRINK: 'bebida',
-  SIDE: 'guarnición',
-  DESSERT: 'postre',
-};
+import { collectCategoryTagsInDraftCart } from '../helpers/complementaryMenu.helper';
 
 /** Hint interno cuando hay shortlist pendiente (SELECT_FROM_LIST / product query). */
 export async function buildPendingProductSelectionLines(
@@ -349,10 +337,10 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
       console.error('[intent] failed to record CONFIRMAR_OFERTA surfaced:', err)
     );
   } else if (
-    ranked.active?.type === 'SUGERIR_COMPLEMENTO' ||
     ranked.active?.type === 'SUGERIR_DIRECCION' ||
     ranked.active?.type === 'RECOLECTAR_PARTY_SIZE'
   ) {
+    // SUGERIR_COMPLEMENTO se registra al presentar la lista (tool), no al inyectar el hint.
     void recordOpportunitySurfaced(ctx.conversationId, ranked.active.type, meta).catch(
       (err) => console.error('[intent] failed to record opportunity surfaced:', err)
     );
@@ -380,6 +368,19 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
       ? ranked.active.hint.split('\n')
       : [];
 
+  // Dual inject: Opportunity de menú opcional junto al Goal/activo, si tiene permiso
+  // y el activo no es Alert ni Goal blocking (ADR-0009 suavizado: mencionable con permiso).
+  const complementCandidate = extras.find((c) => c.type === 'SUGERIR_COMPLEMENTO');
+  const activeBlocksOptional =
+    ranked.active?.kind === 'alert' ||
+    (ranked.active?.kind === 'goal' && ranked.active.pressure === 'blocking');
+  const optionalComplementLines =
+    complementCandidate &&
+    ranked.active?.type !== 'SUGERIR_COMPLEMENTO' &&
+    !activeBlocksOptional
+      ? complementCandidate.hint.split('\n')
+      : [];
+
   const nlpLines = nlpHint
     ? [
         `- Hint NLP (secundario, no vinculante): intent=${nlpHint.intent}, ` +
@@ -387,19 +388,6 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
           `cantidad=${nlpHint.quantity ?? 'ninguna'}`,
       ]
     : [];
-
-  let menuGapLine: string | null = null;
-  if (hasItems && !checkoutActive && canSurfaceComplementOpportunity(meta)) {
-    const missing = getMissingMenuTags(cartTags);
-    const labels = missing
-      .map((t) => MENU_GAP_LABELS[t])
-      .filter((l): l is string => Boolean(l));
-    if (labels.length > 0) {
-      menuGapLine =
-        `- Huecos de menú en el pedido: ${labels.join(', ')} ` +
-        `(dato interno; ofrecer solo si es natural con present_complement_suggestions, máx 1 vez).`;
-    }
-  }
 
   const pendingSelectionLines = await buildPendingProductSelectionLines(meta, businessId);
 
@@ -410,9 +398,9 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
       : null,
     hasActiveDraft && fulfillmentType ? `- Tipo de entrega: ${fulfillmentType}` : null,
     checkoutActive ? '- Sesión de checkout: activa' : null,
-    menuGapLine,
     ...pendingSelectionLines,
     ...intentLines,
+    ...optionalComplementLines,
     ...nlpLines,
   ].filter((line): line is string => line !== null);
 

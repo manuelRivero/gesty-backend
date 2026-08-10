@@ -44,6 +44,10 @@ import { resolveDeliveryContext } from '../services/deliveryFee.service';
 import { patchConversationMetadata, omitConversationMetadataKeys } from '../repositories/conversationState.repository';
 import { clearLastOffer } from '../services/lastOffer.service';
 import {
+  markComplementEngagedIfOffered,
+  markComplementRefused,
+} from '../services/intent/opportunities.service';
+import {
   getOrderCompletionLedger,
   recordOrderCompletionAbandonment,
   reviveOrderCompletionIfAbandoned,
@@ -1321,6 +1325,7 @@ export const addCartItemTool = new DynamicStructuredTool<
 
     if (conversationId) {
       await clearLastOffer(conversationId);
+      await markComplementEngagedIfOffered(conversationId, productId);
       // Revival del Goal COMPLETAR_PEDIDO (ADR-0005, corolario): si el
       // cliente había abandonado el pedido y agrega otro ítem, el abandono
       // se limpia solo.
@@ -1838,10 +1843,10 @@ export const presentComplementSuggestionsTool = new DynamicStructuredTool<
 >({
   name: 'present_complement_suggestions',
   description:
-    'Ofrece una lista interactiva de complementos (bebida, postre, entrada, etc.) si encaja naturalmente. ' +
-    'Usala tras add_cart_item cuando tenga sentido sumar algo más — no en cada add. ' +
+    'Ofrece una lista interactiva para completar el menú (hasta 2 categorías: entrada, principal, bebida, postre). ' +
+    'Usala tras add_cart_item cuando [ESTADO DEL CLIENTE] tenga Opportunity opcional SUGERIR_COMPLEMENTO. ' +
     'No la combines con present_cart en el mismo turno. ' +
-    'El runtime puede omitir la lista si el modelo de sugerencias decide skip o ya se ofreció una vez.',
+    'El runtime omite la lista si el cliente ya rechazó, está en cooldown, o no hay huecos.',
   schema: presentComplementSuggestionsSchema,
   func: async (
     { productId }: PresentComplementSuggestionsInput,
@@ -1853,6 +1858,25 @@ export const presentComplementSuggestionsTool = new DynamicStructuredTool<
       signal: 'present_complement_suggestions',
       ...(productId ? { productId } : {}),
     });
+  },
+});
+
+const markComplementRefusedSchema = z.object({});
+type MarkComplementRefusedInput = z.infer<typeof markComplementRefusedSchema>;
+
+export const markComplementRefusedTool = new DynamicStructuredTool<
+  typeof markComplementRefusedSchema,
+  MarkComplementRefusedInput
+>({
+  name: 'mark_complement_refused',
+  description:
+    'Registra que el cliente rechazó completar el menú (dijo no / mejor no / sin postre / no gracias a la oferta de complementos). ' +
+    'Llamá ANTES de responder. Después de esto NO vuelvas a ofrecer present_complement_suggestions en este pedido.',
+  schema: markComplementRefusedSchema,
+  func: async (_input: MarkComplementRefusedInput, _runManager, config?: RunnableConfig) => {
+    const { conversationId } = getReactContext(config);
+    await markComplementRefused(conversationId);
+    return toJson({ refused: true });
   },
 });
 
@@ -2149,6 +2173,7 @@ export const allReactTools = [
   savePartySizeTool,
   presentCartTool,
   presentComplementSuggestionsTool,
+  markComplementRefusedTool,
   presentCategoryTool,
   presentWelcomeOptionsTool,
   presentProductCtaTool,

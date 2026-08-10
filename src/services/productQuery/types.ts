@@ -22,6 +22,16 @@ export type IntentLedgerEntryBase = {
   openedAt?: string | null;
   /** Expiración explícita (ISO); si falta, se deriva de openedAt + catálogo. */
   expiresAt?: string | null;
+  /**
+   * SUGERIR_COMPLEMENTO: el cliente rechazó completar el menú → no más olas.
+   */
+  refused?: boolean;
+  /**
+   * SUGERIR_COMPLEMENTO: aceptó/sumó algo de una oferta → habilita olas futuras.
+   */
+  engaged?: boolean;
+  /** Productos ofrecidos en la última ola (para marcar engaged al sumar uno). */
+  lastOfferedProductIds?: string[];
 };
 
 export type ConversationMetadata = {
@@ -232,7 +242,11 @@ export type ConversationMetadata = {
       suggestedQuantity?: number;
       source?: string;
     };
-    SUGERIR_COMPLEMENTO?: IntentLedgerEntryBase;
+    SUGERIR_COMPLEMENTO?: IntentLedgerEntryBase & {
+      refused?: boolean;
+      engaged?: boolean;
+      lastOfferedProductIds?: string[];
+    };
     SUGERIR_DIRECCION?: IntentLedgerEntryBase;
     OFRECER_PROMOCION?: IntentLedgerEntryBase;
     RECOLECTAR_PARTY_SIZE?: IntentLedgerEntryBase;

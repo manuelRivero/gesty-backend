@@ -23,11 +23,16 @@ describe('INTENT_CATALOG (A.1)', () => {
     );
   });
 
-  it('Opportunity nunca tiene presupuesto > 1 (ADR-0008 / D7)', () => {
+  it('Opportunity: presupuesto 1 salvo SUGERIR_COMPLEMENTO (olas tras sí)', () => {
     for (const [type, entry] of Object.entries(INTENT_CATALOG)) {
-      if (entry.kind === 'opportunity') {
-        expect(entry.maxSurfaces, type).toBe(1);
+      if (entry.kind !== 'opportunity') continue;
+      if (type === 'SUGERIR_COMPLEMENTO') {
+        // Un «no» abandona; un «sí» habilita más olas (refused/engaged), no un solo surface.
+        expect(entry.maxSurfaces, type).toBeGreaterThan(1);
+        expect(entry.cooldownMs, type).toBeGreaterThan(0);
+        continue;
       }
+      expect(entry.maxSurfaces, type).toBe(1);
     }
   });
 });

@@ -40,6 +40,11 @@ export type IntentLedgerEntry = {
   /** ISO del nacimiento / oferta (decay de Opportunities). */
   openedAt?: string | null;
   expiresAt?: string | null;
+  /** SUGERIR_COMPLEMENTO: rechazo explícito → fin de olas. */
+  refused?: boolean;
+  /** SUGERIR_COMPLEMENTO: aceptó una oferta → puede haber más olas. */
+  engaged?: boolean;
+  lastOfferedProductIds?: string[];
 };
 
 export type IntentLedgerView = Partial<Record<IntentType, IntentLedgerEntry>>;

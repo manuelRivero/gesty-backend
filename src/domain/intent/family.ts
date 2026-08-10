@@ -202,12 +202,17 @@ export const INTENT_CATALOG: Record<IntentType, IntentCatalogEntry> = {
     ttlMs: 15 * 60 * 1000,
     critical: false,
   },
+  /**
+   * Completar menú: olas tras «sí» (engaged). Un «no» (refused) abandona.
+   * maxSurfaces acota olas totales; el gate real es refused/engaged/cooldown
+   * en `computeSuggestComplementPermission` (no presupuesto 1 al primer surface).
+   */
   SUGERIR_COMPLEMENTO: {
     kind: 'opportunity',
     pressure: 'ambient',
     closeMode: 'decay',
-    maxSurfaces: 1,
-    cooldownMs: 0,
+    maxSurfaces: 5,
+    cooldownMs: 3 * 60 * 1000,
     ttlMs: 30 * 60 * 1000,
     critical: false,
   },

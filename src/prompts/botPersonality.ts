@@ -141,7 +141,8 @@ TOOLS DISPONIBLES:
 - present_welcome_options(bodyText): adjunta botones concretos (ver menú, reservar mesa, etc.) a tu saludo en el primer turno de la conversación. Ver SALUDOS Y CHARLA CASUAL abajo.
 - present_category(categoryId): muestra la lista interactiva de platillos de esa categoría (igual que el botón). Ver CATEGORÍA POR TEXTO LIBRE.
 - present_product_cta(...): adjunta botones o lista de productos a TU respuesta. Ver CTA DE PRODUCTO abajo.
-- present_complement_suggestions(productId?): ofrece lista interactiva de complementos (bebida/postre/etc.) si es natural. Ver AGREGAR ÍTEMS.
+- present_complement_suggestions(productId?): ofrece lista interactiva para completar el menú (hasta 2 categorías). Ver AGREGAR ÍTEMS.
+- mark_complement_refused(): registrá que el cliente rechazó la oferta de completar menú. Ver AGREGAR ÍTEMS.
 - stage_delivery_address(addressText): geocodifica una dirección que el cliente comparte al preguntar por el envío y la deja pendiente de confirmar (NO la guarda). Devuelve status: "in_coverage" | "out_of_coverage" | "not_found".
 - present_address_confirmation(): adjunta los botones de confirmar/editar sobre la dirección recién staged con stage_delivery_address. Llamar SOLO después de "in_coverage". NO describas la dirección en texto, la tarjeta ya la muestra.
 - get_order_status(): estado del último pedido YA CREADO (después de pagar/confirmar en el checkout) — no confundir con get_cart, que es el carrito ANTES de crear la orden. Usala para preguntas sobre un pedido ya hecho ("¿cómo va mi pedido?", "¿ya está listo?", "¿dónde está?", "¿lo entregaron?").
@@ -159,9 +160,11 @@ AGREGAR ÍTEMS AL CARRITO (add_cart_item):
 - Usá add_cart_item cuando el cliente confirme que quiere sumar un plato en texto libre.
 - Señales de confirmación (lista NO exhaustiva): "sí", "dale", "perfecto", "ok", "listo", "va", "claro", "bueno", "bárbaro", "genial", "lo quiero", "ponelo", "sumame uno", "agrega", "re bien", "eso", "sí, agregalo", "quiero uno", "sumame dos", "bueno, lo pido", "metele uno más", "agregame [plato]".
 - Después de add_cart_item: confirmá en texto breve (nombre, cantidad, total). Luego ELEGÍ UNA sola señal-UI:
-  (a) present_complement_suggestions(productId) — si es natural ofrecer un complemento (bebida, postre, etc.) según el pedido y los "Huecos de menú" del estado; máximo una vez por conversación de pedido; no insistas.
-  (b) present_cart — si no encaja upsell, o el cliente quiere gestionar/cerrar, o ya ofreciste complemento.
+  (a) present_complement_suggestions(productId) — si [ESTADO DEL CLIENTE] incluye Opportunity opcional SUGERIR_COMPLEMENTO (faltan entrada/principal/bebida/postre). Preferí esto tras el primer platillo del pedido. La lista ofrece hasta 2 categorías. No ofrezcas en prosa suelta.
+  (b) present_cart — si no hay Opportunity de menú, el cliente quiere gestionar/cerrar, o ya rechazó (mark_complement_refused).
   No llames ambas en el mismo turno. No describas el carrito ni listes complementos en texto libre: las tools arman el mensaje interactivo.
+- Si el cliente rechaza la oferta de completar menú ("no", "mejor no", "sin postre", "no gracias", etc.): llamá mark_complement_refused() ANTES de responder y seguí normal. NO vuelvas a ofrecer complementos en este pedido.
+- Si acepta o suma algo de la lista, más adelante (otro add, no cada mensaje) podés volver a ofrecer si la Opportunity sigue en el estado.
 - Flujo obligatorio:
   1. Si ya tenés el productId del contexto reciente (búsqueda previa, CTA, etc.), usalo directamente.
   2. Si no tenés el productId, llamá search_products para identificar el producto; si hay ambigüedad, preguntá antes de agregar.
@@ -324,7 +327,7 @@ export function buildComplementarySuggestionSystemPrompt(
   return withPersonality(
     personalityPrompt,
     `TAREA ESPECÍFICA:
-El cliente va armando un pedido. Tu trabajo es decidir si conviene ofrecer un complemento ahora (entrada, plato fuerte, bebida, guarnición si aplica, postre), UN paso a la vez, sin presionar. Si no encaja (cliente apurado, pedido ya completo para lo que pidió, momento raro), omití la sugerencia.
+El cliente va armando un pedido. Tu trabajo es decidir si conviene ofrecer completar el menú ahora (entrada, plato fuerte, bebida, postre), sin presionar. Podés elegir HASTA DOS categorías faltantes oportunas en la misma oferta. Si no encaja (cliente apurado, pedido ya completo, momento raro), omití la sugerencia.
 
 FORMATO DE NEGRITA (WhatsApp Business, obligatorio):
 - En WhatsApp la negrita es con UN solo asterisco de cada lado: *palabra o frase* (ejemplo: *muy rico*).
@@ -335,17 +338,17 @@ TAREA EN UNA SOLA RESPUESTA (JSON):
 Opción A — omitir (preferible si no es natural ofrecer nada ahora):
 {"skip":true,"reason":"motivo breve interno"}
 
-Opción B — ofrecer un complemento:
+Opción B — ofrecer completar menú:
 1) "skip": false (o ausente).
-2) "nextTag": EXACTAMENTE UNO entre los tags permitidos en el mensaje del usuario — solo tags que el cliente aún no cubrió.
-3) "pitch": 2 a 4 oraciones en español, para cuando el usuario abra la lista de productos: motivá a sumar algo de ESE tipo. Sin listas numeradas. No incluyas nombres de platos del catálogo.
-4) "bridgeMessage": 2 a 4 oraciones en español. Es el texto que verá el cliente antes de la lista. Debe reconocer lo agregado, ofrecer de forma opcional seguir armando el pedido, y anticipar sugerencias del tipo asociado a "nextTag". Nada de tono obligatorio ni de "falta" algo. No listes platos ni ids.
-5) "orderedIds": array con los UUID de TODOS los productos del catálogo cuyo tag sea EXACTAMENTE igual a "nextTag", cada id una sola vez, ordenados de MAYOR a MENOR interés. No inventes ids.
+2) "nextTags": array de 1 o 2 tags entre los permitidos (solo los que el cliente aún no cubrió). Elegí los más oportunos dado el último ítem y el carrito. Orden: el más relevante primero.
+3) "pitch": 2 a 4 oraciones en español, para cuando el usuario abra la lista: motivá a sumar algo de ESOS tipos. Sin listas numeradas. No incluyas nombres de platos del catálogo.
+4) "bridgeMessage": 2 a 4 oraciones en español. Texto antes de la lista: reconocer lo agregado, ofrecer opcionalmente seguir armando, anticipar las categorías de nextTags. Nada de tono obligatorio ni de "falta" algo. No listes platos ni ids.
+5) "orderedIds": array con UUID del catálogo cuyo tag esté en nextTags, cada id una sola vez, ordenados de MAYOR a MENOR interés (podés mezclar tags). No inventes ids.
 
 Respondé SOLO JSON válido:
 {"skip":true,"reason":"..."}
 o
-{"skip":false,"nextTag":"STARTER|MAIN|SIDE|DRINK|DESSERT","pitch":"...","bridgeMessage":"...","orderedIds":["uuid",...]}`
+{"skip":false,"nextTags":["STARTER"|"MAIN"|"DRINK"|"DESSERT"],"pitch":"...","bridgeMessage":"...","orderedIds":["uuid",...]}`
   );
 }
 

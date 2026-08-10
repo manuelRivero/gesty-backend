@@ -16,8 +16,10 @@ import {
 import type { business as Business } from '@prisma/client';
 import { formatBotUserMessage } from './productQuery';
 import { buildComplementarySuggestionsWithLlm } from './ai/complementarySuggestion.ai.service';
-import { computeCatalogPermission } from './intent/activeIntent.service';
-import { recordOpportunitySurfaced } from './intent/opportunities.service';
+import {
+  computeSuggestComplementPermission,
+  recordOpportunitySurfaced,
+} from './intent/opportunities.service';
 import { normalizeMetadata } from './productQuery/utils';
 import type { ConversationMetadata } from './productQuery/types';
 import { buildListMessageFromButtons, truncateDescription, truncateTitle } from '../whatsappBuilders';
@@ -26,11 +28,11 @@ import {
   shortcutBullet,
 } from '../whatsappBuilders/listShortcutsBody';
 
-/** Presupuesto 1 de SUGERIR_COMPLEMENTO: false si ya se planteó en esta vida. */
+/** false si refused, esperando engaged tras 1ª ola, cooldown o TTL. */
 export function canSurfaceComplementOpportunity(metadata: unknown): boolean {
   const meta = normalizeMetadata(metadata) as ConversationMetadata;
   const entry = meta.intentLedger?.SUGERIR_COMPLEMENTO ?? {};
-  return computeCatalogPermission('SUGERIR_COMPLEMENTO', entry).granted;
+  return computeSuggestComplementPermission(entry).granted;
 }
 
 export async function persistComplementSuggestionSnapshot(
@@ -180,7 +182,8 @@ export function buildComplementSuggestionsListMessage(params: {
     title: truncateTitle(row.name),
     payload: `ADD_ITEM:${row.id}:1`,
     description: truncateDescription(row.categoryName, 72),
-    sectionTitle: 'Sugerencias',
+    // Una sección por categoría cuando hay varias (hasta 2 tags en la ola).
+    sectionTitle: truncateTitle(row.categoryName || 'Sugerencias', 24),
   }));
 
   if (includeManagementRows) {
@@ -349,7 +352,9 @@ export async function presentComplementSuggestionBundle(params: {
     includeManagementRows: true,
   });
 
-  await recordOpportunitySurfaced(conversationId, 'SUGERIR_COMPLEMENTO', metadata);
+  await recordOpportunitySurfaced(conversationId, 'SUGERIR_COMPLEMENTO', metadata, {
+    offeredProductIds: bundle.items.map((i) => i.id),
+  });
   await clearComplementSuggestionSnapshot(conversationId);
   await createConversationMessage(conversationId, 'ai', listMessage.body.text, true);
   await updateConversationLastMessageAt(conversationId);

@@ -21,6 +21,17 @@ export const MENU_SUGGESTION_ORDER: MenuCategoryTag[] = [
   'DESSERT',
 ];
 
+/**
+ * Categorías del menú “completo” para SUGERIR_COMPLEMENTO (sin SIDE).
+ * Orden = prioridad de oferta cuando el fallback es determinístico.
+ */
+export const MENU_COMPLETE_TAGS: readonly MenuCategoryTag[] = [
+  'STARTER',
+  'MAIN',
+  'DRINK',
+  'DESSERT',
+];
+
 export type ComplementaryMenuItemSummary = {
   id: string;
   name: string;
@@ -41,9 +52,25 @@ export function getMissingMenuTags(cartTags: Set<MenuCategoryTag>): MenuCategory
   return MENU_SUGGESTION_ORDER.filter((t) => !cartTags.has(t));
 }
 
+/** Huecos STARTER/MAIN/DRINK/DESSERT (Opportunity de completar menú). */
+export function getMissingMenuCompleteTags(
+  cartTags: ReadonlySet<MenuCategoryTag>
+): MenuCategoryTag[] {
+  return MENU_COMPLETE_TAGS.filter((t) => !cartTags.has(t));
+}
+
 /** Siguiente tag si no hay IA: el primero de la lista faltante. */
 export function pickFallbackNextTag(missingOrdered: MenuCategoryTag[]): MenuCategoryTag | null {
   return missingOrdered[0] ?? null;
+}
+
+/** Hasta `max` tags faltantes (fallback determinístico / olas multi-categoría). */
+export function pickFallbackNextTags(
+  missingOrdered: MenuCategoryTag[],
+  max: number = 2
+): MenuCategoryTag[] {
+  if (max <= 0) return [];
+  return missingOrdered.slice(0, max);
 }
 
 /**
