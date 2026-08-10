@@ -28,6 +28,7 @@ import { buildListMessageFromButtons } from '../whatsappBuilders';
 import {
   buildAddItemShortcutsFollowUpBody,
   buildAddItemShortcutsFollowUpList,
+  tryPresentComplementSuggestions,
 } from './complementSuggestions.service';
 import { formatBotUserMessage } from './productQuery';
 import { clearLastOffer } from './lastOffer.service';
@@ -444,6 +445,20 @@ export const buildAddItemMessage = async (
   await updateConversationLastMessageAt(conversation.id);
 
   const includeAddress = fulfillmentType === 'DELIVERY' && hasDeliveryAddress;
+
+  const state = await findOrCreateConversationState(conversation.id);
+  const suggestionList = await tryPresentComplementSuggestions({
+    business,
+    conversationId: conversation.id,
+    metadata: state.metadata,
+    draftOrderId: cart.id,
+    lastAddedMenuItemId: menuItemId,
+    maxItems: 5,
+  });
+  if (suggestionList) {
+    return { main: mainText, mainFollowUpList: suggestionList };
+  }
+
   const followUpBody = buildAddItemShortcutsFollowUpBody({
     includeEditAddressHint: includeAddress,
   });

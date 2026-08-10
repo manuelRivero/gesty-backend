@@ -51,7 +51,19 @@ import {
   deriveRetomarTareaCandidate,
   recordCatalogGoalSurfaced,
 } from '../services/intent/catalogGoals.service';
-import { collectCategoryTagsInDraftCart } from '../helpers/complementaryMenu.helper';
+import {
+  collectCategoryTagsInDraftCart,
+  getMissingMenuTags,
+} from '../helpers/complementaryMenu.helper';
+import { canSurfaceComplementOpportunity } from '../services/complementSuggestions.service';
+
+const MENU_GAP_LABELS: Partial<Record<MenuCategoryTag, string>> = {
+  STARTER: 'entrada',
+  MAIN: 'plato principal',
+  DRINK: 'bebida',
+  SIDE: 'guarnición',
+  DESSERT: 'postre',
+};
 
 const FOOD_RELATED_INTENTS = new Set([
   'ORDER_FOOD',
@@ -328,6 +340,19 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
       ]
     : [];
 
+  let menuGapLine: string | null = null;
+  if (hasItems && !checkoutActive && canSurfaceComplementOpportunity(meta)) {
+    const missing = getMissingMenuTags(cartTags);
+    const labels = missing
+      .map((t) => MENU_GAP_LABELS[t])
+      .filter((l): l is string => Boolean(l));
+    if (labels.length > 0) {
+      menuGapLine =
+        `- Huecos de menú en el pedido: ${labels.join(', ')} ` +
+        `(dato interno; ofrecer solo si es natural con present_complement_suggestions, máx 1 vez).`;
+    }
+  }
+
   const lines = [
     `- Personas para el pedido: ${partySizeLine}`,
     hasItems || checkoutActive || offerStillAlive
@@ -335,6 +360,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
       : null,
     hasActiveDraft && fulfillmentType ? `- Tipo de entrega: ${fulfillmentType}` : null,
     checkoutActive ? '- Sesión de checkout: activa' : null,
+    menuGapLine,
     ...intentLines,
     ...nlpLines,
   ].filter((line): line is string => line !== null);

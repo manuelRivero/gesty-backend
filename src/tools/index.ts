@@ -1808,13 +1808,51 @@ export const presentCartTool = new DynamicStructuredTool<
   name: 'present_cart',
   description:
     'Muestra el resumen interactivo del carrito actual con opciones para modificar, seguir comprando, finalizar o cancelar. ' +
-    'Llamá esta tool después de add_cart_item (en lugar de escribir un resumen en texto libre) ' +
-    'y también cuando el cliente quiera ver qué tiene en el pedido. ' +
+    'Usala cuando el cliente quiera ver qué tiene en el pedido, o tras add_cart_item si NO vas a ofrecer un complemento. ' +
     'No describas el carrito en texto: esta tool construye el mensaje interactivo completo.',
   schema: presentCartSchema,
   func: async (_input: PresentCartInput, _runManager, config?: RunnableConfig) => {
     getReactContext(config); // validar contexto
     return toJson({ signal: 'present_cart' });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// present_complement_suggestions (señal-UI — upsell model-led)
+// ---------------------------------------------------------------------------
+
+const presentComplementSuggestionsSchema = z.object({
+  productId: z
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      'UUID del último producto sumado (preferido). Si se omite, se usa el ítem más reciente del carrito.'
+    ),
+});
+type PresentComplementSuggestionsInput = z.infer<typeof presentComplementSuggestionsSchema>;
+
+export const presentComplementSuggestionsTool = new DynamicStructuredTool<
+  typeof presentComplementSuggestionsSchema,
+  PresentComplementSuggestionsInput
+>({
+  name: 'present_complement_suggestions',
+  description:
+    'Ofrece una lista interactiva de complementos (bebida, postre, entrada, etc.) si encaja naturalmente. ' +
+    'Usala tras add_cart_item cuando tenga sentido sumar algo más — no en cada add. ' +
+    'No la combines con present_cart en el mismo turno. ' +
+    'El runtime puede omitir la lista si el modelo de sugerencias decide skip o ya se ofreció una vez.',
+  schema: presentComplementSuggestionsSchema,
+  func: async (
+    { productId }: PresentComplementSuggestionsInput,
+    _runManager,
+    config?: RunnableConfig
+  ) => {
+    getReactContext(config);
+    return toJson({
+      signal: 'present_complement_suggestions',
+      ...(productId ? { productId } : {}),
+    });
   },
 });
 
@@ -2110,6 +2148,7 @@ export const allReactTools = [
   updateItemNoteTool,
   savePartySizeTool,
   presentCartTool,
+  presentComplementSuggestionsTool,
   presentCategoryTool,
   presentWelcomeOptionsTool,
   presentProductCtaTool,

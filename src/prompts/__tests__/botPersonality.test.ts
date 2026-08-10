@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BOT_PERSONALITY_PROMPT,
+  buildComplementarySuggestionSystemPrompt,
   buildHumanizeSystemPrompt,
   buildHybridAgentSystemPrompt,
   buildProductAwareSystemPrompt,
@@ -40,6 +41,18 @@ describe('botPersonality', () => {
     expect(hybrid).toMatch(/ANTI-MULTI-PRODUCTO/i);
     expect(hybrid).toMatch(/present_category/i);
     expect(hybrid).toMatch(/CATEGORÍA POR TEXTO LIBRE/i);
+  });
+
+  it('hybrid permite present_complement_suggestions tras add sin forzar present_cart', () => {
+    const hybrid = buildHybridAgentSystemPrompt();
+    expect(hybrid).toMatch(/present_complement_suggestions/i);
+    expect(hybrid).toMatch(/No llames ambas en el mismo turno/i);
+  });
+
+  it('complementary prompt permite omitir con skip', () => {
+    const prompt = buildComplementarySuggestionSystemPrompt();
+    expect(prompt).toMatch(/"skip"\s*:\s*true/);
+    expect(prompt).toMatch(/omitir/i);
   });
 
   it('hybrid declara el bloque de estado como contexto interno no narrable', () => {

@@ -170,8 +170,18 @@ function applyOrderedIdsToPool(
   return ordered;
 }
 
+export type LlmMenuStepResult =
+  | { skip: true; reason?: string }
+  | {
+      skip: false;
+      nextTag: MenuCategoryTag;
+      pitch: string;
+      orderedIds: string[];
+      bridgeMessage: string;
+    };
+
 /**
- * Una sola llamada: elige el siguiente tag, redacta el pitch y ordena los productos de ese tag.
+ * Una sola llamada: decide omitir o elegir el siguiente tag, pitch y orden de productos.
  */
 async function llmMenuStepUnified(params: {
   business: Business;
@@ -180,12 +190,7 @@ async function llmMenuStepUnified(params: {
   lastItemName: string;
   lastItemTag: MenuCategoryTag | null;
   catalog: ComplementaryMenuItemSummary[];
-}): Promise<{
-  nextTag: MenuCategoryTag;
-  pitch: string;
-  orderedIds: string[];
-  bridgeMessage: string;
-} | null> {
+}): Promise<LlmMenuStepResult | null> {
   const { business, missingOrdered, cartSummary, lastItemName, lastItemTag, catalog } = params;
   if (missingOrdered.length === 0 || catalog.length === 0) return null;
 
@@ -206,7 +211,7 @@ ${cartSummary}
 
 Último producto agregado: "${lastItemName}"${lastItemTag ? ` (tag categoría: ${lastItemTag})` : ''}
 
-Tags aún no cubiertos (elegí uno como nextTag): ${allowed}
+Tags aún no cubiertos (si ofrecés, elegí uno como nextTag; si no encaja, skip): ${allowed}
 
 Catálogo candidato (id | tag | nombre):
 ${catalogLines}`;
@@ -226,6 +231,12 @@ ${catalogLines}`;
 
   const obj = parseJsonObject(content);
   if (!obj) return null;
+
+  if (obj.skip === true || obj.nextTag === null) {
+    const reason = typeof obj.reason === 'string' ? obj.reason.trim().slice(0, 200) : undefined;
+    return { skip: true, ...(reason ? { reason } : {}) };
+  }
+
   const nextTag = obj.nextTag;
   const pitch = obj.pitch;
   const bridgeRaw = obj.bridgeMessage;
@@ -258,6 +269,7 @@ ${catalogLines}`;
   const ordered = applyOrderedIdsToPool(tagPool, orderedIds);
 
   return {
+    skip: false,
     nextTag,
     pitch: pitchTrim.slice(0, 500),
     bridgeMessage: bridgeTrim.slice(0, 600),
@@ -321,28 +333,15 @@ export async function buildComplementarySuggestionsWithLlm(
 
   const useAi = business.openai_active !== false && !business.ai_blocked;
 
-  let nextTag: MenuCategoryTag = fallbackTag;
-  let pitch =
-    'Si querés, podés mirar la lista: son opciones que van bien con lo que ya elegiste 👇';
-  let bridgePlain = buildFallbackBridgeMessage(lastItemName, fallbackTag);
-  let ordered: ComplementaryMenuItemSummary[] = multiPool.filter((i) => i.categoryTag === fallbackTag);
-
-  if (ordered.length === 0) {
-    ordered = await fetchComplementaryMenuItems({
-      businessId,
-      tags: [fallbackTag],
-      excludeProductIds,
-      limit: poolSize,
-    });
-  }
-
-  if (ordered.length === 0) {
-    return null;
-  }
+  let nextTag: MenuCategoryTag;
+  let pitch: string;
+  let bridgePlain: string;
+  let ordered: ComplementaryMenuItemSummary[];
 
   if (useAi) {
+    let unified: LlmMenuStepResult | null = null;
     try {
-      const unified = await llmMenuStepUnified({
+      unified = await llmMenuStepUnified({
         business,
         missingOrdered,
         cartSummary,
@@ -350,20 +349,43 @@ export async function buildComplementarySuggestionsWithLlm(
         lastItemTag: lastTag,
         catalog: multiPool,
       });
-      if (unified) {
-        nextTag = unified.nextTag;
-        pitch = unified.pitch;
-        bridgePlain = unified.bridgeMessage;
-        const tagPool = multiPool.filter((i) => i.categoryTag === nextTag);
-        if (tagPool.length > 0) {
-          ordered = applyOrderedIdsToPool(tagPool, unified.orderedIds);
-        }
-      }
     } catch {
-      /* fallback */
+      return null;
     }
+    if (!unified || unified.skip) {
+      return null;
+    }
+    nextTag = unified.nextTag;
+    pitch = unified.pitch;
+    bridgePlain = unified.bridgeMessage;
+    const tagPool = multiPool.filter((i) => i.categoryTag === nextTag);
+    ordered =
+      tagPool.length > 0
+        ? applyOrderedIdsToPool(tagPool, unified.orderedIds)
+        : await fetchComplementaryMenuItems({
+            businessId,
+            tags: [nextTag],
+            excludeProductIds,
+            limit: poolSize,
+          });
   } else {
+    nextTag = fallbackTag;
+    pitch =
+      'Si querés, podés mirar la lista: son opciones que van bien con lo que ya elegiste 👇';
     bridgePlain = buildFallbackBridgeMessage(lastItemName, nextTag);
+    ordered = multiPool.filter((i) => i.categoryTag === nextTag);
+    if (ordered.length === 0) {
+      ordered = await fetchComplementaryMenuItems({
+        businessId,
+        tags: [nextTag],
+        excludeProductIds,
+        limit: poolSize,
+      });
+    }
+  }
+
+  if (ordered.length === 0) {
+    return null;
   }
 
   const items = ordered.slice(0, maxItems);

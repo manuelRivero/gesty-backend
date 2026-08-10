@@ -13,12 +13,25 @@ import {
   patchConversationMetadata,
   updateConversationLastMessageAt,
 } from '../repositories';
+import type { business as Business } from '@prisma/client';
 import { formatBotUserMessage } from './productQuery';
+import { buildComplementarySuggestionsWithLlm } from './ai/complementarySuggestion.ai.service';
+import { computeCatalogPermission } from './intent/activeIntent.service';
+import { recordOpportunitySurfaced } from './intent/opportunities.service';
+import { normalizeMetadata } from './productQuery/utils';
+import type { ConversationMetadata } from './productQuery/types';
 import { buildListMessageFromButtons, truncateDescription, truncateTitle } from '../whatsappBuilders';
 import {
   buildShortcutsThenListBody,
   shortcutBullet,
 } from '../whatsappBuilders/listShortcutsBody';
+
+/** Presupuesto 1 de SUGERIR_COMPLEMENTO: false si ya se planteó en esta vida. */
+export function canSurfaceComplementOpportunity(metadata: unknown): boolean {
+  const meta = normalizeMetadata(metadata) as ConversationMetadata;
+  const entry = meta.intentLedger?.SUGERIR_COMPLEMENTO ?? {};
+  return computeCatalogPermission('SUGERIR_COMPLEMENTO', entry).granted;
+}
 
 export async function persistComplementSuggestionSnapshot(
   conversationId: string,
@@ -137,6 +150,72 @@ export function buildAddItemShortcutsFollowUpList(
   };
 }
 
+export type ComplementSuggestionListItem = {
+  id: string;
+  name: string;
+  categoryName: string;
+};
+
+/**
+ * Lista WA de sugerencias de complemento + filas mínimas de gestión.
+ * Body = bridge (post-add) o pitch (materialización diferida).
+ */
+export function buildComplementSuggestionsListMessage(params: {
+  title: string;
+  titleEmoji: string;
+  /** Texto principal bajo el título (bridge o pitch). */
+  bodyPlain: string;
+  items: ComplementSuggestionListItem[];
+  /** Incluir Modificar / Finalizar además de Ver menú (post-add / señal híbrida). */
+  includeManagementRows?: boolean;
+}): WhatsAppListMessage {
+  const { title, titleEmoji, bodyPlain, items, includeManagementRows = false } = params;
+  const suggestionBody = formatBotUserMessage(
+    title,
+    titleEmoji,
+    `${bodyPlain.trim()}\n\nTocá el botón y elegí 👇`
+  );
+
+  const suggestionButtons = items.map((row) => ({
+    title: truncateTitle(row.name),
+    payload: `ADD_ITEM:${row.id}:1`,
+    description: truncateDescription(row.categoryName, 72),
+    sectionTitle: 'Sugerencias',
+  }));
+
+  if (includeManagementRows) {
+    suggestionButtons.push(
+      {
+        title: 'Modificar pedido',
+        payload: 'VIEW_CART_FOR_EDITION',
+        description: 'Cantidades, ítems y revisión',
+        sectionTitle: 'Pedido',
+      },
+      {
+        title: 'Finalizar pedido',
+        payload: 'CHECKOUT',
+        description: 'Ir al checkout',
+        sectionTitle: 'Pedido',
+      }
+    );
+  }
+
+  suggestionButtons.push({
+    title: 'Ver menú completo',
+    payload: 'VIEW_MENU',
+    description: 'Todas las categorías',
+    sectionTitle: 'Menú',
+  });
+
+  return buildListMessageFromButtons(
+    suggestionBody,
+    suggestionButtons,
+    'Ver sugerencias',
+    '',
+    'Elegí o escribí'
+  );
+}
+
 /**
  * Construye la lista de sugerencias desde metadata, valida borrador y limpia estado.
  */
@@ -226,36 +305,107 @@ export async function materializeComplementSuggestionsList(
     );
   }
 
-  const suggestionBody = formatBotUserMessage(
-    snapshot.title,
-    snapshot.titleEmoji,
-    `${snapshot.pitchBody}\n\nTocá el botón y elegí 👇`
-  );
-
-  const suggestionButtons = ordered.map((row) => ({
-    title: truncateTitle(row.name),
-    payload: `ADD_ITEM:${row.id}:1`,
-    description: truncateDescription(row.menu_category.name, 72),
-    sectionTitle: 'Sugerencias',
-  }));
-  suggestionButtons.push({
-    title: 'Ver menú completo',
-    payload: 'VIEW_MENU',
-    description: 'Todas las categorías',
-    sectionTitle: 'Menú',
+  const listMessage = buildComplementSuggestionsListMessage({
+    title: snapshot.title,
+    titleEmoji: snapshot.titleEmoji,
+    bodyPlain: snapshot.pitchBody,
+    items: ordered.map((row) => ({
+      id: row.id,
+      name: row.name,
+      categoryName: row.menu_category.name,
+    })),
   });
 
-  const listMessage = buildListMessageFromButtons(
-    suggestionBody,
-    suggestionButtons,
-    'Ver sugerencias',
-    '',
-    'Podés sumar con un toque'
-  );
-
   await clearComplementSuggestionSnapshot(ctx.conversation.id);
-  await createConversationMessage(ctx.conversation.id, 'ai', suggestionBody, true);
+  await createConversationMessage(ctx.conversation.id, 'ai', listMessage.body.text, true);
   await updateConversationLastMessageAt(ctx.conversation.id);
 
   return listResponse(listMessage);
+}
+
+/**
+ * Arma follow-up post-add / señal híbrida desde un bundle del builder LLM.
+ * Persiste snapshot, registra Opportunity y devuelve la lista (o null).
+ */
+export async function presentComplementSuggestionBundle(params: {
+  conversationId: string;
+  metadata: unknown;
+  bundle: {
+    snapshot: ComplementSuggestionSnapshot;
+    bridgeMessagePlain: string;
+    items: Array<{ id: string; name: string; categoryName: string }>;
+  };
+}): Promise<WhatsAppListMessage | null> {
+  const { conversationId, metadata, bundle } = params;
+  if (bundle.items.length === 0) return null;
+
+  await persistComplementSuggestionSnapshot(conversationId, bundle.snapshot);
+
+  const listMessage = buildComplementSuggestionsListMessage({
+    title: bundle.snapshot.title,
+    titleEmoji: bundle.snapshot.titleEmoji,
+    bodyPlain: bundle.bridgeMessagePlain,
+    items: bundle.items,
+    includeManagementRows: true,
+  });
+
+  await recordOpportunitySurfaced(conversationId, 'SUGERIR_COMPLEMENTO', metadata);
+  await clearComplementSuggestionSnapshot(conversationId);
+  await createConversationMessage(conversationId, 'ai', listMessage.body.text, true);
+  await updateConversationLastMessageAt(conversationId);
+
+  return listMessage;
+}
+
+/**
+ * Intenta decidir (LLM) y presentar sugerencias de complemento.
+ * Null si presupuesto agotado, skip del modelo, sin catálogo o error.
+ */
+export async function tryPresentComplementSuggestions(params: {
+  business: Business;
+  conversationId: string;
+  metadata: unknown;
+  draftOrderId: string;
+  lastAddedMenuItemId: string;
+  maxItems?: number;
+}): Promise<WhatsAppListMessage | null> {
+  const {
+    business,
+    conversationId,
+    metadata,
+    draftOrderId,
+    lastAddedMenuItemId,
+    maxItems = 5,
+  } = params;
+
+  if (!canSurfaceComplementOpportunity(metadata)) {
+    return null;
+  }
+
+  try {
+    const bundle = await buildComplementarySuggestionsWithLlm(business, {
+      businessId: business.id,
+      draftOrderId,
+      lastAddedMenuItemId,
+      maxItems,
+    });
+    if (!bundle) return null;
+
+    return presentComplementSuggestionBundle({
+      conversationId,
+      metadata,
+      bundle: {
+        snapshot: bundle.snapshot,
+        bridgeMessagePlain: bundle.bridgeMessagePlain,
+        items: bundle.items.map((i) => ({
+          id: i.id,
+          name: i.name,
+          categoryName: i.categoryName,
+        })),
+      },
+    });
+  } catch (err) {
+    console.error('[complement] tryPresentComplementSuggestions failed', err);
+    return null;
+  }
 }

@@ -45,7 +45,9 @@ import { startCheckoutSessionTool } from '../tools/checkout';
 import type { CtaPlan, CtaPlannerRaw } from './types';
 import { persistLastOffer } from '../services/lastOffer.service';
 import { buildCartSummaryMessage } from '../services/cart.service';
+import { tryPresentComplementSuggestions } from '../services/complementSuggestions.service';
 import { buildCategoryProductListMessage } from '../services/category.service';
+import { findOrCreateConversationState } from '../repositories';
 import { AddressService } from '../services/address.service';
 import { buildSmallTalkMenu } from '../services/smallTalk.service';
 
@@ -136,6 +138,9 @@ export interface HybridAgentSignals {
   startCheckoutSession: boolean;
   startCheckoutReason: string | null;
   presentCart: boolean;
+  /** Upsell de complemento (bebida/postre/etc.); productId opcional del último add. */
+  presentComplementSuggestions: boolean;
+  complementProductId: string | null;
   /** Lista de platillos de una categoría (misma UX que botón CATEGORY). */
   presentCategoryId: string | null;
   presentAddressConfirmation: boolean;
@@ -204,6 +209,8 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
     startCheckoutSession: false,
     startCheckoutReason: null,
     presentCart: false,
+    presentComplementSuggestions: false,
+    complementProductId: null,
     presentCategoryId: null,
     presentAddressConfirmation: false,
     stagedAddressText: null,
@@ -227,6 +234,7 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
         status?: string;
         formattedAddress?: string;
         bodyText?: string;
+        productId?: string;
       };
       if (data.signal === 'start_checkout_session') {
         signals.startCheckoutSession = true;
@@ -234,6 +242,12 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
       }
       if (data.signal === 'present_cart') {
         signals.presentCart = true;
+      }
+      if (data.signal === 'present_complement_suggestions') {
+        signals.presentComplementSuggestions = true;
+        if (typeof data.productId === 'string' && data.productId.length > 0) {
+          signals.complementProductId = data.productId;
+        }
       }
       if (
         data.signal === 'present_category' &&
@@ -498,6 +512,63 @@ export const runHybridReactAgent = async (
       kind: 'delegate_checkout',
       reason: signals.startCheckoutReason,
     };
+  }
+
+  if (signals.presentComplementSuggestions) {
+    try {
+      const business = ctx.business as Parameters<typeof tryPresentComplementSuggestions>[0]['business'];
+      const draft = await prisma.draft_order.findFirst({
+        where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
+        select: {
+          id: true,
+          draft_order_item: {
+            orderBy: { id: 'desc' },
+            take: 1,
+            select: { product_id: true },
+          },
+        },
+      });
+      const lastProductId =
+        signals.complementProductId ??
+        draft?.draft_order_item[0]?.product_id ??
+        null;
+      if (draft && lastProductId) {
+        const state = await findOrCreateConversationState(conversationId);
+        const listMsg = await tryPresentComplementSuggestions({
+          business,
+          conversationId,
+          metadata: state.metadata,
+          draftOrderId: draft.id,
+          lastAddedMenuItemId: lastProductId,
+          maxItems: 5,
+        });
+        if (listMsg) {
+          const agentText = extractFinalText(out);
+          console.log(
+            JSON.stringify({
+              event: '[hybrid-agent] present_complement_suggestions_signal',
+              conversationId,
+            })
+          );
+          if (agentText?.trim()) {
+            return {
+              kind: 'response',
+              handlerResult: markHybridResult({
+                content: agentText,
+                isInteractive: false,
+                followUps: [{ type: 'list', listMessage: listMsg }],
+              }),
+            };
+          }
+          return {
+            kind: 'response',
+            handlerResult: markHybridResult({ content: listMsg, isInteractive: true }),
+          };
+        }
+      }
+    } catch (err) {
+      console.error('[hybrid-agent] present_complement_suggestions failed, falling through', err);
+    }
   }
 
   if (signals.presentCart) {
