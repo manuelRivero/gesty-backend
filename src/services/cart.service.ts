@@ -446,6 +446,14 @@ export const buildAddItemMessage = async (
   await createConversationMessage(conversation.id, 'ai', mainText, false);
   await updateConversationLastMessageAt(conversation.id);
 
+  // Cierra shortlist tipable previo (product query / ola anterior) para que el
+  // próximo mensaje libre no re-sume un candidato viejo (p. ej. doble aguadito).
+  await omitConversationMetadataKeys(conversation.id, [
+    'pendingProductSelection',
+    'pendingQuestion',
+    'candidateProductIds',
+  ]);
+
   const includeAddress = fulfillmentType === 'DELIVERY' && hasDeliveryAddress;
 
   const state = await findOrCreateConversationState(conversation.id);

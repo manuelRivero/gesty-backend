@@ -25,13 +25,13 @@ describe('smallTalk welcome shortcuts', () => {
 
   it('incluye opcionales en el mismo orden que los botones', () => {
     const bullets = buildWelcomeShortcutBullets([
-      { title: 'Ver pedido', payload: 'VIEW_ORDER' },
+      { title: 'Ver pedido', payload: 'VIEW_CART' },
       { title: 'Ver menú', payload: 'VIEW_MENU' },
       { title: 'Reservar mesa', payload: 'VIEW_RESERVATION' },
       { title: 'Editar dirección', payload: 'EDIT_ADDRESS' },
     ]);
     expect(bullets).toEqual([
-      '• *Ver* pedido',
+      '• Ver *pedido*',
       '• *Menú*',
       '• *Reservar* mesa',
       '• *Editar* dirección',

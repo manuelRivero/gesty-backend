@@ -69,7 +69,7 @@ export function buildAddItemShortcutsFollowUpBody(options?: {
     shortcutBullet('Menú'),
     shortcutBullet('Modificar', 'pedido'),
     shortcutBullet('Finalizar', 'pedido'),
-    shortcutBullet('Notas', 'del pedido'),
+    shortcutBullet('Nota', 'del pedido'),
   ];
   if (options?.includeEditAddressHint) {
     bullets.push(shortcutBullet('Dirección', 'del pedido'));
@@ -182,7 +182,7 @@ export function buildComplementSuggestionsListMessage(params: {
   const managementBullets = includeManagementRows
     ? [
         shortcutBullet('Menú'),
-        shortcutBullet('Ver', 'pedido'),
+        '• Ver *pedido*',
         shortcutBullet('Modificar', 'pedido'),
         shortcutBullet('Finalizar', 'pedido'),
         shortcutBullet('Nota', 'del pedido'),

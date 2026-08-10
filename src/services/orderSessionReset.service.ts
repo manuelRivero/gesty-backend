@@ -20,6 +20,7 @@ const ORDER_SESSION_OMIT_KEYS = [
   'pendingQuestion',
   'candidateProductIds',
   'pendingVariation',
+  'awaitingItemNote',
   'pendingAction',
   'pendingItemId',
   'pendingItemName',

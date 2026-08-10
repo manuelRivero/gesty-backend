@@ -112,7 +112,7 @@ describe('buildComplementSuggestionsListMessage', () => {
     expect(list.body.text).toMatch(/postre/i);
     expect(list.body.text).toContain('• *Flan*');
     expect(list.body.text).toContain('• *Brownie*');
-    expect(list.body.text).toContain('• *Ver* pedido');
+    expect(list.body.text).toContain('• Ver *pedido*');
     expect(list.body.text).toContain('• *Modificar* pedido');
     expect(list.body.text).toContain('• *Finalizar* pedido');
     expect(list.body.text).toContain('• *Nota* del pedido');
@@ -123,7 +123,7 @@ describe('buildComplementSuggestionsListMessage', () => {
     const body = list.body.text;
     const flanIdx = body.indexOf('• *Flan*');
     const mgmtIdx = body.search(/gestión de tu pedido/i);
-    const verIdx = body.indexOf('• *Ver* pedido');
+    const verIdx = body.indexOf('• Ver *pedido*');
     const modIdx = body.indexOf('• *Modificar* pedido');
     expect(flanIdx).toBeGreaterThan(-1);
     expect(mgmtIdx).toBeGreaterThan(flanIdx);

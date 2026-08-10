@@ -50,6 +50,16 @@ export type ConversationMetadata = {
     askedAt: string;
   } | null;
   /**
+   * Captura tipable de nota de ítem tras atajo "Nota del pedido".
+   * productId null = aún eligiendo entre candidates.
+   */
+  awaitingItemNote?: {
+    productId: string | null;
+    productName: string | null;
+    candidates?: Array<{ productId: string; productName: string }>;
+    askedAt: string;
+  } | null;
+  /**
    * Confirmación pendiente sobre un ítem del carrito (`cart.service.ts`).
    * `CONFIRM_REMOVE` es el Constraint de borde de `remove_cart_item`
    * (ADR-0002): fuente única, compartida entre el flujo determinístico de

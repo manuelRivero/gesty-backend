@@ -79,6 +79,13 @@ export const clearProductFilterMetadata = (
   return rest;
 };
 
+/** Claves de shortlist tipable (product query / complementos). */
+export const PENDING_PRODUCT_SELECTION_KEYS = [
+  'pendingProductSelection',
+  'pendingQuestion',
+  'candidateProductIds',
+] as const;
+
 /** Personas en contexto: peopleCount, requestedPartySize o legacy. */
 export function getRequestedPartySize(
   meta: ConversationMetadata

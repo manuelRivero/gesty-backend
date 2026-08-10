@@ -39,7 +39,7 @@ import { refreshDraftOrderTimeout } from '../services/draftOrderTimeout.service'
 import { resolveEffectivePrice } from '../helpers/menuItemPrice.helper';
 import { listPaymentAdjustmentsForAmount } from '../services/paymentAdjustment.service';
 import { computeOrderPricing } from '../services/pricing.service';
-import { partySizeMetadataFields, normalizeMetadata } from '../services/productQuery/utils';
+import { partySizeMetadataFields, normalizeMetadata, PENDING_PRODUCT_SELECTION_KEYS } from '../services/productQuery/utils';
 import { resolveDeliveryContext } from '../services/deliveryFee.service';
 import { patchConversationMetadata, omitConversationMetadataKeys } from '../repositories/conversationState.repository';
 import { clearLastOffer } from '../services/lastOffer.service';
@@ -1354,6 +1354,9 @@ export const addCartItemTool = new DynamicStructuredTool<
     if (conversationId) {
       await clearPendingVariation(conversationId);
       await clearLastOffer(conversationId);
+      await omitConversationMetadataKeys(conversationId, [
+        ...PENDING_PRODUCT_SELECTION_KEYS,
+      ]);
       await markComplementEngagedIfOffered(conversationId, productId);
       // Revival del Goal COMPLETAR_PEDIDO (ADR-0005, corolario): si el
       // cliente había abandonado el pedido y agrega otro ítem, el abandono

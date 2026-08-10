@@ -50,6 +50,11 @@ vi.mock('../../services/pendingVariation.service', () => ({
   clearPendingVariation: vi.fn(),
 }));
 
+vi.mock('../../repositories/conversationState.repository', () => ({
+  patchConversationMetadata: vi.fn(),
+  omitConversationMetadataKeys: vi.fn(),
+}));
+
 vi.mock('../../services/orderCompletionGoal.service', () => ({
   getOrderCompletionLedger: vi.fn(),
   recordOrderCompletionAbandonment: vi.fn(),

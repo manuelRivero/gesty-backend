@@ -43,8 +43,9 @@ export function welcomeShortcutBullet(button: {
       return shortcutBullet('Horarios');
     case 'ASK_QUESTION':
       return shortcutBullet('Consulta');
+    case 'VIEW_CART':
     case 'VIEW_ORDER':
-      return shortcutBullet('Ver', 'pedido');
+      return '• Ver *pedido*';
     case 'VIEW_RESERVATION':
       return shortcutBullet('Reservar', 'mesa');
     case 'EDIT_ADDRESS':
@@ -95,7 +96,7 @@ export const buildSmallTalkButtons = async (ctx: EnrichedContext) => {
   if (activeOrder) {
     buttons.unshift({
       title: 'Ver pedido',
-      payload: 'VIEW_ORDER',
+      payload: 'VIEW_CART',
       description: 'Revisar tu pedido actual',
       sectionTitle: 'Opciones'
     });
