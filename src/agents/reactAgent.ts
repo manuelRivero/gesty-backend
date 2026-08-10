@@ -322,6 +322,10 @@ const ensureWhatsAppBotFormat = (text: string): string => {
   const normalized = normalizeWhatsAppBoldMarkers(text.trim());
   if (!normalized) return normalized;
   if (normalized.startsWith('🤖')) return normalized;
+  // Pregunta de party size sin encabezado: título canónico (no "*Respuesta* 💬").
+  if (/para\s+cu[aá]ntas\s+personas/i.test(normalized)) {
+    return formatBotUserMessage('¿Para cuántas personas?', '👥', normalized);
+  }
   return formatBotUserMessage('Respuesta', '💬', normalized);
 };
 

@@ -36,6 +36,7 @@ import {
   PEOPLE_COUNT_PROMPT_MESSAGE,
   shouldAbandonPeopleCountForNewIntent,
   shouldBlockForMissingPeopleCount,
+  shouldTreatBareNumberAsPartySize,
 } from '../../../services/peopleCountGate.service';
 import {
   CLOSED_ORDER_CANCELLED_BOT_MESSAGE,
@@ -491,7 +492,7 @@ export const nlpSubgraphNode = async (
       };
     }
 
-    if (shouldAbandonPeopleCountForNewIntent(reDetection) && extractedPeople == null) {
+    if (shouldAbandonPeopleCountForNewIntent(reDetection, userMessage) && extractedPeople == null) {
       await omitConversationMetadataKeys(conversation.id, [
         'awaitingPartySize',
         'peopleCountResume',
@@ -542,7 +543,7 @@ export const nlpSubgraphNode = async (
         detectionContext
       );
 
-      if (shouldAbandonPeopleCountForNewIntent(reDetection)) {
+      if (shouldAbandonPeopleCountForNewIntent(reDetection, userMessage)) {
         await omitConversationMetadataKeys(conversation.id, [
           'awaitingPeopleCount',
           'peopleCountResume',
@@ -578,6 +579,77 @@ export const nlpSubgraphNode = async (
     topCandidate: detection.topCandidate || null,
     rescueMargin: detection.rescueMargin ?? null,
   });
+
+  // "2" solo tras pedir personas (o sin party size): no es MODIFY_QUANTITY.
+  const metaAfterDetect = normalizeMetadata(workingConversationState?.metadata);
+  if (
+    shouldTreatBareNumberAsPartySize({
+      userMessage,
+      intent: detection.intent as ConversationIntent,
+      metadata: metaAfterDetect,
+      detectedProductName: detection.detectedProductName,
+    })
+  ) {
+    const people = extractStrictNumericPeopleCount(userMessage);
+    if (people != null) {
+      const resume = parsePeopleCountResume(metaAfterDetect);
+      await patchConversationMetadata(conversation.id, {
+        ...partySizeMetadataFields(people),
+        awaitingPartySize: false,
+        awaitingPeopleCount: false,
+      });
+      await omitConversationMetadataKeys(conversation.id, [
+        'peopleCountResume',
+        'awaitingPartySize',
+        'awaitingPeopleCount',
+      ]);
+      workingConversationState = await findOrCreateConversationState(
+        conversation.id
+      );
+
+      console.log(
+        JSON.stringify({
+          event: '[dispatch] bare_number_as_party_size',
+          people,
+          hadResume: Boolean(resume),
+          previousIntent: detection.intent,
+          conversationId: conversation.id,
+        })
+      );
+
+      if (resume) {
+        const resumedCtx: EnrichedContext = {
+          ...enrichedBase,
+          conversationState: workingConversationState,
+          detection: resume.detection,
+          message: {
+            ...ctx.message!,
+            type: 'text',
+            text: { body: resume.userMessage },
+          },
+          hasAddress: state.hasAddress,
+          isInCoverage: state.isInCoverage,
+        };
+        const resumedResult = await dispatchOrHybrid(resumedCtx, checkoutHandoff);
+        if (!resumedResult) {
+          return { earlyExit: 'no_handler_match', workingConversationState };
+        }
+        return {
+          handlerResult: resumedResult,
+          detection: resume.detection,
+          dataCollectionDelegated: true,
+          workingConversationState,
+        };
+      }
+
+      // Sin consulta congelada: el híbrido retoma con el dato ya persistido.
+      detection.intent = ConversationIntent.UNKNOWN;
+      detection.confidence = 1;
+      detection.detectedProductName = null;
+      detection.quantity = null;
+      detection.quantityMode = null;
+    }
+  }
 
   if (shouldAskIntentConfirmation(detection)) {
     // Opción D: la confirmación se construye con la decisión del sistema
@@ -622,7 +694,6 @@ export const nlpSubgraphNode = async (
     shouldBlockForMissingPeopleCount({
       intent: detection.intent,
       metadata: metaForGate,
-      detectionQuantity: detection.quantity,
     })
   ) {
     if (!metaForGate.awaitingPartySize) {
@@ -645,7 +716,6 @@ export const nlpSubgraphNode = async (
     shouldBlockForMissingPeopleCount({
       intent: detection.intent,
       metadata: metaForGate,
-      detectionQuantity: detection.quantity,
     })
   ) {
     await patchConversationMetadata(conversation.id, {
