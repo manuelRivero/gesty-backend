@@ -940,6 +940,7 @@ export const buildCartSummaryMessage = async (params: {
   const pricing = computeOrderPricing(cartItems.draft_order_item, { deliveryFee: deliveryCtx.deliveryFee });
 
   let deliveryLine = '';
+  let hasDeliveryAddress = false;
   if (fulfillmentType === 'TAKE_AWAY') {
     deliveryLine = businessStreetAddress
       ? `\n🏪 *Retiro en local:* ${businessStreetAddress}`
@@ -950,6 +951,7 @@ export const buildCartSummaryMessage = async (params: {
       select: { street_address: true },
     });
     if (defaultAddress?.street_address) {
+      hasDeliveryAddress = true;
       deliveryLine = `\n📍 *Entrega a:* ${defaultAddress.street_address}`;
     }
   }
@@ -959,28 +961,49 @@ export const buildCartSummaryMessage = async (params: {
     : '';
   const totalLine = `${subtotalLine}*Total: $${pricing.total.toFixed(2)} ${currencyCode ?? 'ARS'}*`;
 
+  const includeAddress = fulfillmentType === 'DELIVERY' && hasDeliveryAddress;
+  const shortcutsBody = buildAddItemShortcutsFollowUpBody({
+    includeEditAddressHint: includeAddress,
+    includeCancelHint: true,
+  });
+
+  const rows: WhatsAppListMessage['action']['sections'][0]['rows'] = [
+    { id: 'VIEW_MENU', title: 'Ver menú completo', description: 'Todas las categorías' },
+    {
+      id: 'VIEW_CART_FOR_EDITION',
+      title: 'Modificar pedido',
+      description: 'Cantidades, ítems y revisión',
+    },
+    { id: 'CHECKOUT', title: 'Finalizar pedido', description: 'Ir al checkout' },
+    { id: 'CANCEL_ORDER', title: 'Cancelar pedido', description: 'Vaciar y empezar de nuevo' },
+  ];
+  if (includeAddress) {
+    rows.push({
+      id: 'EDIT_ADDRESS',
+      title: 'Editar dirección',
+      description: 'Cambiar entrega',
+    });
+  }
+  rows.push(
+    { id: 'MENU_BY_TAG:STARTER:1', title: 'Ver entradas', description: 'Solo entradas' },
+    { id: 'MENU_BY_TAG:MAIN:1', title: 'Ver platos principales', description: 'Solo principales' },
+    { id: 'MENU_BY_TAG:DRINK:1', title: 'Ver bebidas', description: 'Solo bebidas' },
+    { id: 'MENU_BY_TAG:DESSERT:1', title: 'Ver postres', description: 'Solo postres' }
+  );
+
   return {
     type: 'list',
-    header: { type: 'text', text: '' },
+    header: { type: 'text', text: '🤖\n\n*Tu pedido actual* 🛒' },
     body: {
-      text: formatBotUserMessage(
-        'Tu pedido actual',
-        '🛒',
-        `${orderSectionsBlock}${guidanceMid}${totalLine}${deliveryLine}\n\n¿Qué querés hacer ahora?`
-      ),
+      text: `${orderSectionsBlock}${guidanceMid}${totalLine}${deliveryLine}\n\n${shortcutsBody}`,
     },
-    footer: { text: 'Selecciona una opción' },
+    footer: { text: 'Elegí una opción' },
     action: {
-      button: 'Opciones',
+      button: 'Ver opciones',
       sections: [
         {
-          title: 'Gestión del pedido',
-          rows: [
-            { id: 'VIEW_CART_FOR_EDITION', title: 'Modificar pedido', description: 'Cambiar cantidades o remover productos' },
-            { id: 'VIEW_MENU', title: 'Seguir comprando', description: 'Agregar más productos' },
-            { id: 'CHECKOUT', title: 'Finalizar pedido', description: 'Proceder al pago' },
-            { id: 'CANCEL_ORDER', title: 'Cancelar pedido', description: 'Eliminar el pedido actual' },
-          ],
+          title: 'Opciones',
+          rows,
         },
       ],
     },

@@ -26,8 +26,8 @@ import { buildContextMessage } from './contextMessage';
 import { buildHybridAgentSystemPrompt } from '../prompts/botPersonality';
 import { resolvePersonalityForBusiness } from '../services/botPersonality.service';
 import { allReactTools } from '../tools';
-import type { EnrichedContext, HandlerFollowUp, HandlerResult } from '../controllers/webhook/types';
-import { buildListMessage, formatBotUserMessage } from '../services/productQuery/utils';
+import type { EnrichedContext, HandlerResult } from '../controllers/webhook/types';
+import { formatBotUserMessage } from '../services/productQuery/utils';
 import { prisma } from '../lib/prisma';
 import {
   isHybridCtaEnabled,
@@ -42,7 +42,6 @@ import {
 } from '../whatsappBuilders/hybridCta';
 import { patchConversationMetadata } from '../repositories';
 import { startCheckoutSessionTool } from '../tools/checkout';
-import { truncateDescription, truncateTitle } from '../whatsappBuilders';
 import type { CtaPlan, CtaPlannerRaw } from './types';
 import { persistLastOffer } from '../services/lastOffer.service';
 import { buildCartSummaryMessage } from '../services/cart.service';
@@ -61,6 +60,8 @@ export type PresentProductCtaSignal = {
   primaryKind: CtaPlannerRaw['primaryKind'];
   productHint: string | null;
   productHints: string[] | null;
+  /** IDs autoritativos del shortlist (SELECT_FROM_LIST). */
+  productIds: string[] | null;
   productId: string | null;
   quantity: number;
   primaryLabel: string | null;
@@ -157,10 +158,15 @@ const parsePresentProductCtaSignal = (data: Record<string, unknown>): PresentPro
     ? data.productHints.filter((h): h is string => typeof h === 'string' && h.trim().length > 0)
     : null;
 
+  const productIds = Array.isArray(data.productIds)
+    ? data.productIds.filter((id): id is string => typeof id === 'string' && id.length > 0)
+    : null;
+
   return {
     primaryKind: primaryKind as PresentProductCtaSignal['primaryKind'],
     productHint: typeof data.productHint === 'string' ? data.productHint : null,
     productHints: productHints && productHints.length > 0 ? productHints : null,
+    productIds: productIds && productIds.length >= 2 ? productIds.slice(0, 10) : null,
     productId: typeof data.productId === 'string' ? data.productId : null,
     quantity:
       typeof data.quantity === 'number' && Number.isFinite(data.quantity)
@@ -296,81 +302,6 @@ const guardJsonRegression = (rawText: string, conversationId: string): void => {
 };
 
 // ---------------------------------------------------------------------------
-// Product list extraction from agent tool results
-// ---------------------------------------------------------------------------
-
-const PRODUCT_LIST_TOOLS = new Set(['search_products', 'find_products_by_filter']);
-
-interface AgentShortlistItem {
-  id: string;
-  name: string;
-  price?: { amount: string; currency: string } | null;
-  description?: string | null;
-}
-
-/** Extrae productos encontrados por tools de búsqueda del historial de mensajes del agente. */
-const extractProductsFromAgentMessages = (messages: unknown[]): AgentShortlistItem[] => {
-  const seen = new Set<string>();
-  const result: AgentShortlistItem[] = [];
-
-  for (const msg of messages) {
-    if (typeof msg !== 'object' || msg === null) continue;
-    const m = msg as Record<string, unknown>;
-    if (typeof m.tool_call_id !== 'string') continue;
-    if (typeof m.name !== 'string' || !PRODUCT_LIST_TOOLS.has(m.name)) continue;
-
-    const rawContent = typeof m.content === 'string' ? m.content : null;
-    if (!rawContent) continue;
-
-    try {
-      const data = JSON.parse(rawContent) as { items?: AgentShortlistItem[] };
-      if (!Array.isArray(data.items)) continue;
-      for (const item of data.items) {
-        if (typeof item.id !== 'string' || !item.id) continue;
-        if (seen.has(item.id)) continue;
-        seen.add(item.id);
-        result.push(item);
-      }
-    } catch { /* skip bad JSON */ }
-  }
-
-  return result;
-};
-
-/** Construye un followUp de lista WhatsApp cuando el agente encontró ≥ 2 productos. */
-const buildProductListFollowUp = (products: AgentShortlistItem[]): HandlerFollowUp | null => {
-  if (products.length < 2) return null;
-
-  const listMessage = buildListMessage({
-    headerText: '',
-    bodyText: formatBotUserMessage(
-      'Opciones disponibles',
-      '📋',
-      'Seleccioná un producto para ver el detalle o sumarlo al pedido.'
-    ),
-    footerText: 'Elegí una opción',
-    actionButtonLabel: 'Ver opciones',
-    sections: [
-      {
-        title: 'Disponibles',
-        rows: products.slice(0, 10).map((p) => {
-          const priceStr = p.price?.amount
-            ? `$${Number(p.price.amount).toLocaleString('es-AR')}`
-            : null;
-          return {
-            id: `SELECT_PRODUCT:${p.id}`,
-            title: truncateTitle((p.name || 'Producto').trim()),
-            description: truncateDescription(priceStr ?? p.description ?? 'Ver detalle'),
-          };
-        }),
-      },
-    ],
-  });
-
-  return { type: 'list', listMessage };
-};
-
-// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -379,8 +310,7 @@ const buildProductListFollowUp = (products: AgentShortlistItem[]): HandlerFollow
  * `null` para que el caller (nodo `nlpSubgraph` en modo hybrid) caiga al
  * handler determinístico.
  *
- * Si HYBRID_CTA_ENABLED=true y el intent es target, ejecuta el pipeline CTA
- * post-ReAct y devuelve un HandlerResult interactivo cuando aplica.
+ * CTA / lista de productos: solo si el agente llamó `present_product_cta`.
  */
 export const runHybridReactAgent = async (
   ctx: EnrichedContext
@@ -501,43 +431,7 @@ export const runHybridReactAgent = async (
   const formattedText = ensureWhatsAppBotFormat(rawText);
   const userMessage = ctx.message?.text?.body ?? '';
 
-  // Extraer productos encontrados por tools de búsqueda para mostrarlo como lista interactiva.
-  const foundProducts = extractProductsFromAgentMessages(agentMessages);
-  const productFollowUp = buildProductListFollowUp(foundProducts);
-
-  if (productFollowUp) {
-    // Guardar los candidatos en el conversation state para que SELECT_PRODUCT handler
-    // pueda validar la selección del usuario cuando clickea en la lista.
-    try {
-      await patchConversationMetadata(conversationId, {
-        pendingProductSelection: true,
-        pendingQuestion: userMessage || ctx.message?.text?.body || '',
-        candidateProductIds: foundProducts.map((p) => p.id),
-      });
-    } catch (err) {
-      console.error('[hybrid-agent] failed to patch candidateProductIds:', err);
-    }
-    console.log(
-      JSON.stringify({
-        event: '[hybrid-agent] product_list_followup',
-        productCount: foundProducts.length,
-        ctaSkipped: 'tool_shortlist_authoritative',
-        conversationId,
-      })
-    );
-    // La shortlist de las tools es autoritativa (IDs verificados). No competir con
-    // CTA SELECT_FROM_LIST, que re-busca por nombre y puede desalinear candidateProductIds.
-    return {
-      kind: 'response',
-      handlerResult: markHybridResult({
-        content: formattedText,
-        isInteractive: false,
-        followUps: [productFollowUp],
-      }),
-    };
-  }
-
-  // CTA solo si el agente pidió present_product_cta (sin planner post-proceso).
+  // CTA / lista: solo si el agente pidió present_product_cta (sin follow-up automático).
   if (
     signals.presentProductCta &&
     isHybridCtaEnabled() &&
@@ -550,6 +444,65 @@ export const runHybridReactAgent = async (
       null;
 
     let resolvedPlan: CtaPlan | null = null;
+
+    // Shortlist autoritativo: IDs de search/find → lista en el mismo mensaje (body = intro del agente).
+    if (
+      ctaReq.primaryKind === 'SELECT_FROM_LIST' &&
+      ctaReq.productIds &&
+      ctaReq.productIds.length >= 2
+    ) {
+      try {
+        const rows = await prisma.menu_item.findMany({
+          where: {
+            id: { in: ctaReq.productIds },
+            business_id: businessId,
+            is_available: true,
+          },
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            menu_item_price: {
+              orderBy: { valid_from: 'desc' },
+              take: 1,
+              select: { amount: true },
+            },
+          },
+        });
+        const byId = new Map(rows.map((r) => [r.id, r]));
+        const ordered = ctaReq.productIds
+          .map((id) => byId.get(id))
+          .filter((r): r is NonNullable<typeof r> => !!r);
+
+        if (ordered.length >= 2) {
+          resolvedPlan = {
+            productHint: ctaReq.productHint ?? undefined,
+            primary: {
+              kind: 'SELECT_FROM_LIST',
+              candidates: ordered.slice(0, 10).map((r) => {
+                const amount = r.menu_item_price[0]?.amount;
+                const priceStr =
+                  amount != null
+                    ? `$${Number(amount).toLocaleString('es-AR')}`
+                    : undefined;
+                return {
+                  productId: r.id,
+                  title: r.name,
+                  description: priceStr ?? r.description ?? undefined,
+                };
+              }),
+              bodyText: formattedText,
+            },
+            secondary: {
+              kind: 'VIEW_MENU' as const,
+              label: (ctaReq.secondaryLabel ?? 'Ver menú').slice(0, 20),
+            },
+          };
+        }
+      } catch (err) {
+        console.error('[hybrid-cta] productIds lookup failed:', err);
+      }
+    }
 
     if (ctaReq.primaryKind === 'ADD_ITEM' && ctaReq.productId) {
       try {

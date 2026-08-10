@@ -316,6 +316,25 @@ export const buildCategoryProductListMessage = async (
     return { message: listMessage, conversationUpdated: true };
 };
 
+/**
+ * Cuerpo del listado de categorías: atajos en negrita + invitación a pedir
+ * por nombre sin explorar (mismo patrón que gestión de pedido).
+ */
+export function buildViewCategoriesBodyText(options?: {
+  includeMenuReturnHint?: boolean;
+}): string {
+  const lines = [
+    'Elegí una opción de la lista, o escribí en texto libre:',
+    '',
+    '• *Categoría* — tocá una de la lista para ver sus platillos',
+    '• *Plato* — si ya sabés qué querés (ej. "ceviche", "milanesa"), escribí el nombre y te lo busco',
+  ];
+  if (options?.includeMenuReturnHint) {
+    lines.push('• *Menú principal* — volver al inicio desde la lista');
+  }
+  return lines.join('\n');
+}
+
 export const buildViewCategoriesMessage = async (
     business: BusinessType,
     conversation: ConversationType,
@@ -375,14 +394,16 @@ export const buildViewCategoriesMessage = async (
         description: 'Siguiente página'
       });
     }
+
+    const bodyPlain = buildViewCategoriesBodyText({
+      includeMenuReturnHint: isFromMenuReturn,
+    });
   
     const listMessage: WhatsAppListMessage = {
       type: 'list',
-      header: { type: 'text', text: '' },
+      header: { type: 'text', text: '🤖\n\n*Este es nuestro menú* 🍲' },
       body: {
-        text: isFromMenuReturn
-          ? '🤖\n\n*Este es nuestro menú* 🍲\n\n¿Qué categoría querés explorar?'
-          : '🤖\n\n*Este es nuestro menú* 🍲\n\nElegí una categoría para ver los platillos:'
+        text: bodyPlain,
       },
       footer: { text: `Página ${page}` },
       action: {

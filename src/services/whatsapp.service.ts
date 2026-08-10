@@ -620,25 +620,41 @@ export const handleProductSelectionFromWebhook = async (
     }`;
   }
 
-  const aiResponse = await generateProductAwareResponse({
-    businessId: business.id,
-    product: {
-      name: item.name,
-      description: item.description,
-      ingredients: item.ingredients,
-      serves_people: item.serves_people,
-      is_available: item.is_available,
-      variations: item.variations?.length ? item.variations : null,
-      price: {
-        amount: activePrice.amount,
-        currency_code: activePrice.currency_code
-      }
-    },
-    userQuestion: `El usuario originalmente preguntó: "${metadata.pendingQuestion}".
+  let aiResponse: string;
+  try {
+    aiResponse = await generateProductAwareResponse({
+      businessId: business.id,
+      product: {
+        name: item.name,
+        description: item.description,
+        ingredients: item.ingredients,
+        serves_people: item.serves_people,
+        is_available: item.is_available,
+        variations: item.variations?.length ? item.variations : null,
+        price: {
+          amount: activePrice.amount,
+          currency_code: activePrice.currency_code
+        }
+      },
+      userQuestion: `El usuario originalmente preguntó: "${metadata.pendingQuestion}".
 El usuario seleccionó el producto "${item.name}".
 Respondé en español con información útil sobre el plato (precio, porciones si constan, etc.).${quantityContext}`,
-    requestedPartySize: requestedQty
-  });
+      requestedPartySize: requestedQty
+    });
+  } catch (err) {
+    // Sin fallback el turno queda en silencio (usuario manda "?" / "hola?" sin respuesta).
+    console.error('[product-selection] generateProductAwareResponse failed:', err);
+    const priceLabel = `${Number(activePrice.amount).toLocaleString('es-AR')} ${activePrice.currency_code}`;
+    const variationsHint =
+      item.variations?.length
+        ? `\n\nVariedades: ${item.variations.join(', ')}. Decime cuál preferís al sumarlo.`
+        : '';
+    aiResponse = formatBotUserMessage(
+      item.name,
+      '🍽️',
+      `${item.description?.trim() || 'Buenisima elección.'}\n\n*Precio:* ${priceLabel}${variationsHint}\n\nSi querés, sumalo al pedido con el botón de abajo.`
+    );
+  }
 
   await createConversationMessage(conversation.id, 'ai', aiResponse, true);
   await updateConversationLastMessageAt(conversation.id);

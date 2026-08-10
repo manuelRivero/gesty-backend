@@ -71,4 +71,42 @@ describe('humanizeHandlerResult', () => {
     expect(result.content).toBe(original);
     expect(invokeMock).not.toHaveBeenCalled();
   });
+
+  it('humaniza body plano de lista (sin encabezado 🤖) y conserva el content interactivo', async () => {
+    invokeMock.mockResolvedValue({
+      content:
+        'Elegí de la lista o escribí libre:\n\n' +
+        '• *Categoría* — tocá una para ver platillos\n' +
+        '• *Plato* — si ya sabés qué querés, escribilo',
+    });
+
+    const listBody =
+      'Elegí una opción de la lista, o escribí en texto libre:\n\n' +
+      '• *Categoría* — tocá una de la lista para ver sus platillos\n' +
+      '• *Plato* — si ya sabés qué querés, escribí el nombre y te lo busco';
+
+    const original = {
+      type: 'list' as const,
+      header: { type: 'text' as const, text: '🤖\n\n*Este es nuestro menú* 🍲' },
+      body: { text: listBody },
+      footer: { text: 'Página 1' },
+      action: {
+        button: 'Ver categorías',
+        sections: [{ title: 'Categorías', rows: [] }],
+      },
+    };
+
+    const result = await humanizeHandlerResult(
+      { content: original, isInteractive: true },
+      { enabled: true, intent: ConversationIntent.VIEW_MENU }
+    );
+
+    expect(invokeMock).toHaveBeenCalledOnce();
+    expect(result.isInteractive).toBe(true);
+    const content = result.content as typeof original;
+    expect(content.header.text).toBe(original.header.text);
+    expect(content.body.text).toContain('*Categoría*');
+    expect(content.body.text).toContain('*Plato*');
+    expect(content.body.text).toContain('•');
+  });
 });

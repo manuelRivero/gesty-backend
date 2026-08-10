@@ -26,8 +26,12 @@ describe('botPersonality', () => {
     expect(humanize).not.toContain(BOT_PERSONALITY_PROMPT);
   });
 
-  it('humanize pide solo el cuerpo reescrito', () => {
-    expect(buildHumanizeSystemPrompt()).toMatch(/SOLO el cuerpo/i);
+  it('humanize pide solo el cuerpo reescrito y preservar estructura', () => {
+    const humanize = buildHumanizeSystemPrompt();
+    expect(humanize).toMatch(/SOLO cambiar el tono/i);
+    expect(humanize).toMatch(/Estructura sagrada/i);
+    expect(humanize).toMatch(/viñetas/i);
+    expect(humanize).toMatch(/negrita/i);
   });
 
   it('hybrid incluye reglas operativas de tools', () => {

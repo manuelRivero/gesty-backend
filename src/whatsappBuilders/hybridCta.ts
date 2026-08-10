@@ -67,15 +67,15 @@ export const buildHybridCtaInteractive = (
         sectionTitle: 'Navegación',
       });
 
-      const baseText = primary.bodyText || botResponseText;
-      const bodyWithCta = `${baseText}\n\nSi querés más información sobre alguna de estas opciones o sumarlo al pedido, seleccionala de la lista 👇`;
+      // El body es el texto del agente (intro); sin append extra — un solo mensaje.
+      const bodyText = (primary.bodyText || botResponseText).trim();
 
       const listMsg = buildListMessageFromButtons(
-        bodyWithCta,
+        bodyText,
         rows,
         'Ver opciones',
         '',
-        'Seleccioná un producto'
+        'Elegí una opción'
       );
 
       return { content: listMsg, isInteractive: true };

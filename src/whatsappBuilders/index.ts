@@ -86,9 +86,12 @@ const buildListMessage = (params: {
     });
   
     return buildListMessage({
-      headerText: '',
-      bodyText: '🤖\n\n*Este es nuestro menú disponible* 🍲\n\nNavega por las categorías y selecciona uno 👇',
-      footerText: '',
+      headerText: '🤖\n\n*Este es nuestro menú* 🍲',
+      bodyText:
+        'Elegí una opción de la lista, o escribí en texto libre:\n\n' +
+        '• *Plato* — si ya sabés qué querés, escribí el nombre y te lo busco\n' +
+        '• *Menú completo* — explorá todas las categorías desde la lista',
+      footerText: 'Elegí una opción',
       actionButtonLabel: 'Ver menú',
       sections: [
         { title: 'Menú', rows }

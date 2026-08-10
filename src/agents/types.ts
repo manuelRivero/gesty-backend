@@ -3,8 +3,8 @@
  *
  * Flujo actual:
  *  agente ReAct llama `present_product_cta` (opcional)
- *  → ctaResolver valida/resuelve productIds
- *  → buildHybridCtaInteractive
+ *  → productIds (SELECT_FROM_LIST) se validan en BD; si no, ctaResolver por hints
+ *  → buildHybridCtaInteractive (un solo mensaje; body = texto del agente)
  *
  * `CtaPlannerRaw` se reutiliza como forma intermedia del payload de la tool
  * (el LLM planner post-proceso ya no es dueño del turno).

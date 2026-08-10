@@ -9,8 +9,6 @@ import {
   findOrCreateConversationState,
   createConversationMessage,
   updateConversationLastMessageAt,
-  omitConversationMetadataKeys,
-  patchConversationMetadata,
 } from '../repositories';
 import { refreshDraftOrderTimeout } from './draftOrderTimeout.service';
 import { buildOrderSearchListMessage } from '../whatsappBuilders'; // Tu ruta: root/whatsappBuilders
@@ -18,6 +16,7 @@ import { normalizeMetadata } from './utils'; // Ajusta ruta si es diferente
 import type { WhatsAppWebhookPayload } from '../types/whatsapp'; // Ajusta ruta
 import { WhatsAppListMessage } from '../domain/intent/whatsappTemplates';
 import { formatBotUserMessage } from './productQuery/utils';
+import { clearOrderSessionAfterCancel } from './orderSessionReset.service';
 
 export const handleOrderSearchPageFromWebhook = async (
   payload: WhatsAppWebhookPayload,
@@ -143,13 +142,8 @@ export const buildCancelOrderMessage = async (
     });
   }
 
-  // Evita que gates/Goals de la sesión a medias sigan empujando party size / checkout.
-  await patchConversationMetadata(conversation.id, {
-    checkout_active: false,
-    awaitingPartySize: false,
-    awaitingPeopleCount: false,
-  });
-  await omitConversationMetadataKeys(conversation.id, ['peopleCountResume']);
+  // Pedido cancelado = sesión de pedido en cero (Ledger, party size, CTA, checkout…).
+  await clearOrderSessionAfterCancel(conversation.id);
 
   const messageText = formatBotUserMessage(
     'Pedido cancelado',

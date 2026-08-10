@@ -43,7 +43,7 @@ export async function humanizeBotBody(
       [
         new SystemMessage(systemPrompt),
         new HumanMessage(
-          `Reescribí este cuerpo de mensaje:\n\n${trimmed}`
+          `Reescribí SOLO el tono de este cuerpo. Conservá viñetas, negritas, saltos de línea y el mismo contenido factual:\n\n${trimmed}`
         ),
       ],
       { signal: AbortSignal.timeout(HUMANIZE_TIMEOUT_MS) }
@@ -75,12 +75,16 @@ async function humanizeBotFormattedText(
   personalityPromptText?: string
 ): Promise<string> {
   const parsed = parseBotUserMessage(text);
-  if (!parsed) return text;
+  if (parsed) {
+    const humanizedBody = await humanizeBotBody(parsed.body, personalityPromptText);
+    if (humanizedBody === parsed.body.trim()) return text;
+    return rebuildBotUserMessage(parsed.title, parsed.emoji, humanizedBody);
+  }
 
-  const humanizedBody = await humanizeBotBody(parsed.body, personalityPromptText);
-  if (humanizedBody === parsed.body.trim()) return text;
-
-  return rebuildBotUserMessage(parsed.title, parsed.emoji, humanizedBody);
+  // Cuerpos planos (p. ej. listas con título en header): humanizar el body tal cual.
+  const trimmed = text.trim();
+  if (!trimmed) return text;
+  return humanizeBotBody(trimmed, personalityPromptText);
 }
 
 async function humanizeListMessage(

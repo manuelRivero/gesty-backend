@@ -1861,7 +1861,17 @@ const presentProductCtaSchema = z.object({
     .array(z.string())
     .nullable()
     .optional()
-    .describe('Nombres exactos (2–5) para SELECT_FROM_LIST.'),
+    .describe('Nombres (fallback) para SELECT_FROM_LIST si no tenés productIds.'),
+  productIds: z
+    .array(z.string().uuid())
+    .min(2)
+    .max(10)
+    .nullable()
+    .optional()
+    .describe(
+      'UUIDs del shortlist (search_products / find_products_by_filter) para SELECT_FROM_LIST. ' +
+        'Preferido: 2–10 ids en el mismo orden que devolvió la tool.'
+    ),
   productId: z
     .string()
     .uuid()
@@ -1895,12 +1905,10 @@ export const presentProductCtaTool = new DynamicStructuredTool<
 >({
   name: 'present_product_cta',
   description:
-    'Adjunta botones o una lista de productos a TU respuesta de texto. ' +
-    'Llamala SOLO cuando quieras ofrecer una acción de producto (sumar, elegir entre opciones, ver menú/destacados). ' +
-    'NO la uses si ya resolviste el pedido del cliente sin necesidad de UI ' +
-    '(ej.: anotaste una nota con update_item_note, quitaste un ítem, solo confirmaste algo del carrito, ' +
-    'o estás cerrando con "¿algo más?"). ' +
-    'Escribí primero el texto de respuesta; esta tool solo decide si se muestran botones/lista.',
+    'Adjunta botones o una lista de productos a TU respuesta de texto (un solo mensaje). ' +
+    'Tras search_products/find_products_by_filter con count ≥ 2: primaryKind=SELECT_FROM_LIST y ' +
+    'productIds = los id del shortlist; tu texto es la intro (sin listar platos). ' +
+    'NO la uses si ya resolviste sin UI (nota, quitar ítem, cierre "¿algo más?").',
   schema: presentProductCtaSchema,
   func: async (input: PresentProductCtaInput, _runManager, config?: RunnableConfig) => {
     getReactContext(config);
@@ -1909,6 +1917,7 @@ export const presentProductCtaTool = new DynamicStructuredTool<
       primaryKind: input.primaryKind,
       productHint: input.productHint ?? null,
       productHints: input.productHints ?? null,
+      productIds: input.productIds ?? null,
       productId: input.productId ?? null,
       quantity: input.quantity ?? 1,
       primaryLabel: input.primaryLabel ?? null,

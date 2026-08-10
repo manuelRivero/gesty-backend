@@ -74,6 +74,7 @@ vi.mock('../../lib/prisma', () => ({
     $queryRaw: vi.fn().mockResolvedValue([]),
     menu_item: {
       findFirst: vi.fn().mockResolvedValue({ id: 'prod-1', name: 'Ceviche Clásico' }),
+      findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn().mockResolvedValue({ name: 'Ceviche Clásico' }),
     },
   },
@@ -85,8 +86,12 @@ import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { isHybridCtaEnabled, isHybridCtaEnabledForBusiness } from '../../config/env';
 import { planCta } from '../ctaPlanner';
 import { resolveCta } from '../ctaResolver';
-import { buildHybridCtaInteractive } from '../../whatsappBuilders/hybridCta';
+import {
+  buildHybridCtaInteractive,
+  extractPrimaryProductId,
+} from '../../whatsappBuilders/hybridCta';
 import { patchConversationMetadata } from '../../repositories';
+import { prisma } from '../../lib/prisma';
 
 const BOT_TEXT = '🤖\n\n*Ceviche Clásico* 🐟\n\nEs levemente picante.';
 
@@ -213,7 +218,7 @@ describe('runHybridReactAgent', () => {
     expect(patchConversationMetadata).toHaveBeenCalledOnce();
   });
 
-  it('present_product_cta SELECT_FROM_LIST → resolveCta + interactive', async () => {
+  it('present_product_cta SELECT_FROM_LIST con productHints → resolveCta + interactive', async () => {
     vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
     vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
     vi.mocked(createReactAgent).mockReturnValue({
@@ -246,6 +251,64 @@ describe('runHybridReactAgent', () => {
     expect(result!.isInteractive).toBe(true);
     expect(planCta).not.toHaveBeenCalled();
     expect(resolveCta).toHaveBeenCalledOnce();
+  });
+
+  it('present_product_cta SELECT_FROM_LIST con productIds → lista única sin resolveCta', async () => {
+    const idA = '11111111-1111-1111-1111-111111111111';
+    const idB = '22222222-2222-2222-2222-222222222222';
+    const introText =
+      '🤖\n\n*Opciones* 🍽️\n\n¡Qué buena idea! Hay varias pizzanesas que te pueden gustar.';
+
+    vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
+    vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
+    vi.mocked(prisma.menu_item.findMany).mockResolvedValue([
+      {
+        id: idA,
+        name: 'Pizzanesa Napolitana',
+        description: null,
+        menu_item_price: [{ amount: 1200 }],
+      },
+      {
+        id: idB,
+        name: 'Pizzanesa Fugazzeta',
+        description: null,
+        menu_item_price: [{ amount: 1300 }],
+      },
+    ] as any);
+    vi.mocked(createReactAgent).mockReturnValue({
+      invoke: makeAgentInvokeWithPresentCta(introText, {
+        primaryKind: 'SELECT_FROM_LIST',
+        productIds: [idA, idB],
+        secondaryKind: 'VIEW_MENU',
+        secondaryLabel: 'Ver menú',
+      }),
+    } as any);
+    vi.mocked(buildHybridCtaInteractive).mockReturnValue({
+      content: { type: 'list' },
+      isInteractive: true,
+    });
+    vi.mocked(extractPrimaryProductId).mockReturnValue(null);
+
+    const result = unwrap(await runHybridReactAgent(makeCtx() as any));
+
+    expect(result!.isInteractive).toBe(true);
+    expect(result!.followUps).toBeUndefined();
+    expect(planCta).not.toHaveBeenCalled();
+    expect(resolveCta).not.toHaveBeenCalled();
+    expect(buildHybridCtaInteractive).toHaveBeenCalledOnce();
+    const planArg = vi.mocked(buildHybridCtaInteractive).mock.calls[0][1];
+    expect(planArg.primary.kind).toBe('SELECT_FROM_LIST');
+    if (planArg.primary.kind === 'SELECT_FROM_LIST') {
+      expect(planArg.primary.candidates.map((c) => c.productId)).toEqual([idA, idB]);
+      expect(planArg.primary.bodyText).toContain('pizzanesas');
+    }
+    expect(patchConversationMetadata).toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({
+        pendingProductSelection: true,
+        candidateProductIds: [idA, idB],
+      })
+    );
   });
 
   it('update_item_note sin present_product_cta → texto solo (caso poca sal)', async () => {
@@ -295,7 +358,7 @@ describe('runHybridReactAgent', () => {
     expect(result).toBeNull();
   });
 
-  it('shortlist de tools ≥2 → followUp lista (sin planCta)', async () => {
+  it('shortlist de tools ≥2 sin present_product_cta → texto plano (sin lista automática)', async () => {
     vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
     vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
 
@@ -311,17 +374,10 @@ describe('runHybridReactAgent', () => {
     const result = unwrap(await runHybridReactAgent(makeCtx() as any));
 
     expect(result!.isInteractive).toBe(false);
-    expect(result!.followUps).toHaveLength(1);
-    expect(result!.followUps![0].type).toBe('list');
+    expect(result!.followUps).toBeUndefined();
     expect(planCta).not.toHaveBeenCalled();
     expect(resolveCta).not.toHaveBeenCalled();
     expect(buildHybridCtaInteractive).not.toHaveBeenCalled();
-    expect(patchConversationMetadata).toHaveBeenCalledWith(
-      'conv-1',
-      expect.objectContaining({
-        pendingProductSelection: true,
-        candidateProductIds: ['prod-a', 'prod-b'],
-      })
-    );
+    expect(prisma.menu_item.findMany).not.toHaveBeenCalled();
   });
 });

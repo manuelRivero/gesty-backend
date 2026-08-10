@@ -37,11 +37,13 @@ export type AddItemFollowUpListOptions = {
 };
 
 /**
- * Cuerpo de "Gestión de pedido": negrita solo en palabras clave de acción
- * (sesgo para texto libre que el clasificador/agente reconoce rápido).
+ * Cuerpo de gestión de pedido (post-add y ver carrito): negrita solo en
+ * palabras clave de acción (sesgo para texto libre).
  */
 export function buildAddItemShortcutsFollowUpBody(options?: {
   includeEditAddressHint?: boolean;
+  /** Vista de carrito: ofrecer cancelar el pedido en curso. */
+  includeCancelHint?: boolean;
 }): string {
   const lines = [
     'Elegí una opción de la lista, o escribí en texto libre:',
@@ -53,6 +55,9 @@ export function buildAddItemShortcutsFollowUpBody(options?: {
   ];
   if (options?.includeEditAddressHint) {
     lines.push('• *Dirección* — actualizar la de entrega si la necesitás');
+  }
+  if (options?.includeCancelHint) {
+    lines.push('• *Cancelar* — vaciar el pedido y empezar de nuevo');
   }
   return lines.join('\n');
 }
