@@ -37,8 +37,8 @@ export type AddItemFollowUpListOptions = {
 };
 
 /**
- * Cuerpo de gestión de pedido (post-add y ver carrito): negrita solo en
- * palabras clave de acción (sesgo para texto libre).
+ * Cuerpo de gestión de pedido (post-add y ver carrito): solo atajos en
+ * negrita (sesgo para texto libre), sin explicaciones largas.
  */
 export function buildAddItemShortcutsFollowUpBody(options?: {
   includeEditAddressHint?: boolean;
@@ -46,22 +46,21 @@ export function buildAddItemShortcutsFollowUpBody(options?: {
   includeCancelHint?: boolean;
 }): string {
   const lines = [
-    'Elegí una opción de la lista, o escribí en texto libre:',
+    'Elegí una opción de la lista, o escribí:',
     '',
-    '• *Menú* — ver el completo o una zona (entradas, principales, bebidas, postres)',
-    '• *Modificar* — cambiar cantidades o sacar ítems',
-    '• *Finalizar* — cerrar la compra cuando quieras',
-    '• *Petición especial* — si un plato necesita algo puntual (poca sal, extra cebolla, bien cocido…), anotalo acá',
+    '• *Menú*',
+    '• *Modificar* pedido',
+    '• *Finalizar* pedido',
+    '• *Notas* del pedido',
   ];
   if (options?.includeEditAddressHint) {
-    lines.push('• *Dirección* — actualizar la de entrega si la necesitás');
+    lines.push('• *Dirección* del pedido');
   }
   if (options?.includeCancelHint) {
-    lines.push('• *Cancelar* — vaciar el pedido y empezar de nuevo');
+    lines.push('• *Cancelar* pedido');
   }
   return lines.join('\n');
 }
-
 /**
  * Segundo mensaje tras agregar al carrito: gestión del pedido (menú, carrito, checkout, zonas por tag).
  * Cabecera: 🤖 + *Gestión de pedido*; el cuerpo va aparte (solo texto descriptivo, sin repetir título).

@@ -119,7 +119,8 @@ function formatDraftOrderSectionsForWhatsApp(
     buckets.get(key)!.lines.push(`${q}× ${name}${variationSuffix}${noteSuffix}`);
   }
 
-  const parts: string[] = [heading];
+  // Heading vacío: el título ya va en el header del mensaje (evita "Tu pedido actual" duplicado).
+  const parts: string[] = heading.trim() ? [heading.trim()] : [];
   const used = new Set<string>();
 
   for (const tag of ORDER_SECTION_TAGS) {
@@ -932,7 +933,7 @@ export const buildCartSummaryMessage = async (params: {
 
   const orderSectionsBlock = formatDraftOrderSectionsForWhatsApp(
     cartItems.draft_order_item as DraftLineForSection[],
-    '*Tu pedido actual*'
+    ''
   );
   const fulfillmentType = cartItems.fulfillment_type;
 
