@@ -7,6 +7,10 @@ import { WhatsAppListMessage } from '../domain/intent/whatsappTemplates';
 import { prisma } from '../lib/prisma';
 import { createConversationMessage, findOrCreateConversationState, createOrGetOpenConversation, findOrCreateCustomer, updateConversationLastMessageAt, findBusinessByPhoneNumberId } from '../repositories';
 import { truncateDescription, truncateTitle } from '../whatsappBuilders';
+import {
+  buildShortcutsThenListBody,
+  shortcutBullet,
+} from '../whatsappBuilders/listShortcutsBody';
 import { WhatsAppWebhookPayload } from '../controllers/webhook/types';
 
 interface CategoryMessageResult {
@@ -317,22 +321,19 @@ export const buildCategoryProductListMessage = async (
 };
 
 /**
- * Cuerpo del listado de categorías: nombra las categorías visibles (negrita)
- * + cierre para pedir un plato por texto libre.
+ * Cuerpo del listado de categorías: atajos (nombres) primero,
+ * lista WA como alternativa. También invita a escribir un plato.
  */
 export function buildViewCategoriesBodyText(categoryNames: string[]): string {
   const bullets = categoryNames
     .map((name) => name.trim())
     .filter(Boolean)
-    .map((name) => `• *${name}*`);
+    .map((name) => shortcutBullet(name));
 
-  return [
-    'Elegí una opción de la lista, o escribí la que más quieras ver:',
-    '',
-    ...bullets,
-    '',
-    'Si ya sabés qué querés, escribilo y te lo busco.',
-  ].join('\n');
+  return buildShortcutsThenListBody(
+    'Escribí una categoría o el nombre del plato que querés:',
+    bullets
+  );
 }
 
 export const buildViewCategoriesMessage = async (
@@ -405,7 +406,7 @@ export const buildViewCategoriesMessage = async (
       body: {
         text: bodyPlain,
       },
-      footer: { text: hasMore ? `Página ${page}` : 'Elegí una opción' },
+      footer: { text: hasMore ? `Página ${page}` : 'Elegí o escribí' },
       action: {
         button: 'Ver categorías',
         sections: [{ title: 'Categorías disponibles', rows }]

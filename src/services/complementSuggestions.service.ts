@@ -15,6 +15,10 @@ import {
 } from '../repositories';
 import { formatBotUserMessage } from './productQuery';
 import { buildListMessageFromButtons, truncateDescription, truncateTitle } from '../whatsappBuilders';
+import {
+  buildShortcutsThenListBody,
+  shortcutBullet,
+} from '../whatsappBuilders/listShortcutsBody';
 
 export async function persistComplementSuggestionSnapshot(
   conversationId: string,
@@ -37,29 +41,27 @@ export type AddItemFollowUpListOptions = {
 };
 
 /**
- * Cuerpo de gestión de pedido (post-add y ver carrito): solo atajos en
- * negrita (sesgo para texto libre), sin explicaciones largas.
+ * Cuerpo de gestión de pedido (post-add y ver carrito): atajos primero,
+ * lista WA como alternativa.
  */
 export function buildAddItemShortcutsFollowUpBody(options?: {
   includeEditAddressHint?: boolean;
   /** Vista de carrito: ofrecer cancelar el pedido en curso. */
   includeCancelHint?: boolean;
 }): string {
-  const lines = [
-    'Elegí una opción de la lista, o escribí:',
-    '',
-    '• *Menú*',
-    '• *Modificar* pedido',
-    '• *Finalizar* pedido',
-    '• *Notas* del pedido',
+  const bullets = [
+    shortcutBullet('Menú'),
+    shortcutBullet('Modificar', 'pedido'),
+    shortcutBullet('Finalizar', 'pedido'),
+    shortcutBullet('Notas', 'del pedido'),
   ];
   if (options?.includeEditAddressHint) {
-    lines.push('• *Dirección* del pedido');
+    bullets.push(shortcutBullet('Dirección', 'del pedido'));
   }
   if (options?.includeCancelHint) {
-    lines.push('• *Cancelar* pedido');
+    bullets.push(shortcutBullet('Cancelar', 'pedido'));
   }
-  return lines.join('\n');
+  return buildShortcutsThenListBody('Escribí:', bullets);
 }
 /**
  * Segundo mensaje tras agregar al carrito: gestión del pedido (menú, carrito, checkout, zonas por tag).
@@ -122,7 +124,7 @@ export function buildAddItemShortcutsFollowUpList(
     type: 'list',
     header: { type: 'text', text: '🤖\n\n*Gestión de pedido*' },
     body: { text: bodyPlain.trim() },
-    footer: { text: 'Elegí una opción' },
+    footer: { text: 'Elegí o escribí' },
     action: {
       button: 'Ver opciones',
       sections: [

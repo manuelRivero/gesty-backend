@@ -75,17 +75,17 @@ describe('humanizeHandlerResult', () => {
   it('humaniza body plano de lista (sin encabezado 🤖) y conserva el content interactivo', async () => {
     invokeMock.mockResolvedValue({
       content:
-        'Elegí de la lista o escribí la que quieras ver:\n\n' +
+        'Escribí una categoría o el plato que querés:\n\n' +
         '• *Bebidas frías*\n' +
         '• *Platos principales*\n\n' +
-        'Si ya sabés qué querés, escribilo y te lo busco.',
+        'O elegí de la lista.',
     });
 
     const listBody =
-      'Elegí una opción de la lista, o escribí la que más quieras ver:\n\n' +
+      'Escribí una categoría o el nombre del plato que querés:\n\n' +
       '• *Bebidas frías*\n' +
       '• *Platos principales*\n\n' +
-      'Si ya sabés qué querés, escribilo y te lo busco.';
+      'O elegí de la lista.';
 
     const original = {
       type: 'list' as const,

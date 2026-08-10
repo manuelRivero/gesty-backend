@@ -120,6 +120,9 @@ describe('buildHybridCtaInteractive', () => {
       expect(allRowIds).toContain('SELECT_PRODUCT:p1');
       expect(allRowIds).toContain('SELECT_PRODUCT:p2');
       expect(allRowIds).toContain('VIEW_MENU');
+      expect(listMsg.body.text).toContain('• *Ceviche Clásico*');
+      expect(listMsg.body.text).toContain('• *Ceviche Mixto*');
+      expect(listMsg.body.text).toMatch(/O elegí de la lista/i);
     });
 
     it('limita a 5 candidatos máximo', () => {

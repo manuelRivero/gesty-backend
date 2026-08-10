@@ -998,7 +998,7 @@ export const buildCartSummaryMessage = async (params: {
     body: {
       text: `${orderSectionsBlock}${guidanceMid}${totalLine}${deliveryLine}\n\n${shortcutsBody}`,
     },
-    footer: { text: 'Elegí una opción' },
+    footer: { text: 'Elegí o escribí' },
     action: {
       button: 'Ver opciones',
       sections: [

@@ -1,4 +1,5 @@
 import { WhatsAppListMessage } from "../domain/intent/whatsappTemplates";
+import { buildShortcutsThenListBody, shortcutBullet } from './listShortcutsBody';
 
 const buildListMessage = (params: {
     headerText: string;
@@ -87,11 +88,11 @@ const buildListMessage = (params: {
   
     return buildListMessage({
       headerText: '🤖\n\n*Este es nuestro menú* 🍲',
-      bodyText:
-        'Elegí una opción de la lista, o escribí en texto libre:\n\n' +
-        '• *Plato* — si ya sabés qué querés, escribí el nombre y te lo busco\n' +
-        '• *Menú completo* — explorá todas las categorías desde la lista',
-      footerText: 'Elegí una opción',
+      bodyText: buildShortcutsThenListBody('Escribí:', [
+        shortcutBullet('Plato', 'si ya sabés qué querés'),
+        shortcutBullet('Menú completo', 'para explorar categorías'),
+      ]),
+      footerText: 'Elegí o escribí',
       actionButtonLabel: 'Ver menú',
       sections: [
         { title: 'Menú', rows }
