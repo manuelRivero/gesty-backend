@@ -80,6 +80,14 @@ vi.mock('../../lib/prisma', () => ({
   },
 }));
 
+vi.mock('../../services/category.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../services/category.service')>();
+  return {
+    ...actual,
+    buildCategoryProductListMessage: vi.fn(),
+  };
+});
+
 import { runHybridReactAgent, resetAgentCacheForTesting } from '../reactAgent';
 import type { HybridAgentRunResult } from '../reactAgent';
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
@@ -92,6 +100,7 @@ import {
 } from '../../whatsappBuilders/hybridCta';
 import { patchConversationMetadata } from '../../repositories';
 import { prisma } from '../../lib/prisma';
+import { buildCategoryProductListMessage } from '../../services/category.service';
 
 const BOT_TEXT = '🤖\n\n*Ceviche Clásico* 🐟\n\nEs levemente picante.';
 
@@ -356,6 +365,43 @@ describe('runHybridReactAgent', () => {
 
     const result = await runHybridReactAgent(makeCtx() as any);
     expect(result).toBeNull();
+  });
+
+  it('present_category → lista de categoría sin present_product_cta', async () => {
+    const categoryId = '33333333-3333-3333-3333-333333333333';
+    vi.mocked(createReactAgent).mockReturnValue({
+      invoke: vi.fn().mockResolvedValue({
+        messages: [
+          {
+            tool_call_id: 'tc-cat-1',
+            name: 'present_category',
+            content: JSON.stringify({ signal: 'present_category', categoryId }),
+          },
+          { content: 'te muestro las bebidas' },
+        ],
+      }),
+    } as any);
+    vi.mocked(buildCategoryProductListMessage).mockResolvedValue({
+      message: {
+        type: 'list',
+        header: { type: 'text', text: '🤖\n\n*Bebidas frías* 🔎' },
+        body: { text: 'Platillos de la categoría' },
+        footer: { text: 'Elige un platillo' },
+        action: { button: 'Ver platillos', sections: [] },
+      },
+      conversationUpdated: true,
+    });
+
+    const result = unwrap(await runHybridReactAgent(makeCtx() as any));
+
+    expect(result!.isInteractive).toBe(true);
+    expect(buildCategoryProductListMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      categoryId,
+      1
+    );
+    expect(buildHybridCtaInteractive).not.toHaveBeenCalled();
   });
 
   it('shortlist de tools ≥2 sin present_product_cta → texto plano (sin lista automática)', async () => {

@@ -45,6 +45,7 @@ import { startCheckoutSessionTool } from '../tools/checkout';
 import type { CtaPlan, CtaPlannerRaw } from './types';
 import { persistLastOffer } from '../services/lastOffer.service';
 import { buildCartSummaryMessage } from '../services/cart.service';
+import { buildCategoryProductListMessage } from '../services/category.service';
 import { AddressService } from '../services/address.service';
 import { buildSmallTalkMenu } from '../services/smallTalk.service';
 
@@ -135,6 +136,8 @@ export interface HybridAgentSignals {
   startCheckoutSession: boolean;
   startCheckoutReason: string | null;
   presentCart: boolean;
+  /** Lista de platillos de una categoría (misma UX que botón CATEGORY). */
+  presentCategoryId: string | null;
   presentAddressConfirmation: boolean;
   /** Texto normalizado de la última dirección dejada `in_coverage` por `stage_delivery_address` este turno. */
   stagedAddressText: string | null;
@@ -201,6 +204,7 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
     startCheckoutSession: false,
     startCheckoutReason: null,
     presentCart: false,
+    presentCategoryId: null,
     presentAddressConfirmation: false,
     stagedAddressText: null,
     presentWelcomeOptions: false,
@@ -230,6 +234,13 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
       }
       if (data.signal === 'present_cart') {
         signals.presentCart = true;
+      }
+      if (
+        data.signal === 'present_category' &&
+        typeof data.categoryId === 'string' &&
+        data.categoryId.length > 0
+      ) {
+        signals.presentCategoryId = data.categoryId;
       }
       if (data.signal === 'present_address_confirmation') {
         signals.presentAddressConfirmation = true;
@@ -390,6 +401,43 @@ export const runHybridReactAgent = async (
       return { kind: 'response', handlerResult: markHybridResult({ content: cartMsg, isInteractive: true }) };
     } catch (err) {
       console.error('[hybrid-agent] present_cart failed, falling through', err);
+    }
+  }
+
+  if (signals.presentCategoryId) {
+    try {
+      const business = ctx.business as Parameters<typeof buildCategoryProductListMessage>[0];
+      const conversation = ctx.conversation as Parameters<typeof buildCategoryProductListMessage>[1];
+      const result = await buildCategoryProductListMessage(
+        business,
+        conversation,
+        signals.presentCategoryId,
+        1
+      );
+      if (result.message) {
+        console.log(
+          JSON.stringify({
+            event: '[hybrid-agent] present_category_signal',
+            categoryId: signals.presentCategoryId,
+            conversationId,
+          })
+        );
+        return {
+          kind: 'response',
+          handlerResult: markHybridResult({ content: result.message, isInteractive: true }),
+        };
+      }
+      if (result.errorMessage) {
+        return {
+          kind: 'response',
+          handlerResult: markHybridResult({
+            content: ensureWhatsAppBotFormat(result.errorMessage),
+            isInteractive: false,
+          }),
+        };
+      }
+    } catch (err) {
+      console.error('[hybrid-agent] present_category failed, falling through', err);
     }
   }
 

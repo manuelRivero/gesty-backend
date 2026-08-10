@@ -158,14 +158,23 @@ export const getCategoriesTool = new DynamicStructuredTool<
   GetCategoriesInput
 >({
   name: 'get_categories',
-  description: 'Devuelve la lista de categorías de menú visibles para el cliente.',
+  description:
+    'Devuelve las categorías de menú visibles (id, title). Usala para matchear cuando el cliente ' +
+    'escribe el nombre de una categoría en texto libre (ej. "bebidas frías", "postres") antes de ' +
+    'llamar present_category.',
   schema: getCategoriesSchema,
   func: async (_input: GetCategoriesInput, _runManager, config?: RunnableConfig) => {
     const { businessId, customerId } = getReactContext(config);
     const res = await MenuService.getCategoryListForCustomer({ businessId, customerId });
     return toJson({
       text: res.text,
-      categories: res.buttons.map((b) => ({ title: b.title, payload: b.payload })),
+      categories: res.buttons.map((b) => {
+        const id =
+          typeof b.payload === 'string' && b.payload.startsWith('CATEGORY:')
+            ? b.payload.slice('CATEGORY:'.length)
+            : null;
+        return { id, title: b.title, payload: b.payload };
+      }),
     });
   },
 });
@@ -1810,6 +1819,34 @@ export const presentCartTool = new DynamicStructuredTool<
 });
 
 // ---------------------------------------------------------------------------
+// present_category (señal-UI — misma lista que el botón CATEGORY)
+// ---------------------------------------------------------------------------
+
+const presentCategorySchema = z.object({
+  categoryId: z
+    .string()
+    .uuid()
+    .describe('UUID de la categoría (campo id de get_categories, o el UUID de payload CATEGORY:{id}).'),
+});
+type PresentCategoryInput = z.infer<typeof presentCategorySchema>;
+
+export const presentCategoryTool = new DynamicStructuredTool<
+  typeof presentCategorySchema,
+  PresentCategoryInput
+>({
+  name: 'present_category',
+  description:
+    'Muestra la lista interactiva de platillos de una categoría (igual que si el cliente tocara esa categoría). ' +
+    'Usala cuando el cliente escribe el nombre de una categoría en texto libre. Primero get_categories para ' +
+    'obtener el categoryId. No listés los platos en texto: esta tool arma el mensaje completo.',
+  schema: presentCategorySchema,
+  func: async (input: PresentCategoryInput, _runManager, config?: RunnableConfig) => {
+    getReactContext(config);
+    return toJson({ signal: 'present_category', categoryId: input.categoryId });
+  },
+});
+
+// ---------------------------------------------------------------------------
 // present_welcome_options (señal-UI — empuje proactivo en el primer saludo)
 // ---------------------------------------------------------------------------
 
@@ -2073,6 +2110,7 @@ export const allReactTools = [
   updateItemNoteTool,
   savePartySizeTool,
   presentCartTool,
+  presentCategoryTool,
   presentWelcomeOptionsTool,
   presentProductCtaTool,
   abandonPendingOrderTool,

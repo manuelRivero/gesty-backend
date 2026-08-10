@@ -35,8 +35,11 @@ describe('botPersonality', () => {
   });
 
   it('hybrid incluye reglas operativas de tools', () => {
-    expect(buildHybridAgentSystemPrompt()).toMatch(/search_products/i);
-    expect(buildHybridAgentSystemPrompt()).toMatch(/ANTI-MULTI-PRODUCTO/i);
+    const hybrid = buildHybridAgentSystemPrompt();
+    expect(hybrid).toMatch(/search_products/i);
+    expect(hybrid).toMatch(/ANTI-MULTI-PRODUCTO/i);
+    expect(hybrid).toMatch(/present_category/i);
+    expect(hybrid).toMatch(/CATEGORÍA POR TEXTO LIBRE/i);
   });
 
   it('hybrid declara el bloque de estado como contexto interno no narrable', () => {

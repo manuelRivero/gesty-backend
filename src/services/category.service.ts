@@ -317,22 +317,22 @@ export const buildCategoryProductListMessage = async (
 };
 
 /**
- * Cuerpo del listado de categorías: atajos en negrita + invitación a pedir
- * por nombre sin explorar (mismo patrón que gestión de pedido).
+ * Cuerpo del listado de categorías: nombra las categorías visibles (negrita)
+ * + cierre para pedir un plato por texto libre.
  */
-export function buildViewCategoriesBodyText(options?: {
-  includeMenuReturnHint?: boolean;
-}): string {
-  const lines = [
-    'Elegí una opción de la lista, o escribí en texto libre:',
+export function buildViewCategoriesBodyText(categoryNames: string[]): string {
+  const bullets = categoryNames
+    .map((name) => name.trim())
+    .filter(Boolean)
+    .map((name) => `• *${name}*`);
+
+  return [
+    'Elegí una opción de la lista, o escribí la que más quieras ver:',
     '',
-    '• *Categoría* — tocá una de la lista para ver sus platillos',
-    '• *Plato* — si ya sabés qué querés (ej. "ceviche", "milanesa"), escribí el nombre y te lo busco',
-  ];
-  if (options?.includeMenuReturnHint) {
-    lines.push('• *Menú principal* — volver al inicio desde la lista');
-  }
-  return lines.join('\n');
+    ...bullets,
+    '',
+    'Si ya sabés qué querés, escribilo y te lo busco.',
+  ].join('\n');
 }
 
 export const buildViewCategoriesMessage = async (
@@ -395,9 +395,9 @@ export const buildViewCategoriesMessage = async (
       });
     }
 
-    const bodyPlain = buildViewCategoriesBodyText({
-      includeMenuReturnHint: isFromMenuReturn,
-    });
+    const bodyPlain = buildViewCategoriesBodyText(
+      displayCategories.map((cat) => cat.name)
+    );
   
     const listMessage: WhatsAppListMessage = {
       type: 'list',
@@ -405,7 +405,7 @@ export const buildViewCategoriesMessage = async (
       body: {
         text: bodyPlain,
       },
-      footer: { text: `Página ${page}` },
+      footer: { text: hasMore ? `Página ${page}` : 'Elegí una opción' },
       action: {
         button: 'Ver categorías',
         sections: [{ title: 'Categorías disponibles', rows }]
