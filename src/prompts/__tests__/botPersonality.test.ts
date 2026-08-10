@@ -49,6 +49,12 @@ describe('botPersonality', () => {
     expect(hybrid).toMatch(/No llames ambas en el mismo turno/i);
   });
 
+  it('hybrid instruye a resolver Selección de producto pendiente contra candidatos', () => {
+    const hybrid = buildHybridAgentSystemPrompt();
+    expect(hybrid).toMatch(/SELECCIÓN PENDIENTE/i);
+    expect(hybrid).toMatch(/Selección de producto pendiente/i);
+  });
+
   it('complementary prompt permite omitir con skip', () => {
     const prompt = buildComplementarySuggestionSystemPrompt();
     expect(prompt).toMatch(/"skip"\s*:\s*true/);

@@ -14,6 +14,9 @@ vi.mock('../../lib/prisma', () => ({
     draft_order: {
       findFirst: vi.fn(),
     },
+    menu_item: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     payment_intent: {
       findFirst: vi.fn().mockResolvedValue(null),
     },
@@ -31,8 +34,18 @@ vi.mock('../../repositories', () => ({
   patchConversationMetadata: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('../../helpers/complementaryMenu.helper', () => ({
-  collectCategoryTagsInDraftCart: vi.fn().mockResolvedValue(new Set()),
+vi.mock('../../helpers/complementaryMenu.helper', async () => {
+  const actual = await vi.importActual<typeof import('../../helpers/complementaryMenu.helper')>(
+    '../../helpers/complementaryMenu.helper'
+  );
+  return {
+    ...actual,
+    collectCategoryTagsInDraftCart: vi.fn().mockResolvedValue(new Set()),
+  };
+});
+
+vi.mock('../../services/complementSuggestions.service', () => ({
+  canSurfaceComplementOpportunity: vi.fn().mockReturnValue(false),
 }));
 
 import { buildContextMessage } from '../contextMessage';
@@ -40,6 +53,7 @@ import { prisma } from '../../lib/prisma';
 import type { EnrichedContext } from '../../controllers/webhook/types';
 
 const findFirstMock = prisma.draft_order.findFirst as unknown as ReturnType<typeof vi.fn>;
+const menuFindManyMock = prisma.menu_item.findMany as unknown as ReturnType<typeof vi.fn>;
 
 const makeCtx = (
   overrides: {
@@ -61,6 +75,8 @@ const makeCtx = (
 describe('buildContextMessage', () => {
   beforeEach(() => {
     findFirstMock.mockReset();
+    menuFindManyMock.mockReset();
+    menuFindManyMock.mockResolvedValue([]);
   });
 
   it('carrito inexistente: no menciona "Carrito"', async () => {
@@ -150,5 +166,38 @@ describe('buildContextMessage', () => {
       .split('\n')
       .filter((l) => l.includes('Objetivo abierto'));
     expect(goalLines).toHaveLength(1);
+  });
+
+  it('pendingProductSelection: inyecta candidatos y consulta original', async () => {
+    findFirstMock.mockResolvedValue(null);
+    const idA = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    const idB = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+    menuFindManyMock.mockResolvedValue([
+      { id: idA, name: 'Lomo a la plancha' },
+      { id: idB, name: 'Lomo al tajo' },
+    ]);
+    const msg = await buildContextMessage(
+      makeCtx({
+        userMsg: 'el de la plancha',
+        metadata: {
+          pendingProductSelection: true,
+          pendingQuestion: 'tienen lomo?',
+          candidateProductIds: [idA, idB],
+        },
+      })
+    );
+    expect(msg).toContain('Selección de producto pendiente');
+    expect(msg).toContain('Lomo a la plancha');
+    expect(msg).toContain(idA);
+    expect(msg).toContain('Consulta original del cliente');
+    expect(msg).toContain('tienen lomo?');
+    expect(msg.endsWith('el de la plancha')).toBe(true);
+  });
+
+  it('sin pendingProductSelection: no menciona selección pendiente', async () => {
+    findFirstMock.mockResolvedValue(null);
+    const msg = await buildContextMessage(makeCtx());
+    expect(msg).not.toContain('Selección de producto pendiente');
+    expect(menuFindManyMock).not.toHaveBeenCalled();
   });
 });

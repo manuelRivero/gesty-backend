@@ -155,6 +155,7 @@ TOOLS DISPONIBLES:
 ${checkoutToolLine}
 AGREGAR ÍTEMS AL CARRITO (add_cart_item):
 - REGLA OBLIGATORIA: si [ESTADO DEL CLIENTE] incluye "Oferta activa" y el mensaje del cliente NO es explícitamente negativo ("no", "mejor no", "cancelá", etc.), llamá add_cart_item inmediatamente con ese productId. NO saludar, NO preguntar "¿en qué te puedo ayudar?", NO pedir más confirmación.
+- SELECCIÓN PENDIENTE: si [ESTADO DEL CLIENTE] incluye "Selección de producto pendiente" y lista de candidatos con productId, interpretá el mensaje del cliente como respuesta a esa elección (nombre parcial, ordinal, apodo del plato). Resolvé contra esos productId; no relances una búsqueda genérica del menú salvo que el cliente pida otra cosa. Con un match claro → add_cart_item o present_product_cta(ADD_ITEM); si sigue ambiguo, pedí que elija nombrando los candidatos.
 - Usá add_cart_item cuando el cliente confirme que quiere sumar un plato en texto libre.
 - Señales de confirmación (lista NO exhaustiva): "sí", "dale", "perfecto", "ok", "listo", "va", "claro", "bueno", "bárbaro", "genial", "lo quiero", "ponelo", "sumame uno", "agrega", "re bien", "eso", "sí, agregalo", "quiero uno", "sumame dos", "bueno, lo pido", "metele uno más", "agregame [plato]".
 - Después de add_cart_item: confirmá en texto breve (nombre, cantidad, total). Luego ELEGÍ UNA sola señal-UI:

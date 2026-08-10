@@ -65,6 +65,54 @@ const MENU_GAP_LABELS: Partial<Record<MenuCategoryTag, string>> = {
   DESSERT: 'postre',
 };
 
+/** Hint interno cuando hay shortlist pendiente (SELECT_FROM_LIST / product query). */
+export async function buildPendingProductSelectionLines(
+  meta: {
+    pendingProductSelection?: boolean;
+    pendingQuestion?: string;
+    candidateProductIds?: string[];
+  },
+  businessId: string
+): Promise<string[]> {
+  if (!meta.pendingProductSelection) return [];
+  const ids = (meta.candidateProductIds ?? []).filter(
+    (id): id is string => typeof id === 'string' && id.length > 0
+  );
+  if (ids.length === 0) return [];
+
+  let labeled = ids.map((id) => `id:${id}`);
+  if (businessId) {
+    try {
+      const rows = await prisma.menu_item.findMany({
+        where: { id: { in: ids }, business_id: businessId, is_available: true },
+        select: { id: true, name: true },
+      });
+      const byId = new Map(rows.map((r) => [r.id, r.name]));
+      labeled = ids.map((id) => {
+        const name = byId.get(id);
+        return name ? `*${name}* (productId: ${id})` : `productId: ${id}`;
+      });
+    } catch {
+      labeled = ids.map((id) => `productId: ${id}`);
+    }
+  }
+
+  const lines = [
+    '- Selección de producto pendiente: el turno anterior ofreció elegir entre varios platos. ' +
+      'El mensaje actual del cliente probablemente responde cuál quiere (nombre parcial, ' +
+      '"el primero", "el de la plancha", etc.).',
+    `- Candidatos (usá estos productId; no inventes otros): ${labeled.join(' | ')}.`,
+    '- Si matchea uno con claridad: present_product_cta(ADD_ITEM) o add_cart_item con ese productId. ' +
+      'Si queda ambiguo entre candidatos, pedí aclaración nombrándolos. ' +
+      'Si rechaza o cambia de tema, no insistas con la lista.',
+  ];
+  const q = meta.pendingQuestion?.trim();
+  if (q) {
+    lines.push(`- Consulta original del cliente (contexto): "${q.slice(0, 200)}".`);
+  }
+  return lines;
+}
+
 const FOOD_RELATED_INTENTS = new Set([
   'ORDER_FOOD',
   'PRODUCT_QUERY',
@@ -353,6 +401,8 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     }
   }
 
+  const pendingSelectionLines = await buildPendingProductSelectionLines(meta, businessId);
+
   const lines = [
     `- Personas para el pedido: ${partySizeLine}`,
     hasItems || checkoutActive || offerStillAlive
@@ -361,6 +411,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     hasActiveDraft && fulfillmentType ? `- Tipo de entrega: ${fulfillmentType}` : null,
     checkoutActive ? '- Sesión de checkout: activa' : null,
     menuGapLine,
+    ...pendingSelectionLines,
     ...intentLines,
     ...nlpLines,
   ].filter((line): line is string => line !== null);
