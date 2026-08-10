@@ -42,6 +42,7 @@ import {
   NO_PENDING_CLOSED_ORDER_BOT_MESSAGE,
 } from '../../../services/productQuery/botMessages';
 import {
+  formatBotUserMessage,
   normalizeMetadata,
   partySizeMetadataFields,
 } from '../../../services/productQuery/utils';
@@ -184,6 +185,19 @@ const unwrapHybridRun = async (
   return null;
 };
 
+const isOpenAiRateLimitError = (err: unknown): boolean => {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as {
+    status?: number;
+    lc_error_code?: string;
+    code?: string;
+    message?: string;
+  };
+  if (e.status === 429 || e.lc_error_code === 'MODEL_RATE_LIMIT') return true;
+  if (e.code === 'rate_limit_exceeded') return true;
+  return typeof e.message === 'string' && /rate.?limit/i.test(e.message);
+};
+
 const dispatchOrHybrid = async (
   enrichedCtx: EnrichedContext,
   checkoutHandoff?: CheckoutHandoffParams
@@ -195,6 +209,17 @@ const dispatchOrHybrid = async (
       if (result) return result;
     } catch (err) {
       console.error('[hybrid-agent] failed, falling back to deterministic', err);
+      // 429 TPM: no caer a ASK_QUESTION ("escribí tu pregunta") — empeora la UX.
+      if (isOpenAiRateLimitError(err)) {
+        return {
+          content: formatBotUserMessage(
+            'Un momento',
+            '⏳',
+            'Estoy un poco demorado. ¿Me reenviás el mensaje en unos segundos?'
+          ),
+          isInteractive: false,
+        };
+      }
     }
   }
   return dispatchIntent(enrichedCtx);

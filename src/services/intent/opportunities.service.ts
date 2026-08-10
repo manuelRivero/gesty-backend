@@ -5,7 +5,10 @@
 
 import type { MenuCategoryTag } from '@prisma/client';
 import { getIntentCatalogEntry, type IntentCandidate } from '../../domain/intent/family';
-import { getMissingMenuCompleteTags } from '../../helpers/complementaryMenu.helper';
+import {
+  collectCategoryTagsInDraftCart,
+  getMissingMenuCompleteTags,
+} from '../../helpers/complementaryMenu.helper';
 import { computeCatalogPermission, type IntentLedgerEntry } from './activeIntent.service';
 import type { ConversationMetadata } from '../productQuery/types';
 import { normalizeMetadata } from '../productQuery/utils';
@@ -112,13 +115,66 @@ export const deriveSuggestComplementCandidate = (
     closeMode: cat.closeMode,
     hint:
       `- Opportunity opcional (SUGERIR_COMPLEMENTO): el pedido puede completarse; faltan ` +
-      `${missingLabels.join(', ')}. Tras agregar un ítem, si es natural —y sin dejar pregunta ` +
-      `abierta— ofrecé hasta 2 categorías oportunas con present_complement_suggestions ` +
-      `(prioridad sugerida: ${offerHint}). Si el cliente dice no / mejor no / sin eso, ` +
+      `${missingLabels.join(', ')}. Tras agregar un ítem, ofrecé con present_complement_suggestions ` +
+      `(hasta 2 categorías; prioridad sugerida: ${offerHint}). PROHIBIDO preguntar en prosa ` +
+      `"¿algo más?" / "¿para acompañar?": la tool ES la oferta. Si el cliente dice no / mejor no / sin eso, ` +
       `llamá mark_complement_refused y no vuelvas a ofrecer. Si acepta o suma de la lista, ` +
-      `podés ofrecer otra ola más adelante (no en cada mensaje).`,
+      `podés ofrecer otra ola más adelante con la misma tool (no en cada mensaje).`,
     tieBreak: 15,
   };
+};
+
+/** Payload inyectado en la respuesta de `add_cart_item` (mismo turno ReAct). */
+export type PostAddComplementOpportunity = {
+  type: 'SUGERIR_COMPLEMENTO';
+  missing: string[];
+  nextAction: 'present_complement_suggestions';
+  instruction: string;
+};
+
+/**
+ * Si tras el add la Opportunity de menú queda abierta y con permiso,
+ * arma el objeto para que el híbrido la vea sin depender del ESTADO pre-add.
+ */
+export const buildPostAddComplementOpportunity = (
+  facts: SuggestComplementFacts,
+  ledgerEntry: IntentLedgerEntry | undefined
+): PostAddComplementOpportunity | null => {
+  if (!deriveSuggestComplementCandidate(facts, ledgerEntry)) return null;
+  const missing = getMissingMenuCompleteTags(facts.cartTags).map(
+    (t) => MENU_COMPLETE_LABEL[t] ?? t
+  );
+  return {
+    type: 'SUGERIR_COMPLEMENTO',
+    missing,
+    nextAction: 'present_complement_suggestions',
+    instruction:
+      `Opportunity opcional SUGERIR_COMPLEMENTO activa tras este add (faltan: ${missing.join(', ')}). ` +
+      `Llamá present_complement_suggestions ahora con el productId recién sumado. ` +
+      `PROHIBIDO preguntar "¿algo más?" / "¿para acompañar?" en prosa: la tool ES la oferta.`,
+  };
+};
+
+export const resolvePostAddComplementOpportunity = async (params: {
+  draftOrderId: string;
+  businessId: string;
+  metadata: unknown;
+}): Promise<PostAddComplementOpportunity | null> => {
+  const meta = normalizeMetadata(params.metadata);
+  const checkoutActive = meta.checkout_active === true;
+  try {
+    const cartTags = await collectCategoryTagsInDraftCart(
+      params.draftOrderId,
+      params.businessId
+    );
+    return buildPostAddComplementOpportunity(
+      { cartTags, checkoutActive },
+      meta.intentLedger?.SUGERIR_COMPLEMENTO
+    );
+  } catch (err) {
+    console.error('[opportunity] resolvePostAddComplementOpportunity failed', err);
+    return null;
+  }
 };
 
 export type SuggestAddressFacts = {

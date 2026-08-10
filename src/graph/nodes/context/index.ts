@@ -316,9 +316,9 @@ export const buildDetectionContextNode = async (
         ctx.payloadId?.startsWith('RESERVATION_') === true ||
         ctx.payloadId === 'VIEW_RESERVATION');
 
-    // El agente de onboarding captura turnos cuando la sesión ya está activa, hay un
-    // step en metadata (cualquier estado del wizard), el cliente usa los botones de
-    // confirmación de dirección, o está esperando ingresar una dirección en texto.
+    // Onboarding solo con sesión/wizard explícitos o botones de confirmación.
+    // NO usar `awaiting_address` solo: ese flag lo encendía el gate de carrito
+    // del híbrido y robaba turnos (ver pedido → captura de dirección).
     const isOnboardingAgentSession =
       isOnboardingAgentEnabled() &&
       !reservationBlocksRouting &&
@@ -327,8 +327,7 @@ export const buildDetectionContextNode = async (
       (wsMeta.onboarding_agent_active === true ||
         wsMeta.onboarding_step != null ||
         ctx.payloadId === 'ONBOARDING_CONFIRM_ADDRESS' ||
-        ctx.payloadId === 'ONBOARDING_EDIT_ADDRESS' ||
-        (wsMeta.awaiting_address === true && ctx.message?.type === 'text'));
+        ctx.payloadId === 'ONBOARDING_EDIT_ADDRESS');
 
     // Comprobante de transferencia (D1): prioridad máxima. Una imagen nunca
     // es un turno de checkout/onboarding/reserva normal, así que no compite
@@ -377,14 +376,11 @@ export const buildDetectionContextNode = async (
     } else {
       const defaultAddress = await findDefaultCustomerAddress(customer.id);
       hasAddress = !!defaultAddress;
+      // Sin dirección: menú/carrito/híbrido siguen; la dirección se pide en
+      // onboarding (sesión explícita) o checkout — no en address_capture acá.
       if (!defaultAddress) {
-        if (wsMeta.awaiting_address && ctx.message?.type === 'text') {
-          console.log('[Orchestrator] Awaiting address → capture from text');
-          contextRoute = 'address_capture';
-        } else {
-          contextRoute = ctx.message?.type === 'interactive' ? 'interactive' : 'nlp';
-          console.log(`[Orchestrator] Route: ${contextRoute} (no address, non-blocking)`);
-        }
+        contextRoute = ctx.message?.type === 'interactive' ? 'interactive' : 'nlp';
+        console.log(`[Orchestrator] Route: ${contextRoute} (no address, non-blocking)`);
       } else {
         // Re-validar cobertura en tiempo real: las zonas pueden haber cambiado
         const zone = await findCoverageZoneForAddress(defaultAddress.id, business.id);

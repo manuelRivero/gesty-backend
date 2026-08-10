@@ -36,13 +36,15 @@ export const getIntentDetectorLlm = (): ChatOpenAI => {
   return cachedDetector;
 };
 
-/** `gpt-4o` `temperature: 0` — ReAct agent reasoner sin response_format JSON (texto libre). */
+/** `gpt-4o-mini` — ReAct (híbrido / checkout / onboarding / reserva). Mini baja TPM/costo vs 4o. */
 export const getReactReasonerLlm = (): ChatOpenAI => {
   if (!cachedReactReasoner) {
     cachedReactReasoner = new ChatOpenAI({
-      model: 'gpt-4o',
+      model: 'gpt-4o-mini',
       temperature: 0,
       apiKey: env.OPENAI_API_KEY,
+      // Evitar cascada de retries que agrava 429 TPM.
+      maxRetries: 2,
     });
   }
   return cachedReactReasoner;
@@ -56,6 +58,7 @@ export const getReasonerLlm = (): ChatOpenAI => {
       temperature: 0,
       apiKey: env.OPENAI_API_KEY,
       modelKwargs: { response_format: { type: 'json_object' } },
+      maxRetries: 2,
     });
   }
   return cachedReasoner;

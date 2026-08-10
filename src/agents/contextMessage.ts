@@ -35,7 +35,6 @@ import {
 } from '../services/intent/activeIntent.service';
 import {
   deriveCollectPartySizeCandidate,
-  deriveSuggestAddressCandidate,
   deriveSuggestComplementCandidate,
   recordOpportunitySurfaced,
 } from '../services/intent/opportunities.service';
@@ -210,10 +209,6 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
   const confirmOfferLedger = getConfirmOfferLedgerEntry(meta);
 
   const hasAddress = ctx.hasAddress === true;
-  const blockingAddressIntent =
-    checkoutActive ||
-    meta.awaiting_address === true ||
-    meta.onboarding_agent_active === true;
 
   const foodRelatedTurn = Boolean(
     detection && FOOD_RELATED_INTENTS.has(String(detection.intent))
@@ -263,10 +258,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
       { cartTags, checkoutActive },
       meta.intentLedger?.SUGERIR_COMPLEMENTO
     ),
-    deriveSuggestAddressCandidate(
-      { hasAddress, blockingAddressIntent },
-      meta.intentLedger?.SUGERIR_DIRECCION
-    ),
+    // SUGERIR_DIRECCION: no se inyecta en el híbrido — dirección solo onboarding/checkout.
     deriveCollectPartySizeCandidate(
       { foodRelatedTurn, partySize: partySize ?? null, checkoutActive },
       meta.intentLedger?.RECOLECTAR_PARTY_SIZE
@@ -292,9 +284,6 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
   if (confirmOfferLedger) extrasLedger.CONFIRMAR_OFERTA = confirmOfferLedger;
   if (meta.intentLedger?.SUGERIR_COMPLEMENTO) {
     extrasLedger.SUGERIR_COMPLEMENTO = meta.intentLedger.SUGERIR_COMPLEMENTO;
-  }
-  if (meta.intentLedger?.SUGERIR_DIRECCION) {
-    extrasLedger.SUGERIR_DIRECCION = meta.intentLedger.SUGERIR_DIRECCION;
   }
   if (meta.intentLedger?.RECOLECTAR_PARTY_SIZE) {
     extrasLedger.RECOLECTAR_PARTY_SIZE = meta.intentLedger.RECOLECTAR_PARTY_SIZE;
@@ -336,11 +325,9 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     void recordConfirmOfferSurfaced(ctx.conversationId, meta).catch((err) =>
       console.error('[intent] failed to record CONFIRMAR_OFERTA surfaced:', err)
     );
-  } else if (
-    ranked.active?.type === 'SUGERIR_DIRECCION' ||
-    ranked.active?.type === 'RECOLECTAR_PARTY_SIZE'
-  ) {
+  } else if (ranked.active?.type === 'RECOLECTAR_PARTY_SIZE') {
     // SUGERIR_COMPLEMENTO se registra al presentar la lista (tool), no al inyectar el hint.
+    // SUGERIR_DIRECCION no se cablea al híbrido.
     void recordOpportunitySurfaced(ctx.conversationId, ranked.active.type, meta).catch(
       (err) => console.error('[intent] failed to record opportunity surfaced:', err)
     );

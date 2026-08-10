@@ -1,10 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+vi.mock('../../../config/env', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../config/env')>();
+  return {
+    ...actual,
+    isDraftOrderWorkerEnabled: vi.fn(() => true),
+  };
+});
+
 import {
   derivePedidoPorExpirarCandidate,
+  derivePedidoPorExpirarOpen,
   deriveFueraDeCoberturaCandidate,
   isCriticalAlert,
   PEDIDO_POR_EXPIRAR_WINDOW_MS,
 } from '../alerts.service';
+import { isDraftOrderWorkerEnabled } from '../../../config/env';
 import { deriveSuggestComplementCandidate } from '../opportunities.service';
 import { rankActiveIntent } from '../activeIntent.service';
 import type { MenuCategoryTag } from '@prisma/client';
@@ -13,6 +24,7 @@ describe('PEDIDO_POR_EXPIRAR (D.1)', () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.mocked(isDraftOrderWorkerEnabled).mockReturnValue(true);
   });
   afterEach(() => logSpy.mockRestore());
 
@@ -34,9 +46,25 @@ describe('PEDIDO_POR_EXPIRAR (D.1)', () => {
     expect(afterEmit).toBeNull();
   });
 
+  it('con worker desactivado → no se abre', () => {
+    vi.mocked(isDraftOrderWorkerEnabled).mockReturnValue(false);
+    const now = Date.parse('2026-08-09T12:00:00.000Z');
+    const expiresAt = new Date(now + PEDIDO_POR_EXPIRAR_WINDOW_MS / 2);
+    expect(
+      derivePedidoPorExpirarOpen({ hasItems: true, expiresAt }, now)
+    ).toBe(false);
+    expect(
+      derivePedidoPorExpirarCandidate(
+        { hasItems: true, expiresAt },
+        { surfaceCount: 0 },
+        now
+      )
+    ).toBeNull();
+  });
+
   it('el cliente no puede silenciarla con abandono (crítica)', () => {
     expect(isCriticalAlert('PEDIDO_POR_EXPIRAR')).toBe(true);
-    // El derivador no mira abandonment — solo Facts + emitted.
+    // El derivador no mira abandonment — solo Facts + emitted (+ worker on).
     const now = Date.parse('2026-08-09T12:00:00.000Z');
     const c = derivePedidoPorExpirarCandidate(
       { hasItems: true, expiresAt: new Date(now + 60_000) },

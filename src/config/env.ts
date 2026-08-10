@@ -96,6 +96,8 @@ const envSchema = z.object({
    * drafts y cierre de conversaciones por inactividad. Cada tick (~60s) hace
    * varias queries a Postgres. Default `false` para no quemar cómputo en Neon
    * hasta tener una estrategia de costos viable. Opt-in explícito: `true`/`1`.
+   * Con `false`, la Alert `PEDIDO_POR_EXPIRAR` tampoco se deriva en el híbrido
+   * (sin cierre real el anuncio es ruido).
    */
   ENABLE_DRAFT_ORDER_WORKER: z
     .string()
@@ -220,6 +222,10 @@ if (!parsed.success) {
 export const env: AppEnv = parsed.data;
 
 export const isHybridAgentMode = (): boolean => env.AGENT_MODE === 'hybrid';
+
+/** Worker de expiración de drafts / idle. Sin él, PEDIDO_POR_EXPIRAR no debe anunciarse. */
+export const isDraftOrderWorkerEnabled = (): boolean =>
+  env.ENABLE_DRAFT_ORDER_WORKER === true;
 
 export const isCheckoutAgentEnabled = (): boolean =>
   isHybridAgentMode() && env.CHECKOUT_AGENT_ENABLED === true;

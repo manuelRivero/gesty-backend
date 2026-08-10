@@ -6,6 +6,7 @@ import {
   deriveSuggestComplementOpen,
   deriveSuggestAddressCandidate,
   deriveCollectPartySizeCandidate,
+  buildPostAddComplementOpportunity,
 } from '../opportunities.service';
 import {
   buildIntentLedgerView,
@@ -89,6 +90,45 @@ describe('SUGERIR_COMPLEMENTO — menú completo', () => {
       { SUGERIR_COMPLEMENTO: { surfaceCount: 0 } }
     );
     expect(ranked.active?.type).toBe('SUGERIR_COMPLEMENTO');
+  });
+});
+
+describe('buildPostAddComplementOpportunity', () => {
+  it('inyecta nextAction cuando el carrito tiene huecos y permiso', () => {
+    const opp = buildPostAddComplementOpportunity(
+      { cartTags: tags('MAIN'), checkoutActive: false },
+      { surfaceCount: 0 }
+    );
+    expect(opp).toEqual(
+      expect.objectContaining({
+        type: 'SUGERIR_COMPLEMENTO',
+        nextAction: 'present_complement_suggestions',
+      })
+    );
+    expect(opp?.missing.length).toBeGreaterThan(0);
+    expect(opp?.instruction).toMatch(/present_complement_suggestions/i);
+    expect(opp?.instruction).toMatch(/PROHIBIDO/i);
+  });
+
+  it('null si checkout activo o menú completo o refused', () => {
+    expect(
+      buildPostAddComplementOpportunity(
+        { cartTags: tags('MAIN'), checkoutActive: true },
+        { surfaceCount: 0 }
+      )
+    ).toBeNull();
+    expect(
+      buildPostAddComplementOpportunity(
+        { cartTags: tags('STARTER', 'MAIN', 'DRINK', 'DESSERT'), checkoutActive: false },
+        { surfaceCount: 0 }
+      )
+    ).toBeNull();
+    expect(
+      buildPostAddComplementOpportunity(
+        { cartTags: tags('MAIN'), checkoutActive: false },
+        { refused: true }
+      )
+    ).toBeNull();
   });
 });
 

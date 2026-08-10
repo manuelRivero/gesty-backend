@@ -46,6 +46,8 @@ import { clearLastOffer } from '../services/lastOffer.service';
 import {
   markComplementEngagedIfOffered,
   markComplementRefused,
+  resolvePostAddComplementOpportunity,
+  type PostAddComplementOpportunity,
 } from '../services/intent/opportunities.service';
 import {
   getOrderCompletionLedger,
@@ -1192,7 +1194,8 @@ export const addCartItemTool = new DynamicStructuredTool<
     'Antes de llamar necesitás el productId: si ya lo tenés del contexto úsalo; ' +
     'si no, llamá search_products primero. Si el producto tiene variaciones y no sabés cuál quiere ' +
     'el cliente, preguntale antes de llamar (esta tool rechaza el llamado si falta y el producto la requiere). ' +
-    'Devuelve el estado actualizado del carrito para que puedas confirmarle al cliente.',
+    'Devuelve el carrito actualizado. Si incluye "opportunity" con nextAction ' +
+    'present_complement_suggestions, llamá esa tool en este turno (no preguntes upsell en prosa).',
   schema: addCartItemSchema,
   func: async (
     { productId, quantity, variation }: AddCartItemInput,
@@ -1323,6 +1326,7 @@ export const addCartItemTool = new DynamicStructuredTool<
     // Si el draft ya existía, touchSession ya renovó su expires_at al
     // inicio del turno; si acaba de crearse, ya se inicializó más arriba.
 
+    let postAddOpportunity: PostAddComplementOpportunity | null = null;
     if (conversationId) {
       await clearLastOffer(conversationId);
       await markComplementEngagedIfOffered(conversationId, productId);
@@ -1337,6 +1341,13 @@ export const addCartItemTool = new DynamicStructuredTool<
         conversationId,
         getOrderCompletionLedger(stateForRevival?.metadata)
       );
+      // El ESTADO DEL CLIENTE del turno se armó antes del add: reinyectamos
+      // la Opportunity en la observación para el mismo turno ReAct.
+      postAddOpportunity = await resolvePostAddComplementOpportunity({
+        draftOrderId: draft.id,
+        businessId,
+        metadata: stateForRevival?.metadata,
+      });
     }
 
     // Devolver snapshot del carrito actualizado
@@ -1369,6 +1380,7 @@ export const addCartItemTool = new DynamicStructuredTool<
           notes: it.notes ?? null,
         })),
       },
+      ...(postAddOpportunity ? { opportunity: postAddOpportunity } : {}),
     });
   },
 });

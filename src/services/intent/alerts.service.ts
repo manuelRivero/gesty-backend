@@ -5,6 +5,7 @@
  */
 
 import { getIntentCatalogEntry, type IntentCandidate } from '../../domain/intent/family';
+import { isDraftOrderWorkerEnabled } from '../../config/env';
 import { computeCatalogPermission, type IntentLedgerEntry } from './activeIntent.service';
 import type { ConversationMetadata } from '../productQuery/types';
 import { normalizeMetadata } from '../productQuery/utils';
@@ -22,6 +23,8 @@ export const derivePedidoPorExpirarOpen = (
   facts: PedidoPorExpirarFacts,
   now: number = Date.now()
 ): boolean => {
+  // Sin worker no hay cierre real del draft: el aviso es ruido y tapa Opportunities.
+  if (!isDraftOrderWorkerEnabled()) return false;
   if (!facts.hasItems || !facts.expiresAt) return false;
   const expiresMs =
     typeof facts.expiresAt === 'string'
