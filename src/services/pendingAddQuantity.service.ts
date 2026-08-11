@@ -14,7 +14,6 @@ import {
 import { normalizeMetadata, getRequestedPartySize } from './productQuery/utils';
 import type { ConversationMetadata } from './productQuery/types';
 import { formatBotUserMessage } from './productQuery/utils';
-import { shortcutBullet } from '../whatsappBuilders/listShortcutsBody';
 import {
   needsAddQuantityConfirmation,
   suggestAddQuantity,
@@ -90,6 +89,15 @@ export const getPendingAddQuantity = (
   return parsePendingAddQuantity(meta.pendingAddQuantity);
 };
 
+/**
+ * Con cantidad pendiente, el turno debe ir al híbrido aunque NLP diga un
+ * intent cerrado (p. ej. MODIFY_QUANTITY ante «quiero tres»). Es ruteo de
+ * ledger, no interpretación del mensaje (norma tipables).
+ */
+export const shouldForceHybridForPendingAddQuantity = (
+  metadata: unknown
+): boolean => getPendingAddQuantity(metadata) != null;
+
 export const setPendingAddQuantity = async (params: {
   conversationId: string;
   productId: string;
@@ -141,30 +149,27 @@ export function buildPendingAddQuantityMessage(pending: PendingAddQuantity): str
   const sug = pending.suggestedQuantity;
   const party = pending.partySize;
   const serves = pending.servesPeople;
+  const unitsLabel = sug === 1 ? '1 unidad' : `${sug} unidades`;
 
   let why: string;
   if (party != null && serves != null && serves > 0) {
-    why =
+    const portionHint =
       serves === 1
-        ? `Para ${party} persona${party === 1 ? '' : 's'} y porción individual, suele ir bien *${sug}×*.`
-        : `Una porción alcanza hasta ${serves}; para ${party} persona${party === 1 ? '' : 's'} suele ir bien *${sug}×*.`;
-  } else if (party != null && party >= 2) {
-    why = `Son ${party}: te sugiero *${sug}×* como orientación (también podés pedir menos o más).`;
+        ? 'Cada unidad es para 1 persona. '
+        : `Cada unidad alcanza para ${serves} personas. `;
+    why =
+      `${portionHint}Como el pedido es para ${party} persona${party === 1 ? '' : 's'} ` +
+      `te sugiero ${unitsLabel}, pero podés pedir las que gustes.`;
+  } else if (party != null && party >= 1) {
+    why =
+      `Como el pedido es para ${party} persona${party === 1 ? '' : 's'} ` +
+      `te sugiero ${unitsLabel}, pero podés pedir las que gustes.`;
   } else {
-    why = `Te sugiero *${sug}×*. También podés pedir otra cantidad.`;
+    why = `Te sugiero ${unitsLabel}, pero podés pedir las que gustes.`;
   }
 
-  const tipables = [
-    shortcutBullet('1'),
-    shortcutBullet(String(sug), '(sugerido)'),
-    shortcutBullet('Cancelar'),
-  ].join('\n');
-
   const inner =
-    `¿Cuántas unidades de *${name}* querés sumar?\n\n` +
-    `${why}\n` +
-    `Escribí un número (1–99) o elegí:\n\n` +
-    tipables;
+    `¿Cuántas unidades de *${name}* querés sumar?\n\n` + why;
 
   return formatBotUserMessage('¿Cuántas querés sumar?', '🔢', inner);
 }

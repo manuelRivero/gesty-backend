@@ -45,8 +45,11 @@ export type SelectListCandidateMeta = {
 };
 
 /**
- * Meta tipable bajo el atajo: "sirve 2 · $11.000".
- * El nombre en negrita queda aparte para reconocimiento por texto.
+ * Meta tipable bajo el atajo (body WA), una línea por dato:
+ *   ración para: 2
+ *   Precio: $11.000
+ * El nombre en negrita queda en la viñeta; porción y precio van debajo.
+ * Para description de fila de lista WA usá `flattenSelectListCandidateMeta`.
  */
 export const formatSelectListCandidateMeta = (
   params: SelectListCandidateMeta
@@ -54,15 +57,27 @@ export const formatSelectListCandidateMeta = (
   const parts: string[] = [];
   const serves = params.servesPeople;
   if (typeof serves === 'number' && Number.isFinite(serves) && serves > 0) {
-    parts.push(serves === 1 ? 'sirve 1' : `sirve ${Math.floor(serves)}`);
+    parts.push(`ración para: ${Math.floor(serves)}`);
   }
   if (params.priceAmount != null && params.priceAmount !== '') {
     const n = Number(params.priceAmount);
     if (Number.isFinite(n)) {
-      parts.push(`$${n.toLocaleString('es-AR')}`);
+      parts.push(`Precio: $${n.toLocaleString('es-AR')}`);
     }
   }
-  return parts.length > 0 ? parts.join(' · ') : undefined;
+  return parts.length > 0 ? parts.join('\n') : undefined;
+};
+
+/** Una línea para description de fila lista WA (Meta no renderiza saltos ahí). */
+export const flattenSelectListCandidateMeta = (
+  meta: string | undefined | null
+): string | undefined => {
+  if (!meta?.trim()) return undefined;
+  return meta
+    .split(/\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .join(' · ');
 };
 
 /**
@@ -95,7 +110,10 @@ export type SelectListBodyCandidate = {
 
 /**
  * Intro del agente + opciones en negrita (atajos tipables).
- * description se muestra como sufijo tipable: • *Nombre* — sirve 2 · $11.000
+ * Formato por candidato:
+ *   • *Nombre*
+ *   ración para: 2
+ *   Precio: $11.000
  * La lista WA se ofrece vía footer; no se agrega «O elegí de la lista.» al body.
  */
 export const buildSelectFromListBodyText = (
@@ -109,7 +127,14 @@ export const buildSelectFromListBodyText = (
       const name = c.title.trim();
       if (!name) return '';
       const meta = c.description?.trim();
-      return meta ? shortcutBullet(name, `— ${meta}`) : shortcutBullet(name);
+      if (!meta) return shortcutBullet(name);
+      // Body multilínea; acepta meta con \n o legacy " · ".
+      const metaBlock = meta
+        .split(/\n+| · /)
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .join('\n');
+      return `${shortcutBullet(name)}\n${metaBlock}`;
     })
     .filter(Boolean);
 
@@ -133,9 +158,12 @@ export const buildHybridCtaInteractive = (
       const rows = listCandidates.map((c) => ({
         title: truncateTitle(c.title, MAX_BUTTON_TITLE),
         payload: safePayload(`SELECT_PRODUCT:${c.productId}`),
-        description: c.description
-          ? c.description.slice(0, MAX_ROW_DESCRIPTION)
-          : 'Seleccioná este producto',
+        description: (() => {
+          const flat = flattenSelectListCandidateMeta(c.description);
+          return flat
+            ? flat.slice(0, MAX_ROW_DESCRIPTION)
+            : 'Seleccioná este producto';
+        })(),
         sectionTitle: 'Opciones disponibles',
       }));
 

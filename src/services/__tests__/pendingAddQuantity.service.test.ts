@@ -3,6 +3,7 @@ import {
   buildPendingAddQuantityContextLines,
   buildPendingAddQuantityMessage,
   parsePendingAddQuantity,
+  shouldForceHybridForPendingAddQuantity,
   type PendingAddQuantity,
 } from '../pendingAddQuantity.service';
 
@@ -35,12 +36,18 @@ describe('pendingAddQuantity.service', () => {
     });
   });
 
-  it('buildPendingAddQuantityMessage sugiere sin imponer', () => {
+  it('buildPendingAddQuantityMessage sugiere sin imponer ni tipables numéricos', () => {
     const msg = buildPendingAddQuantityMessage(basePending());
     expect(msg).toMatch(/Cuántas querés sumar/i);
-    expect(msg).toMatch(/3×/);
-    expect(msg).toMatch(/sugerido/i);
+    expect(msg).toMatch(/Cada unidad es para 1 persona/i);
+    expect(msg).toMatch(
+      /Como el pedido es para 3 personas te sugiero 3 unidades, pero podés pedir las que gustes/i
+    );
     expect(msg).not.toMatch(/voy a sumar/i);
+    expect(msg).not.toMatch(/Escribí un número/i);
+    expect(msg).not.toMatch(/\(sugerido\)/i);
+    expect(msg).not.toMatch(/• \*Cancelar\*/);
+    expect(msg).not.toMatch(/3×/);
   });
 
   it('context lines instruyen al agente (ledger tipable, no router)', () => {
@@ -51,5 +58,12 @@ describe('pendingAddQuantity.service', () => {
     expect(lines.join('\n')).toMatch(/add_cart_item/i);
     expect(lines.join('\n')).toMatch(/clear_pending_add_quantity/i);
     expect(lines.join('\n')).toMatch(/sugerido 3/i);
+  });
+
+  it('shouldForceHybridForPendingAddQuantity solo con ledger activo', () => {
+    expect(shouldForceHybridForPendingAddQuantity({})).toBe(false);
+    expect(
+      shouldForceHybridForPendingAddQuantity({ pendingAddQuantity: basePending() })
+    ).toBe(true);
   });
 });

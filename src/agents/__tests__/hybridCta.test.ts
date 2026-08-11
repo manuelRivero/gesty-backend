@@ -15,13 +15,15 @@ import {
 import type { CtaPlan } from '../types';
 
 describe('formatSelectListCandidateMeta', () => {
-  it('arma sirve N · $precio', () => {
+  it('arma ración para: N y Precio: en líneas distintas', () => {
     expect(formatSelectListCandidateMeta({ servesPeople: 2, priceAmount: 25000 })).toBe(
-      'sirve 2 · $25.000'
+      'ración para: 2\nPrecio: $25.000'
     );
-    expect(formatSelectListCandidateMeta({ servesPeople: 1, priceAmount: null })).toBe('sirve 1');
+    expect(formatSelectListCandidateMeta({ servesPeople: 1, priceAmount: null })).toBe(
+      'ración para: 1'
+    );
     expect(formatSelectListCandidateMeta({ servesPeople: null, priceAmount: 11000 })).toBe(
-      '$11.000'
+      'Precio: $11.000'
     );
   });
 });
@@ -122,8 +124,16 @@ describe('buildHybridCtaInteractive', () => {
         primary: {
           kind: 'SELECT_FROM_LIST',
           candidates: [
-            { productId: 'p1', title: 'Ceviche Clásico', description: 'sirve 2 · $25.000' },
-            { productId: 'p2', title: 'Ceviche Mixto', description: 'sirve 1 · $11.000' },
+            {
+              productId: 'p1',
+              title: 'Ceviche Clásico',
+              description: 'ración para: 2\nPrecio: $25.000',
+            },
+            {
+              productId: 'p2',
+              title: 'Ceviche Mixto',
+              description: 'ración para: 1\nPrecio: $11.000',
+            },
           ],
           bodyText: TEXT,
         },
@@ -141,8 +151,17 @@ describe('buildHybridCtaInteractive', () => {
       expect(allRowIds).toContain('SELECT_PRODUCT:p1');
       expect(allRowIds).toContain('SELECT_PRODUCT:p2');
       expect(allRowIds).toContain('VIEW_MENU');
-      expect(listMsg.body.text).toContain('• *Ceviche Clásico* — sirve 2 · $25.000');
-      expect(listMsg.body.text).toContain('• *Ceviche Mixto* — sirve 1 · $11.000');
+      expect(listMsg.body.text).toContain(
+        '• *Ceviche Clásico*\nración para: 2\nPrecio: $25.000'
+      );
+      expect(listMsg.body.text).toContain(
+        '• *Ceviche Mixto*\nración para: 1\nPrecio: $11.000'
+      );
+      // Fila WA: meta aplanada en una línea.
+      const classicRow = listMsg.action.sections
+        .flatMap((s: any) => s.rows)
+        .find((r: any) => r.id === 'SELECT_PRODUCT:p1');
+      expect(classicRow?.description).toBe('ración para: 2 · Precio: $25.000');
       // Footer WA ya invita a elegir/escribir; no repetir en el body.
       expect(listMsg.body.text).not.toMatch(/O elegí de la lista/i);
       expect(listMsg.footer?.text).toMatch(/Elegí o escribí/i);
@@ -160,8 +179,16 @@ describe('buildHybridCtaInteractive', () => {
         primary: {
           kind: 'SELECT_FROM_LIST',
           candidates: [
-            { productId: 'p1', title: 'Ceviche Clásico', description: 'sirve 2 · $25.000' },
-            { productId: 'p2', title: 'Ceviche Mixto', description: 'sirve 1 · $11.000' },
+            {
+              productId: 'p1',
+              title: 'Ceviche Clásico',
+              description: 'ración para: 2\nPrecio: $25.000',
+            },
+            {
+              productId: 'p2',
+              title: 'Ceviche Mixto',
+              description: 'ración para: 1\nPrecio: $11.000',
+            },
           ],
           bodyText: dirtyIntro,
         },
@@ -171,7 +198,7 @@ describe('buildHybridCtaInteractive', () => {
       const body = (result!.content as any).body.text as string;
       expect(body).toMatch(/Perfecto/i);
       expect(body).not.toMatch(/1\.\s*\*Ceviche/);
-      expect(body).toContain('• *Ceviche Clásico* — sirve 2 · $25.000');
+      expect(body).toContain('• *Ceviche Clásico*\nración para: 2\nPrecio: $25.000');
     });
 
     it('limita a 5 candidatos máximo', () => {

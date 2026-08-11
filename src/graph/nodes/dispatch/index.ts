@@ -20,6 +20,7 @@ import {
   needsAddQuantityConfirmation,
   suggestAddQuantity,
 } from '../../../services/addQuantitySuggestion';
+import { shouldForceHybridForPendingAddQuantity } from '../../../services/pendingAddQuantity.service';
 import { findActiveEnvironmentsByBusinessId } from '../../../repositories/reservation.repository';
 import { buildListMessageFromButtons } from '../../../whatsappBuilders';
 import { runReservationAgent } from '../../../agents/reservationAgent';
@@ -210,7 +211,16 @@ const dispatchOrHybrid = async (
   enrichedCtx: EnrichedContext,
   checkoutHandoff?: CheckoutHandoffParams
 ): Promise<HandlerResult | null> => {
-  if (isHybridAgentMode() && (!enrichedCtx.detection || !CLOSED_INTENTS.has(enrichedCtx.detection.intent))) {
+  const forceHybridPendingQty = shouldForceHybridForPendingAddQuantity(
+    enrichedCtx.conversationState?.metadata
+  );
+  // pendingAddQuantity: forzar ReAct aunque NLP diga MODIFY_QUANTITY (cerrado).
+  if (
+    isHybridAgentMode() &&
+    (forceHybridPendingQty ||
+      !enrichedCtx.detection ||
+      !CLOSED_INTENTS.has(enrichedCtx.detection.intent))
+  ) {
     try {
       const hybrid = await runHybridReactAgent(enrichedCtx);
       const result = await unwrapHybridRun(hybrid, enrichedCtx, checkoutHandoff);
@@ -701,10 +711,15 @@ export const nlpSubgraphNode = async (
   // willUseAgent determina si el turno irá al ReAct agent; se usa para:
   // 1) saltar el gate de party-size (el agente lo recolecta naturalmente)
   // 2) setear dataCollectionDelegated para saltar los post-gates
+  // Misma fuente que enrichedCtx: working o, si falta, el state del contexto.
+  const metaForGate = normalizeMetadata(
+    (workingConversationState ?? enrichedBase.conversationState)?.metadata
+  );
+  const forceHybridPendingQty = shouldForceHybridForPendingAddQuantity(metaForGate);
   const willUseAgent =
-    isHybridAgentMode() && !CLOSED_INTENTS.has(detection.intent as ConversationIntent);
-
-  const metaForGate = normalizeMetadata(workingConversationState?.metadata);
+    isHybridAgentMode() &&
+    (forceHybridPendingQty ||
+      !CLOSED_INTENTS.has(detection.intent as ConversationIntent));
   if (abandonedPeopleCountGate || abandonedPartySizeDefer) {
     // La metadata en memoria todavía trae el flag viejo; lo limpiamos para que
     // el gate evalúe el mensaje nuevo como si fuera la primera vez.
