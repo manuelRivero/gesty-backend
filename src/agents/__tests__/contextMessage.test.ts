@@ -194,6 +194,24 @@ describe('buildContextMessage', () => {
     expect(msg.endsWith('el de la plancha')).toBe(true);
   });
 
+  it('pendingTipables: inyecta tipables de gestión ofrecidos', async () => {
+    findFirstMock.mockResolvedValue(null);
+    const msg = await buildContextMessage(
+      makeCtx({
+        userMsg: 'nota',
+        metadata: {
+          pendingTipables: {
+            offeredAt: new Date().toISOString(),
+            management: ['VIEW_CART', 'ITEM_NOTE'],
+          },
+        },
+      })
+    );
+    expect(msg).toContain('Tipables de gestión ofrecidos');
+    expect(msg).toContain('ITEM_NOTE');
+    expect(msg).toContain('present_cart');
+  });
+
   it('sin pendingProductSelection: no menciona selección pendiente', async () => {
     findFirstMock.mockResolvedValue(null);
     const msg = await buildContextMessage(makeCtx());

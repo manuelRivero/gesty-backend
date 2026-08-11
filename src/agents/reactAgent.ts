@@ -51,10 +51,6 @@ import { buildCartSummaryMessage } from '../services/cart.service';
 import { buildCancelOrderMessage } from '../services/order.service';
 import { tryPresentComplementSuggestions } from '../services/complementSuggestions.service';
 import { tryHandlePendingVariationHybrid } from '../services/pendingVariation.service';
-import {
-  tryHandleAwaitingItemNoteHybrid,
-  tryHandleManagementShortcutHybrid,
-} from '../services/managementShortcut.service';
 import { buildCategoryProductListMessage } from '../services/category.service';
 import { findOrCreateConversationState } from '../repositories';
 import { AddressService } from '../services/address.service';
@@ -506,45 +502,6 @@ export const runHybridReactAgent = async (
     }
   } catch (err) {
     console.error('[hybrid-agent] pending_variation resolve failed', err);
-  }
-
-  // Atajos tipables de gestión (nota / pedido / menú…) — antes del ReAct para
-  // no pelear con pendingProductSelection de complementos.
-  try {
-    const mgmtHandled = await tryHandleManagementShortcutHybrid(ctx);
-    if (mgmtHandled) {
-      console.log(
-        JSON.stringify({
-          event: '[hybrid-agent] management_shortcut',
-          conversationId: ctx.conversationId,
-        })
-      );
-      return {
-        kind: 'response',
-        handlerResult: markHybridResult(mgmtHandled),
-      };
-    }
-  } catch (err) {
-    console.error('[hybrid-agent] management_shortcut failed', err);
-  }
-
-  // Continuación de captura de nota de ítem.
-  try {
-    const noteHandled = await tryHandleAwaitingItemNoteHybrid(ctx);
-    if (noteHandled) {
-      console.log(
-        JSON.stringify({
-          event: '[hybrid-agent] item_note_captured',
-          conversationId: ctx.conversationId,
-        })
-      );
-      return {
-        kind: 'response',
-        handlerResult: markHybridResult(noteHandled),
-      };
-    }
-  } catch (err) {
-    console.error('[hybrid-agent] item_note capture failed', err);
   }
 
   const { id: personalityId, promptText } =

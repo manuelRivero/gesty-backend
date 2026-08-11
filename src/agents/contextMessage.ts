@@ -52,6 +52,10 @@ import {
 } from '../services/intent/catalogGoals.service';
 import { collectCategoryTagsInDraftCart } from '../helpers/complementaryMenu.helper';
 import { buildPendingVariationContextLines } from '../services/pendingVariation.service';
+import {
+  MANAGEMENT_TOOL_HINT,
+  type TipableManagementAction,
+} from '../services/pendingTipables.service';
 
 /** Hint interno cuando hay shortlist pendiente (SELECT_FROM_LIST / product query). */
 export async function buildPendingProductSelectionLines(
@@ -93,12 +97,39 @@ export async function buildPendingProductSelectionLines(
     '- Si matchea uno con claridad: present_product_cta(ADD_ITEM) o add_cart_item con ese productId. ' +
       'Si queda ambiguo entre candidatos, pedí aclaración nombrándolos. ' +
       'Si rechaza o cambia de tema, no insistas con la lista.',
+    '- PRIORIDAD: si el mensaje es gestión tipable (menú, ver pedido, modificar, finalizar, nota) ' +
+      'o pide otro plato / instrucción de preparación ("poca sal"), NO fuerces add_cart_item del shortlist.',
   ];
   const q = meta.pendingQuestion?.trim();
   if (q) {
     lines.push(`- Consulta original del cliente (contexto): "${q.slice(0, 200)}".`);
   }
   return lines;
+}
+
+/** Acciones de gestión tipables del último mensaje (ledger, no regex). */
+export function buildPendingTipablesManagementLines(meta: {
+  pendingTipables?: {
+    offeredAt?: string;
+    management?: TipableManagementAction[];
+  } | null;
+}): string[] {
+  const actions = meta.pendingTipables?.management?.filter(Boolean) ?? [];
+  if (actions.length === 0) return [];
+
+  const mapped = actions
+    .map((a) => `${a} → ${MANAGEMENT_TOOL_HINT[a] ?? 'tool correspondiente'}`)
+    .join('; ');
+
+  return [
+    '- Tipables de gestión ofrecidos en el mensaje anterior (el cliente puede tiparlos): ' +
+      mapped +
+      '.',
+    '- Si el mensaje actual apunta a uno de esos tipables, ejecutá esa tool/señal. ' +
+      'Para ITEM_NOTE: get_cart, resolvé el ítem (nombre parcial u ordinal del carrito) y ' +
+      'update_item_note en el mismo turno si ya trae la nota (ej. "la papa con poca sal"); ' +
+      'solo desambiguá si hay ≥2 matches o falta el texto de la nota.',
+  ];
 }
 
 const FOOD_RELATED_INTENTS = new Set([
@@ -378,6 +409,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     : [];
 
   const pendingSelectionLines = await buildPendingProductSelectionLines(meta, businessId);
+  const pendingTipablesLines = buildPendingTipablesManagementLines(meta);
 
   const pendingCancel = meta.pending_cancel_disambiguation;
   const pendingCancelLines =
@@ -401,6 +433,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     hasActiveDraft && fulfillmentType ? `- Tipo de entrega: ${fulfillmentType}` : null,
     checkoutActive ? '- Sesión de checkout: activa' : null,
     ...pendingSelectionLines,
+    ...pendingTipablesLines,
     ...pendingVariationLines,
     ...pendingCancelLines,
     ...intentLines,

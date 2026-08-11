@@ -36,6 +36,13 @@ describe('botPersonality', () => {
     expect(humanize).toMatch(/NO agregues un segundo par/i);
   });
 
+  it('hybrid menciona tipables ITEM_NOTE / prioridad gestión', () => {
+    const hybrid = buildHybridAgentSystemPrompt();
+    expect(hybrid).toMatch(/ITEM_NOTE|nota del pedido/i);
+    expect(hybrid).toMatch(/la papa con poca sal/i);
+    expect(hybrid).toMatch(/NO fuerces add/i);
+  });
+
   it('hybrid incluye reglas operativas de tools', () => {
     const hybrid = buildHybridAgentSystemPrompt();
     expect(hybrid).toMatch(/search_products/i);

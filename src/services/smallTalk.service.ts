@@ -9,6 +9,11 @@ import {
   buildShortcutsThenListBody,
   shortcutBullet,
 } from '../whatsappBuilders/listShortcutsBody';
+import { patchConversationMetadata } from '../repositories';
+import {
+  buildPendingTipablesPatch,
+  type TipableManagementAction,
+} from './pendingTipables.service';
 
 const baseButtons = [
   {
@@ -151,6 +156,19 @@ export const buildSmallTalkMenu = async (
     '👋',
     buildShortcutsThenListBody(intro, buildWelcomeShortcutBullets(buttons))
   );
+
+  const management: TipableManagementAction[] = [];
+  for (const b of buttons) {
+    if (b.payload === 'VIEW_MENU') management.push('VIEW_MENU');
+    if (b.payload === 'VIEW_CART') management.push('VIEW_CART');
+  }
+  const conversationId = ctx.conversation?.id;
+  if (conversationId && management.length > 0) {
+    await patchConversationMetadata(
+      conversationId,
+      buildPendingTipablesPatch(management)
+    );
+  }
 
   return buildListMessageFromButtons(
     bodyText,

@@ -67,15 +67,22 @@ export const clearProductFilterMetadata = (
   if (
     !metadata.pendingProductSelection &&
     !metadata.pendingQuestion &&
-    !metadata.candidateProductIds
+    !metadata.candidateProductIds &&
+    !metadata.pendingTipables
   ) {
     return metadata;
   }
-  const { pendingProductSelection, pendingQuestion, candidateProductIds, ...rest } =
-    metadata;
+  const {
+    pendingProductSelection,
+    pendingQuestion,
+    candidateProductIds,
+    pendingTipables,
+    ...rest
+  } = metadata;
   void pendingProductSelection;
   void pendingQuestion;
   void candidateProductIds;
+  void pendingTipables;
   return rest;
 };
 
@@ -84,6 +91,7 @@ export const PENDING_PRODUCT_SELECTION_KEYS = [
   'pendingProductSelection',
   'pendingQuestion',
   'candidateProductIds',
+  'pendingTipables',
 ] as const;
 
 /** Personas en contexto: peopleCount, requestedPartySize o legacy. */

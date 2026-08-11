@@ -30,6 +30,11 @@ import {
   buildAddItemShortcutsFollowUpList,
   tryPresentComplementSuggestions,
 } from './complementSuggestions.service';
+import {
+  CART_FOLLOWUP_MANAGEMENT_TIPABLES,
+  buildPendingTipablesPatch,
+  type TipableManagementAction,
+} from './pendingTipables.service';
 import { formatBotUserMessage } from './productQuery';
 import { wrapWhatsAppBold } from '../utils/whatsappBold';
 import { clearLastOffer } from './lastOffer.service';
@@ -452,6 +457,7 @@ export const buildAddItemMessage = async (
     'pendingProductSelection',
     'pendingQuestion',
     'candidateProductIds',
+    'pendingTipables',
   ]);
 
   const includeAddress = fulfillmentType === 'DELIVERY' && hasDeliveryAddress;
@@ -475,6 +481,9 @@ export const buildAddItemMessage = async (
 
   const mainFollowUpList = buildAddItemShortcutsFollowUpList(followUpBody, {
     includeEditAddressRow: includeAddress,
+  });
+  await patchConversationMetadata(conversation.id, {
+    ...buildPendingTipablesPatch(CART_FOLLOWUP_MANAGEMENT_TIPABLES),
   });
   await createConversationMessage(conversation.id, 'ai', followUpBody, false);
   await updateConversationLastMessageAt(conversation.id);
@@ -993,6 +1002,13 @@ export const buildCartSummaryMessage = async (params: {
   const shortcutsBody = buildAddItemShortcutsFollowUpBody({
     includeEditAddressHint: includeAddress,
     includeCancelHint: true,
+  });
+
+  const cartTipables: TipableManagementAction[] = [
+    ...CART_FOLLOWUP_MANAGEMENT_TIPABLES,
+  ];
+  await patchConversationMetadata(conversationId, {
+    ...buildPendingTipablesPatch(cartTipables),
   });
 
   const rows: WhatsAppListMessage['action']['sections'][0]['rows'] = [

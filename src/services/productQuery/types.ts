@@ -39,6 +39,20 @@ export type ConversationMetadata = {
   pendingQuestion?: string;
   candidateProductIds?: string[];
   /**
+   * Tipables de gestión ofrecidos en el último mensaje con atajos
+   * (complementos / carrito / welcome). El agente razona contra esto + tools.
+   */
+  pendingTipables?: {
+    offeredAt: string;
+    management?: Array<
+      | 'VIEW_MENU'
+      | 'VIEW_CART'
+      | 'VIEW_CART_FOR_EDITION'
+      | 'CHECKOUT'
+      | 'ITEM_NOTE'
+    >;
+  } | null;
+  /**
    * Variación pendiente tras `add_cart_item` → variation_required / invalid.
    * El híbrido (o el resolver determinista) completa con el texto del cliente.
    */
@@ -47,16 +61,6 @@ export type ConversationMetadata = {
     productName: string;
     variations: string[];
     quantity: number;
-    askedAt: string;
-  } | null;
-  /**
-   * Captura tipable de nota de ítem tras atajo "Nota del pedido".
-   * productId null = aún eligiendo entre candidates.
-   */
-  awaitingItemNote?: {
-    productId: string | null;
-    productName: string | null;
-    candidates?: Array<{ productId: string; productName: string }>;
     askedAt: string;
   } | null;
   /**

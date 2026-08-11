@@ -172,6 +172,14 @@ describe('presentComplementSuggestionBundle', () => {
       expect.objectContaining({
         pendingProductSelection: true,
         candidateProductIds: [productId],
+        pendingTipables: expect.objectContaining({
+          management: expect.arrayContaining([
+            'VIEW_MENU',
+            'VIEW_CART',
+            'ITEM_NOTE',
+            'CHECKOUT',
+          ]),
+        }),
       })
     );
   });

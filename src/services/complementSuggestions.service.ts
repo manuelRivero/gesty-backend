@@ -28,6 +28,11 @@ import {
   buildSuggestionsThenManagementThenListBody,
   shortcutBullet,
 } from '../whatsappBuilders/listShortcutsBody';
+import {
+  COMPLEMENT_MANAGEMENT_TIPABLES,
+  COMPLEMENT_MENU_ONLY_TIPABLES,
+  buildPendingTipablesPatch,
+} from './pendingTipables.service';
 
 /** false si refused, esperando engaged tras 1ª ola, cooldown o TTL. */
 export function canSurfaceComplementOpportunity(metadata: unknown): boolean {
@@ -350,6 +355,7 @@ export async function materializeComplementSuggestionsList(
     pendingProductSelection: true,
     pendingQuestion: snapshot.title || 'sugerencia de complemento',
     candidateProductIds: ordered.map((row) => row.id),
+    ...buildPendingTipablesPatch(COMPLEMENT_MENU_ONLY_TIPABLES),
   });
 
   await clearComplementSuggestionSnapshot(ctx.conversation.id);
@@ -382,6 +388,7 @@ export async function presentComplementSuggestionBundle(params: {
     pendingProductSelection: true,
     pendingQuestion: bundle.snapshot.title || 'sugerencia de complemento',
     candidateProductIds: candidateIds,
+    ...buildPendingTipablesPatch(COMPLEMENT_MANAGEMENT_TIPABLES),
   });
 
   const listMessage = buildComplementSuggestionsListMessage({
