@@ -164,14 +164,48 @@ export type ComplementSuggestionListItem = {
   categoryName: string;
 };
 
+/** Confirmación post-add embebida en el título de la lista (mensaje único). */
+export type ComplementAddConfirm = {
+  itemName: string;
+  quantity: number;
+  /** Monto ya formateado o número/Decimal-like. */
+  totalAmount: string | number;
+};
+
+export function buildComplementConfirmTitle(params: {
+  itemName: string;
+  quantity: number;
+}): string {
+  const name = params.itemName.trim() || 'el producto';
+  const qtyPrefix = params.quantity > 1 ? `${params.quantity}× ` : '';
+  return `¡Listo! Sumé ${qtyPrefix}${name} al pedido`;
+}
+
+export function buildComplementConfirmBodyIntro(params: {
+  totalAmount: string | number;
+  pitch: string;
+}): string {
+  const totalRaw =
+    typeof params.totalAmount === 'number'
+      ? params.totalAmount
+      : Number(params.totalAmount);
+  const totalLabel = Number.isFinite(totalRaw)
+    ? `$${totalRaw.toLocaleString('es-AR')}`
+    : `$${String(params.totalAmount)}`;
+  const pitch = params.pitch.trim();
+  const totalLine = `Total hasta ahora: ${totalLabel}.`;
+  return pitch ? `${totalLine}\n\n${pitch}` : totalLine;
+}
+
 /**
  * Lista WA de sugerencias de complemento + filas mínimas de gestión.
- * Body = intro (bridge/pitch) → platos sugeridos → bloque de gestión → alternativa lista.
+ * Body = intro (confirm/total + pitch) → platos → gestión.
+ * Sin «O elegí de la lista.» (el footer WA ya invita a elegir/escribir).
  */
 export function buildComplementSuggestionsListMessage(params: {
   title: string;
   titleEmoji: string;
-  /** Texto principal bajo el título (bridge o pitch). */
+  /** Texto principal bajo el título (pitch / total + pitch). */
   bodyPlain: string;
   items: ComplementSuggestionListItem[];
   /** Incluir Modificar / Finalizar además de Ver menú (post-add / señal híbrida). */
@@ -201,6 +235,7 @@ export function buildComplementSuggestionsListMessage(params: {
       intro: bodyPlain.trim(),
       suggestionBullets,
       managementBullets,
+      includeListAlternative: false,
     })
   );
 
@@ -368,33 +403,55 @@ export async function materializeComplementSuggestionsList(
 /**
  * Arma follow-up post-add / señal híbrida desde un bundle del builder LLM.
  * Persiste snapshot, registra Opportunity y devuelve la lista (o null).
+ * Con `confirm`: título = «¡Listo! Sumé…» y body = total + pitch (mensaje único).
  */
 export async function presentComplementSuggestionBundle(params: {
   conversationId: string;
   metadata: unknown;
   bundle: {
     snapshot: ComplementSuggestionSnapshot;
+    /** Legacy: el cuerpo post-add usa pitch + confirm, no el bridge. */
     bridgeMessagePlain: string;
     items: Array<{ id: string; name: string; categoryName: string }>;
   };
+  confirm?: ComplementAddConfirm | null;
 }): Promise<WhatsAppListMessage | null> {
-  const { conversationId, metadata, bundle } = params;
+  const { conversationId, metadata, bundle, confirm } = params;
   if (bundle.items.length === 0) return null;
 
   await persistComplementSuggestionSnapshot(conversationId, bundle.snapshot);
 
   const candidateIds = bundle.items.map((i) => i.id);
+  const confirmTitle = confirm
+    ? buildComplementConfirmTitle({
+        itemName: confirm.itemName,
+        quantity: confirm.quantity,
+      })
+    : null;
   await patchConversationMetadata(conversationId, {
     pendingProductSelection: true,
-    pendingQuestion: bundle.snapshot.title || 'sugerencia de complemento',
+    pendingQuestion: confirmTitle || bundle.snapshot.title || 'sugerencia de complemento',
     candidateProductIds: candidateIds,
     ...buildPendingTipablesPatch(COMPLEMENT_MANAGEMENT_TIPABLES),
   });
 
+  const pitch =
+    bundle.snapshot.pitchBody?.trim() ||
+    bundle.bridgeMessagePlain?.trim() ||
+    '';
+  const title = confirmTitle ?? bundle.snapshot.title;
+  const titleEmoji = confirm ? '🍽️' : bundle.snapshot.titleEmoji;
+  const bodyPlain = confirm
+    ? buildComplementConfirmBodyIntro({
+        totalAmount: confirm.totalAmount,
+        pitch,
+      })
+    : pitch;
+
   const listMessage = buildComplementSuggestionsListMessage({
-    title: bundle.snapshot.title,
-    titleEmoji: bundle.snapshot.titleEmoji,
-    bodyPlain: bundle.bridgeMessagePlain,
+    title,
+    titleEmoji,
+    bodyPlain,
     items: bundle.items,
     includeManagementRows: true,
   });
@@ -419,6 +476,8 @@ export async function tryPresentComplementSuggestions(params: {
   metadata: unknown;
   draftOrderId: string;
   lastAddedMenuItemId: string;
+  /** Cantidad sumada en este add (si falta, se usa la cantidad de la línea). */
+  addedQuantity?: number;
   maxItems?: number;
 }): Promise<WhatsAppListMessage | null> {
   const {
@@ -427,6 +486,7 @@ export async function tryPresentComplementSuggestions(params: {
     metadata,
     draftOrderId,
     lastAddedMenuItemId,
+    addedQuantity,
     maxItems = 5,
   } = params;
 
@@ -443,9 +503,38 @@ export async function tryPresentComplementSuggestions(params: {
     });
     if (!bundle) return null;
 
+    const [lastLine, draftTotals] = await Promise.all([
+      prisma.draft_order_item.findFirst({
+        where: { draft_order_id: draftOrderId, product_id: lastAddedMenuItemId },
+        orderBy: { id: 'desc' },
+        select: {
+          quantity: true,
+          menu_item: { select: { name: true } },
+        },
+      }),
+      prisma.draft_order.findUnique({
+        where: { id: draftOrderId },
+        select: { total_amount: true },
+      }),
+    ]);
+
+    const qtyForConfirm =
+      typeof addedQuantity === 'number' && addedQuantity > 0
+        ? Math.min(99, Math.floor(addedQuantity))
+        : (lastLine?.quantity ?? 1);
+    const confirm: ComplementAddConfirm | null =
+      lastLine?.menu_item?.name && draftTotals
+        ? {
+            itemName: lastLine.menu_item.name,
+            quantity: qtyForConfirm,
+            totalAmount: draftTotals.total_amount?.toString() ?? '0',
+          }
+        : null;
+
     return presentComplementSuggestionBundle({
       conversationId,
       metadata,
+      confirm,
       bundle: {
         snapshot: bundle.snapshot,
         bridgeMessagePlain: bundle.bridgeMessagePlain,

@@ -93,6 +93,9 @@ export class AddItemHandler implements IntentHandler {
     // Si había pendingVariation por un intento híbrido previo, el botón la cierra.
     await clearPendingVariation(ctx.conversation.id);
     if (typeof result === 'string') return textResponse(result);
+    if (result.complementOnly) {
+      return listResponse(result.mainFollowUpList);
+    }
     return textResponse(result.main, [
       { type: 'list' as const, listMessage: result.mainFollowUpList },
     ]);

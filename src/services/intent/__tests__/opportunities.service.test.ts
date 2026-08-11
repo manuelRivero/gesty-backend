@@ -163,7 +163,7 @@ describe('computeSuggestComplementPermission', () => {
     ).toEqual({ granted: true, reason: 'ok' });
   });
 
-  it('engaged + cooldown activo → cooldown', () => {
+  it('engaged + cooldown activo → granted (2ª ola inmediata tras aceptar)', () => {
     const now = Date.parse('2026-08-10T12:01:00.000Z');
     expect(
       computeSuggestComplementPermission(
@@ -174,7 +174,7 @@ describe('computeSuggestComplementPermission', () => {
         },
         now
       )
-    ).toEqual({ granted: false, reason: 'cooldown' });
+    ).toEqual({ granted: true, reason: 'ok' });
   });
 
   it('derive null tras refused', () => {

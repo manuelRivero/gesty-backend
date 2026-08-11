@@ -58,7 +58,7 @@ describe('botPersonality', () => {
     expect(hybrid).toMatch(/PROHIBIDO \(upsell vacío\)/i);
     expect(hybrid).toMatch(/Sugerir sin esta tool está prohibido/i);
     expect(hybrid).toMatch(/opportunity.*nextAction|nextAction present_complement/i);
-    expect(hybrid).toMatch(/único mensaje al cliente/i);
+    expect(hybrid).toMatch(/La lista ya confirma el add/i);
   });
 
   it('hybrid instruye a resolver Selección de producto pendiente contra candidatos', () => {

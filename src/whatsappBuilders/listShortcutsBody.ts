@@ -43,6 +43,11 @@ export function buildSuggestionsThenManagementThenListBody(params: {
   suggestionBullets: string[];
   managementBullets: string[];
   managementIntro?: string;
+  /**
+   * Complementos: el footer WA ya dice «Elegí o escribí»; no repetir
+   * «O elegí de la lista.» en el body.
+   */
+  includeListAlternative?: boolean;
 }): string {
   const introTrim = params.intro.trim();
   const suggestions = params.suggestionBullets
@@ -54,6 +59,7 @@ export function buildSuggestionsThenManagementThenListBody(params: {
   const managementIntro = (
     params.managementIntro ?? MANAGEMENT_CONTINUE_LINE
   ).trim();
+  const includeListAlternative = params.includeListAlternative !== false;
 
   const parts: string[] = [];
   if (introTrim) parts.push(introTrim);
@@ -67,8 +73,10 @@ export function buildSuggestionsThenManagementThenListBody(params: {
     if (managementIntro) parts.push('');
     parts.push(...management);
   }
-  if (parts.length > 0) parts.push('');
-  parts.push(LIST_AS_ALTERNATIVE_LINE);
+  if (includeListAlternative) {
+    if (parts.length > 0) parts.push('');
+    parts.push(LIST_AS_ALTERNATIVE_LINE);
+  }
   return parts.join('\n');
 }
 

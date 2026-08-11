@@ -592,15 +592,24 @@ export const runHybridReactAgent = async (
               conversationId,
             })
           );
-          // Un solo mensaje: la lista ya trae bridge + atajos tipables (sin prosa + followUp).
+          // Un solo mensaje: confirmación + total + pitch + atajos (sin prosa aparte).
           return {
             kind: 'response',
             handlerResult: markHybridResult({ content: listMsg, isInteractive: true }),
           };
         }
+        // Sin ola (cooldown/presupuesto/sin ítems): carrito completo, no categorías en prosa.
+        console.log(
+          JSON.stringify({
+            event: '[hybrid-agent] present_complement_suggestions_fallback_cart',
+            conversationId,
+          })
+        );
+        signals.presentCart = true;
       }
     } catch (err) {
       console.error('[hybrid-agent] present_complement_suggestions failed, falling through', err);
+      signals.presentCart = true;
     }
   }
 

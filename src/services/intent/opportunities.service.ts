@@ -41,7 +41,9 @@ export type SuggestComplementPermissionDenial =
  * Permiso de SUGERIR_COMPLEMENTO:
  * - «no» (refused) → fin de la vida
  * - tras la 1ª ola sin engaged → no más hasta que acepte/sume de la oferta
- * - con engaged → cooldown + tope de olas (maxSurfaces)
+ * - con engaged → tope de olas (maxSurfaces); el cooldown NO aplica
+ *   (el cliente acaba de aceptar: 2ª ola inmediata al siguiente add)
+ * - sin engaged (1ª ola) → cooldown entre surfaces si aplica
  */
 export const computeSuggestComplementPermission = (
   entry: IntentLedgerEntry,
@@ -63,7 +65,9 @@ export const computeSuggestComplementPermission = (
     return { granted: false, reason: 'budget_exhausted' };
   }
 
+  // Tras engaged, permitir ola inmediata (aceptó / sumó de la oferta).
   if (
+    !engaged &&
     cat.cooldownMs > 0 &&
     entry.lastSurfacedAt &&
     now - new Date(entry.lastSurfacedAt).getTime() < cat.cooldownMs
@@ -119,7 +123,8 @@ export const deriveSuggestComplementCandidate = (
       `(hasta 2 categorías; prioridad sugerida: ${offerHint}). PROHIBIDO preguntar en prosa ` +
       `"¿algo más?" / "¿para acompañar?": la tool ES la oferta. Si el cliente dice no / mejor no / sin eso, ` +
       `llamá mark_complement_refused y no vuelvas a ofrecer. Si acepta o suma de la lista, ` +
-      `podés ofrecer otra ola más adelante con la misma tool (no en cada mensaje).`,
+      `podés ofrecer otra ola de inmediato con la misma tool. Si no hay opportunity en el add, ` +
+      `usá present_cart — PROHIBIDO listar categorías (Bebidas/Postres/…) en prosa.`,
     tieBreak: 15,
   };
 };

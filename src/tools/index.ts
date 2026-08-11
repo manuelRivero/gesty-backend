@@ -1408,7 +1408,16 @@ export const addCartItemTool = new DynamicStructuredTool<
           notes: it.notes ?? null,
         })),
       },
-      ...(postAddOpportunity ? { opportunity: postAddOpportunity } : {}),
+      ...(postAddOpportunity
+        ? { opportunity: postAddOpportunity }
+        : {
+            followUp: {
+              nextAction: 'present_cart',
+              instruction:
+                'No hay ola de complemento ahora. Llamá present_cart para confirmar el add ' +
+                'con el pedido completo. PROHIBIDO listar categorías (Bebidas/Postres/Entradas) en prosa.',
+            },
+          }),
     });
   },
 });

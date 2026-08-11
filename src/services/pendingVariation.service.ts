@@ -256,6 +256,14 @@ export const tryHandlePendingVariationHybrid = async (
       };
     }
 
+    if (addResult.complementOnly) {
+      return {
+        content: addResult.mainFollowUpList,
+        isInteractive: true,
+        skipBodyHumanization: true,
+      };
+    }
+
     const mainWithNote = `${addResult.main}${noteSuffix}`;
     return {
       content: mainWithNote,

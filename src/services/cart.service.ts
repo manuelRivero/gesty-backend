@@ -222,6 +222,11 @@ export type AddItemMessageResult =
   | {
       main: string;
       mainFollowUpList: WhatsAppListMessage;
+      /**
+       * true: la lista de complemento ya confirma (¡Listo! + total + pitch).
+       * Un solo mensaje interactivo; no enviar `main` aparte.
+       */
+      complementOnly?: boolean;
     };
 
 export const buildRemoveItemMessage = async (
@@ -448,9 +453,6 @@ export const buildAddItemMessage = async (
     mainInner
   );
 
-  await createConversationMessage(conversation.id, 'ai', mainText, false);
-  await updateConversationLastMessageAt(conversation.id);
-
   // Cierra shortlist tipable previo (product query / ola anterior) para que el
   // próximo mensaje libre no re-sume un candidato viejo (p. ej. doble aguadito).
   await omitConversationMetadataKeys(conversation.id, [
@@ -469,11 +471,21 @@ export const buildAddItemMessage = async (
     metadata: state.metadata,
     draftOrderId: cart.id,
     lastAddedMenuItemId: menuItemId,
+    addedQuantity: qty,
     maxItems: 5,
   });
   if (suggestionList) {
-    return { main: mainText, mainFollowUpList: suggestionList };
+    // La lista ya trae confirmación + total + pitch (mensaje único).
+    // Evita el doble «Producto agregado» + «Podés seguir armando».
+    return {
+      main: suggestionList.body.text,
+      mainFollowUpList: suggestionList,
+      complementOnly: true,
+    };
   }
+
+  await createConversationMessage(conversation.id, 'ai', mainText, false);
+  await updateConversationLastMessageAt(conversation.id);
 
   const followUpBody = buildAddItemShortcutsFollowUpBody({
     includeEditAddressHint: includeAddress,

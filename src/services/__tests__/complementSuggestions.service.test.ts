@@ -117,7 +117,8 @@ describe('buildComplementSuggestionsListMessage', () => {
     expect(list.body.text).toContain('• *Finalizar* pedido');
     expect(list.body.text).toContain('• *Nota* del pedido');
     expect(list.body.text).toMatch(/gestión de tu pedido/i);
-    expect(list.body.text).toMatch(/O elegí de la lista/i);
+    // Footer WA ya invita a elegir/escribir; no repetir en el body.
+    expect(list.body.text).not.toMatch(/O elegí de la lista/i);
     expect(list.body.text).not.toMatch(/Tocá el botón/i);
     // Sugerencias y gestión no van en un solo bloque continuo de viñetas.
     const body = list.body.text;
@@ -143,6 +144,11 @@ describe('presentComplementSuggestionBundle', () => {
     const list = await presentComplementSuggestionBundle({
       conversationId: 'conv-1',
       metadata: {},
+      confirm: {
+        itemName: 'Milanesa',
+        quantity: 1,
+        totalAmount: 80000,
+      },
       bundle: {
         snapshot: {
           v: 1,
@@ -160,6 +166,11 @@ describe('presentComplementSuggestionBundle', () => {
     });
 
     expect(list).not.toBeNull();
+    expect(list!.body.text).toMatch(/¡Listo! Sumé Milanesa al pedido/i);
+    expect(list!.body.text).toMatch(/Total hasta ahora/i);
+    expect(list!.body.text).toContain('Probá un postre.');
+    expect(list!.body.text).not.toMatch(/Ya sumaste la milanesa/i);
+    expect(list!.body.text).not.toMatch(/O elegí de la lista/i);
     expect(list!.body.text).toContain('• *Flan*');
     expect(recordOpportunitySurfaced).toHaveBeenCalledWith(
       'conv-1',

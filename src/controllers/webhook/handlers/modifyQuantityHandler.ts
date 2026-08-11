@@ -1,5 +1,5 @@
 import type { EnrichedContext, HandlerResult, IntentClassification, IntentHandler } from '../types';
-import { noResponse, textResponse, normalizeToHandlerResult } from '../utils';
+import { listResponse, noResponse, textResponse, normalizeToHandlerResult } from '../utils';
 import {
   handleAddItemFromWebhook,
   executeRemoveDraftOrderItemFromWebhook,
@@ -64,6 +64,9 @@ export class ModifyQuantityHandler implements IntentHandler {
       const result = await handleAddItemFromWebhook(ctx.payload, productId, target, 'set');
       if (result === null) return noResponse();
       if (typeof result === 'string') return textResponse(result);
+      if (result.complementOnly) {
+        return { ...listResponse(result.mainFollowUpList), skipBodyHumanization: true };
+      }
       return {
         ...textResponse(result.main, [
           { type: 'list' as const, listMessage: result.mainFollowUpList },
@@ -79,6 +82,9 @@ export class ModifyQuantityHandler implements IntentHandler {
     const result = await handleAddItemFromWebhook(ctx.payload, productId, quantity, 'set');
     if (result === null) return noResponse();
     if (typeof result === 'string') return textResponse(result);
+    if (result.complementOnly) {
+      return { ...listResponse(result.mainFollowUpList), skipBodyHumanization: true };
+    }
     return {
       ...textResponse(result.main, [
         { type: 'list' as const, listMessage: result.mainFollowUpList },

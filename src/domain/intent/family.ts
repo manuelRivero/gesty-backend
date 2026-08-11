@@ -204,8 +204,8 @@ export const INTENT_CATALOG: Record<IntentType, IntentCatalogEntry> = {
   },
   /**
    * Completar menú: olas tras «sí» (engaged). Un «no» (refused) abandona.
-   * maxSurfaces acota olas totales; el gate real es refused/engaged/cooldown
-   * en `computeSuggestComplementPermission` (no presupuesto 1 al primer surface).
+   * maxSurfaces acota olas totales; tras engaged el cooldown no bloquea la
+   * siguiente ola (ver `computeSuggestComplementPermission`).
    */
   SUGERIR_COMPLEMENTO: {
     kind: 'opportunity',
