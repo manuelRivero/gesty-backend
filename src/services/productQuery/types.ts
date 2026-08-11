@@ -54,13 +54,27 @@ export type ConversationMetadata = {
   } | null;
   /**
    * Variación pendiente tras `add_cart_item` → variation_required / invalid.
-   * El híbrido (o el resolver determinista) completa con el texto del cliente.
+   * Ledger para el híbrido (tipable); confirma con add_cart_item(variation=…).
    */
   pendingVariation?: {
     productId: string;
     productName: string;
     variations: string[];
     quantity: number;
+    askedAt: string;
+  } | null;
+  /**
+   * Cantidad pendiente de confirmar antes de escribir el carrito
+   * (party size → sugerencia ceil(party/serves); el cliente elige el número).
+   */
+  pendingAddQuantity?: {
+    productId: string;
+    productName: string;
+    suggestedQuantity: number;
+    servesPeople: number | null;
+    partySize: number | null;
+    variation?: string | null;
+    source: 'deterministic' | 'hybrid' | 'complement';
     askedAt: string;
   } | null;
   /**

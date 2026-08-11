@@ -165,7 +165,8 @@ export const buildHybridCtaInteractive = (
     const buttons: ReturnType<typeof buildButtonReply>[] = [];
 
     if (primary.kind === 'ADD_ITEM') {
-      const payload = `ADD_ITEM:${primary.productId}:${primary.quantity}`;
+      // Sin qty embebida: AddItemHandler abre pendingAddQuantity si party sugiere ≥2.
+      const payload = `ADD_ITEM:${primary.productId}`;
       buttons.push(buildButtonReply(payload, primary.label));
     } else {
       // VIEW_MENU or VIEW_FEATURED
@@ -204,7 +205,7 @@ export const buildHybridCtaInteractive = (
 export const extractPrimaryPayload = (plan: CtaPlan): string | null => {
   const { primary } = plan;
   if (primary.kind === 'ADD_ITEM') {
-    return `ADD_ITEM:${primary.productId}:${primary.quantity}`;
+    return `ADD_ITEM:${primary.productId}`;
   }
   if (primary.kind === 'VIEW_MENU') return 'VIEW_MENU';
   if (primary.kind === 'VIEW_FEATURED') return 'FEATURED_PAGE:1';

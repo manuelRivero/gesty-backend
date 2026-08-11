@@ -5,27 +5,13 @@ vi.mock('../../repositories', () => ({
   omitConversationMetadataKeys: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('../cart.service', () => ({
-  buildAddItemMessage: vi.fn(),
-}));
-
-vi.mock('../../lib/prisma', () => ({
-  prisma: {
-    draft_order: { findFirst: vi.fn() },
-    draft_order_item: { updateMany: vi.fn() },
-  },
-}));
-
 import {
   parsePendingVariation,
-  resolvePendingVariationFromMessage,
-  extractNoteAfterVariation,
   setPendingVariation,
   clearPendingVariation,
-  tryHandlePendingVariationHybrid,
+  buildPendingVariationContextLines,
 } from '../pendingVariation.service';
 import { patchConversationMetadata, omitConversationMetadataKeys } from '../../repositories';
-import { buildAddItemMessage } from '../cart.service';
 
 describe('pendingVariation.service', () => {
   beforeEach(() => {
@@ -51,40 +37,12 @@ describe('pendingVariation.service', () => {
     );
   });
 
-  it('match compuesto: variación + nota residual', () => {
-    const meta = {
-      pendingVariation: {
-        productId: 'p1',
-        productName: 'Ceviche clásico con variaciones',
-        variations: ['Con poco picante', 'Muy picante'],
-        quantity: 1,
-        askedAt: '2026-08-10T12:00:00.000Z',
-      },
-    };
-    const resolved = resolvePendingVariationFromMessage(
-      meta,
-      'Muy picante Pero que no tenga tanta cebolla'
-    );
-    expect(resolved.status).toBe('matched');
-    if (resolved.status === 'matched') {
-      expect(resolved.variation).toBe('Muy picante');
-      expect(resolved.note).toMatch(/cebolla/i);
-    }
-  });
-
-  it('extractNoteAfterVariation limpia conectores', () => {
-    expect(extractNoteAfterVariation('Muy picante', 'Muy picante')).toBeNull();
-    expect(
-      extractNoteAfterVariation('Muy picante, sin tanta cebolla', 'Muy picante')
-    ).toMatch(/cebolla/i);
-  });
-
   it('set/clear pendingVariation tocan metadata', async () => {
     await setPendingVariation({
       conversationId: 'conv-1',
       productId: 'p1',
-      productName: 'Pizza',
-      variations: ['Especial', 'Roquefort'],
+      productName: 'Ceviche',
+      variations: ['Muy picante'],
       quantity: 2,
     });
     expect(patchConversationMetadata).toHaveBeenCalledWith(
@@ -103,45 +61,20 @@ describe('pendingVariation.service', () => {
     ]);
   });
 
-  it('tryHandlePendingVariationHybrid suma con variación y nota', async () => {
-    vi.mocked(buildAddItemMessage).mockResolvedValue(
-      '¡Listo! Sumé el ceviche.' as never
-    );
-
-    const result = await tryHandlePendingVariationHybrid({
-      conversationId: 'conv-1',
-      message: { text: { body: 'Muy picante sin cebolla' } },
-      conversationState: {
-        metadata: {
-          pendingVariation: {
-            productId: 'p1',
-            productName: 'Ceviche',
-            variations: ['Con poco picante', 'Muy picante'],
-            quantity: 1,
-            askedAt: '2026-08-10T12:00:00.000Z',
-          },
-        },
+  it('context lines instruyen al agente (ledger tipable, no router)', () => {
+    const lines = buildPendingVariationContextLines({
+      pendingVariation: {
+        productId: 'p1',
+        productName: 'Ceviche',
+        variations: ['Muy picante', 'Suave'],
+        quantity: 1,
+        askedAt: '2026-08-10T12:00:00.000Z',
       },
-      business: { id: 'biz-1' },
-      conversation: { id: 'conv-1' },
-      customer: { phone_number: '+54911' },
-      payload: {} as never,
-      phoneNumberId: 'x',
-      to: '+54911',
-      value: {},
-    } as never);
-
-    expect(result).not.toBeNull();
-    expect(buildAddItemMessage).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      'p1',
-      expect.anything(),
-      1,
-      'add',
-      'Muy picante'
-    );
-    expect(omitConversationMetadataKeys).toHaveBeenCalled();
-    expect(String(result!.content)).toMatch(/Listo|Anoté|cebolla/i);
+    });
+    const text = lines.join('\n');
+    expect(text).toMatch(/Variación pendiente/i);
+    expect(text).toMatch(/add_cart_item/i);
+    expect(text).toMatch(/clear_pending_variation/i);
+    expect(text).toMatch(/Muy picante/);
   });
 });

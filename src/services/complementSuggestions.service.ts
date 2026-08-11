@@ -240,7 +240,8 @@ export function buildComplementSuggestionsListMessage(params: {
 
   const suggestionButtons = items.map((row) => ({
     title: truncateTitle(row.name),
-    payload: `ADD_ITEM:${row.id}:1`,
+    // Sin qty: AddItemHandler abre pendingAddQuantity si party sugiere ≥2.
+    payload: `ADD_ITEM:${row.id}`,
     description: truncateDescription(row.categoryName, 72),
     // Una sección por categoría cuando hay varias (hasta 2 tags en la ola).
     sectionTitle: truncateTitle(row.categoryName || 'Sugerencias', 24),

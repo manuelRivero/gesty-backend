@@ -25,7 +25,11 @@ import type { RunnableConfig } from '@langchain/core/runnables';
 import { Prisma, OrderStatus } from '@prisma/client';
 import { MenuService } from '../services/menu.service';
 import { getBusinessOpenInfo } from '../services/businessHours.service';
-import { findRecentMessagesForDetectionContext, findDefaultCustomerAddress } from '../repositories';
+import {
+  findRecentMessagesForDetectionContext,
+  findDefaultCustomerAddress,
+  findOrCreateConversationState,
+} from '../repositories';
 import { prisma } from '../lib/prisma';
 import { buildGoogleMapsUrl } from '../utils/googleMapsUrl';
 import {
@@ -39,7 +43,12 @@ import { refreshDraftOrderTimeout } from '../services/draftOrderTimeout.service'
 import { resolveEffectivePrice } from '../helpers/menuItemPrice.helper';
 import { listPaymentAdjustmentsForAmount } from '../services/paymentAdjustment.service';
 import { computeOrderPricing } from '../services/pricing.service';
-import { partySizeMetadataFields, normalizeMetadata, PENDING_PRODUCT_SELECTION_KEYS } from '../services/productQuery/utils';
+import {
+  partySizeMetadataFields,
+  normalizeMetadata,
+  getRequestedPartySize,
+  PENDING_PRODUCT_SELECTION_KEYS,
+} from '../services/productQuery/utils';
 import { resolveDeliveryContext } from '../services/deliveryFee.service';
 import { patchConversationMetadata, omitConversationMetadataKeys } from '../repositories/conversationState.repository';
 import { clearLastOffer } from '../services/lastOffer.service';
@@ -53,6 +62,16 @@ import {
   setPendingVariation,
   clearPendingVariation,
 } from '../services/pendingVariation.service';
+import {
+  buildPendingAddQuantityMessage,
+  clearPendingAddQuantity,
+  setPendingAddQuantity,
+} from '../services/pendingAddQuantity.service';
+import {
+  isConfirmedAddQuantity,
+  needsAddQuantityConfirmation,
+  suggestAddQuantity,
+} from '../services/addQuantitySuggestion';
 import {
   getOrderCompletionLedger,
   recordOrderCompletionAbandonment,
@@ -1170,8 +1189,11 @@ const addCartItemSchema = z.object({
     .int()
     .positive()
     .max(99)
-    .default(1)
-    .describe('Cantidad a agregar. Por defecto 1.'),
+    .optional()
+    .describe(
+      'Cantidad a agregar. Omitila si el cliente no dijo un número: el sistema ' +
+        'sugerirá según personas/porciones y pedirá confirmación. Si dijo "dos"/"tres", pasá ese número.'
+    ),
   variation: z
     .string()
     .optional()
@@ -1207,7 +1229,6 @@ export const addCartItemTool = new DynamicStructuredTool<
     config?: RunnableConfig
   ) => {
     const { businessId, customerPhone, conversationId } = getReactContext(config);
-    const qty = Math.min(99, Math.max(1, Math.floor(quantity)));
 
     // Obtener o crear draft
     let draft = await prisma.draft_order.findFirst({
@@ -1252,6 +1273,24 @@ export const addCartItemTool = new DynamicStructuredTool<
       return toJson({ success: false, error: 'product_not_found_or_unavailable' });
     }
 
+    let partySize: number | null = null;
+    if (conversationId) {
+      const state = await findOrCreateConversationState(conversationId);
+      partySize = getRequestedPartySize(normalizeMetadata(state.metadata)) ?? null;
+    }
+    const { suggestedQuantity } = suggestAddQuantity({
+      partySize,
+      servesPeople: item.serves_people,
+    });
+    const qtyConfirmed = isConfirmedAddQuantity({
+      quantity: quantity ?? null,
+      suggestedQuantity,
+    });
+    // Placeholder para variation_required (aún no confirmamos cantidad).
+    const qtyForVariationPending = qtyConfirmed
+      ? Math.min(99, Math.max(1, Math.floor(quantity!)))
+      : suggestedQuantity;
+
     // D5 — el agente híbrido no adivina la variación: la tool lo obliga a
     // preguntar. Se resuelve ANTES de tocar draft_order_item, para que un
     // llamado sin variación (o con una inválida) no escriba nada.
@@ -1264,7 +1303,7 @@ export const addCartItemTool = new DynamicStructuredTool<
             productId,
             productName: item.name,
             variations: item.variations,
-            quantity: qty,
+            quantity: qtyForVariationPending,
           });
         }
         return toJson({
@@ -1283,7 +1322,7 @@ export const addCartItemTool = new DynamicStructuredTool<
             productId,
             productName: item.name,
             variations: item.variations,
-            quantity: qty,
+            quantity: qtyForVariationPending,
           });
         }
         return toJson({
@@ -1296,6 +1335,41 @@ export const addCartItemTool = new DynamicStructuredTool<
       }
       resolvedVariation = match.value;
     }
+
+    // D7 — cantidad: si party sugiere ≥2 y el cliente no dio número, no escribir.
+    if (
+      !qtyConfirmed &&
+      conversationId &&
+      needsAddQuantityConfirmation({ suggestedQuantity, partySize })
+    ) {
+      const pending = await setPendingAddQuantity({
+        conversationId,
+        productId,
+        productName: item.name,
+        suggestedQuantity,
+        servesPeople: item.serves_people,
+        partySize,
+        variation: resolvedVariation,
+        source: 'hybrid',
+      });
+      return toJson({
+        success: false,
+        error: 'quantity_required',
+        productName: item.name,
+        suggestedQuantity: pending.suggestedQuantity,
+        partySize,
+        servesPeople: item.serves_people,
+        pendingAddQuantity: true,
+        askMessage: buildPendingAddQuantityMessage(pending),
+        instruction:
+          'Mostrá askMessage (o equivalente) pidiendo cuántas unidades, con la sugerencia. ' +
+          'NO digas que ya sumaste. NO llames present_complement_suggestions ni present_cart hasta confirmar.',
+      });
+    }
+
+    const qty = qtyConfirmed
+      ? Math.min(99, Math.max(1, Math.floor(quantity!)))
+      : 1;
     // Producto sin variaciones: si el modelo mandó una de todos modos, se
     // ignora (no es un error; el modelo a veces manda campos de más).
 
@@ -1353,6 +1427,7 @@ export const addCartItemTool = new DynamicStructuredTool<
     let postAddOpportunity: PostAddComplementOpportunity | null = null;
     if (conversationId) {
       await clearPendingVariation(conversationId);
+      await clearPendingAddQuantity(conversationId);
       await clearLastOffer(conversationId);
       await omitConversationMetadataKeys(conversationId, [
         ...PENDING_PRODUCT_SELECTION_KEYS,
@@ -1965,6 +2040,56 @@ export const markComplementRefusedTool = new DynamicStructuredTool<
   },
 });
 
+const clearPendingAddQuantitySchema = z.object({});
+type ClearPendingAddQuantityInput = z.infer<typeof clearPendingAddQuantitySchema>;
+
+export const clearPendingAddQuantityTool = new DynamicStructuredTool<
+  typeof clearPendingAddQuantitySchema,
+  ClearPendingAddQuantityInput
+>({
+  name: 'clear_pending_add_quantity',
+  description:
+    'Cancela la confirmación de cantidad pendiente (el cliente dijo cancelar / no / mejor no a “¿cuántas unidades?”). ' +
+    'Llamá ANTES de responder. No suma nada al carrito.',
+  schema: clearPendingAddQuantitySchema,
+  func: async (
+    _input: ClearPendingAddQuantityInput,
+    _runManager,
+    config?: RunnableConfig
+  ) => {
+    const { conversationId } = getReactContext(config);
+    if (conversationId) {
+      await clearPendingAddQuantity(conversationId);
+    }
+    return toJson({ cleared: true });
+  },
+});
+
+const clearPendingVariationSchema = z.object({});
+type ClearPendingVariationInput = z.infer<typeof clearPendingVariationSchema>;
+
+export const clearPendingVariationTool = new DynamicStructuredTool<
+  typeof clearPendingVariationSchema,
+  ClearPendingVariationInput
+>({
+  name: 'clear_pending_variation',
+  description:
+    'Cancela la elección de variedad pendiente (el cliente dijo cancelar / no / mejor no / otro plato). ' +
+    'Llamá ANTES de responder. No suma nada al carrito.',
+  schema: clearPendingVariationSchema,
+  func: async (
+    _input: ClearPendingVariationInput,
+    _runManager,
+    config?: RunnableConfig
+  ) => {
+    const { conversationId } = getReactContext(config);
+    if (conversationId) {
+      await clearPendingVariation(conversationId);
+    }
+    return toJson({ cleared: true });
+  },
+});
+
 // ---------------------------------------------------------------------------
 // present_category (señal-UI — misma lista que el botón CATEGORY)
 // ---------------------------------------------------------------------------
@@ -2265,6 +2390,8 @@ export const allReactTools = [
   cancelOrderTool,
   presentComplementSuggestionsTool,
   markComplementRefusedTool,
+  clearPendingAddQuantityTool,
+  clearPendingVariationTool,
   presentCategoryTool,
   presentWelcomeOptionsTool,
   presentProductCtaTool,

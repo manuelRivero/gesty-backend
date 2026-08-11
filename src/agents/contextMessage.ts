@@ -52,6 +52,7 @@ import {
 } from '../services/intent/catalogGoals.service';
 import { collectCategoryTagsInDraftCart } from '../helpers/complementaryMenu.helper';
 import { buildPendingVariationContextLines } from '../services/pendingVariation.service';
+import { buildPendingAddQuantityContextLines } from '../services/pendingAddQuantity.service';
 import {
   MANAGEMENT_TOOL_HINT,
   type TipableManagementAction,
@@ -424,6 +425,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
       : [];
 
   const pendingVariationLines = buildPendingVariationContextLines(meta);
+  const pendingAddQuantityLines = buildPendingAddQuantityContextLines(meta);
 
   const lines = [
     `- Personas para el pedido: ${partySizeLine}`,
@@ -435,6 +437,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     ...pendingSelectionLines,
     ...pendingTipablesLines,
     ...pendingVariationLines,
+    ...pendingAddQuantityLines,
     ...pendingCancelLines,
     ...intentLines,
     ...optionalComplementLines,

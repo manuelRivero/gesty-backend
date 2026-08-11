@@ -615,7 +615,7 @@ export const handleProductSelectionFromWebhook = async (
         : 'no indicado en la ficha cuántas personas alcanza una porción';
     quantityContext = `\n\nCONTEXTO DE PORCIONES:\n- El cliente buscaba algo para aproximadamente ${requestedQty} persona(s).\n- En los datos del plato: sirve a = ${servesLabel}.\n${
       servesMismatch
-        ? '- Es importante: aclarar en tu respuesta que una sola unidad puede no alcanzar para todos y que puede sumar varias unidades con los botones (hay uno para agregar varias de una vez). Sé concreto y no inventes números que no estén en la ficha.'
+        ? '- Es importante: aclarar en tu respuesta que una sola unidad puede no alcanzar para todos. NO digas que va a sumar N unidades ni inventes botones "Agregar N": al tocar Agregar el sistema preguntará cuántas quiere.'
         : '- Si la ficha alcanza para lo pedido, podés confirmarlo brevemente.'
     }`;
   }
@@ -693,45 +693,23 @@ Respondé en español con información útil sobre el plato (precio, porciones s
     ? ({ type: 'image', image: { link: item.image } } as const)
     : ({ type: 'text', text: 'Tenemos un match para tu consulta' } as const);
 
-  /** WhatsApp permite máximo 3 botones de respuesta (error 131009 si se excede). */
-  const MAX_REPLY_BUTTONS = 3;
-
-  const extraAddQuantities = new Set<number>();
-  if (listSuggestedQuantity != null && listSuggestedQuantity > 1) {
-    extraAddQuantities.add(listSuggestedQuantity);
-  }
-  if (servesMismatch && requestedQty != null && requestedQty >= 2) {
-    extraAddQuantities.add(requestedQty);
-  }
-
+  // Un solo CTA de intención de sumar (sin qty). Si party sugiere ≥2,
+  // AddItemHandler abre pendingAddQuantity en lugar de botones Agregar N.
+  void listSuggestedQuantity;
+  void servesMismatch;
   const buttons: Array<{
     type: 'reply';
     reply: { id: string; title: string };
   }> = [
     {
       type: 'reply',
-      reply: { id: `ADD_ITEM:${item.id}:1`, title: 'Agregar 1' },
+      reply: { id: `ADD_ITEM:${item.id}`, title: 'Agregar' },
     },
-  ];
-
-  for (const q of Array.from(extraAddQuantities).sort((a, b) => a - b)) {
-    if (q === 1) continue;
-    if (buttons.length >= MAX_REPLY_BUTTONS) break;
-    buttons.push({
-      type: 'reply',
-      reply: {
-        id: `ADD_ITEM:${item.id}:${q}`,
-        title: `Agregar ${q}`,
-      },
-    });
-  }
-
-  if (buttons.length < MAX_REPLY_BUTTONS) {
-    buttons.push({
+    {
       type: 'reply',
       reply: { id: 'VIEW_MENU', title: 'Ver menú' },
-    });
-  }
+    },
+  ];
 
   return {
     type: 'interactive',

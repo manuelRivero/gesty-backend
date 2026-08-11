@@ -104,7 +104,7 @@ describe('buildComplementSuggestionsListMessage', () => {
     });
 
     const rows = list.action.sections.flatMap((s) => s.rows);
-    expect(rows.some((r) => r.id === 'ADD_ITEM:p1:1')).toBe(true);
+    expect(rows.some((r) => r.id === 'ADD_ITEM:p1')).toBe(true);
     expect(rows.some((r) => r.id === 'VIEW_CART')).toBe(true);
     expect(rows.some((r) => r.id === 'CHECKOUT')).toBe(true);
     expect(rows.some((r) => r.id === 'VIEW_CART_FOR_EDITION')).toBe(true);

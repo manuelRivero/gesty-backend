@@ -546,6 +546,8 @@ export const handleAddItemFromWebhook = async (
   ) {
     await clearLastOffer(conversation.id);
     await clearLastListSuggestedQuantityFromConversation(conversation.id);
+    const { clearPendingAddQuantity } = await import('./pendingAddQuantity.service');
+    await clearPendingAddQuantity(conversation.id);
     const { markComplementEngagedIfOffered } = await import('./intent/opportunities.service');
     await markComplementEngagedIfOffered(conversation.id, menuItemId);
   }
