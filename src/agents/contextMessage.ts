@@ -243,13 +243,6 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     : 'no informado — preguntar solo si el cliente consulta platos o pide comida en este turno';
 
   const detection = ctx.detection;
-  const nlpHint = detection
-    ? {
-        intent: String(detection.intent),
-        detectedProductName: detection.detectedProductName ?? null,
-        quantity: detection.quantity ?? null,
-      }
-    : null;
 
   const orderLedger = getOrderCompletionLedger(meta);
   const reservationLedger = getReservationCompletionLedger(meta);
@@ -427,14 +420,6 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
       ? complementCandidate.hint.split('\n')
       : [];
 
-  const nlpLines = nlpHint
-    ? [
-        `- Hint NLP (secundario, no vinculante): intent=${nlpHint.intent}, ` +
-          `producto=${nlpHint.detectedProductName ?? 'ninguno'}, ` +
-          `cantidad=${nlpHint.quantity ?? 'ninguna'}`,
-      ]
-    : [];
-
   const pendingSelectionLines = await buildPendingProductSelectionLines(meta, businessId);
   const pendingTipablesLines = buildPendingTipablesManagementLines(meta);
   const pendingItemNoteLines = buildPendingItemNoteContextLines(meta);
@@ -473,7 +458,6 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     ...pendingCancelLines,
     ...intentLines,
     ...optionalComplementLines,
-    ...nlpLines,
   ].filter((line): line is string => line !== null);
 
   if (lines.length === 0) {

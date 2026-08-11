@@ -172,13 +172,9 @@ export const detectIntentWithConfidence = async (
     quantity = coerced.quantity;
     const outConfidence = coerced.confidence;
 
-    const productQueryPriority = applyProductQueryPriorityRules({
-      message,
-      intent: finalIntent,
-      detectedProductName,
-    });
-    finalIntent = productQueryPriority.intent;
-    detectedProductName = productQueryPriority.detectedProductName;
+    // No coerce post-LLM a PRODUCT_QUERY: el clasificador decide ORDER_FOOD vs
+    // PRODUCT_QUERY vs VIEW_MENU. Un force determinístico sesgaba al híbrido
+    // (p. ej. «Un tacu tacu» → query aunque el LLM dijera ORDER_FOOD).
     finalIntent = applyRecommendationPriorityRule({
       message,
       intent: finalIntent,
@@ -386,8 +382,8 @@ const extractQuantityFromText = (text: string): number | null => {
 };
 
 /**
- * Mención de comida/ingrediente genérico → prioridad PRODUCT_QUERY sobre VIEW_MENU.
- * Lista ampliable; coincide con platos típicos y variantes en español.
+ * Mención de comida/ingrediente genérico (heurística local para otros overrides,
+ * p. ej. no coerce VIEW_MENU party / recommendation cuando ya hay food topic).
  */
 const LOOSE_FOOD_PATTERN =
   /\b(pollo|carne|pescado|cerdo|vac(a|o|ío)|hamburguesa|pizza|pasta|ensalada|postres?|tarta|empanada[s]?|asado|milanesa|ñoquis|ravioles|sándwich|sandwich|ceviche|sushi|tacos?|burrito|verdura[s]?|vegetariano|vegano|bebida[s]?|gaseosa|cerveza|vino|café|helado|guiso|sopa|milanesas?)\b/i;
@@ -396,14 +392,8 @@ function hasLooseFoodTopic(text: string): boolean {
   return LOOSE_FOOD_PATTERN.test(text);
 }
 
-function extractLooseFoodKeyword(text: string): string | null {
-  const m = text.match(LOOSE_FOOD_PATTERN);
-  return m ? m[0].trim().toLowerCase() : null;
-}
-
 /**
  * Pedido explícito de catálogo sin ingrediente concreto (VIEW_MENU legítimo).
- * Si el texto nombra comida, debe devolver false para no bloquear PRODUCT_QUERY.
  */
 function isExplicitMenuOnlyRequest(text: string): boolean {
   const t = text.toLowerCase().replace(/\s+/g, ' ').trim();
@@ -418,50 +408,6 @@ function isExplicitMenuOnlyRequest(text: string): boolean {
   }
   if (/\bcat[aá]logo\b/.test(t) && !hasLooseFoodTopic(t)) return true;
   return false;
-}
-
-const INTENTS_BLOCK_FORCE_PRODUCT_QUERY: ReadonlySet<ConversationIntent> = new Set([
-  ConversationIntent.REMOVE_ITEM,
-  ConversationIntent.MODIFY_QUANTITY,
-  ConversationIntent.PRODUCT_ATTRIBUTE_QUESTION,
-  ConversationIntent.VIEW_CART,
-  ConversationIntent.VIEW_CART_FOR_EDITION,
-  ConversationIntent.RESERVATION,
-  ConversationIntent.EDIT_ADDRESS,
-  ConversationIntent.CHECKOUT,
-  ConversationIntent.CANCEL_ORDER
-]);
-
-/**
- * PRODUCT_QUERY > VIEW_MENU: si hay producto detectado o mención de comida, forzar búsqueda/recomendación.
- */
-function applyProductQueryPriorityRules(params: {
-  message: string;
-  intent: ConversationIntent;
-  detectedProductName: string | null;
-}): { intent: ConversationIntent; detectedProductName: string | null } {
-  const { message, intent } = params;
-  let name = params.detectedProductName?.trim() || null;
-
-  if (!name && hasLooseFoodTopic(message) && !isExplicitMenuOnlyRequest(message)) {
-    name = extractLooseFoodKeyword(message);
-  }
-
-  if (!name) {
-    return {
-      intent,
-      detectedProductName: params.detectedProductName?.trim() || null
-    };
-  }
-
-  if (INTENTS_BLOCK_FORCE_PRODUCT_QUERY.has(intent)) {
-    return { intent, detectedProductName: name };
-  }
-
-  return {
-    intent: ConversationIntent.PRODUCT_QUERY,
-    detectedProductName: name
-  };
 }
 
 const RECOMMENDATION_HINT_PATTERN =
@@ -506,7 +452,7 @@ const looksLikeReservationIntent = (text: string): boolean =>
 
 /**
  * Si el modelo confunde saludo/pedido genérico con headcount, forzar VIEW_MENU + quantity.
- * No aplica si hay nombre de producto o mención de comida (flujo PRODUCT_QUERY / recomendaciones).
+ * No aplica si hay nombre de producto o mención de comida.
  */
 const applyViewMenuPartyIntentOverride = (params: {
   message: string;

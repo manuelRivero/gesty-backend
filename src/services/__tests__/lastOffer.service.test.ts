@@ -37,15 +37,10 @@ describe('lastOffer.service / CONFIRMAR_OFERTA (B.2)', () => {
           },
         },
       },
-      {
-        intent: 'PRODUCT_QUERY',
-        detectedProductName: 'Ceviche clásico',
-        quantity: 1,
-      },
       now
     );
     expect(lines.some((l) => l.includes('Oferta activa'))).toBe(true);
-    expect(lines.some((l) => l.includes('Hint NLP'))).toBe(true);
+    expect(lines.some((l) => l.includes('Hint NLP'))).toBe(false);
     expect(lines.some((l) => l.includes('add_cart_item'))).toBe(true);
   });
 
@@ -66,7 +61,6 @@ describe('lastOffer.service / CONFIRMAR_OFERTA (B.2)', () => {
           },
         },
       },
-      null,
       now
     );
     expect(lines.some((l) => l.includes('Oferta activa'))).toBe(false);

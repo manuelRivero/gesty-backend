@@ -35,12 +35,6 @@ export interface LastOffer {
   source: LastOfferSource;
 }
 
-export type LastOfferNlpHint = {
-  intent: string;
-  detectedProductName: string | null;
-  quantity: number | null;
-};
-
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
 
@@ -195,21 +189,12 @@ export const buildConfirmOfferHint = (offer: LastOffer): string =>
  */
 export const buildLastOfferContextLines = (
   metadata: unknown,
-  nlpHint?: LastOfferNlpHint | null,
   now: number = Date.now()
 ): string[] => {
   const lines: string[] = [];
   const candidate = deriveConfirmOfferCandidate(metadata, now);
   if (candidate) {
     lines.push(...candidate.hint.split('\n'));
-  }
-
-  if (nlpHint) {
-    lines.push(
-      `- Hint NLP (secundario, no vinculante): intent=${nlpHint.intent}, ` +
-        `producto=${nlpHint.detectedProductName ?? 'ninguno'}, ` +
-        `cantidad=${nlpHint.quantity ?? 'ninguna'}`
-    );
   }
 
   return lines;
