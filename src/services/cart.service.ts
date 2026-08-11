@@ -1033,6 +1033,11 @@ export const buildCartSummaryMessage = async (params: {
       description: 'Cantidades, ítems y revisión',
     },
     { id: 'CHECKOUT', title: 'Finalizar pedido', description: 'Ir al checkout' },
+    {
+      id: 'ITEM_NOTE',
+      title: 'Nota del pedido',
+      description: 'Instrucción especial de un plato',
+    },
     { id: 'CANCEL_ORDER', title: 'Cancelar pedido', description: 'Vaciar y empezar de nuevo' },
   ];
   if (includeAddress) {

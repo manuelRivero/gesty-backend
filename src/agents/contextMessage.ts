@@ -54,6 +54,10 @@ import { collectCategoryTagsInDraftCart } from '../helpers/complementaryMenu.hel
 import { buildPendingVariationContextLines } from '../services/pendingVariation.service';
 import { buildPendingAddQuantityContextLines } from '../services/pendingAddQuantity.service';
 import {
+  buildPendingItemNoteContextLines,
+  getPendingItemNote,
+} from '../services/pendingItemNote.service';
+import {
   MANAGEMENT_TOOL_HINT,
   type TipableManagementAction,
 } from '../services/pendingTipables.service';
@@ -64,6 +68,10 @@ export async function buildPendingProductSelectionLines(
     pendingProductSelection?: boolean;
     pendingQuestion?: string;
     candidateProductIds?: string[];
+    pendingTipables?: {
+      management?: TipableManagementAction[];
+    } | null;
+    pendingItemNote?: unknown;
   },
   businessId: string
 ): Promise<string[]> {
@@ -90,7 +98,18 @@ export async function buildPendingProductSelectionLines(
     }
   }
 
+  const noteTakesPriority =
+    Boolean(getPendingItemNote(meta)) ||
+    (meta.pendingTipables?.management ?? []).includes('ITEM_NOTE');
+
   const lines = [
+    ...(noteTakesPriority
+      ? [
+          '- PRIORIDAD NOTA: tipable ITEM_NOTE o pendingItemNote activo — ' +
+            'NO fuerces add_cart_item del shortlist; resolvé la nota ' +
+            '(start_item_note / update_item_note / clear_pending_item_note).',
+        ]
+      : []),
     '- Selección de producto pendiente: el turno anterior ofreció elegir entre varios platos. ' +
       'El mensaje actual del cliente probablemente responde cuál quiere (nombre parcial, ' +
       '"el primero", "el de la plancha", etc.).',
@@ -127,8 +146,9 @@ export function buildPendingTipablesManagementLines(meta: {
       mapped +
       '.',
     '- Si el mensaje actual apunta a uno de esos tipables, ejecutá esa tool/señal. ' +
-      'Para ITEM_NOTE: get_cart, resolvé el ítem (nombre parcial u ordinal del carrito) y ' +
-      'update_item_note en el mismo turno si ya trae la nota (ej. "la papa con poca sal"); ' +
+      'Para ITEM_NOTE: si solo tipó «nota» sin detalle → start_item_note() y mostrá askMessage ' +
+      '(PROHIBIDO add_cart_item / present_complement_suggestions / present_product_cta). ' +
+      'Si ya trae plato+nota (ej. "la papa con poca sal"): get_cart → update_item_note en el mismo turno; ' +
       'solo desambiguá si hay ≥2 matches o falta el texto de la nota.',
   ];
 }
@@ -390,14 +410,18 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
 
   // Dual inject: Opportunity de menú opcional junto al Goal/activo, si tiene permiso
   // y el activo no es Alert ni Goal blocking (ADR-0009 suavizado: mencionable con permiso).
+  const pendingItemNoteActive = Boolean(getPendingItemNote(meta));
+
   const complementCandidate = extras.find((c) => c.type === 'SUGERIR_COMPLEMENTO');
   const activeBlocksOptional =
     ranked.active?.kind === 'alert' ||
     (ranked.active?.kind === 'goal' && ranked.active.pressure === 'blocking');
+  // pendingItemNote gana sobre la Opportunity de complemento (misma ola).
   const optionalComplementLines =
     complementCandidate &&
     ranked.active?.type !== 'SUGERIR_COMPLEMENTO' &&
-    !activeBlocksOptional
+    !activeBlocksOptional &&
+    !pendingItemNoteActive
       ? complementCandidate.hint.split('\n')
       : [];
 
@@ -411,6 +435,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
 
   const pendingSelectionLines = await buildPendingProductSelectionLines(meta, businessId);
   const pendingTipablesLines = buildPendingTipablesManagementLines(meta);
+  const pendingItemNoteLines = buildPendingItemNoteContextLines(meta);
 
   const pendingCancel = meta.pending_cancel_disambiguation;
   const pendingCancelLines =
@@ -434,8 +459,9 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
       : null,
     hasActiveDraft && fulfillmentType ? `- Tipo de entrega: ${fulfillmentType}` : null,
     checkoutActive ? '- Sesión de checkout: activa' : null,
-    ...pendingSelectionLines,
+    ...pendingItemNoteLines,
     ...pendingTipablesLines,
+    ...pendingSelectionLines,
     ...pendingVariationLines,
     ...pendingAddQuantityLines,
     ...pendingCancelLines,

@@ -78,6 +78,18 @@ export type ConversationMetadata = {
     askedAt: string;
   } | null;
   /**
+   * Captura de nota por ítem tras tipable/payload «Nota» (o start_item_note).
+   * El híbrido confirma con update_item_note; cancela con clear_pending_item_note.
+   */
+  pendingItemNote?: {
+    askedAt: string;
+    productId?: string | null;
+    productName?: string | null;
+    noteText?: string | null;
+    candidateProductIds?: string[];
+    source: 'tipable' | 'payload' | 'hybrid';
+  } | null;
+  /**
    * Confirmación pendiente sobre un ítem del carrito (`cart.service.ts`).
    * `CONFIRM_REMOVE` es el Constraint de borde de `remove_cart_item`
    * (ADR-0002): fuente única, compartida entre el flujo determinístico de

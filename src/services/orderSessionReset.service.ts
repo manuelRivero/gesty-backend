@@ -22,6 +22,7 @@ const ORDER_SESSION_OMIT_KEYS = [
   'pendingTipables',
   'pendingVariation',
   'pendingAddQuantity',
+  'pendingItemNote',
   'pendingAction',
   'pendingItemId',
   'pendingItemName',

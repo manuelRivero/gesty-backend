@@ -117,6 +117,7 @@ const CLOSED_INTENTS = new Set<ConversationIntent>([
   ConversationIntent.MODIFY_QUANTITY,
   ConversationIntent.VIEW_CART,
   ConversationIntent.VIEW_CART_FOR_EDITION,
+  ConversationIntent.ITEM_NOTE,
   ConversationIntent.SELECT_CART_ITEM,
   ConversationIntent.VIEW_ORDER,
   ConversationIntent.EDIT_ADDRESS,

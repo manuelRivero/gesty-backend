@@ -108,6 +108,11 @@ export function buildAddItemShortcutsFollowUpList(
       title: 'Finalizar pedido',
       description: 'Ir al checkout',
     },
+    {
+      id: 'ITEM_NOTE',
+      title: 'Nota del pedido',
+      description: 'Instrucción especial de un plato',
+    },
   ];
 
   if (options?.includeEditAddressRow) {
@@ -265,6 +270,12 @@ export function buildComplementSuggestionsListMessage(params: {
         title: 'Finalizar pedido',
         payload: 'CHECKOUT',
         description: 'Ir al checkout',
+        sectionTitle: 'Pedido',
+      },
+      {
+        title: 'Nota del pedido',
+        payload: 'ITEM_NOTE',
+        description: 'Instrucción especial de un plato',
         sectionTitle: 'Pedido',
       }
     );

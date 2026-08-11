@@ -62,5 +62,7 @@ export const MANAGEMENT_TOOL_HINT: Record<TipableManagementAction, string> = {
   CHECKOUT:
     'start_checkout_session(reason) si hay ítems (o indicar finalizar)',
   ITEM_NOTE:
-    'get_cart → update_item_note(productId, note) en el mismo turno si el mensaje trae plato+nota',
+    'si solo tipó «nota» sin texto: start_item_note() y mostrá askMessage; ' +
+    'si ya trae plato+nota: get_cart → update_item_note en el mismo turno; ' +
+    'con pendingItemNote activo: PROHIBIDO add/complementos',
 };

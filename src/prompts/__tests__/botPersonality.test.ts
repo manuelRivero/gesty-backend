@@ -43,6 +43,14 @@ describe('botPersonality', () => {
     expect(hybrid).toMatch(/NO fuerces add/i);
   });
 
+  it('hybrid nota: start_item_note / clear_pending_item_note / prioridad', () => {
+    const hybrid = buildHybridAgentSystemPrompt();
+    expect(hybrid).toMatch(/start_item_note/i);
+    expect(hybrid).toMatch(/clear_pending_item_note/i);
+    expect(hybrid).toMatch(/pendingItemNote/i);
+    expect(hybrid).toMatch(/PROHIBIDO add_cart_item/i);
+  });
+
   it('hybrid variaciones: autonomía + clear_pending_variation', () => {
     const hybrid = buildHybridAgentSystemPrompt();
     expect(hybrid).toMatch(/VARIACIONES \(autonomía del agente/i);

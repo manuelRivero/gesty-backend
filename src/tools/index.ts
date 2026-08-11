@@ -68,6 +68,11 @@ import {
   setPendingAddQuantity,
 } from '../services/pendingAddQuantity.service';
 import {
+  buildPendingItemNoteMessage,
+  clearPendingItemNote,
+  setPendingItemNote,
+} from '../services/pendingItemNote.service';
+import {
   isConfirmedAddQuantity,
   needsAddQuantityConfirmation,
   suggestAddQuantity,
@@ -1701,10 +1706,117 @@ export const updateItemNoteTool = new DynamicStructuredTool<
       data: { notes: normalizedNote },
     });
 
+    const { conversationId } = getReactContext(config);
+    if (conversationId) {
+      await clearPendingItemNote(conversationId);
+    }
+
     return toJson({
       success: true,
       itemName: line.menu_item?.name ?? 'Producto',
       note: normalizedNote,
+    });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// start_item_note
+// ---------------------------------------------------------------------------
+
+const startItemNoteSchema = z.object({
+  productId: z
+    .string()
+    .uuid()
+    .optional()
+    .describe('UUID del ítem si ya se sabe sobre cuál anotar; omitir si hay que pedir el plato.'),
+  noteText: z
+    .string()
+    .max(300)
+    .optional()
+    .describe(
+      'Nota ya dicha mientras se desambigua alcance (varias líneas del mismo plato).'
+    ),
+  candidateProductIds: z
+    .array(z.string().uuid())
+    .optional()
+    .describe('productIds candidatos cuando hay ≥2 matches del mismo plato.'),
+});
+type StartItemNoteInput = z.infer<typeof startItemNoteSchema>;
+
+export const startItemNoteTool = new DynamicStructuredTool<
+  typeof startItemNoteSchema,
+  StartItemNoteInput
+>({
+  name: 'start_item_note',
+  description:
+    'Inicia el flujo de nota del pedido (tipable «Nota» / «Nota del pedido» sin texto de instrucción). ' +
+    'Setea pendingItemNote y devuelve askMessage para mostrar al cliente. ' +
+    'También sirve para dejar noteText/candidateProductIds mientras se desambigua si la nota ' +
+    'aplica a todas las líneas o solo a una. No escribe el carrito.',
+  schema: startItemNoteSchema,
+  func: async (input: StartItemNoteInput, _runManager, config?: RunnableConfig) => {
+    const { businessId, customerPhone, conversationId } = getReactContext(config);
+
+    const draft = await prisma.draft_order.findFirst({
+      where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
+      include: {
+        draft_order_item: {
+          include: { menu_item: { select: { id: true, name: true } } },
+        },
+      },
+    });
+
+    if (!draft || draft.draft_order_item.length === 0) {
+      return toJson({
+        success: false,
+        error: 'empty_cart',
+        hint: 'No hay ítems en el carrito para anotar. Pedí que sume algo primero.',
+      });
+    }
+
+    const items = draft.draft_order_item;
+    let productId: string | null | undefined = input.productId;
+    let productName: string | null | undefined;
+
+    if (productId) {
+      const match = items.find((it) => it.product_id === productId);
+      if (!match) {
+        return toJson({
+          success: false,
+          error: 'item_not_in_cart',
+          hint: 'Ese productId no está en el carrito. Usá get_cart.',
+        });
+      }
+      productName = match.menu_item?.name ?? null;
+    } else if (items.length === 1) {
+      productId = items[0].product_id;
+      productName = items[0].menu_item?.name ?? null;
+    } else {
+      productId = null;
+      productName = null;
+    }
+
+    const pending = await setPendingItemNote({
+      conversationId,
+      productId,
+      productName,
+      noteText: input.noteText,
+      candidateProductIds: input.candidateProductIds,
+      source: 'hybrid',
+    });
+
+    const askMessage = buildPendingItemNoteMessage(
+      items.length,
+      pending.productName
+    );
+
+    return toJson({
+      success: true,
+      pending: true,
+      askMessage,
+      productId: pending.productId ?? null,
+      productName: pending.productName ?? null,
+      cartItemCount: items.length,
     });
   },
 });
@@ -2090,6 +2202,31 @@ export const clearPendingVariationTool = new DynamicStructuredTool<
   },
 });
 
+const clearPendingItemNoteSchema = z.object({});
+type ClearPendingItemNoteInput = z.infer<typeof clearPendingItemNoteSchema>;
+
+export const clearPendingItemNoteTool = new DynamicStructuredTool<
+  typeof clearPendingItemNoteSchema,
+  ClearPendingItemNoteInput
+>({
+  name: 'clear_pending_item_note',
+  description:
+    'Cancela el flujo de nota del pedido (el cliente dijo cancelar / mejor no / nada). ' +
+    'Llamá ANTES de responder. No modifica notas del carrito.',
+  schema: clearPendingItemNoteSchema,
+  func: async (
+    _input: ClearPendingItemNoteInput,
+    _runManager,
+    config?: RunnableConfig
+  ) => {
+    const { conversationId } = getReactContext(config);
+    if (conversationId) {
+      await clearPendingItemNote(conversationId);
+    }
+    return toJson({ cleared: true });
+  },
+});
+
 // ---------------------------------------------------------------------------
 // present_category (señal-UI — misma lista que el botón CATEGORY)
 // ---------------------------------------------------------------------------
@@ -2385,6 +2522,7 @@ export const allReactTools = [
   addCartItemTool,
   removeCartItemTool,
   updateItemNoteTool,
+  startItemNoteTool,
   savePartySizeTool,
   presentCartTool,
   cancelOrderTool,
@@ -2392,6 +2530,7 @@ export const allReactTools = [
   markComplementRefusedTool,
   clearPendingAddQuantityTool,
   clearPendingVariationTool,
+  clearPendingItemNoteTool,
   presentCategoryTool,
   presentWelcomeOptionsTool,
   presentProductCtaTool,
