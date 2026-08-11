@@ -66,6 +66,12 @@ describe('clearOrderSessionAfterCancel', () => {
         'lastOffer',
         'pendingProductSelection',
         'pendingItemNote',
+        'pendingAddQuantity',
+        'pendingVariation',
+        'intentCandidates',
+        'pending_address_text',
+        'pendingOrderSelection',
+        'pendingOrderCandidateIds',
       ])
     );
 
@@ -93,5 +99,29 @@ describe('clearOrderSessionAfterCancel', () => {
     await clearOrderSessionAfterCancel('conv-2');
 
     expect(omitConversationMetadataKeys).toHaveBeenCalledWith('conv-2', ['intentLedger']);
+  });
+
+  it('limpia alerts de pedido del Ledger y preserva RESERVA_PROXIMA', async () => {
+    vi.mocked(prisma.conversation_state.findUnique).mockResolvedValue({
+      metadata: {
+        intentLedger: {
+          FUERA_DE_COBERTURA: { emitted: true },
+          PAGO_RECHAZADO: { emitted: true },
+          ITEM_SIN_STOCK: { emitted: true },
+          NEGOCIO_POR_CERRAR: { emitted: true },
+          RESERVA_PROXIMA: { emitted: true },
+          COMPLETAR_RESERVA: { surfaceCount: 2 },
+        },
+      },
+    } as any);
+
+    await clearOrderSessionAfterCancel('conv-3');
+
+    expect(patchConversationMetadata).toHaveBeenCalledWith('conv-3', {
+      intentLedger: {
+        RESERVA_PROXIMA: { emitted: true },
+        COMPLETAR_RESERVA: { surfaceCount: 2 },
+      },
+    });
   });
 });

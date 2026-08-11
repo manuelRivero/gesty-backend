@@ -86,7 +86,10 @@ export type ConversationMetadata = {
     productId?: string | null;
     productName?: string | null;
     noteText?: string | null;
+    /** @deprecated Preferí candidateLineIds */
     candidateProductIds?: string[];
+    /** draft_order_item.id cuando hay ≥2 líneas del mismo plato */
+    candidateLineIds?: string[];
     source: 'tipable' | 'payload' | 'hybrid';
   } | null;
   /**

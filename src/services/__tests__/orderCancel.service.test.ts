@@ -105,7 +105,7 @@ describe('buildCancelOrderMessage', () => {
         orderRef: expect.any(String),
       })
     );
-    expect(clearOrderSessionAfterCancel).not.toHaveBeenCalled();
+    expect(clearOrderSessionAfterCancel).toHaveBeenCalledWith('conv-1');
   });
 
   it('ambos sin target → desambigua con botones y no muta', async () => {
@@ -145,7 +145,7 @@ describe('buildCancelOrderMessage', () => {
     expect(emitAdminOrderStatusChanged).not.toHaveBeenCalled();
   });
 
-  it('ambos con target order → solo cancela orden + admin', async () => {
+  it('ambos con target order → cancela orden + admin; no wipe (draft vivo)', async () => {
     vi.mocked(prisma.orders.findFirst).mockResolvedValue({
       id: ORDER_ID,
       business_id: 'biz-1',
@@ -157,6 +157,7 @@ describe('buildCancelOrderMessage', () => {
 
     expect(prisma.orders.update).toHaveBeenCalled();
     expect(emitAdminOrderStatusChanged).toHaveBeenCalled();
+    // El carrito sigue activo: no reiniciar party/pendings del draft.
     expect(clearOrderSessionAfterCancel).not.toHaveBeenCalled();
     expect(omitConversationMetadataKeys).toHaveBeenCalledWith(
       'conv-1',

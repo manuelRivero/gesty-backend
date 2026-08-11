@@ -1,6 +1,7 @@
 /**
- * Limpia el estado de sesión de *pedido* al cancelar el carrito/orden.
- * No toca borrador de reserva ni Goals de reserva (COMPLETAR_RESERVA).
+ * Limpia el estado de sesión de *pedido* al cancelar el carrito/orden
+ * (o al expirar el draft). No toca borrador de reserva ni Goals de reserva
+ * (COMPLETAR_RESERVA / RESERVA_PROXIMA), ni onboarding, ni ambassador_ref.
  */
 
 import { prisma } from '../lib/prisma';
@@ -13,38 +14,57 @@ import { COMPLEMENT_METADATA_KEY } from '../domain/complementSuggestions.schema'
 import type { ConversationMetadata } from './productQuery/types';
 import { normalizeMetadata } from './productQuery/utils';
 
-/** Claves de metadata de pedido/checkout/CTA/party-size (no reserva). */
+/**
+ * Claves de metadata de pedido/checkout/CTA/party-size/pendings tipables.
+ * Todo lo que pueda contaminar el *siguiente* pedido.
+ */
 const ORDER_SESSION_OMIT_KEYS = [
+  // Shortlist / selección de producto
   'peopleCountResume',
   'pendingProductSelection',
   'pendingQuestion',
   'candidateProductIds',
+  'intentCandidates',
+  // Legacy shortlist de búsqueda de pedido
+  'pendingOrderSelection',
+  'pendingOrderMessage',
+  'pendingOrderCandidateIds',
+  // Tipables / ledgers conversacionales
   'pendingTipables',
   'pendingVariation',
   'pendingAddQuantity',
   'pendingItemNote',
+  // Confirmación quitar ítem
   'pendingAction',
   'pendingItemId',
   'pendingItemName',
   'pendingActionAt',
+  // Party size / porciones
   'requestedPartySize',
   'peopleCount',
   'pendingProductQueryQuantity',
   'lastListSuggestedQuantity',
   'coveredPortions',
   'missingPortions',
+  // CTA / oferta
   'nextActionHintsShown',
   'lastCtaShownAt',
   'lastCtaProductId',
   'lastCtaPayload',
   'lastOffer',
   'lastReferencedProductName',
+  // Checkout / fulfillment / cancel
   'pending_fulfillment_action',
   'pending_cancel_disambiguation',
   'pending_closed_add_item',
   'closed_order_confirmed_at',
+  // Dirección staged (delegada) — la guardada en customer no se toca
   'pending_address_action',
   'address_soft_asked',
+  'pending_address_text',
+  'pending_address_lat',
+  'pending_address_lng',
+  'pending_address_zone_id',
   COMPLEMENT_METADATA_KEY,
   'name_refusal_count',
   'address_refusal_count',
@@ -59,6 +79,10 @@ const ORDER_LEDGER_KEYS = [
   'OFRECER_PROMOCION',
   'RECOLECTAR_PARTY_SIZE',
   'PEDIDO_POR_EXPIRAR',
+  'NEGOCIO_POR_CERRAR',
+  'FUERA_DE_COBERTURA',
+  'ITEM_SIN_STOCK',
+  'PAGO_RECHAZADO',
   'CONFIRMAR_PAGO_ONLINE',
   'DESBLOQUEAR_PEDIDO_CERRADO',
   'RETOMAR_TAREA_INTERRUMPIDA',
@@ -70,8 +94,11 @@ const ORDER_LEDGER_KEYS = [
 ] as const;
 
 /**
- * Tras cancelar el pedido: flags en false, omite claves de sesión de pedido
- * y limpia el Ledger de Goals/Opportunities/Alerts de pedido.
+ * Tras cancelar el pedido (o expirar el draft): flags en false, omite claves
+ * de sesión de pedido y limpia el Ledger de Goals/Opportunities/Alerts de pedido.
+ *
+ * Preserva: reservation*, onboarding_*, temp_address, ambassador_ref,
+ * COMPLETAR_RESERVA, RESERVA_PROXIMA.
  */
 export async function clearOrderSessionAfterCancel(
   conversationId: string

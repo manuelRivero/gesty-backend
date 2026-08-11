@@ -4,7 +4,7 @@ import { getBusinessConfig } from '../services/businessConfig.service';
 import { workerTextMessages } from './textMessages';
 import { buildListMessageFromButtons } from '../whatsappBuilders';
 import { expireOrphanedIntents } from '../services/payment/payment.service';
-import { clearCheckoutSession } from '../graph/nodes/checkout';
+import { clearOrderSessionAfterCancel } from '../services/orderSessionReset.service';
 import { normalizeMetadata } from '../services/productQuery/utils';
 
 // Ventana de gracia (H-04): si hubo actividad del usuario dentro de este margen
@@ -187,13 +187,12 @@ export const processDraftOrderTimeouts = async () => {
             });
 
             if (conversation) {
-                // Solo se limpian las claves del pedido: el draft expiró, no el resto
-                // de la conversación. Preserva `reservation_draft`, `onboarding_step`,
-                // pendings de otros flujos y demás checkpoints ajenos al carrito (H-04).
+                // Wipe de sesión de pedido (mismo helper que cancel_order): notes/
+                // pendings/party/goals/CTA. Preserva reserva, onboarding, ambassador_ref.
                 try {
-                    await clearCheckoutSession(conversation.id);
+                    await clearOrderSessionAfterCancel(conversation.id);
                 } catch (err) {
-                    console.error('[DraftOrderTimeout] error limpiando metadata de checkout:', err);
+                    console.error('[DraftOrderTimeout] error limpiando sesión de pedido:', err);
                 }
             }
 

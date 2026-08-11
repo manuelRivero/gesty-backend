@@ -149,7 +149,8 @@ export function buildPendingTipablesManagementLines(meta: {
     '- Si el mensaje actual apunta a uno de esos tipables, ejecutá esa tool/señal. ' +
       'Para ITEM_NOTE: si solo tipó «nota» sin detalle → start_item_note() y mostrá askMessage ' +
       '(PROHIBIDO add_cart_item / present_complement_suggestions / present_product_cta). ' +
-      'Si ya trae plato+nota (ej. "la papa con poca sal"): get_cart → update_item_note en el mismo turno; ' +
+      'Si ya trae plato+nota (ej. "la papa con poca sal"): get_cart → update_item_note ' +
+      '(draftOrderItemId / draftOrderItemIds si hay ≥2 líneas del mismo plato; si no, productId) en el mismo turno; ' +
       'solo desambiguá si hay ≥2 matches o falta el texto de la nota.',
   ];
 }

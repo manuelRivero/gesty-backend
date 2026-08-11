@@ -3,8 +3,9 @@
  *
  * Patrón tipables / pendingAddQuantity: NO es un router regex pre-ReAct.
  * El híbrido lee el ledger en [ESTADO DEL CLIENTE] y confirma con
- * update_item_note(productId, note) o cancela con clear_pending_item_note().
- * Gate duro solo en la tool (ítem en carrito).
+ * update_item_note(draftOrderItemId(s) | productId, note) o cancela con
+ * clear_pending_item_note(). Gate duro solo en la tool (ítem en carrito /
+ * ambiguous_lines si hay ≥2 líneas del mismo productId sin line id).
  */
 
 import {
@@ -25,8 +26,13 @@ export type PendingItemNote = {
   productName?: string | null;
   /** Nota ya dicha mientras se desambigua el alcance */
   noteText?: string | null;
-  /** productIds candidatos cuando hubo ≥2 matches */
+  /**
+   * @deprecated Preferí candidateLineIds (get_cart.items[].id).
+   * Se mantiene por compat si el modelo aún nombra productIds.
+   */
   candidateProductIds?: string[];
+  /** draft_order_item.id candidatos cuando hay ≥2 líneas del mismo plato */
+  candidateLineIds?: string[];
   source: PendingItemNoteSource;
 };
 
@@ -66,6 +72,11 @@ export const parsePendingItemNote = (raw: unknown): PendingItemNote | null => {
         (id): id is string => typeof id === 'string' && id.trim().length > 0
       )
     : undefined;
+  const candidateLineIds = Array.isArray(raw.candidateLineIds)
+    ? raw.candidateLineIds.filter(
+        (id): id is string => typeof id === 'string' && id.trim().length > 0
+      )
+    : undefined;
 
   return {
     askedAt,
@@ -74,6 +85,9 @@ export const parsePendingItemNote = (raw: unknown): PendingItemNote | null => {
     ...(noteText !== undefined ? { noteText } : {}),
     ...(candidateProductIds && candidateProductIds.length > 0
       ? { candidateProductIds }
+      : {}),
+    ...(candidateLineIds && candidateLineIds.length > 0
+      ? { candidateLineIds }
       : {}),
     source,
   };
@@ -90,6 +104,7 @@ export const setPendingItemNote = async (params: {
   productName?: string | null;
   noteText?: string | null;
   candidateProductIds?: string[];
+  candidateLineIds?: string[];
   source?: PendingItemNoteSource;
 }): Promise<PendingItemNote> => {
   const pending: PendingItemNote = {
@@ -115,11 +130,17 @@ export const setPendingItemNote = async (params: {
     candidateProductIds: params.candidateProductIds?.filter(
       (id) => typeof id === 'string' && id.trim().length > 0
     ),
+    candidateLineIds: params.candidateLineIds?.filter(
+      (id) => typeof id === 'string' && id.trim().length > 0
+    ),
     source: params.source ?? 'hybrid',
   };
   // Limpiar undefined opcionales vacíos para metadata limpia
   if (pending.candidateProductIds?.length === 0) {
     delete pending.candidateProductIds;
+  }
+  if (pending.candidateLineIds?.length === 0) {
+    delete pending.candidateLineIds;
   }
   await patchConversationMetadata(params.conversationId, {
     pendingItemNote: pending,
@@ -168,21 +189,27 @@ export const buildPendingItemNoteContextLines = (
     pending.noteText != null && pending.noteText !== ''
       ? ` Nota ya capturada (mientras desambiguás alcance): "${pending.noteText}".`
       : '';
-  const candidates =
+  const lineCandidates =
+    pending.candidateLineIds && pending.candidateLineIds.length > 0
+      ? ` Líneas candidatas (draftOrderItemId): ${pending.candidateLineIds.join(', ')}.`
+      : '';
+  const productCandidates =
     pending.candidateProductIds && pending.candidateProductIds.length > 0
-      ? ` Candidatos (≥2 matches): ${pending.candidateProductIds.join(', ')}.`
+      ? ` productIds candidatos (legacy): ${pending.candidateProductIds.join(', ')}.`
       : '';
 
   return [
     `- Nota de ítem pendiente (tipable; el mensaje actual probablemente ES la nota o plato+nota): ` +
-      `${itemHint}.${noteHint}${candidates} ` +
+      `${itemHint}.${noteHint}${lineCandidates}${productCandidates} ` +
       `PRIORIDAD ABSOLUTA sobre shortlist de productos y complementos. ` +
       `PROHIBIDO add_cart_item, present_complement_suggestions y present_product_cta ` +
       `salvo que el cliente pida explícitamente otro plato. ` +
-      `Si el mensaje trae nota (+ plato si hace falta): get_cart → update_item_note(productId, note) ` +
+      `Si el mensaje trae nota (+ plato si hace falta): get_cart → update_item_note ` +
+      `(preferí draftOrderItemId / draftOrderItemIds de get_cart.items[].id; productId solo si hay 1 línea) ` +
       `en un solo paso (sin re-preguntar qué anotar). ` +
-      `Si ≥2 líneas matchean el mismo plato: preguntá si aplica a todas o solo una; ` +
-      `podés dejar noteText/candidateProductIds en el ledger vía start_item_note. ` +
+      `Si update_item_note devuelve ambiguous_lines o hay ≥2 líneas del mismo plato: ` +
+      `preguntá si aplica a todas o solo una; dejá noteText/candidateLineIds con start_item_note. ` +
+      `"las dos"/"todas" → draftOrderItemIds; una sola → draftOrderItemId. ` +
       `Si cancela ("cancelar", "mejor no", "nada"): clear_pending_item_note() y confirmá breve.`,
   ];
 };

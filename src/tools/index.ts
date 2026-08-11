@@ -1657,17 +1657,67 @@ export const removeCartItemTool = new DynamicStructuredTool<
 // update_item_note
 // ---------------------------------------------------------------------------
 
-const updateItemNoteSchema = z.object({
-  productId: z
-    .string()
-    .uuid()
-    .describe('UUID del menu_item al que pertenece la nota (usar productId devuelto por get_cart o search_products)'),
-  note: z
-    .string()
-    .max(300)
-    .describe('Instrucción especial del cliente para ese platillo. Ej: "término medio", "sin cebolla", "poca sal". Enviar cadena vacía para borrar la nota.'),
-});
+const updateItemNoteSchema = z
+  .object({
+    productId: z
+      .string()
+      .uuid()
+      .optional()
+      .describe(
+        'UUID del menu_item (get_cart.productId). Si hay ≥2 líneas con ese productId ' +
+          'y no pasás draftOrderItemId(s), la tool devuelve ambiguous_lines.'
+      ),
+    draftOrderItemId: z
+      .string()
+      .uuid()
+      .optional()
+      .describe(
+        'UUID de UNA línea del carrito (get_cart.items[].id). Preferido cuando hay varias ' +
+          'líneas del mismo plato (variaciones distintas).'
+      ),
+    draftOrderItemIds: z
+      .array(z.string().uuid())
+      .min(1)
+      .max(20)
+      .optional()
+      .describe(
+        'Varias líneas (get_cart.items[].id) para la misma nota — ej. el cliente dijo ' +
+          '"las dos" / "todas" tras desambiguar.'
+      ),
+    note: z
+      .string()
+      .max(300)
+      .describe(
+        'Instrucción especial. Ej: "término medio", "sin cebolla", "poca sal". ' +
+          'Cadena vacía para borrar la nota.'
+      ),
+  })
+  .refine(
+    (v) =>
+      Boolean(v.draftOrderItemId) ||
+      (v.draftOrderItemIds != null && v.draftOrderItemIds.length > 0) ||
+      Boolean(v.productId),
+    { message: 'Pasá draftOrderItemId, draftOrderItemIds o productId.' }
+  );
 type UpdateItemNoteInput = z.infer<typeof updateItemNoteSchema>;
+
+type CartLineForNote = {
+  id: string;
+  product_id: string;
+  variation: string | null;
+  quantity: number;
+  menu_item: { id: string; name: string } | null;
+};
+
+function mapNoteLineCandidate(it: CartLineForNote) {
+  return {
+    draftOrderItemId: it.id,
+    productId: it.product_id,
+    name: it.menu_item?.name ?? 'Producto',
+    variation: it.variation ?? null,
+    quantity: it.quantity,
+  };
+}
 
 export const updateItemNoteTool = new DynamicStructuredTool<
   typeof updateItemNoteSchema,
@@ -1675,14 +1725,15 @@ export const updateItemNoteTool = new DynamicStructuredTool<
 >({
   name: 'update_item_note',
   description:
-    'Guarda (o reemplaza) la nota/instrucción especial de un ítem del carrito activo. ' +
-    'Usá este tool cuando el cliente indique preferencias de preparación para un platillo ' +
-    '(ej: término de cocción, ingredientes a omitir, cantidad de sal, etc.). ' +
-    'Antes de llamar a este tool asegurate de tener el productId del ítem: usá get_cart si no lo tenés. ' +
-    'Devuelve el nombre del ítem y la nota guardada para que puedas confirmarle al cliente.',
+    'Guarda (o reemplaza) la nota/instrucción especial de una o más líneas del carrito. ' +
+    'Usá get_cart: cada ítem trae id (línea), productId, variation. ' +
+    'Si el mismo plato aparece en ≥2 líneas y el cliente no aclaró alcance, pasá solo productId ' +
+    'para recibir ambiguous_lines (preguntá si aplica a todas o a una). ' +
+    'Con "las dos"/"todas" usá draftOrderItemIds; con una línea concreta, draftOrderItemId.',
   schema: updateItemNoteSchema,
-  func: async ({ productId, note }: UpdateItemNoteInput, _runManager, config?: RunnableConfig) => {
-    const { businessId, customerPhone } = getReactContext(config);
+  func: async (input: UpdateItemNoteInput, _runManager, config?: RunnableConfig) => {
+    const { businessId, customerPhone, conversationId } = getReactContext(config);
+    const { productId, draftOrderItemId, draftOrderItemIds, note } = input;
 
     const draft = await prisma.draft_order.findFirst({
       where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
@@ -1697,32 +1748,89 @@ export const updateItemNoteTool = new DynamicStructuredTool<
       return toJson({ success: false, error: 'no_active_cart' });
     }
 
-    const line = draft.draft_order_item.find((it) => it.product_id === productId);
+    const lines = draft.draft_order_item as CartLineForNote[];
+    const normalizedNote = note.trim() || null;
 
-    if (!line) {
+    let targets: CartLineForNote[] = [];
+
+    if (draftOrderItemIds != null && draftOrderItemIds.length > 0) {
+      const wanted = new Set(draftOrderItemIds);
+      targets = lines.filter((it) => wanted.has(it.id));
+      if (targets.length !== wanted.size) {
+        return toJson({
+          success: false,
+          error: 'item_not_in_cart',
+          hint: 'Algún draftOrderItemId no está en el carrito. Verificá con get_cart.',
+        });
+      }
+    } else if (draftOrderItemId) {
+      const line = lines.find((it) => it.id === draftOrderItemId);
+      if (!line) {
+        return toJson({
+          success: false,
+          error: 'item_not_in_cart',
+          hint: 'Ese draftOrderItemId no está en el carrito. Verificá con get_cart.',
+        });
+      }
+      targets = [line];
+    } else if (productId) {
+      const matches = lines.filter((it) => it.product_id === productId);
+      if (matches.length === 0) {
+        return toJson({
+          success: false,
+          error: 'item_not_in_cart',
+          hint: 'El producto no está en el carrito activo. Verificá el productId con get_cart.',
+        });
+      }
+      if (matches.length >= 2) {
+        return toJson({
+          success: false,
+          error: 'ambiguous_lines',
+          productId,
+          productName: matches[0]?.menu_item?.name ?? null,
+          candidates: matches.map(mapNoteLineCandidate),
+          hint:
+            'Hay varias líneas del mismo plato. Preguntá si la nota va en todas o en una ' +
+            '(variación / ordinal). Luego reintentá con draftOrderItemIds (todas) o draftOrderItemId (una). ' +
+            'Podés guardar noteText/candidateLineIds con start_item_note.',
+        });
+      }
+      targets = [matches[0]!];
+    }
+
+    if (targets.length === 0) {
       return toJson({
         success: false,
         error: 'item_not_in_cart',
-        hint: 'El producto no está en el carrito activo. Verificá el productId con get_cart.',
+        hint: 'No se resolvió ninguna línea. Usá get_cart.',
       });
     }
 
-    const normalizedNote = note.trim() || null;
+    await prisma.$transaction(
+      targets.map((line) =>
+        prisma.draft_order_item.update({
+          where: { id: line.id },
+          data: { notes: normalizedNote },
+        })
+      )
+    );
 
-    await prisma.draft_order_item.update({
-      where: { id: line.id },
-      data: { notes: normalizedNote },
-    });
-
-    const { conversationId } = getReactContext(config);
     if (conversationId) {
       await clearPendingItemNote(conversationId);
     }
 
     return toJson({
       success: true,
-      itemName: line.menu_item?.name ?? 'Producto',
       note: normalizedNote,
+      updatedCount: targets.length,
+      items: targets.map((line) => ({
+        draftOrderItemId: line.id,
+        productId: line.product_id,
+        itemName: line.menu_item?.name ?? 'Producto',
+        variation: line.variation ?? null,
+      })),
+      // Compat con prompts viejos
+      itemName: targets[0]?.menu_item?.name ?? 'Producto',
     });
   },
 });
@@ -1744,10 +1852,18 @@ const startItemNoteSchema = z.object({
     .describe(
       'Nota ya dicha mientras se desambigua alcance (varias líneas del mismo plato).'
     ),
+  candidateLineIds: z
+    .array(z.string().uuid())
+    .optional()
+    .describe(
+      'draft_order_item.id (get_cart.items[].id) candidatos cuando hay ≥2 líneas del mismo plato. Preferido.'
+    ),
   candidateProductIds: z
     .array(z.string().uuid())
     .optional()
-    .describe('productIds candidatos cuando hay ≥2 matches del mismo plato.'),
+    .describe(
+      'Legacy: productIds candidatos. Preferí candidateLineIds (varias líneas pueden compartir productId).'
+    ),
 });
 type StartItemNoteInput = z.infer<typeof startItemNoteSchema>;
 
@@ -1759,8 +1875,8 @@ export const startItemNoteTool = new DynamicStructuredTool<
   description:
     'Inicia el flujo de nota del pedido (tipable «Nota» / «Nota del pedido» sin texto de instrucción). ' +
     'Setea pendingItemNote y devuelve askMessage para mostrar al cliente. ' +
-    'También sirve para dejar noteText/candidateProductIds mientras se desambigua si la nota ' +
-    'aplica a todas las líneas o solo a una. No escribe el carrito.',
+    'También sirve para dejar noteText/candidateLineIds mientras se desambigua si la nota ' +
+    'aplica a todas las líneas o solo a una (tras ambiguous_lines). No escribe el carrito.',
   schema: startItemNoteSchema,
   func: async (input: StartItemNoteInput, _runManager, config?: RunnableConfig) => {
     const { businessId, customerPhone, conversationId } = getReactContext(config);
@@ -1809,6 +1925,7 @@ export const startItemNoteTool = new DynamicStructuredTool<
       productId,
       productName,
       noteText: input.noteText,
+      candidateLineIds: input.candidateLineIds,
       candidateProductIds: input.candidateProductIds,
       source: 'hybrid',
     });

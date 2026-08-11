@@ -276,14 +276,18 @@ export const buildCancelOrderMessage = async (
 
   if (cancelDraft && draftOrder) {
     await cancelActiveDraft(draftOrder.id);
-    await clearOrderSessionAfterCancel(conversation.id);
   }
 
   if (cancelOrder && pendingOrder) {
     await cancelPlacedOrderAndNotifyAdmin(pendingOrder);
-    if (!cancelDraft) {
-      await omitConversationMetadataKeys(conversation.id, ['pending_cancel_disambiguation']);
-    }
+  }
+
+  // Si ya no queda carrito activo, wipe de sesión de pedido (notas/pendings/
+  // party/goals/CTA/dirección staged). Si cancelamos solo la orden creada pero
+  // el draft sigue vivo, no tocamos el estado del carrito en armado.
+  const draftStillActive = Boolean(draftOrder && !cancelDraft);
+  if (!draftStillActive && (cancelDraft || cancelOrder)) {
+    await clearOrderSessionAfterCancel(conversation.id);
   } else {
     await omitConversationMetadataKeys(conversation.id, ['pending_cancel_disambiguation']);
   }

@@ -4,6 +4,7 @@ vi.mock('../../lib/prisma', () => ({
   prisma: {
     draft_order: { findFirst: vi.fn() },
     draft_order_item: { update: vi.fn() },
+    $transaction: vi.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
   },
 }));
 
@@ -42,6 +43,10 @@ const CONFIG = {
   },
 };
 
+const PRODUCT_A = '11111111-1111-1111-1111-111111111111';
+const LINE_1 = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+const LINE_2 = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+
 describe('item note tools', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -51,7 +56,7 @@ describe('item note tools', () => {
     vi.mocked(prisma.draft_order.findFirst).mockResolvedValue({
       draft_order_item: [
         {
-          product_id: '11111111-1111-1111-1111-111111111111',
+          product_id: PRODUCT_A,
           menu_item: { name: 'Chupe' },
         },
         {
@@ -80,6 +85,48 @@ describe('item note tools', () => {
     );
   });
 
+  it('start_item_note guarda candidateLineIds al desambiguar', async () => {
+    vi.mocked(prisma.draft_order.findFirst).mockResolvedValue({
+      draft_order_item: [
+        {
+          id: LINE_1,
+          product_id: PRODUCT_A,
+          menu_item: { name: 'Chicha' },
+        },
+        {
+          id: LINE_2,
+          product_id: PRODUCT_A,
+          menu_item: { name: 'Chicha' },
+        },
+      ],
+    } as never);
+    vi.mocked(setPendingItemNote).mockResolvedValue({
+      askedAt: new Date().toISOString(),
+      productId: PRODUCT_A,
+      productName: 'Chicha',
+      noteText: 'sin azúcar',
+      candidateLineIds: [LINE_1, LINE_2],
+      source: 'hybrid',
+    });
+
+    const raw = await startItemNoteTool.func(
+      {
+        productId: PRODUCT_A,
+        noteText: 'sin azúcar',
+        candidateLineIds: [LINE_1, LINE_2],
+      },
+      undefined,
+      CONFIG
+    );
+    expect(JSON.parse(raw as string).success).toBe(true);
+    expect(setPendingItemNote).toHaveBeenCalledWith(
+      expect.objectContaining({
+        noteText: 'sin azúcar',
+        candidateLineIds: [LINE_1, LINE_2],
+      })
+    );
+  });
+
   it('clear_pending_item_note limpia metadata', async () => {
     const raw = await clearPendingItemNoteTool.func({}, undefined, CONFIG);
     expect(JSON.parse(raw as string)).toEqual({ cleared: true });
@@ -87,25 +134,133 @@ describe('item note tools', () => {
   });
 
   it('update_item_note exitoso limpia pendingItemNote', async () => {
-    const productId = '11111111-1111-1111-1111-111111111111';
     vi.mocked(prisma.draft_order.findFirst).mockResolvedValue({
       draft_order_item: [
         {
-          id: 'line-1',
-          product_id: productId,
-          menu_item: { id: productId, name: 'Chupe' },
+          id: LINE_1,
+          product_id: PRODUCT_A,
+          variation: null,
+          quantity: 1,
+          menu_item: { id: PRODUCT_A, name: 'Chupe' },
         },
       ],
     } as never);
     vi.mocked(prisma.draft_order_item.update).mockResolvedValue({} as never);
 
     const raw = await updateItemNoteTool.func(
-      { productId, note: 'sin picante' },
+      { productId: PRODUCT_A, note: 'sin picante' },
       undefined,
       CONFIG
     );
     const parsed = JSON.parse(raw as string);
     expect(parsed.success).toBe(true);
+    expect(parsed.updatedCount).toBe(1);
     expect(clearPendingItemNote).toHaveBeenCalledWith('conv-1');
+  });
+
+  it('update_item_note con ≥2 líneas del mismo productId → ambiguous_lines', async () => {
+    vi.mocked(prisma.draft_order.findFirst).mockResolvedValue({
+      draft_order_item: [
+        {
+          id: LINE_1,
+          product_id: PRODUCT_A,
+          variation: 'Especial',
+          quantity: 1,
+          menu_item: { id: PRODUCT_A, name: 'Chicha' },
+        },
+        {
+          id: LINE_2,
+          product_id: PRODUCT_A,
+          variation: 'Roquefort',
+          quantity: 1,
+          menu_item: { id: PRODUCT_A, name: 'Chicha' },
+        },
+      ],
+    } as never);
+
+    const raw = await updateItemNoteTool.func(
+      { productId: PRODUCT_A, note: 'sin azúcar' },
+      undefined,
+      CONFIG
+    );
+    const parsed = JSON.parse(raw as string);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toBe('ambiguous_lines');
+    expect(parsed.candidates).toHaveLength(2);
+    expect(parsed.candidates[0].draftOrderItemId).toBe(LINE_1);
+    expect(clearPendingItemNote).not.toHaveBeenCalled();
+    expect(prisma.draft_order_item.update).not.toHaveBeenCalled();
+  });
+
+  it('update_item_note con draftOrderItemIds aplica a todas las líneas', async () => {
+    vi.mocked(prisma.draft_order.findFirst).mockResolvedValue({
+      draft_order_item: [
+        {
+          id: LINE_1,
+          product_id: PRODUCT_A,
+          variation: 'Especial',
+          quantity: 1,
+          menu_item: { id: PRODUCT_A, name: 'Chicha' },
+        },
+        {
+          id: LINE_2,
+          product_id: PRODUCT_A,
+          variation: 'Roquefort',
+          quantity: 1,
+          menu_item: { id: PRODUCT_A, name: 'Chicha' },
+        },
+      ],
+    } as never);
+    vi.mocked(prisma.draft_order_item.update).mockResolvedValue({} as never);
+
+    const raw = await updateItemNoteTool.func(
+      {
+        draftOrderItemIds: [LINE_1, LINE_2],
+        note: 'sin azúcar',
+      },
+      undefined,
+      CONFIG
+    );
+    const parsed = JSON.parse(raw as string);
+    expect(parsed.success).toBe(true);
+    expect(parsed.updatedCount).toBe(2);
+    expect(prisma.draft_order_item.update).toHaveBeenCalledTimes(2);
+    expect(clearPendingItemNote).toHaveBeenCalledWith('conv-1');
+  });
+
+  it('update_item_note con draftOrderItemId apunta a una sola línea', async () => {
+    vi.mocked(prisma.draft_order.findFirst).mockResolvedValue({
+      draft_order_item: [
+        {
+          id: LINE_1,
+          product_id: PRODUCT_A,
+          variation: 'Especial',
+          quantity: 1,
+          menu_item: { id: PRODUCT_A, name: 'Chicha' },
+        },
+        {
+          id: LINE_2,
+          product_id: PRODUCT_A,
+          variation: 'Roquefort',
+          quantity: 1,
+          menu_item: { id: PRODUCT_A, name: 'Chicha' },
+        },
+      ],
+    } as never);
+    vi.mocked(prisma.draft_order_item.update).mockResolvedValue({} as never);
+
+    const raw = await updateItemNoteTool.func(
+      { draftOrderItemId: LINE_2, note: 'poca sal' },
+      undefined,
+      CONFIG
+    );
+    const parsed = JSON.parse(raw as string);
+    expect(parsed.success).toBe(true);
+    expect(parsed.updatedCount).toBe(1);
+    expect(parsed.items[0].draftOrderItemId).toBe(LINE_2);
+    expect(prisma.draft_order_item.update).toHaveBeenCalledWith({
+      where: { id: LINE_2 },
+      data: { notes: 'poca sal' },
+    });
   });
 });

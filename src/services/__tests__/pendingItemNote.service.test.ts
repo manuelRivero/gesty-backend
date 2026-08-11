@@ -37,11 +37,19 @@ describe('pendingItemNote.service', () => {
           productName: 'Chicha',
           noteText: 'sin azúcar',
           candidateProductIds: ['11111111-1111-1111-1111-111111111111'],
+          candidateLineIds: [
+            'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+            'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+          ],
         })
       )
     ).toMatchObject({
       productName: 'Chicha',
       noteText: 'sin azúcar',
+      candidateLineIds: [
+        'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+      ],
     });
   });
 
@@ -72,5 +80,22 @@ describe('pendingItemNote.service', () => {
     expect(text).toMatch(/clear_pending_item_note/i);
     expect(text).toMatch(/PROHIBIDO add_cart_item/i);
     expect(text).toMatch(/present_complement_suggestions/i);
+    expect(text).toMatch(/draftOrderItemId/i);
+  });
+
+  it('context lines incluyen candidateLineIds', () => {
+    const lines = buildPendingItemNoteContextLines({
+      pendingItemNote: basePending({
+        noteText: 'sin azúcar',
+        candidateLineIds: [
+          'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+          'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+        ],
+      }),
+    });
+    const text = lines.join('\n');
+    expect(text).toMatch(/Líneas candidatas/i);
+    expect(text).toMatch(/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/);
+    expect(text).toMatch(/ambiguous_lines|draftOrderItemIds/i);
   });
 });

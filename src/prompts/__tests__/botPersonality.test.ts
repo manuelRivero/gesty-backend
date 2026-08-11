@@ -49,6 +49,7 @@ describe('botPersonality', () => {
     expect(hybrid).toMatch(/clear_pending_item_note/i);
     expect(hybrid).toMatch(/pendingItemNote/i);
     expect(hybrid).toMatch(/PROHIBIDO add_cart_item/i);
+    expect(hybrid).toMatch(/ambiguous_lines|draftOrderItemIds/i);
   });
 
   it('hybrid variaciones: autonomía + clear_pending_variation', () => {
