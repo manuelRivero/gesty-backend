@@ -10,6 +10,7 @@ import type { MenuCategoryTag } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import type { EnrichedContext } from '../controllers/webhook/types';
 import { getRequestedPartySize, normalizeMetadata } from '../services/productQuery/utils';
+import { buildPartySizeJustConfirmedContextLines } from '../services/peopleCountGate.service';
 import {
   deriveConfirmOfferCandidate,
   getConfirmOfferLedgerEntry,
@@ -451,9 +452,13 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
 
   const pendingVariationLines = buildPendingVariationContextLines(meta);
   const pendingAddQuantityLines = buildPendingAddQuantityContextLines(meta);
+  const partySizeJustConfirmedLines = buildPartySizeJustConfirmedContextLines(
+    ctx.partySizeJustConfirmed
+  );
 
   const lines = [
     `- Personas para el pedido: ${partySizeLine}`,
+    ...partySizeJustConfirmedLines,
     hasItems || checkoutActive || offerStillAlive
       ? `- Carrito: ${cartSummary ?? 'sin pedido activo'}`
       : null,

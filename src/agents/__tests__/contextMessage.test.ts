@@ -59,6 +59,7 @@ const makeCtx = (
   overrides: {
     metadata?: Record<string, unknown>;
     userMsg?: string;
+    partySizeJustConfirmed?: number;
   } = {}
 ): EnrichedContext =>
   ({
@@ -70,6 +71,7 @@ const makeCtx = (
     message: { text: { body: overrides.userMsg ?? '¿Tienen descuentos?' }, type: 'text' },
     to: '51999000000',
     detection: null,
+    partySizeJustConfirmed: overrides.partySizeJustConfirmed,
   }) as unknown as EnrichedContext;
 
 describe('buildContextMessage', () => {
@@ -242,5 +244,32 @@ describe('buildContextMessage', () => {
     const msg = await buildContextMessage(makeCtx());
     expect(msg).not.toContain('Selección de producto pendiente');
     expect(menuFindManyMock).not.toHaveBeenCalled();
+  });
+
+  it('partySizeJustConfirmed: inyecta hint de resume sin metadata persistida', async () => {
+    findFirstMock.mockResolvedValue(null);
+    const msg = await buildContextMessage(
+      makeCtx({
+        userMsg: 'quiero papas',
+        metadata: { peopleCount: 3, requestedPartySize: 3 },
+        partySizeJustConfirmed: 3,
+      })
+    );
+    expect(msg).toContain('Party size recién confirmado (3)');
+    expect(msg).toContain('add_cart_item');
+    expect(msg).toContain('PROHIBIDO present_product_cta(ADD_ITEM)');
+    expect(msg).toContain('PROHIBIDO decir que ya sumaste');
+    expect(msg).not.toContain('partySizeJustConfirmed');
+  });
+
+  it('sin partySizeJustConfirmed: no inyecta hint de resume', async () => {
+    findFirstMock.mockResolvedValue(null);
+    const msg = await buildContextMessage(
+      makeCtx({
+        userMsg: 'quiero papas',
+        metadata: { peopleCount: 3, requestedPartySize: 3 },
+      })
+    );
+    expect(msg).not.toContain('Party size recién confirmado');
   });
 });

@@ -203,6 +203,8 @@ REMOVER ÍTEMS DEL CARRITO (remove_cart_item):
 CTA DE PRODUCTO (present_product_cta):
 - Shortlist ≥ 2: OBLIGATORIO present_product_cta(SELECT_FROM_LIST, productIds=[...ids de la tool]). Intro corta SIN listar platos, porciones ni precios (eso lo pone el sistema en los atajos). Esta regla gana sobre notas/party size en el mismo turno.
 - Un producto / sumar: ADD_ITEM + productId (o productHint). Explorar: VIEW_MENU / VIEW_FEATURED.
+- present_product_cta(ADD_ITEM) = OFERTA, no add hecho. Copy solo en futuro/pregunta («¿Lo sumamos?», «Si querés lo agrego»). PROHIBIDO con esa tool: «Sumé», «Agregué», «Listo, ya está en el pedido», «¿algo más?». «Sumé…» solo después de add_cart_item con success: true.
+- Si [ESTADO DEL CLIENTE] dice "Party size recién confirmado": preferí add_cart_item (1 producto claro) o SELECT_FROM_LIST (≥2); no uses ADD_ITEM salvo que no puedas resolver el productId.
 - NO la llames solo cuando YA resolviste el turno sin UI: nota sobre un ítem QUE YA ESTÁ en el carrito o quitar ítem. El cierre post-add no es "¿algo más?" en prosa: usá present_complement_suggestions o present_cart (ver AGREGAR ÍTEMS).
 
 INSTRUCCIONES ESPECIALES DE PLATOS (notas por ítem) — autonomía tipable, no regex:

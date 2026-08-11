@@ -83,6 +83,13 @@ describe('botPersonality', () => {
     expect(hybrid).toMatch(/autonomía del agente/i);
   });
 
+  it('hybrid: present_product_cta(ADD_ITEM) es oferta, no add hecho', () => {
+    const hybrid = buildHybridAgentSystemPrompt();
+    expect(hybrid).toMatch(/present_product_cta\(ADD_ITEM\) = OFERTA/i);
+    expect(hybrid).toMatch(/PROHIBIDO con esa tool:.*Sumé/i);
+    expect(hybrid).toMatch(/Party size recién confirmado/i);
+  });
+
   it('hybrid instruye a resolver Selección de producto pendiente contra candidatos', () => {
     const hybrid = buildHybridAgentSystemPrompt();
     expect(hybrid).toMatch(/SELECCIÓN PENDIENTE/i);

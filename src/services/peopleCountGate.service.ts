@@ -123,3 +123,23 @@ export function shouldTreatBareNumberAsPartySize(params: {
     params.intent === ConversationIntent.UNKNOWN
   );
 }
+
+/**
+ * Hint de un solo turno tras confirmar party size y reanudar la consulta
+ * congelada. Se inyecta vía EnrichedContext (no metadata persistida).
+ */
+export function buildPartySizeJustConfirmedContextLines(
+  justConfirmed: number | undefined | null
+): string[] {
+  if (justConfirmed == null || !Number.isFinite(justConfirmed) || justConfirmed <= 0) {
+    return [];
+  }
+  const n = Math.trunc(justConfirmed);
+  return [
+    `- Party size recién confirmado (${n}). Estás reanudando la consulta de comida.`,
+    '  Si hay 1 producto claro → add_cart_item (sin quantity si el cliente no dijo unidades; la tool pedirá confirmación si hace falta).',
+    '  Si hay ≥2 → present_product_cta(SELECT_FROM_LIST).',
+    '  PROHIBIDO present_product_cta(ADD_ITEM) en este turno salvo que no puedas resolver el productId.',
+    '  PROHIBIDO decir que ya sumaste sin add_cart_item exitoso. PROHIBIDO upsell vacío («¿algo más?»).',
+  ];
+}

@@ -61,6 +61,11 @@ export interface EnrichedContext extends WebhookContext {
   /** Estado de dirección — propagado desde AgentState para el contexto del ReAct agent. */
   hasAddress?: boolean;
   isInCoverage?: boolean;
+  /**
+   * Ephemeral (solo este turno): party size acabó de confirmarse y se reanuda
+   * la consulta de comida. No se persiste en conversation metadata.
+   */
+  partySizeJustConfirmed?: number;
 }
 
 export type HandlerFollowUp =

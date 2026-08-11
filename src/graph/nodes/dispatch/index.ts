@@ -514,6 +514,7 @@ export const nlpSubgraphNode = async (
         },
         hasAddress: state.hasAddress,
         isInCoverage: state.isInCoverage,
+        partySizeJustConfirmed: extractedPeople,
       };
 
       const resumedResult = await dispatchOrHybrid(resumedCtx, checkoutHandoff);
@@ -560,6 +561,7 @@ export const nlpSubgraphNode = async (
             type: 'text',
             text: { body: resume.userMessage },
           },
+          partySizeJustConfirmed: extractedPeople,
         };
 
         const resumedResult = await dispatchOrHybrid(resumedCtx, checkoutHandoff);
@@ -665,6 +667,7 @@ export const nlpSubgraphNode = async (
           },
           hasAddress: state.hasAddress,
           isInCoverage: state.isInCoverage,
+          partySizeJustConfirmed: people,
         };
         const resumedResult = await dispatchOrHybrid(resumedCtx, checkoutHandoff);
         if (!resumedResult) {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ConversationIntent } from '../../types/conversationIntent';
 import {
+  buildPartySizeJustConfirmedContextLines,
   shouldAbandonPeopleCountForNewIntent,
   shouldBlockForMissingPeopleCount,
   shouldTreatBareNumberAsPartySize,
@@ -95,5 +96,13 @@ describe('peopleCountGate', () => {
         detectedProductName: 'lomito',
       })
     ).toBe(false);
+  });
+
+  it('buildPartySizeJustConfirmedContextLines: hint solo con N > 0', () => {
+    expect(buildPartySizeJustConfirmedContextLines(undefined)).toEqual([]);
+    expect(buildPartySizeJustConfirmedContextLines(0)).toEqual([]);
+    const lines = buildPartySizeJustConfirmedContextLines(3);
+    expect(lines.join('\n')).toContain('Party size recién confirmado (3)');
+    expect(lines.join('\n')).toContain('PROHIBIDO present_product_cta(ADD_ITEM)');
   });
 });
