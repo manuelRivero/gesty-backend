@@ -65,6 +65,7 @@ import {
 import {
   buildPendingAddQuantityMessage,
   clearPendingAddQuantity,
+  getPendingAddQuantity,
   setPendingAddQuantity,
 } from '../services/pendingAddQuantity.service';
 import {
@@ -1279,9 +1280,15 @@ export const addCartItemTool = new DynamicStructuredTool<
     }
 
     let partySize: number | null = null;
+    let pendingReply = false;
     if (conversationId) {
       const state = await findOrCreateConversationState(conversationId);
-      partySize = getRequestedPartySize(normalizeMetadata(state.metadata)) ?? null;
+      const meta = normalizeMetadata(state.metadata);
+      partySize = getRequestedPartySize(meta) ?? null;
+      const pendingQty = getPendingAddQuantity(meta);
+      pendingReply = Boolean(
+        pendingQty && pendingQty.productId === productId && quantity != null
+      );
     }
     const { suggestedQuantity } = suggestAddQuantity({
       partySize,
@@ -1290,6 +1297,7 @@ export const addCartItemTool = new DynamicStructuredTool<
     const qtyConfirmed = isConfirmedAddQuantity({
       quantity: quantity ?? null,
       suggestedQuantity,
+      pendingReply,
     });
     // Placeholder para variation_required (aún no confirmamos cantidad).
     const qtyForVariationPending = qtyConfirmed

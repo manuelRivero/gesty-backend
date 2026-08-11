@@ -63,4 +63,21 @@ describe('needsAddQuantityConfirmation / isConfirmedAddQuantity', () => {
       isConfirmedAddQuantity({ quantity: 1, suggestedQuantity: 1 })
     ).toBe(true);
   });
+
+  it('con pendingReply, quantity 1 confirma aunque suggested ≥ 2', () => {
+    expect(
+      isConfirmedAddQuantity({
+        quantity: 1,
+        suggestedQuantity: 3,
+        pendingReply: true,
+      })
+    ).toBe(true);
+    expect(
+      isConfirmedAddQuantity({
+        quantity: 1,
+        suggestedQuantity: 3,
+        pendingReply: false,
+      })
+    ).toBe(false);
+  });
 });

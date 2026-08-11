@@ -65,15 +65,20 @@ export function needsAddQuantityConfirmation(params: {
 /**
  * Qty del payload/tool cuenta como confirmada por el cliente (no abrir pending).
  * - n ≥ 2: siempre (vino de "dos", confirm tipable, etc.)
- * - n === 1: solo si no hace falta sugerir más (suggested < 2); si suggested ≥ 2,
- *   el `:1` del CTA se trata como intención de sumar, no como confirmación.
+ * - n === 1 sin pending: solo si suggested < 2; si suggested ≥ 2, el `:1` del
+ *   CTA es intención de sumar, no confirmación (abre pending).
+ * - Con pendingReply (cliente respondiendo al ask): cualquier n ≥ 1 confirma,
+ *   incluido 1 (“solo una” / tipar «1» tras la sugerencia de 3).
  */
 export function isConfirmedAddQuantity(params: {
   quantity: number | null | undefined;
   suggestedQuantity: number;
+  /** True si hay pendingAddQuantity del mismo producto y el cliente pasó quantity. */
+  pendingReply?: boolean;
 }): boolean {
   const q = params.quantity;
   if (q == null || q < 1) return false;
+  if (params.pendingReply) return true;
   if (q >= 2) return true;
   return params.suggestedQuantity < 2;
 }

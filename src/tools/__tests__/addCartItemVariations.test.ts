@@ -66,6 +66,7 @@ vi.mock('../../repositories', async (importOriginal) => {
 vi.mock('../../services/pendingAddQuantity.service', () => ({
   setPendingAddQuantity: vi.fn(),
   clearPendingAddQuantity: vi.fn(),
+  getPendingAddQuantity: vi.fn().mockReturnValue(null),
   buildPendingAddQuantityMessage: vi.fn().mockReturnValue('¿Cuántas?'),
 }));
 

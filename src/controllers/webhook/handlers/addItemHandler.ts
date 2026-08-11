@@ -22,6 +22,7 @@ import { clearPendingVariation } from '../../../services/pendingVariation.servic
 import {
   buildPendingAddQuantityMessage,
   clearPendingAddQuantity,
+  getPendingAddQuantity,
   maybeSetPendingAddQuantity,
 } from '../../../services/pendingAddQuantity.service';
 import {
@@ -75,9 +76,17 @@ export class AddItemHandler implements IntentHandler {
       servesPeople: item.serves_people,
     });
 
+    const pendingQty = getPendingAddQuantity(meta);
+    const pendingReply = Boolean(
+      pendingQty &&
+        pendingQty.productId === menuItemId &&
+        quantityFromPayload != null
+    );
+
     const qtyConfirmed = isConfirmedAddQuantity({
       quantity: quantityFromPayload,
       suggestedQuantity,
+      pendingReply,
     });
 
     if (!qtyConfirmed) {
