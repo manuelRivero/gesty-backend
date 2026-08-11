@@ -143,7 +143,9 @@ describe('buildHybridCtaInteractive', () => {
       expect(allRowIds).toContain('VIEW_MENU');
       expect(listMsg.body.text).toContain('• *Ceviche Clásico* — sirve 2 · $25.000');
       expect(listMsg.body.text).toContain('• *Ceviche Mixto* — sirve 1 · $11.000');
-      expect(listMsg.body.text).toMatch(/O elegí de la lista/i);
+      // Footer WA ya invita a elegir/escribir; no repetir en el body.
+      expect(listMsg.body.text).not.toMatch(/O elegí de la lista/i);
+      expect(listMsg.footer?.text).toMatch(/Elegí o escribí/i);
     });
 
     it('sanitiza intro que trae lista numerada y deja solo la prosa previa', () => {

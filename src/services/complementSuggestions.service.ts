@@ -62,8 +62,8 @@ export type AddItemFollowUpListOptions = {
 };
 
 /**
- * Cuerpo de gestión de pedido (post-add y ver carrito): atajos primero,
- * lista WA como alternativa.
+ * Cuerpo de gestión de pedido (post-add y ver carrito): atajos tipables.
+ * La lista WA se ofrece vía footer («Elegí o escribí»), no en el body.
  */
 export function buildAddItemShortcutsFollowUpBody(options?: {
   includeEditAddressHint?: boolean;
@@ -200,7 +200,7 @@ export function buildComplementConfirmBodyIntro(params: {
 /**
  * Lista WA de sugerencias de complemento + filas mínimas de gestión.
  * Body = intro (confirm/total + pitch) → platos → gestión.
- * Sin «O elegí de la lista.» (el footer WA ya invita a elegir/escribir).
+ * El footer WA («Elegí o escribí») invita a la lista; no se repite en el body.
  */
 export function buildComplementSuggestionsListMessage(params: {
   title: string;
@@ -235,7 +235,6 @@ export function buildComplementSuggestionsListMessage(params: {
       intro: bodyPlain.trim(),
       suggestionBullets,
       managementBullets,
-      includeListAlternative: false,
     })
   );
 

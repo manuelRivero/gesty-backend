@@ -94,8 +94,9 @@ export type SelectListBodyCandidate = {
 };
 
 /**
- * Intro del agente + opciones en negrita (atajos) + alternativa lista WA.
+ * Intro del agente + opciones en negrita (atajos tipables).
  * description se muestra como sufijo tipable: • *Nombre* — sirve 2 · $11.000
+ * La lista WA se ofrece vía footer; no se agrega «O elegí de la lista.» al body.
  */
 export const buildSelectFromListBodyText = (
   intro: string,

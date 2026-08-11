@@ -322,7 +322,7 @@ export const buildCategoryProductListMessage = async (
 
 /**
  * Cuerpo del listado de categorías: atajos (nombres) primero,
- * lista WA como alternativa. También invita a escribir un plato.
+ * atajos tipables. La lista WA se ofrece vía footer, no en el body.
  */
 export function buildViewCategoriesBodyText(categoryNames: string[]): string {
   const bullets = categoryNames

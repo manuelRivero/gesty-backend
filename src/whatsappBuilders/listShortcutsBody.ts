@@ -1,18 +1,19 @@
 /**
  * Formato común para mensajes con lista interactiva + atajos en texto:
- * 1) intro / atajos en negrita (primero)
- * 2) alternativa: elegir de la lista WA
+ * intro / atajos en negrita. El footer WA («Elegí o escribí») invita a la lista;
+ * no repetir «O elegí de la lista.» en el body.
  */
 
 import { stripWhatsAppBoldMarkers } from '../utils/whatsappBold';
 
+/** @deprecated El footer WA ya invita a elegir/escribir; no usar en bodies nuevos. */
 export const LIST_AS_ALTERNATIVE_LINE = 'O elegí de la lista.';
 
 export const MANAGEMENT_CONTINUE_LINE =
   'O podés continuar con la gestión de tu pedido.';
 
 /**
- * Arma el body: intro opcional → viñetas (atajos) → invitación a la lista.
+ * Arma el body: intro opcional → viñetas (atajos).
  * `bulletLines` ya vienen formateadas (ej. "• *Menú*" o "• *Modificar* pedido").
  */
 export function buildShortcutsThenListBody(
@@ -28,15 +29,14 @@ export function buildShortcutsThenListBody(
     if (parts.length > 0) parts.push('');
     parts.push(...bullets);
   }
-  if (parts.length > 0) parts.push('');
-  parts.push(LIST_AS_ALTERNATIVE_LINE);
 
   return parts.join('\n');
 }
 
 /**
- * Body post-add / complemento: sugerencias de platos, luego gestión, luego lista WA.
+ * Body post-add / complemento: sugerencias de platos, luego gestión.
  * Evita mezclar upselles y acciones (Menú / Finalizar) en un solo bloque de viñetas.
+ * Por defecto no agrega «O elegí de la lista.» (el footer WA ya invita).
  */
 export function buildSuggestionsThenManagementThenListBody(params: {
   intro: string;
@@ -44,8 +44,8 @@ export function buildSuggestionsThenManagementThenListBody(params: {
   managementBullets: string[];
   managementIntro?: string;
   /**
-   * Complementos: el footer WA ya dice «Elegí o escribí»; no repetir
-   * «O elegí de la lista.» en el body.
+   * Si true, agrega «O elegí de la lista.» al body.
+   * Default false: el footer WA («Elegí o escribí») ya cubre esa invitación.
    */
   includeListAlternative?: boolean;
 }): string {
@@ -59,7 +59,7 @@ export function buildSuggestionsThenManagementThenListBody(params: {
   const managementIntro = (
     params.managementIntro ?? MANAGEMENT_CONTINUE_LINE
   ).trim();
-  const includeListAlternative = params.includeListAlternative !== false;
+  const includeListAlternative = params.includeListAlternative === true;
 
   const parts: string[] = [];
   if (introTrim) parts.push(introTrim);

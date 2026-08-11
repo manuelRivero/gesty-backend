@@ -77,15 +77,13 @@ describe('humanizeHandlerResult', () => {
       content:
         'Escribí una categoría o el plato que querés:\n\n' +
         '• *Bebidas frías*\n' +
-        '• *Platos principales*\n\n' +
-        'O elegí de la lista.',
+        '• *Platos principales*',
     });
 
     const listBody =
       'Escribí una categoría o el nombre del plato que querés:\n\n' +
       '• *Bebidas frías*\n' +
-      '• *Platos principales*\n\n' +
-      'O elegí de la lista.';
+      '• *Platos principales*';
 
     const original = {
       type: 'list' as const,
