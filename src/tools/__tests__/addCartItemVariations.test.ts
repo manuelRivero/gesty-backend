@@ -55,6 +55,20 @@ vi.mock('../../repositories/conversationState.repository', () => ({
   omitConversationMetadataKeys: vi.fn(),
 }));
 
+vi.mock('../../repositories', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../repositories')>();
+  return {
+    ...actual,
+    findOrCreateConversationState: vi.fn().mockResolvedValue({ metadata: {} }),
+  };
+});
+
+vi.mock('../../services/pendingAddQuantity.service', () => ({
+  setPendingAddQuantity: vi.fn(),
+  clearPendingAddQuantity: vi.fn(),
+  buildPendingAddQuantityMessage: vi.fn().mockReturnValue('¿Cuántas?'),
+}));
+
 vi.mock('../../services/orderCompletionGoal.service', () => ({
   getOrderCompletionLedger: vi.fn(),
   recordOrderCompletionAbandonment: vi.fn(),

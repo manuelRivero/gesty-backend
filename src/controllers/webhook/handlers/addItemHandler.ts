@@ -19,26 +19,15 @@ import {
 import { prisma } from '../../../lib/prisma';
 import { hasVariations, variationByIndex } from '../../../services/menu/menuItemVariations';
 import { clearPendingVariation } from '../../../services/pendingVariation.service';
-
-function resolveAddItemQuantity(params: {
-  payloadId: string;
-  metadata: ReturnType<typeof normalizeMetadata>;
-}): number {
-  const { quantityFromPayload } = parseAddItemButtonPayload(params.payloadId);
-  // ADD_ITEM:<id>:<n> en el payload siempre manda (p. ej. :1 en "Agregar 1"); no pisar con sugerencias.
-  if (quantityFromPayload != null) {
-    return Math.min(99, Math.max(1, Math.floor(quantityFromPayload)));
-  }
-  const last = params.metadata.lastListSuggestedQuantity;
-  if (last != null && last >= 1) {
-    return Math.min(99, Math.floor(last));
-  }
-  const people = getRequestedPartySize(params.metadata);
-  if (people != null && people >= 1) {
-    return Math.min(99, Math.floor(people));
-  }
-  return 1;
-}
+import {
+  buildPendingAddQuantityMessage,
+  clearPendingAddQuantity,
+  maybeSetPendingAddQuantity,
+} from '../../../services/pendingAddQuantity.service';
+import {
+  isConfirmedAddQuantity,
+  suggestAddQuantity,
+} from '../../../services/addQuantitySuggestion';
 
 export class AddItemHandler implements IntentHandler {
   readonly command = ConversationIntent.ADD_ITEM;
@@ -49,38 +38,67 @@ export class AddItemHandler implements IntentHandler {
 
   async execute(ctx: EnrichedContext): Promise<HandlerResult | null> {
     const payloadId = ctx.payloadId ?? '';
-    const { productId: menuItemId, variationIndex } =
+    const { productId: menuItemId, quantityFromPayload, variationIndex } =
       parseAddItemButtonPayload(payloadId);
     if (!menuItemId) return noResponse();
 
     const meta = normalizeMetadata(ctx.conversationState?.metadata);
-    const addQuantity = resolveAddItemQuantity({
-      payloadId,
-      metadata: meta,
-    });
+    const partySize = getRequestedPartySize(meta);
 
-    // D5/D7 — el bot nunca agrega un platillo con variaciones sin haber
-    // preguntado cuál quiere el cliente. Se resuelve acá, antes de tocar
-    // el carrito, para que también cubra el flujo determinístico (la tool
-    // del agente híbrido tiene su propio gate — ver Fase 5 del plan).
+    // D5/D7 — variación antes que cantidad (plan party-size D4).
     const item = await prisma.menu_item.findFirst({
       where: { id: menuItemId, business_id: ctx.business.id },
-      select: { id: true, name: true, variations: true },
+      select: {
+        id: true,
+        name: true,
+        variations: true,
+        serves_people: true,
+      },
     });
     if (!item) return noResponse();
 
     let resolvedVariation: string | null = null;
     if (hasVariations(item)) {
       if (variationIndex == null) {
-        return listResponse(buildVariationPickerList(item, addQuantity));
+        // qty en el picker es placeholder; el gate de cantidad corre después.
+        return listResponse(buildVariationPickerList(item, 1));
       }
       const picked = variationByIndex(item.variations, variationIndex);
       if (!picked) {
-        // El catálogo cambió entre que se mandó la lista y el cliente tocó.
-        return listResponse(buildVariationPickerList(item, addQuantity));
+        return listResponse(buildVariationPickerList(item, 1));
       }
       resolvedVariation = picked;
     }
+
+    const { suggestedQuantity } = suggestAddQuantity({
+      partySize,
+      servesPeople: item.serves_people,
+    });
+
+    const qtyConfirmed = isConfirmedAddQuantity({
+      quantity: quantityFromPayload,
+      suggestedQuantity,
+    });
+
+    if (!qtyConfirmed) {
+      const pending = await maybeSetPendingAddQuantity({
+        conversationId: ctx.conversation.id,
+        productId: menuItemId,
+        productName: item.name?.trim() || 'Este plato',
+        servesPeople: item.serves_people,
+        metadata: meta,
+        variation: resolvedVariation,
+        source: 'deterministic',
+      });
+      if (pending) {
+        await clearPendingVariation(ctx.conversation.id);
+        return textResponse(buildPendingAddQuantityMessage(pending));
+      }
+    }
+
+    const addQuantity = qtyConfirmed
+      ? Math.min(99, Math.max(1, Math.floor(quantityFromPayload!)))
+      : 1;
 
     const result = await handleAddItemFromWebhook(
       ctx.payload,
@@ -90,8 +108,8 @@ export class AddItemHandler implements IntentHandler {
       resolvedVariation
     );
     if (result === null) return noResponse();
-    // Si había pendingVariation por un intento híbrido previo, el botón la cierra.
     await clearPendingVariation(ctx.conversation.id);
+    await clearPendingAddQuantity(ctx.conversation.id);
     if (typeof result === 'string') return textResponse(result);
     if (result.complementOnly) {
       return listResponse(result.mainFollowUpList);

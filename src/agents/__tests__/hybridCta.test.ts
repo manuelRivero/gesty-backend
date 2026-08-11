@@ -57,7 +57,7 @@ describe('buildHybridCtaInteractive', () => {
       expect(interactive.action.buttons).toHaveLength(2);
 
       const [primary, secondary] = interactive.action.buttons;
-      expect(primary.reply.id).toBe('ADD_ITEM:prod-123:1');
+      expect(primary.reply.id).toBe('ADD_ITEM:prod-123');
       expect(primary.reply.title).toBe('Agregar 🛒');
       expect(secondary.reply.id).toBe('FEATURED_PAGE:1');
       expect(secondary.reply.title).toBe('Ver destacados');
@@ -76,7 +76,7 @@ describe('buildHybridCtaInteractive', () => {
       expect(ids.some((id: string) => id === 'FEATURED_PAGE:1' || id === 'VIEW_MENU')).toBe(true);
     });
 
-    it('incluye quantity en el payload', () => {
+    it('ADD_ITEM sin qty en el payload (pending de cantidad si aplica)', () => {
       const plan: CtaPlan = {
         primary: { kind: 'ADD_ITEM', productId: 'prod-789', quantity: 3, label: 'Agregar' },
         secondary: { kind: 'VIEW_MENU', label: 'Ver menú' },
@@ -84,7 +84,7 @@ describe('buildHybridCtaInteractive', () => {
 
       const result = buildHybridCtaInteractive(TEXT, plan);
       const primaryBtn = (result!.content as any).interactive.action.buttons[0];
-      expect(primaryBtn.reply.id).toBe('ADD_ITEM:prod-789:3');
+      expect(primaryBtn.reply.id).toBe('ADD_ITEM:prod-789');
     });
   });
 
@@ -245,11 +245,11 @@ describe('buildHybridCtaInteractive', () => {
 // ---------------------------------------------------------------------------
 
 describe('extractPrimaryPayload', () => {
-  it('ADD_ITEM → ADD_ITEM:<id>:<qty>', () => {
+  it('ADD_ITEM → ADD_ITEM:<id> (sin qty; pending de cantidad si aplica)', () => {
     const plan: CtaPlan = {
       primary: { kind: 'ADD_ITEM', productId: 'abc', quantity: 2, label: 'Agregar' },
     };
-    expect(extractPrimaryPayload(plan)).toBe('ADD_ITEM:abc:2');
+    expect(extractPrimaryPayload(plan)).toBe('ADD_ITEM:abc');
   });
 
   it('VIEW_MENU → VIEW_MENU', () => {

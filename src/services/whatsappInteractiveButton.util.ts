@@ -20,16 +20,27 @@ function sanitizeButtonId(rawId: string): string | null {
 }
 
 /**
- * Normaliza id ADD_ITEM a forma canónica ADD_ITEM:<productId>:<qty 1–99>.
- * Rechaza payloads con productId vacío o inválido.
+ * Normaliza id ADD_ITEM.
+ * - Sin qty: `ADD_ITEM:<productId>` (intención de sumar → pending de cantidad si aplica).
+ * - Con qty: `ADD_ITEM:<productId>:<qty>`.
+ * - Con variación: conserva `ADD_ITEM:<id>:<qty>:v<n>`.
  */
 function normalizeAddItemButtonId(id: string): string | null {
   if (!id.startsWith('ADD_ITEM:')) return sanitizeButtonId(id);
   const parsed = parseAddItemButtonPayload(id);
   if (!parsed.productId || parsed.productId === 'undefined') return null;
-  const qty = parsed.quantityFromPayload ?? 1;
-  if (qty < 1 || qty > 99) return null;
-  const canonical = `ADD_ITEM:${parsed.productId}:${qty}`;
+  let canonical: string;
+  if (parsed.variationIndex != null) {
+    const qty = parsed.quantityFromPayload ?? 1;
+    if (qty < 1 || qty > 99) return null;
+    canonical = `ADD_ITEM:${parsed.productId}:${qty}:v${parsed.variationIndex}`;
+  } else if (parsed.quantityFromPayload != null) {
+    const qty = parsed.quantityFromPayload;
+    if (qty < 1 || qty > 99) return null;
+    canonical = `ADD_ITEM:${parsed.productId}:${qty}`;
+  } else {
+    canonical = `ADD_ITEM:${parsed.productId}`;
+  }
   if (canonical.length >= MAX_WHATSAPP_BUTTON_ID_LENGTH) return null;
   return canonical;
 }

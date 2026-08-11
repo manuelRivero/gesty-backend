@@ -183,6 +183,7 @@ export const detectIntentFromPayload = (
     VIEW_MENU_RETURN: ConversationIntent.VIEW_MENU_RETURN,
     VIEW_MENU: ConversationIntent.VIEW_MENU,
     VIEW_CART_FOR_EDITION: ConversationIntent.VIEW_CART_FOR_EDITION,
+    ITEM_NOTE: ConversationIntent.ITEM_NOTE,
     VIEW_ORDER: ConversationIntent.VIEW_ORDER,
     VIEW_CART: ConversationIntent.VIEW_CART,
     EDIT_ADDRESS: ConversationIntent.EDIT_ADDRESS,

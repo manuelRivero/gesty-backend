@@ -212,6 +212,31 @@ describe('buildContextMessage', () => {
     expect(msg).toContain('present_cart');
   });
 
+  it('pendingItemNote: prioriza nota y bloquea complementos en contexto', async () => {
+    findFirstMock.mockResolvedValue(null);
+    const msg = await buildContextMessage(
+      makeCtx({
+        userMsg: 'sin mucha azúcar',
+        metadata: {
+          pendingItemNote: {
+            askedAt: new Date().toISOString(),
+            productId: '11111111-1111-1111-1111-111111111111',
+            productName: 'Chicha',
+            source: 'tipable',
+          },
+        },
+      })
+    );
+    expect(msg).toContain('Nota de ítem pendiente');
+    expect(msg).toContain('update_item_note');
+    expect(msg).toContain('PROHIBIDO add_cart_item');
+    expect(msg.indexOf('Nota de ítem pendiente')).toBeLessThan(
+      msg.indexOf('Personas para el pedido') >= 0
+        ? msg.length
+        : msg.indexOf('sin mucha azúcar')
+    );
+  });
+
   it('sin pendingProductSelection: no menciona selección pendiente', async () => {
     findFirstMock.mockResolvedValue(null);
     const msg = await buildContextMessage(makeCtx());

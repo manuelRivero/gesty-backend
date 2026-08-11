@@ -61,7 +61,12 @@ describe('clearOrderSessionAfterCancel', () => {
 
     expect(omitConversationMetadataKeys).toHaveBeenCalledWith(
       'conv-1',
-      expect.arrayContaining(['peopleCountResume', 'lastOffer', 'pendingProductSelection'])
+      expect.arrayContaining([
+        'peopleCountResume',
+        'lastOffer',
+        'pendingProductSelection',
+        'pendingItemNote',
+      ])
     );
 
     expect(patchConversationMetadata).toHaveBeenCalledWith('conv-1', {

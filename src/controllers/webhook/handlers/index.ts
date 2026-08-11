@@ -40,6 +40,7 @@ import { SupportHandler } from './supportHandler';
 // Fallback
 import { FallbackHandler } from './fallbackHandler';
 import { ViewCartForEditionHandler } from './viewCartForEditionHandler';
+import { ItemNoteHandler } from './itemNoteHandler';
 import { ViewCartHandler } from './viewCartHandler';
 import { ViewMenuHandler } from './viewMenuHandler';
 import { SelectCartItemForEditionHandler } from './selectCartItemForEdition';
@@ -73,6 +74,7 @@ export const handlers = [
   new CancelRemoveActionHandler(),
   new ConfirmRemoveActionHandler(),
   new ViewCartForEditionHandler(),
+  new ItemNoteHandler(),
   new ViewCartHandler(),
   new ViewMenuHandler(),
   new SelectCartItemForEditionHandler(),

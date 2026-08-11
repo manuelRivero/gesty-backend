@@ -1,22 +1,19 @@
 /**
- * pendingVariation — espera estructurada de variación en texto libre (híbrido).
+ * pendingVariation — ledger de “variedad a confirmar” antes de escribir el carrito.
  *
- * Tras `add_cart_item` → variation_required / invalid, persistimos el productId
- * y la lista canónica. El siguiente turno puede resolver sin LLM si el mensaje
- * matchea una variación (D6: matchVariation).
+ * Patrón tipables / pendingAddQuantity: NO es un router regex pre-ReAct.
+ * El híbrido lee el ledger en [ESTADO DEL CLIENTE] y confirma con
+ * add_cart_item(..., variation=<opción>). La tool valida la opción contra
+ * el catálogo (matchVariation) — eso es gate de datos, no interpretación
+ * del mensaje del usuario fuera del agente.
  */
 
 import {
   omitConversationMetadataKeys,
   patchConversationMetadata,
 } from '../repositories';
-import { normalizeMetadata } from './productQuery/utils';
 import type { ConversationMetadata } from './productQuery/types';
-import { matchVariation } from './menu/menuItemVariations';
-import { buildAddItemMessage } from './cart.service';
-import { prisma } from '../lib/prisma';
-import type { EnrichedContext, HandlerResult } from '../controllers/webhook/types';
-import { formatBotUserMessage } from './productQuery/utils';
+import { normalizeMetadata } from './productQuery/utils';
 
 export const PENDING_VARIATION_KEY = 'pendingVariation' as const;
 
@@ -91,74 +88,7 @@ export const clearPendingVariation = async (
   await omitConversationMetadataKeys(conversationId, [PENDING_VARIATION_KEY]);
 };
 
-const escapeRegExp = (s: string): string =>
-  s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-/**
- * Quita la variación matcheada del mensaje y deja el resto como posible nota
- * ("Muy picante Pero que no tenga tanta cebolla" → "que no tenga tanta cebolla").
- */
-export const extractNoteAfterVariation = (
-  userMessage: string,
-  matchedVariation: string
-): string | null => {
-  const re = new RegExp(escapeRegExp(matchedVariation), 'i');
-  let rest = userMessage.replace(re, ' ').replace(/\s+/g, ' ').trim();
-  rest = rest
-    .replace(/^(pero|y|que|,|;|:|\.|!|\?|\-–—)+/i, '')
-    .replace(/(pero|y|,|;|\.|!|\?|\-–—)+$/i, '')
-    .trim();
-  if (rest.length < 3) return null;
-  if (/^(dale|ok|okay|si|sí|listo|va|claro|bueno|perfecto|bárbaro)$/i.test(rest)) {
-    return null;
-  }
-  return rest;
-};
-
-export type ResolvePendingVariationResult =
-  | {
-      status: 'matched';
-      productId: string;
-      productName: string;
-      variation: string;
-      quantity: number;
-      note: string | null;
-    }
-  | { status: 'ambiguous'; candidates: string[]; pending: PendingVariation }
-  | { status: 'none' };
-
-/** Intenta resolver el mensaje del usuario contra pendingVariation. */
-export const resolvePendingVariationFromMessage = (
-  metadata: unknown,
-  userMessage: string
-): ResolvePendingVariationResult => {
-  const pending = getPendingVariation(metadata);
-  if (!pending) return { status: 'none' };
-
-  const text = userMessage.trim();
-  if (!text) return { status: 'none' };
-
-  const match = matchVariation(text, pending.variations);
-  if (match.status === 'ok') {
-    return {
-      status: 'matched',
-      productId: pending.productId,
-      productName: pending.productName,
-      variation: match.value,
-      quantity: pending.quantity,
-      note: extractNoteAfterVariation(text, match.value),
-    };
-  }
-  if (match.status === 'ambiguous') {
-    return {
-      status: 'ambiguous',
-      candidates: match.candidates,
-      pending,
-    };
-  }
-  return { status: 'none' };
-};
-
+/** Ledger para el híbrido (misma filosofía que tipables / pendingAddQuantity). */
 export const buildPendingVariationContextLines = (
   metadata: unknown
 ): string[] => {
@@ -166,113 +96,12 @@ export const buildPendingVariationContextLines = (
   if (!pending) return [];
   const opts = pending.variations.map((v) => `*${v}*`).join(', ');
   return [
-    `- Variación pendiente: el cliente debe elegir una opción para *${pending.productName}* ` +
-      `(productId: ${pending.productId}). Opciones del catálogo: ${opts}. ` +
-      `Si el mensaje actual elige una (aunque traiga nota extra tipo "sin cebolla"), ` +
-      `llamá add_cart_item(productId, quantity: ${pending.quantity}, variation=<opción exacta>). ` +
+    `- Variación pendiente de confirmar (tipable; el cliente puede responder en prosa): ` +
+      `*${pending.productName}* (productId: ${pending.productId}). Opciones del catálogo: ${opts}. ` +
+      `Interpretá el mensaje (nombre parcial, typo razonable, nota extra tipo "sin cebolla") y llamá ` +
+      `add_cart_item(productId, quantity: ${pending.quantity}, variation=<opción del catálogo>). ` +
       `Si además hay preferencia de preparación, después update_item_note. ` +
-      `NO relistes otros productos ni ignores la variación.`,
+      `Si cancela: clear_pending_variation() y confirmá breve. ` +
+      `NO relistes otros productos ni ignores la variación. NO asumas una opción sin que el cliente elija.`,
   ];
-};
-
-/**
- * Si hay variación pendiente y el mensaje del usuario matchea, suma al carrito
- * (y nota residual) sin pasar por el ReAct. Null si no aplica.
- */
-export const tryHandlePendingVariationHybrid = async (
-  ctx: EnrichedContext
-): Promise<HandlerResult | null> => {
-  const userMessage = ctx.message?.text?.body?.trim() ?? '';
-  if (!userMessage) return null;
-
-  const metadata = ctx.conversationState?.metadata;
-  const resolved = resolvePendingVariationFromMessage(metadata, userMessage);
-  if (resolved.status === 'none') return null;
-
-  if (resolved.status === 'ambiguous') {
-    const opts = resolved.candidates.map((c) => `*${c}*`).join(' o ');
-    const text = formatBotUserMessage(
-      'Elegí la variedad',
-      '🌶️',
-      `Para *${resolved.pending.productName}* necesito que elijas con más precisión: ${opts}.`
-    );
-    return { content: text, isInteractive: false, skipBodyHumanization: true };
-  }
-
-  const business = ctx.business;
-  const conversation = ctx.conversation;
-  const customer = ctx.customer;
-  if (!business?.id || !conversation?.id || !customer?.phone_number) {
-    return null;
-  }
-
-  try {
-    const addResult = await buildAddItemMessage(
-      business,
-      conversation,
-      resolved.productId,
-      customer,
-      resolved.quantity,
-      'add',
-      resolved.variation
-    );
-
-    await clearPendingVariation(conversation.id);
-
-    if (resolved.note) {
-      try {
-        const draft = await prisma.draft_order.findFirst({
-          where: {
-            business_id: business.id,
-            customer_phone: customer.phone_number,
-            status: 'active',
-          },
-          select: { id: true },
-        });
-        if (draft) {
-          await prisma.draft_order_item.updateMany({
-            where: {
-              draft_order_id: draft.id,
-              product_id: resolved.productId,
-              variation: resolved.variation,
-            },
-            data: { notes: resolved.note },
-          });
-        }
-      } catch (err) {
-        console.error('[pendingVariation] failed to attach residual note', err);
-      }
-    }
-
-    const noteSuffix = resolved.note
-      ? `\n\nAnoté: _${resolved.note}_.`
-      : '';
-
-    if (typeof addResult === 'string') {
-      return {
-        content: `${addResult}${noteSuffix}`,
-        isInteractive: false,
-        skipBodyHumanization: true,
-      };
-    }
-
-    if (addResult.complementOnly) {
-      return {
-        content: addResult.mainFollowUpList,
-        isInteractive: true,
-        skipBodyHumanization: true,
-      };
-    }
-
-    const mainWithNote = `${addResult.main}${noteSuffix}`;
-    return {
-      content: mainWithNote,
-      isInteractive: false,
-      skipBodyHumanization: true,
-      followUps: [{ type: 'list', listMessage: addResult.mainFollowUpList }],
-    };
-  } catch (err) {
-    console.error('[pendingVariation] tryHandlePendingVariationHybrid failed', err);
-    return null;
-  }
 };

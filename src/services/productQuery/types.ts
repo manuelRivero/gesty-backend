@@ -54,7 +54,7 @@ export type ConversationMetadata = {
   } | null;
   /**
    * Variación pendiente tras `add_cart_item` → variation_required / invalid.
-   * El híbrido (o el resolver determinista) completa con el texto del cliente.
+   * Ledger para el híbrido (tipable); confirma con add_cart_item(variation=…).
    */
   pendingVariation?: {
     productId: string;
@@ -62,6 +62,32 @@ export type ConversationMetadata = {
     variations: string[];
     quantity: number;
     askedAt: string;
+  } | null;
+  /**
+   * Cantidad pendiente de confirmar antes de escribir el carrito
+   * (party size → sugerencia ceil(party/serves); el cliente elige el número).
+   */
+  pendingAddQuantity?: {
+    productId: string;
+    productName: string;
+    suggestedQuantity: number;
+    servesPeople: number | null;
+    partySize: number | null;
+    variation?: string | null;
+    source: 'deterministic' | 'hybrid' | 'complement';
+    askedAt: string;
+  } | null;
+  /**
+   * Captura de nota por ítem tras tipable/payload «Nota» (o start_item_note).
+   * El híbrido confirma con update_item_note; cancela con clear_pending_item_note.
+   */
+  pendingItemNote?: {
+    askedAt: string;
+    productId?: string | null;
+    productName?: string | null;
+    noteText?: string | null;
+    candidateProductIds?: string[];
+    source: 'tipable' | 'payload' | 'hybrid';
   } | null;
   /**
    * Confirmación pendiente sobre un ítem del carrito (`cart.service.ts`).

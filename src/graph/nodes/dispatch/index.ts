@@ -15,6 +15,11 @@ import { dispatchIntent, dispatchInteractive } from '../../../controllers/webhoo
 import { parseAddItemButtonPayload } from '../../../controllers/webhook/utils';
 import { prisma } from '../../../lib/prisma';
 import { hasVariations } from '../../../services/menu/menuItemVariations';
+import {
+  isConfirmedAddQuantity,
+  needsAddQuantityConfirmation,
+  suggestAddQuantity,
+} from '../../../services/addQuantitySuggestion';
 import { findActiveEnvironmentsByBusinessId } from '../../../repositories/reservation.repository';
 import { buildListMessageFromButtons } from '../../../whatsappBuilders';
 import { runReservationAgent } from '../../../agents/reservationAgent';
@@ -44,6 +49,7 @@ import {
 } from '../../../services/productQuery/botMessages';
 import {
   formatBotUserMessage,
+  getRequestedPartySize,
   normalizeMetadata,
   partySizeMetadataFields,
 } from '../../../services/productQuery/utils';
@@ -111,6 +117,7 @@ const CLOSED_INTENTS = new Set<ConversationIntent>([
   ConversationIntent.MODIFY_QUANTITY,
   ConversationIntent.VIEW_CART,
   ConversationIntent.VIEW_CART_FOR_EDITION,
+  ConversationIntent.ITEM_NOTE,
   ConversationIntent.SELECT_CART_ITEM,
   ConversationIntent.VIEW_ORDER,
   ConversationIntent.EDIT_ADDRESS,
@@ -288,18 +295,37 @@ export const interactiveSubgraphNode = async (
         return { handlerResult: result };
       }
 
-      // D7 — si el platillo tiene variaciones y el payload todavía no trae
-      // una elegida, hay que mostrar el picker ANTES de pedir la confirmación
-      // de horario cerrado: si no, el cliente confirma un pedido que todavía
-      // no terminó de definir, y al elegir la variedad se genera un payload
-      // nuevo que dispara una segunda confirmación (síntoma 2 del plan).
-      const { productId, variationIndex } = parseAddItemButtonPayload(payloadId);
-      if (productId && variationIndex == null) {
+      // D4/D7 — variación y cantidad ANTES del confirm de cerrado: el add
+      // debe estar definido (producto + variación + qty) para no re-preguntar.
+      const { productId, variationIndex, quantityFromPayload } =
+        parseAddItemButtonPayload(payloadId);
+      if (productId) {
         const item = await prisma.menu_item.findFirst({
           where: { id: productId, business_id: state.business!.id },
-          select: { variations: true },
+          select: { variations: true, serves_people: true },
         });
-        if (item && hasVariations(item)) {
+        if (item && hasVariations(item) && variationIndex == null) {
+          const result = await dispatchInteractive(enrichedBase);
+          if (!result) {
+            return { earlyExit: 'interactive_no_payload' };
+          }
+          return { handlerResult: result };
+        }
+        const partySize = getRequestedPartySize(
+          normalizeMetadata(enrichedBase.conversationState?.metadata)
+        );
+        const { suggestedQuantity } = suggestAddQuantity({
+          partySize,
+          servesPeople: item?.serves_people,
+        });
+        // Solo diferir el confirm de cerrado si realmente hay que preguntar cantidad.
+        if (
+          needsAddQuantityConfirmation({ suggestedQuantity, partySize }) &&
+          !isConfirmedAddQuantity({
+            quantity: quantityFromPayload,
+            suggestedQuantity,
+          })
+        ) {
           const result = await dispatchInteractive(enrichedBase);
           if (!result) {
             return { earlyExit: 'interactive_no_payload' };

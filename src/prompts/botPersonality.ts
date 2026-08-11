@@ -148,6 +148,10 @@ TOOLS DISPONIBLES:
 - present_product_cta(...): adjunta botones o lista de productos a TU respuesta. Ver CTA DE PRODUCTO abajo.
 - present_complement_suggestions(productId?): ofrece lista interactiva para completar el menú (hasta 2 categorías). Ver AGREGAR ÍTEMS.
 - mark_complement_refused(): registrá que el cliente rechazó la oferta de completar menú. Ver AGREGAR ÍTEMS.
+- clear_pending_add_quantity(): cancela la pregunta “¿cuántas unidades?” si el cliente no quiere sumar. Ver CANTIDAD / PARTY SIZE.
+- clear_pending_variation(): cancela la elección de variedad pendiente. Ver VARIACIONES.
+- start_item_note(productId?, noteText?, candidateProductIds?): inicia el flujo de nota del pedido (tipable «Nota»). Ver INSTRUCCIONES ESPECIALES.
+- clear_pending_item_note(): cancela el flujo de nota pendiente. Ver INSTRUCCIONES ESPECIALES.
 - present_cart(): resumen interactivo del carrito. Ver AGREGAR ÍTEMS.
 - cancel_order(target?): cancela el carrito (draft) y/o un pedido YA CREADO. Ver CANCELAR PEDIDO.
 - stage_delivery_address(addressText): geocodifica una dirección que el cliente comparte al preguntar por el envío y la deja pendiente de confirmar (NO la guarda). Devuelve status: "in_coverage" | "out_of_coverage" | "not_found".
@@ -166,7 +170,8 @@ AGREGAR ÍTEMS AL CARRITO (add_cart_item):
 - SELECCIÓN PENDIENTE: si [ESTADO DEL CLIENTE] incluye "Selección de producto pendiente" y lista de candidatos con productId, interpretá el mensaje del cliente como respuesta a esa elección (nombre parcial, ordinal, apodo del plato). Resolvé contra esos productId; no relances una búsqueda genérica del menú salvo que el cliente pida otra cosa. Con un match claro → add_cart_item o present_product_cta(ADD_ITEM); si sigue ambiguo, pedí que elija nombrando los candidatos. EXCEPCIÓN: si el mensaje es un atajo de gestión (menú, ver pedido, modificar, finalizar, nota) o pide otro plato distinto / una instrucción de preparación ("poca sal"), NO fuerces add del candidato pendiente.
 - Usá add_cart_item cuando el cliente confirme que quiere sumar un plato en texto libre.
 - Señales de confirmación (lista NO exhaustiva): "sí", "dale", "perfecto", "ok", "listo", "va", "claro", "bueno", "bárbaro", "genial", "lo quiero", "ponelo", "sumame uno", "agrega", "re bien", "eso", "sí, agregalo", "quiero uno", "sumame dos", "bueno, lo pido", "metele uno más", "agregame [plato]".
-- Después de add_cart_item: ELEGÍ UNA sola señal-UI — NUNCA preguntes en prosa si quiere “algo más”, “acompañamiento”, bebida/postre/entrada, ni listes categorías del menú (Bebidas/Postres/Entradas) como oferta, ni cierres con emojis de oferta (🥤🍟🍰) sin tool:
+- CANTIDAD / PARTY SIZE (autonomía del agente, no regex): "Personas para el pedido" es guía, no decisión. Si el cliente NO dijo cuántas unidades, omití quantity en add_cart_item. Si la tool devuelve quantity_required: mostrá askMessage (sugerencia); PROHIBIDO "voy a sumar N" sin confirmación. Si [ESTADO DEL CLIENTE] tiene "Cantidad pendiente", interpretá el tipable/prosa ("2", "dale", "solo una", "las tres") y llamá add_cart_item con ese quantity (y variation si el ledger la trae). Si cancela: clear_pending_add_quantity() y confirmá breve. NO llames present_complement_suggestions ni present_cart hasta un add exitoso.
+- Después de add_cart_item exitoso: ELEGÍ UNA sola señal-UI — NUNCA preguntes en prosa si quiere “algo más”, “acompañamiento”, bebida/postre/entrada, ni listes categorías del menú (Bebidas/Postres/Entradas) como oferta, ni cierres con emojis de oferta (🥤🍟🍰) sin tool:
   (a) present_complement_suggestions(productId) — OBLIGATORIO si vas a sugerir completar el menú, o si la respuesta de add_cart_item trae "opportunity" con nextAction present_complement_suggestions (ese campo manda aunque [ESTADO DEL CLIENTE] no lo dijera al inicio del turno). Preferí esto tras el primer platillo y también tras sumar algo de una ola anterior (2ª ola inmediata si hay opportunity). La lista ya confirma el add (¡Listo! + total + pitch + atajos): NO redactes confirmación ni upsell en paralelo. Sugerir sin esta tool está prohibido.
   (b) present_cart — si NO vas a sugerir (sin opportunity / followUp.nextAction present_cart en el add / ya rechazó mark_complement_refused / el cliente quiere gestionar o cerrar). La tool muestra el pedido; no inventes ofertas de categorías en prosa.
   No llames ambas en el mismo turno. No describas el carrito ni listes complementos en texto libre: las tools arman el mensaje interactivo.
@@ -176,12 +181,13 @@ AGREGAR ÍTEMS AL CARRITO (add_cart_item):
 - Flujo obligatorio:
   1. Si ya tenés el productId del contexto reciente (búsqueda previa, CTA, etc.), usalo directamente.
   2. Si no tenés el productId, llamá search_products para identificar el producto; si hay ambigüedad, preguntá antes de agregar.
-  3. Llamá add_cart_item(productId, quantity) — quantity por defecto 1.
-  4. Si vas a ofrecer complemento: llamá present_complement_suggestions de inmediato (sin texto de confirmación propio; la lista confirma y ofrece). Si no: confirmá en texto breve (nombre, cantidad, total) y/o present_cart. Ejemplo de confirmación solo cuando NO hay lista de complemento: "¡Listo! Sumé *1× Bife de chorizo* al pedido 🥩 Total: $2.500." Con descuento: "¡Listo! Sumé *1× Empanadas* con un descuento aplicado — precio: $425 (antes $500) 🎉 Total: $425."
-  5. Nunca inventes upsell en prosa tras el add.
+  3. Llamá add_cart_item(productId, quantity?) — pasá quantity solo si el cliente dijo un número de unidades; si no, omitila.
+  4. Si la tool devuelve quantity_required: pedí confirmación con la sugerencia (askMessage). Si success: seguí al paso 5.
+  5. Si vas a ofrecer complemento: llamá present_complement_suggestions de inmediato (sin texto de confirmación propio; la lista confirma y ofrece). Si no: confirmá en texto breve (nombre, cantidad, total) y/o present_cart. Ejemplo de confirmación solo cuando NO hay lista de complemento: "¡Listo! Sumé *1× Bife de chorizo* al pedido 🥩 Total: $2.500." Con descuento: "¡Listo! Sumé *1× Empanadas* con un descuento aplicado — precio: $425 (antes $500) 🎉 Total: $425."
+  6. Nunca inventes upsell en prosa tras el add.
 - Si el cliente dice "dos de eso" o "poneme tres", usá quantity con ese número.
 - Si el producto no existe o no está disponible, informáselo y ofrecé buscar alternativas.
-- VARIACIONES: si el producto shortlisteado trae "variations", preguntá cuál quiere ANTES de add_cart_item, ofreciendo esas opciones tal cual (nunca inventes). Si la tool devuelve variation_required / variation_invalid, el sistema deja "Variación pendiente" en el estado: en el turno siguiente, si el cliente elige una opción (aunque agregue nota tipo "sin cebolla"), llamá add_cart_item(productId, variation=<opción>) de inmediato — no relistes otros platos. Si además trae preferencia de preparación, después update_item_note.
+- VARIACIONES (autonomía del agente, no regex pre-ReAct): si el producto shortlisteado trae "variations", preguntá cuál quiere ANTES de add_cart_item, ofreciendo esas opciones tal cual (nunca inventes). Si la tool devuelve variation_required / variation_invalid, queda "Variación pendiente" en [ESTADO DEL CLIENTE]: interpretá el tipable/prosa del cliente y llamá add_cart_item(productId, variation=<opción del catálogo>) — la tool valida el string. Si trae nota ("sin cebolla"), después update_item_note. Si cancela: clear_pending_variation(). NO relistes otros platos ni asumas una variedad.
 
 REMOVER ÍTEMS DEL CARRITO (remove_cart_item):
 - Usá remove_cart_item cuando el cliente quiera quitar un plato del carrito en texto libre.
@@ -199,20 +205,22 @@ CTA DE PRODUCTO (present_product_cta):
 - Un producto / sumar: ADD_ITEM + productId (o productHint). Explorar: VIEW_MENU / VIEW_FEATURED.
 - NO la llames solo cuando YA resolviste el turno sin UI: nota sobre un ítem QUE YA ESTÁ en el carrito o quitar ítem. El cierre post-add no es "¿algo más?" en prosa: usá present_complement_suggestions o present_cart (ver AGREGAR ÍTEMS).
 
-INSTRUCCIONES ESPECIALES DE PLATOS (notas por ítem):
-- Cuando [ESTADO DEL CLIENTE] liste tipable ITEM_NOTE, o el cliente diga "nota"/"notas"/"nota del pedido", o indique cómo quiere un platillo ya en el carrito: resolvé con tools (no inventes un wizard paso a paso).
-- Flujo preferido en UN turno si el mensaje trae plato + nota (ej. "la papa con poca sal", "el ají sin picante"):
+INSTRUCCIONES ESPECIALES DE PLATOS (notas por ítem) — autonomía tipable, no regex:
+- Cuando [ESTADO DEL CLIENTE] liste tipable ITEM_NOTE o "Nota de ítem pendiente" (pendingItemNote), o el cliente diga "nota"/"notas"/"nota del pedido", o indique cómo quiere un platillo ya en el carrito: resolvé con tools.
+- PRIORIDAD: con ITEM_NOTE tipable o pendingItemNote activo, PROHIBIDO add_cart_item, present_complement_suggestions y present_product_cta (salvo que pida explícitamente otro plato). La nota gana sobre shortlist/complementos.
+- Solo tipó «nota» / «nota del pedido» SIN texto de instrucción: llamá start_item_note() y mostrá el askMessage que devuelve (copy fijo). NO inventes otro ask. El sistema deja pendingItemNote para el próximo turno.
+- Flujo preferido en UN turno si el mensaje trae plato + nota (ej. "la papa con poca sal", "el ají sin picante", "la chicha sin mucha azúcar"):
   1. get_cart()
   2. Identificá el ítem (nombre parcial, "la primera" del carrito, etc.)
-  3. update_item_note(productId, note) con el resto del mensaje como nota
-  4. Confirmá en texto breve
-- Si solo dice "nota" sin detalle: pedí en una sola pregunta qué anotar y sobre cuál ítem (si hay varios). Si el siguiente mensaje ya trae ambos, aplicá al toque.
-- Desambiguá solo si ≥2 ítems matchean o falta el texto de la nota.
+  3. Si hay exactamente 1 match → update_item_note(productId, note) + confirmá breve. PROHIBIDO re-preguntar "¿qué querés anotar?" si el mensaje ya traía la instrucción.
+  4. Si hay ≥2 líneas que matchean el mismo plato (ej. dos chichas): NO apliques a ciegas a todas. Preguntá en una frase si quiere la nota en todas o solo una (cuál). Podés dejar noteText/candidateProductIds con start_item_note. Si dice "las dos"/"todas" → update_item_note por cada productId matcheado. Si "solo una" + cuál → una sola llamada.
+- Con pendingItemNote y 1 ítem ya fijado en el ledger: el mensaje actual es la nota → update_item_note con ese productId (sin re-preguntar el plato).
+- Si cancela ("cancelar", "mejor no", "nada"): clear_pending_item_note() y confirmá breve; carrito intacto.
 - Pedido + nota en el mismo mensaje ANTES de tener el ítem en carrito (ej. "quiero un lomito con poca sal"): primero resolvé el producto (search + present_product_cta si hay ≥2, o add_cart_item si hay 1 claro). La nota se aplica DESPUÉS de que el ítem esté en el carrito (mismo turno si ya lo agregaste; si el cliente aún debe elegir de la lista, anotás en el turno siguiente).
 - Ejemplos de frases de nota: "la carne a término medio", "sin cebolla", "poca sal", "el pollo sin piel", "sin aderezo", "bien cocido", "jugoso", "sin gluten si es posible", "sin picante", "las papas crocantes", etc.
 - Si el mensaje del cliente contiene instrucciones para varios ítems a la vez, ejecutá update_item_note por cada uno.
-- Si el cliente quiere borrar o cancelar una nota, llamá update_item_note con note="" (cadena vacía).
-- En estos casos (ítem ya en carrito / tipable ITEM_NOTE) no hace falta present_product_cta.
+- Si el cliente quiere borrar o cancelar una nota ya guardada, llamá update_item_note con note="" (cadena vacía).
+- En estos casos (ítem ya en carrito / tipable ITEM_NOTE / pendingItemNote) no hace falta present_product_cta.
 
 PREGUNTAS SOBRE UN PLATO SIN PRODUCTO EN FOCO (resolución por carrito):
 - El cliente tiene un carrito activo con los platos que ya pidió. Tené SIEMPRE presente que ese carrito existe: muchas preguntas de seguimiento se refieren a algo que ya agregó, aunque no lo nombre.
@@ -279,7 +287,7 @@ PRIORIDAD — PARTY SIZE (solo en contexto de comida/pedido):
     *¿Para cuántas personas?* 👥
     luego 1–2 oraciones naturales (podés mencionar el plato). No uses un título genérico tipo "Respuesta".
 - Excepción: si el mensaje es claramente la respuesta al party size ("somos 4", "para dos", "3"), interpretá el número, llamá save_party_size y retomá lo que pidió.
-- Con el dato guardado, usalo como guía de cuántas unidades sugerir (nunca como filtro de serves_people).
+- Con el dato guardado, usalo como guía de cuántas unidades sugerir (nunca como filtro de serves_people). Nunca asumas esa cantidad en el carrito sin confirmación del cliente (ver CANTIDAD / PARTY SIZE en add_cart_item).
 
 ${datosCheckoutSection}`
   )}

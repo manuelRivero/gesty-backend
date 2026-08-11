@@ -43,6 +43,20 @@ describe('botPersonality', () => {
     expect(hybrid).toMatch(/NO fuerces add/i);
   });
 
+  it('hybrid nota: start_item_note / clear_pending_item_note / prioridad', () => {
+    const hybrid = buildHybridAgentSystemPrompt();
+    expect(hybrid).toMatch(/start_item_note/i);
+    expect(hybrid).toMatch(/clear_pending_item_note/i);
+    expect(hybrid).toMatch(/pendingItemNote/i);
+    expect(hybrid).toMatch(/PROHIBIDO add_cart_item/i);
+  });
+
+  it('hybrid variaciones: autonomía + clear_pending_variation', () => {
+    const hybrid = buildHybridAgentSystemPrompt();
+    expect(hybrid).toMatch(/VARIACIONES \(autonomía del agente/i);
+    expect(hybrid).toMatch(/clear_pending_variation/i);
+  });
+
   it('hybrid incluye reglas operativas de tools', () => {
     const hybrid = buildHybridAgentSystemPrompt();
     expect(hybrid).toMatch(/search_products/i);
@@ -59,6 +73,14 @@ describe('botPersonality', () => {
     expect(hybrid).toMatch(/Sugerir sin esta tool está prohibido/i);
     expect(hybrid).toMatch(/opportunity.*nextAction|nextAction present_complement/i);
     expect(hybrid).toMatch(/La lista ya confirma el add/i);
+  });
+
+  it('hybrid instruye quantity_required / autonomía tipable (sin router)', () => {
+    const hybrid = buildHybridAgentSystemPrompt();
+    expect(hybrid).toMatch(/quantity_required/i);
+    expect(hybrid).toMatch(/CANTIDAD \/ PARTY SIZE/i);
+    expect(hybrid).toMatch(/clear_pending_add_quantity/i);
+    expect(hybrid).toMatch(/autonomía del agente/i);
   });
 
   it('hybrid instruye a resolver Selección de producto pendiente contra candidatos', () => {

@@ -40,6 +40,7 @@ vi.mock('../productQuery', () => ({
 import { recordOpportunitySurfaced } from '../intent/opportunities.service';
 import { buildComplementarySuggestionsWithLlm } from '../ai/complementarySuggestion.ai.service';
 import {
+  buildAddItemShortcutsFollowUpList,
   buildComplementSuggestionsListMessage,
   canSurfaceComplementOpportunity,
   presentComplementSuggestionBundle,
@@ -90,6 +91,15 @@ describe('canSurfaceComplementOpportunity', () => {
   });
 });
 
+describe('buildAddItemShortcutsFollowUpList', () => {
+  it('incluye fila ITEM_NOTE junto a gestión', () => {
+    const list = buildAddItemShortcutsFollowUpList('Escribí: …');
+    const rows = list.action.sections.flatMap((s) => s.rows);
+    expect(rows.some((r) => r.id === 'ITEM_NOTE')).toBe(true);
+    expect(rows.find((r) => r.id === 'ITEM_NOTE')?.title).toBe('Nota del pedido');
+  });
+});
+
 describe('buildComplementSuggestionsListMessage', () => {
   it('incluye productos, filas de gestión y atajos tipables en el body', () => {
     const list = buildComplementSuggestionsListMessage({
@@ -104,10 +114,11 @@ describe('buildComplementSuggestionsListMessage', () => {
     });
 
     const rows = list.action.sections.flatMap((s) => s.rows);
-    expect(rows.some((r) => r.id === 'ADD_ITEM:p1:1')).toBe(true);
+    expect(rows.some((r) => r.id === 'ADD_ITEM:p1')).toBe(true);
     expect(rows.some((r) => r.id === 'VIEW_CART')).toBe(true);
     expect(rows.some((r) => r.id === 'CHECKOUT')).toBe(true);
     expect(rows.some((r) => r.id === 'VIEW_CART_FOR_EDITION')).toBe(true);
+    expect(rows.some((r) => r.id === 'ITEM_NOTE')).toBe(true);
     expect(rows.some((r) => r.id === 'VIEW_MENU')).toBe(true);
     expect(list.body.text).toMatch(/postre/i);
     expect(list.body.text).toContain('• *Flan*');

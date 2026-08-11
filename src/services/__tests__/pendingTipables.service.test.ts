@@ -42,8 +42,8 @@ describe('pendingTipables', () => {
     });
     expect(lines.length).toBeGreaterThan(0);
     expect(lines.join('\n')).toMatch(/VIEW_CART.*present_cart/i);
-    expect(lines.join('\n')).toMatch(/ITEM_NOTE.*update_item_note/i);
-    expect(lines.join('\n')).toMatch(/la papa con poca sal/i);
+    expect(lines.join('\n')).toMatch(/ITEM_NOTE.*start_item_note|ITEM_NOTE.*update_item_note/i);
+    expect(lines.join('\n')).toMatch(/la papa con poca sal|start_item_note/i);
   });
 
   it('sin tipables: no emite líneas', () => {

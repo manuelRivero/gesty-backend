@@ -50,7 +50,6 @@ import { persistLastOffer } from '../services/lastOffer.service';
 import { buildCartSummaryMessage } from '../services/cart.service';
 import { buildCancelOrderMessage } from '../services/order.service';
 import { tryPresentComplementSuggestions } from '../services/complementSuggestions.service';
-import { tryHandlePendingVariationHybrid } from '../services/pendingVariation.service';
 import { buildCategoryProductListMessage } from '../services/category.service';
 import { findOrCreateConversationState } from '../repositories';
 import { AddressService } from '../services/address.service';
@@ -485,24 +484,9 @@ export const runHybridReactAgent = async (
       : '';
   if (!businessId) return null;
 
-  // Variación pendiente: resolver en texto libre antes del ReAct (evita relistar).
-  try {
-    const pendingHandled = await tryHandlePendingVariationHybrid(ctx);
-    if (pendingHandled) {
-      console.log(
-        JSON.stringify({
-          event: '[hybrid-agent] pending_variation_resolved',
-          conversationId: ctx.conversationId,
-        })
-      );
-      return {
-        kind: 'response',
-        handlerResult: markHybridResult(pendingHandled),
-      };
-    }
-  } catch (err) {
-    console.error('[hybrid-agent] pending_variation resolve failed', err);
-  }
+  // Pendings tipables (variación / cantidad): ledger en [ESTADO DEL CLIENTE].
+  // El ReAct confirma con tools — sin router regex pre-ReAct.
+  // Ver .cursor/rules/hybrid-pending-autonomy.mdc
 
   const { id: personalityId, promptText } =
     await resolvePersonalityForBusiness(businessId);
