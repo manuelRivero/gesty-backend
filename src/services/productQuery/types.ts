@@ -314,7 +314,9 @@ export type ConversationMetadata = {
     };
     SUGERIR_DIRECCION?: IntentLedgerEntryBase;
     OFRECER_PROMOCION?: IntentLedgerEntryBase;
+    /** @deprecated Alias ledger; preferir OBTENER_PERSONAS_DEL_PEDIDO. */
     RECOLECTAR_PARTY_SIZE?: IntentLedgerEntryBase;
+    OBTENER_PERSONAS_DEL_PEDIDO?: IntentLedgerEntryBase;
     PEDIDO_POR_EXPIRAR?: IntentLedgerEntryBase & { emitted?: boolean };
     NEGOCIO_POR_CERRAR?: IntentLedgerEntryBase & { emitted?: boolean };
     FUERA_DE_COBERTURA?: IntentLedgerEntryBase & { emitted?: boolean };

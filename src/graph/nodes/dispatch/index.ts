@@ -55,7 +55,7 @@ import {
   partySizeMetadataFields,
 } from '../../../services/productQuery/utils';
 import { patchConversationMetadata, findOrCreateConversationState, omitConversationMetadataKeys } from '../../../repositories';
-import { extractStrictNumericPeopleCount, resolvePartySizeFromReply } from '../../../helpers/peopleCountExtraction';
+import { extractStrictNumericPeopleCount } from '../../../helpers/peopleCountExtraction';
 import { buildIntentAmbiguityInteractiveMessage } from '../../../services/intentAmbiguityConfirmation.service';
 import { isHybridAgentMode, isReservationAgentEnabled, isCheckoutAgentEnabled } from '../../../config/env';
 import { runHybridReactAgent } from '../../../agents/reactAgent';
@@ -479,67 +479,17 @@ export const nlpSubgraphNode = async (
   // "personas faltantes" debe poder volver a evaluarse como si fuera un mensaje
   // nuevo (la metadata en memoria todavía trae el flag viejo).
   let abandonedPeopleCountGate = false;
-  let abandonedPartySizeDefer = false;
 
-  // Modo híbrido: reanudar consulta de menú tras responder party size
+  // Híbrido: awaitingPartySize era Ownership encubierto (PLAN-ACCION-PARTY-SIZE-GOAL).
+  // Limpiar flag legacy y dejar tipables al ReAct + Goal OBTENER_PERSONAS_DEL_PEDIDO.
   if (isHybridAgentMode() && metaPre.awaitingPartySize) {
-    const resume = parsePeopleCountResume(metaPre);
-    const reDetection = await detectIntentWithConfidence(
-      userMessage,
-      detectionContext
+    await omitConversationMetadataKeys(conversation.id, [
+      'awaitingPartySize',
+      'peopleCountResume',
+    ]);
+    workingConversationState = await findOrCreateConversationState(
+      conversation.id
     );
-    const extractedPeople = resolvePartySizeFromReply(
-      userMessage,
-      reDetection.quantity
-    );
-
-    if (resume && extractedPeople != null && extractedPeople > 0) {
-      await patchConversationMetadata(conversation.id, {
-        ...partySizeMetadataFields(extractedPeople),
-        awaitingPartySize: false,
-      });
-      await omitConversationMetadataKeys(conversation.id, ['peopleCountResume']);
-      workingConversationState = await findOrCreateConversationState(
-        conversation.id
-      );
-
-      const resumedCtx: EnrichedContext = {
-        ...enrichedBase,
-        conversationState: workingConversationState,
-        detection: resume.detection,
-        message: {
-          ...ctx.message!,
-          type: 'text',
-          text: { body: resume.userMessage },
-        },
-        hasAddress: state.hasAddress,
-        isInCoverage: state.isInCoverage,
-        partySizeJustConfirmed: extractedPeople,
-      };
-
-      const resumedResult = await dispatchOrHybrid(resumedCtx, checkoutHandoff);
-      if (!resumedResult) {
-        return { earlyExit: 'no_handler_match', workingConversationState };
-      }
-      return {
-        handlerResult: resumedResult,
-        detection: resume.detection,
-        dataCollectionDelegated: true,
-        workingConversationState,
-      };
-    }
-
-    if (shouldAbandonPeopleCountForNewIntent(reDetection, userMessage) && extractedPeople == null) {
-      await omitConversationMetadataKeys(conversation.id, [
-        'awaitingPartySize',
-        'peopleCountResume',
-      ]);
-      precomputedDetection = reDetection;
-      abandonedPartySizeDefer = true;
-      workingConversationState = await findOrCreateConversationState(
-        conversation.id
-      );
-    }
   }
 
   if (metaPre.awaitingPeopleCount) {
@@ -618,9 +568,10 @@ export const nlpSubgraphNode = async (
     rescueMargin: detection.rescueMargin ?? null,
   });
 
-  // "2" solo tras pedir personas (o sin party size): no es MODIFY_QUANTITY.
+  // Legacy determinístico: "2" solo = party size. En híbrido lo interpreta ReAct + save_party_size.
   const metaAfterDetect = normalizeMetadata(workingConversationState?.metadata);
   if (
+    !isHybridAgentMode() &&
     shouldTreatBareNumberAsPartySize({
       userMessage,
       intent: detection.intent as ConversationIntent,
@@ -711,10 +662,8 @@ export const nlpSubgraphNode = async (
     };
   }
 
-  // willUseAgent determina si el turno irá al ReAct agent; se usa para:
-  // 1) saltar el gate de party-size (el agente lo recolecta naturalmente)
-  // 2) setear dataCollectionDelegated para saltar los post-gates
-  // Misma fuente que enrichedCtx: working o, si falta, el state del contexto.
+  // willUseAgent: ReAct recoge party size vía Goal (sin Ownership awaitingPartySize).
+  // dataCollectionDelegated salta post-gates de dirección/nombre.
   const metaForGate = normalizeMetadata(
     (workingConversationState ?? enrichedBase.conversationState)?.metadata
   );
@@ -723,35 +672,12 @@ export const nlpSubgraphNode = async (
     isHybridAgentMode() &&
     (forceHybridPendingQty ||
       !CLOSED_INTENTS.has(detection.intent as ConversationIntent));
-  if (abandonedPeopleCountGate || abandonedPartySizeDefer) {
+  if (abandonedPeopleCountGate) {
     // La metadata en memoria todavía trae el flag viejo; lo limpiamos para que
-    // el gate evalúe el mensaje nuevo como si fuera la primera vez.
+    // el gate legacy evalúe el mensaje nuevo como si fuera la primera vez.
     metaForGate.awaitingPeopleCount = false;
     metaForGate.awaitingPartySize = false;
     metaForGate.peopleCountResume = undefined;
-  }
-
-  // Híbrido: congelar consulta de menú y delegar al agente que pide party size
-  if (
-    willUseAgent &&
-    !abandonedPartySizeDefer &&
-    shouldBlockForMissingPeopleCount({
-      intent: detection.intent,
-      metadata: metaForGate,
-    })
-  ) {
-    if (!metaForGate.awaitingPartySize) {
-      await patchConversationMetadata(conversation.id, {
-        awaitingPartySize: true,
-        peopleCountResume: {
-          userMessage,
-          detection: JSON.parse(JSON.stringify(detection)),
-        },
-      });
-      workingConversationState = await findOrCreateConversationState(
-        conversation.id
-      );
-    }
   }
 
   // Gate duro de party-size solo en ruta determinística (no híbrida).

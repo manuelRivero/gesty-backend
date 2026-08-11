@@ -84,6 +84,12 @@ import {
   reviveOrderCompletionIfAbandoned,
 } from '../services/orderCompletionGoal.service';
 import {
+  getPartySizeGoalLedger,
+  derivePartySizeGoal,
+  PARTY_SIZE_GOAL_TYPE,
+} from '../services/partySizeGoal.service';
+import { getIntentCatalogEntry } from '../domain/intent/family';
+import {
   getReservationCompletionLedger,
   recordReservationCompletionAbandonment,
 } from '../services/reservationCompletionGoal.service';
@@ -1281,6 +1287,7 @@ export const addCartItemTool = new DynamicStructuredTool<
 
     let partySize: number | null = null;
     let pendingReply = false;
+    let partySizeGoalBlocksAdd = false;
     if (conversationId) {
       const state = await findOrCreateConversationState(conversationId);
       const meta = normalizeMetadata(state.metadata);
@@ -1289,7 +1296,33 @@ export const addCartItemTool = new DynamicStructuredTool<
       pendingReply = Boolean(
         pendingQty && pendingQty.productId === productId && quantity != null
       );
+      // Gate duro: sin Fact de personas y Goal aún con presupuesto → no escribir carrito.
+      const partyLedger = getPartySizeGoalLedger(meta);
+      const partyGoal = derivePartySizeGoal(
+        {
+          partySize,
+          foodRelatedSignal: true,
+          checkoutActive: meta.checkout_active === true,
+        },
+        partyLedger
+      );
+      const maxSurfaces = getIntentCatalogEntry(PARTY_SIZE_GOAL_TYPE).maxSurfaces;
+      partySizeGoalBlocksAdd =
+        partyGoal.open && partyLedger.surfaceCount < maxSurfaces;
     }
+
+    if (partySizeGoalBlocksAdd) {
+      return toJson({
+        success: false,
+        error: 'party_size_required',
+        pending: true,
+        instruction:
+          'Falta cuántas personas comen (Goal OBTENER_PERSONAS_DEL_PEDIDO). ' +
+          'Preguntá el número (1–99), llamá save_party_size cuando lo diga, ' +
+          'y recién después reintentá add_cart_item. NO digas que ya sumaste.',
+      });
+    }
+
     const { suggestedQuantity } = suggestAddQuantity({
       partySize,
       servesPeople: item.serves_people,

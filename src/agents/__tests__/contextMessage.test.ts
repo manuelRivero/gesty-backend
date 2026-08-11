@@ -116,11 +116,34 @@ describe('buildContextMessage', () => {
     expect(msg).toContain('- Sesión de checkout: activa');
   });
 
-  it('oferta activa sin carrito: menciona "Carrito" por la oferta pendiente', async () => {
+  it('oferta activa sin party: Goal personas gana; carrito por oferta pendiente', async () => {
     findFirstMock.mockResolvedValue(null);
     const msg = await buildContextMessage(
       makeCtx({
         metadata: {
+          lastOffer: {
+            kind: 'ADD_ITEM',
+            productId: 'prod-1',
+            productName: 'Ceviche',
+            suggestedQuantity: 1,
+            offeredAt: new Date().toISOString(),
+            source: 'product_focus',
+          },
+        },
+      })
+    );
+    expect(msg).toContain('- Carrito:');
+    expect(msg).toContain('OBTENER_PERSONAS_DEL_PEDIDO');
+    expect(msg).not.toContain('Oferta activa');
+  });
+
+  it('oferta activa con party size: menciona Oferta activa', async () => {
+    findFirstMock.mockResolvedValue(null);
+    const msg = await buildContextMessage(
+      makeCtx({
+        metadata: {
+          peopleCount: 2,
+          requestedPartySize: 2,
           lastOffer: {
             kind: 'ADD_ITEM',
             productId: 'prod-1',

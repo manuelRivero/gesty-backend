@@ -41,6 +41,7 @@ describe('clearOrderSessionAfterCancel', () => {
           COMPLETAR_PEDIDO: { surfaceCount: 3 },
           RETOMAR_TAREA_INTERRUMPIDA: { surfaceCount: 1 },
           RECOLECTAR_PARTY_SIZE: { surfaceCount: 1 },
+          OBTENER_PERSONAS_DEL_PEDIDO: { surfaceCount: 2 },
           COMPLETAR_RESERVA: { surfaceCount: 1 },
         },
       },

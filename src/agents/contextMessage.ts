@@ -35,10 +35,15 @@ import {
   type IntentLedgerView,
 } from '../services/intent/activeIntent.service';
 import {
-  deriveCollectPartySizeCandidate,
   deriveSuggestComplementCandidate,
-  recordOpportunitySurfaced,
 } from '../services/intent/opportunities.service';
+import {
+  derivePartySizeGoalCandidate,
+  isFoodRelatedPartySizeSignal,
+  recordPartySizeGoalSurfaced,
+  resolvePartySizeLedgerEntry,
+  PARTY_SIZE_GOAL_TYPE,
+} from '../services/partySizeGoal.service';
 import {
   deriveFueraDeCoberturaCandidate,
   derivePedidoPorExpirarCandidate,
@@ -155,14 +160,6 @@ export function buildPendingTipablesManagementLines(meta: {
   ];
 }
 
-const FOOD_RELATED_INTENTS = new Set([
-  'ORDER_FOOD',
-  'PRODUCT_QUERY',
-  'ADD_ITEM',
-  'VIEW_MENU',
-  'MODIFY_QUANTITY',
-]);
-
 export const buildContextMessage = async (ctx: EnrichedContext): Promise<string> => {
   const userMsg = ctx.message?.text?.body ?? '';
   const meta = normalizeMetadata(ctx.conversationState?.metadata);
@@ -258,9 +255,13 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
 
   const hasAddress = ctx.hasAddress === true;
 
-  const foodRelatedTurn = Boolean(
-    detection && FOOD_RELATED_INTENTS.has(String(detection.intent))
-  );
+  const foodRelatedSignal = isFoodRelatedPartySizeSignal({
+    detectionIntent: detection?.intent ?? null,
+    metadata: meta,
+    lastReferencedProductId:
+      (ctx.conversation as { lastReferencedProductId?: string | null } | undefined)
+        ?.lastReferencedProductId ?? null,
+  });
 
   const isInCoverage = ctx.isInCoverage === true;
 
@@ -307,9 +308,13 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
       meta.intentLedger?.SUGERIR_COMPLEMENTO
     ),
     // SUGERIR_DIRECCION: no se inyecta en el híbrido — dirección solo onboarding/checkout.
-    deriveCollectPartySizeCandidate(
-      { foodRelatedTurn, partySize: partySize ?? null, checkoutActive },
-      meta.intentLedger?.RECOLECTAR_PARTY_SIZE
+    derivePartySizeGoalCandidate(
+      {
+        foodRelatedSignal,
+        partySize: partySize ?? null,
+        checkoutActive,
+      },
+      resolvePartySizeLedgerEntry(meta)
     ),
     confirmOfferCandidate,
   ].filter((c): c is NonNullable<typeof c> => c != null);
@@ -333,8 +338,9 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
   if (meta.intentLedger?.SUGERIR_COMPLEMENTO) {
     extrasLedger.SUGERIR_COMPLEMENTO = meta.intentLedger.SUGERIR_COMPLEMENTO;
   }
-  if (meta.intentLedger?.RECOLECTAR_PARTY_SIZE) {
-    extrasLedger.RECOLECTAR_PARTY_SIZE = meta.intentLedger.RECOLECTAR_PARTY_SIZE;
+  const partySizeLedgerEntry = resolvePartySizeLedgerEntry(meta);
+  if (partySizeLedgerEntry) {
+    extrasLedger[PARTY_SIZE_GOAL_TYPE] = partySizeLedgerEntry;
   }
   if (meta.intentLedger?.PEDIDO_POR_EXPIRAR) {
     extrasLedger.PEDIDO_POR_EXPIRAR = meta.intentLedger.PEDIDO_POR_EXPIRAR;
@@ -373,11 +379,9 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     void recordConfirmOfferSurfaced(ctx.conversationId, meta).catch((err) =>
       console.error('[intent] failed to record CONFIRMAR_OFERTA surfaced:', err)
     );
-  } else if (ranked.active?.type === 'RECOLECTAR_PARTY_SIZE') {
-    // SUGERIR_COMPLEMENTO se registra al presentar la lista (tool), no al inyectar el hint.
-    // SUGERIR_DIRECCION no se cablea al híbrido.
-    void recordOpportunitySurfaced(ctx.conversationId, ranked.active.type, meta).catch(
-      (err) => console.error('[intent] failed to record opportunity surfaced:', err)
+  } else if (ranked.active?.type === PARTY_SIZE_GOAL_TYPE) {
+    void recordPartySizeGoalSurfaced(ctx.conversationId, meta).catch((err) =>
+      console.error('[goal] failed to record OBTENER_PERSONAS_DEL_PEDIDO surfaced:', err)
     );
   } else if (ranked.active?.type === 'PEDIDO_POR_EXPIRAR') {
     void recordAlertEmitted(ctx.conversationId, 'PEDIDO_POR_EXPIRAR', meta).catch((err) =>

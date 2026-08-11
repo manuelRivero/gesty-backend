@@ -214,42 +214,9 @@ export const deriveSuggestAddressCandidate = (
   };
 };
 
-export type CollectPartySizeFacts = {
-  /** Consulta de comida / pedido en este turno (señal del detection). */
-  foodRelatedTurn: boolean;
-  partySize: number | null;
-  checkoutActive: boolean;
-};
-
-export const deriveCollectPartySizeOpen = (facts: CollectPartySizeFacts): boolean =>
-  facts.foodRelatedTurn && facts.partySize == null && !facts.checkoutActive;
-
-export const deriveCollectPartySizeCandidate = (
-  facts: CollectPartySizeFacts,
-  ledgerEntry: IntentLedgerEntry | undefined,
-  now: number = Date.now()
-): IntentCandidate | null => {
-  if (!deriveCollectPartySizeOpen(facts)) return null;
-  const perm = computeCatalogPermission('RECOLECTAR_PARTY_SIZE', ledgerEntry ?? {}, now);
-  if (!perm.granted) return null;
-
-  const cat = getIntentCatalogEntry('RECOLECTAR_PARTY_SIZE');
-  return {
-    type: 'RECOLECTAR_PARTY_SIZE',
-    kind: cat.kind,
-    pressure: cat.pressure,
-    closeMode: cat.closeMode,
-    hint:
-      '- Opportunity (RECOLECTAR_PARTY_SIZE): el cliente consulta comida y no informó ' +
-      'cuántas personas. Si es natural, preguntá el número una sola vez. No mezclar con ' +
-      'ruteo ni Ownership.',
-    tieBreak: 14,
-  };
-};
-
 export const recordOpportunitySurfaced = async (
   conversationId: string,
-  type: 'SUGERIR_COMPLEMENTO' | 'SUGERIR_DIRECCION' | 'RECOLECTAR_PARTY_SIZE' | 'OFRECER_PROMOCION',
+  type: 'SUGERIR_COMPLEMENTO' | 'SUGERIR_DIRECCION' | 'OFRECER_PROMOCION',
   metadata: unknown,
   opts?: { offeredProductIds?: string[] }
 ): Promise<void> => {

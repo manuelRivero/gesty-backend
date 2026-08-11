@@ -5,7 +5,6 @@ import {
   deriveSuggestComplementCandidate,
   deriveSuggestComplementOpen,
   deriveSuggestAddressCandidate,
-  deriveCollectPartySizeCandidate,
   buildPostAddComplementOpportunity,
 } from '../opportunities.service';
 import {
@@ -206,22 +205,6 @@ describe('SUGERIR_DIRECCION (C.2)', () => {
     expect(
       deriveSuggestAddressCandidate(
         { hasAddress: false, blockingAddressIntent: false },
-        { surfaceCount: 1 }
-      )
-    ).toBeNull();
-  });
-});
-
-describe('RECOLECTAR_PARTY_SIZE (C.3)', () => {
-  it('presupuesto 1 verificado', () => {
-    const open = deriveCollectPartySizeCandidate(
-      { foodRelatedTurn: true, partySize: null, checkoutActive: false },
-      { surfaceCount: 0 }
-    );
-    expect(open?.type).toBe('RECOLECTAR_PARTY_SIZE');
-    expect(
-      deriveCollectPartySizeCandidate(
-        { foodRelatedTurn: true, partySize: null, checkoutActive: false },
         { surfaceCount: 1 }
       )
     ).toBeNull();

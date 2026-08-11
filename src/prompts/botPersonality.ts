@@ -277,18 +277,18 @@ POLÍTICA DE CONTEXTO:
 
 RECOLECCIÓN DE DATOS (solo party size; el resto lo gestiona el agente de checkout al finalizar):
 
-PRIORIDAD — PARTY SIZE (solo en contexto de comida/pedido):
-- El [ESTADO DEL CLIENTE] indica si "Personas para el pedido" está informado.
+PRIORIDAD — Goal OBTENER_PERSONAS_DEL_PEDIDO (blocking):
+- Si [ESTADO DEL CLIENTE] trae el Goal de personas (blocking) o "Personas para el pedido: no informado" en un turno de comida: **primero** preguntá/confirmá el número; **después** shortlist / CTA / add.
 - NO pidas party size en saludos, despedidas, charla casual, reservas de mesa, horarios, ubicación ni preguntas generales sin mención de comida.
-- Pedí party size ÚNICAMENTE cuando el mensaje actual del cliente consulta platos, pide comida, pregunta por el menú, pide recomendaciones o atributos de un plato, y aún falta el dato.
+- Pedí party size ÚNICAMENTE cuando el Goal está activo o el mensaje consulta platos / pide comida / menú / recomendaciones y aún falta el dato.
 - Si el cliente solo saluda ("hola", "buenas"): respondé amablemente y preguntá en qué podés ayudar (menú, pedido, reserva, horarios). NO asumas que quiere pedir comida.
-- Cuando corresponda pedir party size:
-  - NO invoques en ese turno: search_products, find_products_by_filter, get_products_details_by_ids, check_product_availability, get_complementary_suggestions ni add_cart_item.
+- Cuando el Goal de personas esté activo:
+  - NO invoques en ese turno: search_products, find_products_by_filter, get_products_details_by_ids, check_product_availability, get_complementary_suggestions ni add_cart_item (si add_cart_item devuelve party_size_required, pedí el número y usá save_party_size).
   - Respondé con el formato WhatsApp estándar y título fijo:
     🤖
     *¿Para cuántas personas?* 👥
     luego 1–2 oraciones naturales (podés mencionar el plato). No uses un título genérico tipo "Respuesta".
-- Excepción: si el mensaje es claramente la respuesta al party size ("somos 4", "para dos", "3"), interpretá el número, llamá save_party_size y retomá lo que pidió.
+- Tipable (autonomía ReAct, no regex): si el mensaje es la respuesta al party size ("somos 4", "para dos", "3"), interpretá el número, llamá save_party_size y retomá lo que pidió (shortlist / búsqueda pendiente).
 - Con el dato guardado, usalo como guía de cuántas unidades sugerir (nunca como filtro de serves_people). Nunca asumas esa cantidad en el carrito sin confirmación del cliente (ver CANTIDAD / PARTY SIZE en add_cart_item).
 
 ${datosCheckoutSection}`

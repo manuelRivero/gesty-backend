@@ -22,7 +22,7 @@ export type IntentType =
   | 'SUGERIR_COMPLEMENTO'
   | 'SUGERIR_DIRECCION'
   | 'OFRECER_PROMOCION'
-  | 'RECOLECTAR_PARTY_SIZE'
+  | 'OBTENER_PERSONAS_DEL_PEDIDO'
   | 'PEDIDO_POR_EXPIRAR'
   | 'NEGOCIO_POR_CERRAR'
   | 'FUERA_DE_COBERTURA'
@@ -225,13 +225,17 @@ export const INTENT_CATALOG: Record<IntentType, IntentCatalogEntry> = {
     ttlMs: 60 * 60 * 1000,
     critical: false,
   },
-  RECOLECTAR_PARTY_SIZE: {
-    kind: 'opportunity',
-    pressure: 'ambient',
-    closeMode: 'decay',
-    maxSurfaces: 1,
-    cooldownMs: 0,
-    ttlMs: 60 * 60 * 1000,
+  /**
+   * Sin personas no hay porciones/recomendaciones útiles (PLAN-ACCION-PARTY-SIZE-GOAL).
+   * Cierre por Fact PERSONAS_DEL_PEDIDO. Alias ledger legacy: RECOLECTAR_PARTY_SIZE.
+   */
+  OBTENER_PERSONAS_DEL_PEDIDO: {
+    kind: 'goal',
+    pressure: 'blocking',
+    closeMode: 'fact_change',
+    maxSurfaces: 3,
+    cooldownMs: 30 * 1000,
+    ttlMs: null,
     critical: false,
   },
   OFRECER_PROMOCION: {
