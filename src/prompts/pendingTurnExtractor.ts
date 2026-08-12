@@ -20,7 +20,8 @@ Devolvés una de cuatro acciones en "status":
 Reglas:
 - Ante la duda entre fulfilled y reprompt en respuestas plausibles al paso, preferí fulfilled.
 - Si responde claramente a otro paso del checkout (solo payment_method o fulfillment_type), usá off_pending con resolvedAction y value de ese otro paso.
-- Preguntas sobre comida, menú, precios o el pedido en general → delegate.
+- Preguntas que aclaran el paso pendiente mismo (qué opciones hay, cuáles son, cómo se paga / cómo se recibe) → "reprompt". NO "delegate": el sistema debe re-mostrar las opciones del paso.
+- Preguntas sobre comida, menú, precios de platos, horarios del local, agregar/quitar ítems → "delegate".
 - Si status es fulfilled, "value" DEBE cumplir el esquema del paso pendiente y resolvedAction debe ser null.
 - Si status es off_pending, "resolvedAction" indica el otro paso respondido y "value" DEBE cumplir su esquema.
 - Si status no es fulfilled ni off_pending, "value" debe ser null y resolvedAction null.

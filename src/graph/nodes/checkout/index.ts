@@ -56,6 +56,7 @@ import {
   getDraftCheckoutState,
   setDraftPaymentMethod,
   clearDraftPaymentMethod,
+  loadLiveCheckoutFacts,
 } from '../../../tools/checkout';
 import { validateCheckoutResponse } from '../../../services/checkout/checkoutValidation';
 import { applyCheckoutResponsePolicy } from '../../../services/checkout/checkoutResponsePolicy';
@@ -282,21 +283,31 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
     typeof enrichedCtx.business === 'object' && enrichedCtx.business
       ? (enrichedCtx.business as { currency_code?: string | null }).currency_code ?? null
       : null;
-  const draftState = await getDraftCheckoutState(businessId, customerPhone);
-  const customerName =
-    typeof enrichedCtx.customer === 'object' && enrichedCtx.customer
-      ? (enrichedCtx.customer as { name?: string | null }).name?.trim() || null
-      : null;
+  // Facts post tool-calls (nombre/dirección pueden haberse guardado este turno).
+  // No usar enrichedCtx.customer / checkoutCtx.hasAddress — quedan stale.
+  if (!customerId) {
+    return (
+      textResponse(
+        '🤖\n\n*Hubo un problema* 😔\n\nNo pude procesar tu pedido en este momento. ¿Podés intentarlo de nuevo?'
+      ) ?? { content: '', isInteractive: false }
+    );
+  }
+  const liveFacts = await loadLiveCheckoutFacts({ businessId, customerId, customerPhone });
+  const customerName = liveFacts.customerName;
+  const hasAddress = liveFacts.hasAddress;
+  const isInCoverage = liveFacts.isInCoverage;
+  const fulfillmentType = liveFacts.fulfillmentType;
+  const paymentMethod = liveFacts.paymentMethod;
 
   // Paso derivado (ADR-0006/0005/0007): única fuente de verdad de qué Goal
   // de checkout está activo este turno; ver `checkoutGoal.service.ts`.
   const currentStep = nextCheckoutStep(
     {
-      fulfillmentType: draftState.fulfillmentType,
-      hasAddress: checkoutCtx.hasAddress,
-      isInCoverage: checkoutCtx.isInCoverage,
+      fulfillmentType,
+      hasAddress,
+      isInCoverage,
       customerName,
-      paymentMethod: draftState.paymentMethod,
+      paymentMethod,
     },
     { deliveryEnabled: checkoutCtx.deliveryEnabled, takeawayEnabled: checkoutCtx.takeawayEnabled }
   );
@@ -304,10 +315,10 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
 
   const validation = validateCheckoutResponse(
     {
-      fulfillmentType: draftState.fulfillmentType,
-      paymentMethod: draftState.paymentMethod,
-      hasAddress: checkoutCtx.hasAddress,
-      isInCoverage: checkoutCtx.isInCoverage,
+      fulfillmentType,
+      paymentMethod,
+      hasAddress,
+      isInCoverage,
       customerName,
       deliveryEnabled: checkoutCtx.deliveryEnabled,
       takeawayEnabled: checkoutCtx.takeawayEnabled,
@@ -340,11 +351,11 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
   const policyResult = applyCheckoutResponsePolicy(
     { text, signals },
     {
-      fulfillmentType: draftState.fulfillmentType,
-      paymentMethod: draftState.paymentMethod,
+      fulfillmentType,
+      paymentMethod,
       orderId: null,
-      hasAddress: checkoutCtx.hasAddress,
-      isInCoverage: checkoutCtx.isInCoverage,
+      hasAddress,
+      isInCoverage,
       customerName,
       deliveryEnabled: checkoutCtx.deliveryEnabled,
       takeawayEnabled: checkoutCtx.takeawayEnabled,
@@ -433,13 +444,13 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
     // tarjeta interactiva vía present_cart). Fusionarla como followUp aparte
     // producía dos tarjetas con el mismo total en la misma respuesta (visto
     // en pruebas manuales: la del híbrido + la de confirmación pegadas).
-    if (resume.checkoutPendingAction === 'confirm_order' && draftState.paymentMethod) {
+    if (resume.checkoutPendingAction === 'confirm_order' && paymentMethod) {
       const leadingText = typeof baseResult.content === 'string' ? baseResult.content : undefined;
       const confirmMessage = await buildOrderConfirmationMessage({
         businessId,
         customerId,
         customerPhone,
-        paymentMethod: draftState.paymentMethod,
+        paymentMethod,
         currencyCode,
         leadingText,
       });
@@ -541,9 +552,9 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
   // Constraint en el borde (ADR-0002): solo se ejecuta el pago si el draft
   // realmente tiene un método de pago elegido — si por algún motivo no lo
   // tiene, no hay nada que confirmar y se ignora la señal.
-  if (signals.orderConfirmationResolved !== null && draftState.paymentMethod) {
+  if (signals.orderConfirmationResolved !== null && paymentMethod) {
     if (signals.orderConfirmationResolved === true) {
-      const result = await executeConfirmedPayment(enrichedCtx, draftState.paymentMethod);
+      const result = await executeConfirmedPayment(enrichedCtx, paymentMethod);
       await clearCheckoutSession(conversationId);
       if (result) {
         return result;
@@ -623,12 +634,12 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
   // mostraba un texto genérico ("seguimos con tu pedido") sin los botones
   // Confirmar/Cancelar ni el total real, dejando al cliente sin forma de
   // confirmar por botón ese turno.
-  if (currentStep === 'confirm' && draftState.paymentMethod) {
+  if (currentStep === 'confirm' && paymentMethod) {
     const confirmMessage = await buildOrderConfirmationMessage({
       businessId,
       customerId,
       customerPhone,
-      paymentMethod: draftState.paymentMethod,
+      paymentMethod,
       currencyCode,
       leadingText: safeText,
     });

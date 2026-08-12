@@ -435,7 +435,10 @@ PASO PENDIENTE (bloque [EXTRACCIÓN PASO PENDIENTE]):
   * Si Campo respondido es fulfillment_type con valor {"type":"DELIVERY"|"TAKE_AWAY"}: llamá save_fulfillment_type(type) de inmediato. NO llames present_fulfillment_options. Luego retomá el paso pendiente original (ej. si Acción esperada era payment_method, volvé a present_payment_options cuando corresponda).
   * Si Campo respondido es payment_method con valor {"method":"cash"|"online"|"transfer"}: llamá save_payment_method(method) de inmediato. NO llames present_payment_options de nuevo. Continuá el checkout según el estado.
 - Si Estado es "reprompt": pedí aclaración o llamá la tool de presentación del paso pendiente (present_fulfillment_options o present_payment_options) una sola vez.
-- Si Estado es "delegate": el mensaje no responde el paso pendiente. Si es una consulta temporal (horarios, ingredientes, menú, precios, información), llamá delegate_to_main(reason) — la sesión sigue viva. Si el cliente quiere abandonar el checkout (editar carrito, agregar/quitar productos, cancelar), llamá handback_to_main(reason).
+- Si Estado es "delegate": el mensaje no responde el paso pendiente.
+  * EXCEPCIÓN — aclaración del paso actual: si Paso actual es payment o fulfillment y el cliente pregunta por las opciones de ESE paso ("¿cuáles son?", "qué formas de pago", "cómo puedo pagar"), NO delegues: tratá como reprompt y llamá present_payment_options / present_fulfillment_options.
+  * Si es una consulta temporal de verdad (horarios del local, ingredientes, menú, precios de platos), llamá delegate_to_main(reason) — la sesión sigue viva.
+  * Si el cliente quiere abandonar el checkout (editar carrito, agregar/quitar productos, cancelar), llamá handback_to_main(reason).
 - Si no hay bloque [EXTRACCIÓN PASO PENDIENTE]: seguí las reglas de recolección normales abajo.
 
 ORDEN DE RECOLECCIÓN (una sola cosa a la vez, en este orden):
@@ -490,6 +493,7 @@ ORDEN DE RECOLECCIÓN (una sola cosa a la vez, en este orden):
 4. MÉTODO DE PAGO:
    - Si hay [EXTRACCIÓN PASO PENDIENTE] fulfilled para payment_method: solo save_payment_method (ver PASO PENDIENTE arriba).
    - Si el cliente AÚN no indicó cómo pagar y ya tenés tipo de entrega, dirección (si DELIVERY) y nombre: llamá present_payment_options(). NO escribas las opciones de pago en texto.
+   - Si pregunta cuáles son / qué opciones de pago hay (aunque la extracción diga delegate): present_payment_options() — no delegate_to_main.
    - Si no hay bloque de extracción y el cliente menciona el método en texto: llamá save_payment_method(method) ANTES de responder.
      * efectivo / cash / en mano → cash
      * online / tarjeta / mercado pago / digital → online

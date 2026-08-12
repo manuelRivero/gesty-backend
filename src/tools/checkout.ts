@@ -45,6 +45,72 @@ const prerequisiteErrorForStep = (step: CheckoutStep): PaymentPrerequisiteError 
   return null;
 };
 
+/** Lee el estado de fulfillment/payment del draft activo, para validación previa a una transición. */
+export const getDraftCheckoutState = async (
+  businessId: string,
+  customerPhone: string
+): Promise<{
+  fulfillmentType: 'DELIVERY' | 'TAKE_AWAY' | null;
+  paymentMethod: PaymentMethodId | null;
+}> => {
+  const draft = await prisma.draft_order.findFirst({
+    where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
+    select: { fulfillment_type: true, payment_method: true },
+  });
+  const raw = draft?.payment_method ?? null;
+  const paymentMethod =
+    raw && (PAYMENT_METHOD_IDS as readonly string[]).includes(raw)
+      ? (raw as PaymentMethodId)
+      : null;
+  return {
+    fulfillmentType: (draft?.fulfillment_type as 'DELIVERY' | 'TAKE_AWAY' | null) ?? null,
+    paymentMethod,
+  };
+};
+
+/**
+ * Snapshot fresco de Facts del checkout (post tool-calls).
+ * No usar `enrichedCtx.customer` / `state.hasAddress`: quedan stale si el
+ * agente guardó nombre o dirección en este mismo turno.
+ */
+export const loadLiveCheckoutFacts = async (params: {
+  businessId: string;
+  customerId: string;
+  customerPhone: string;
+}): Promise<{
+  fulfillmentType: 'DELIVERY' | 'TAKE_AWAY' | null;
+  paymentMethod: PaymentMethodId | null;
+  customerName: string | null;
+  hasAddress: boolean;
+  isInCoverage: boolean;
+}> => {
+  const draftState = await getDraftCheckoutState(params.businessId, params.customerPhone);
+  const [customer, defaultAddress] = await Promise.all([
+    findCustomerById(params.customerId),
+    findDefaultCustomerAddress(params.customerId),
+  ]);
+  const hasAddress = Boolean(defaultAddress?.street_address);
+  let isInCoverage = false;
+  if (hasAddress && draftState.fulfillmentType === 'DELIVERY') {
+    const deliveryCtx = await resolveDeliveryContext({
+      customerId: params.customerId,
+      businessId: params.businessId,
+      fulfillmentType: 'DELIVERY',
+    });
+    isInCoverage = deliveryCtx.zoneId !== null;
+  } else if (hasAddress) {
+    isInCoverage = true;
+  }
+
+  return {
+    fulfillmentType: draftState.fulfillmentType,
+    paymentMethod: draftState.paymentMethod,
+    customerName: customer?.name?.trim() || null,
+    hasAddress,
+    isInCoverage,
+  };
+};
+
 /**
  * Persiste el método de pago en el draft activo del cliente.
  * Gate duro (ADR-0002): no escribe si `nextCheckoutStep` no es `payment`/`confirm`
@@ -70,37 +136,23 @@ export const setDraftPaymentMethod = async (
 
   const draft = await prisma.draft_order.findFirst({
     where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
-    select: { id: true, fulfillment_type: true, payment_method: true },
+    select: { id: true },
   });
   if (!draft) {
     return { success: false, error: 'no_active_cart' };
   }
 
-  const [customer, defaultAddress] = await Promise.all([
-    findCustomerById(options.customerId),
-    findDefaultCustomerAddress(options.customerId),
-  ]);
-  const fulfillmentType =
-    (draft.fulfillment_type as 'DELIVERY' | 'TAKE_AWAY' | null) ?? null;
-  const hasAddress = Boolean(defaultAddress?.street_address);
-  let isInCoverage = false;
-  if (hasAddress && fulfillmentType === 'DELIVERY') {
-    const deliveryCtx = await resolveDeliveryContext({
-      customerId: options.customerId,
-      businessId,
-      fulfillmentType: 'DELIVERY',
-    });
-    isInCoverage = deliveryCtx.zoneId !== null;
-  } else if (hasAddress) {
-    isInCoverage = true;
-  }
-
+  const facts = await loadLiveCheckoutFacts({
+    businessId,
+    customerId: options.customerId,
+    customerPhone,
+  });
   const step = nextCheckoutStep(
     {
-      fulfillmentType,
-      hasAddress,
-      isInCoverage,
-      customerName: customer?.name?.trim() || null,
+      fulfillmentType: facts.fulfillmentType,
+      hasAddress: facts.hasAddress,
+      isInCoverage: facts.isInCoverage,
+      customerName: facts.customerName,
       // Preguntar qué falta ANTES de payment (mismo criterio que validateCheckoutResponse).
       paymentMethod: null,
     },
@@ -145,29 +197,6 @@ export const clearDraftPaymentMethod = async (
     where: { id: draft.id },
     data: { payment_method: null },
   });
-};
-
-/** Lee el estado de fulfillment/payment del draft activo, para validación previa a una transición. */
-export const getDraftCheckoutState = async (
-  businessId: string,
-  customerPhone: string
-): Promise<{
-  fulfillmentType: 'DELIVERY' | 'TAKE_AWAY' | null;
-  paymentMethod: PaymentMethodId | null;
-}> => {
-  const draft = await prisma.draft_order.findFirst({
-    where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
-    select: { fulfillment_type: true, payment_method: true },
-  });
-  const raw = draft?.payment_method ?? null;
-  const paymentMethod =
-    raw && (PAYMENT_METHOD_IDS as readonly string[]).includes(raw)
-      ? (raw as PaymentMethodId)
-      : null;
-  return {
-    fulfillmentType: (draft?.fulfillment_type as 'DELIVERY' | 'TAKE_AWAY' | null) ?? null,
-    paymentMethod,
-  };
 };
 
 /** Persiste el tipo de entrega en el draft activo del cliente. */
