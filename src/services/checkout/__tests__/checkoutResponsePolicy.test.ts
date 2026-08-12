@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { applyCheckoutResponsePolicy } from '../checkoutResponsePolicy';
+import {
+  applyCheckoutResponsePolicy,
+  buildContinuationMessage,
+} from '../checkoutResponsePolicy';
+import type { CheckoutResponsePolicyState } from '../checkoutResponsePolicy';
 import type { CheckoutAgentSignals } from '../../../agents/checkoutAgent';
+import {
+  CUSTOMER_NAME_PROMPT_BOT_MESSAGE,
+  PAYMENT_METHOD_PROMPT_BOT_MESSAGE,
+} from '../../productQuery/botMessages';
 
 const baseSignals = (): CheckoutAgentSignals => ({
   presentFulfillmentOptions: false,
@@ -13,11 +21,67 @@ const baseSignals = (): CheckoutAgentSignals => ({
   orderConfirmationResolved: null,
 });
 
-describe('applyCheckoutResponsePolicy', () => {
-  it('Caso 1: orden creada (orderId presente) + texto de confirmación → deja pasar y habilita las tres afirmaciones', () => {
+const baseState = (
+  overrides: Partial<CheckoutResponsePolicyState> = {}
+): CheckoutResponsePolicyState => ({
+  fulfillmentType: 'TAKE_AWAY',
+  paymentMethod: null,
+  orderId: null,
+  hasAddress: true,
+  isInCoverage: true,
+  customerName: null,
+  deliveryEnabled: true,
+  takeawayEnabled: true,
+  ...overrides,
+});
+
+describe('applyCheckoutResponsePolicy (D5-A)', () => {
+  it('tipable: save_fulfillment implícito + texto pidiendo nombre → texto del agente intacto', () => {
+    const agentText =
+      '🤖\n\n*Retiro* 🛍️\n\nPerfecto, lo preparo para retirar. ¿Con qué nombre anotamos el pedido?';
+    const result = applyCheckoutResponsePolicy(
+      { text: agentText, signals: baseSignals() },
+      baseState({ fulfillmentType: 'TAKE_AWAY', customerName: null })
+    );
+
+    expect(result.responseAllowed).toBe(true);
+    expect(result.corrections).toEqual([]);
+    expect(result.text).toBe(agentText);
+    expect(result.orderConfirmationAllowed).toBe(false);
+    expect(result.completionClaimAllowed).toBe(false);
+  });
+
+  it('sin tools + step name + texto vacío → fallback de nombre, nunca de pago', () => {
+    const result = applyCheckoutResponsePolicy(
+      { text: '   ', signals: baseSignals() },
+      baseState({ fulfillmentType: 'TAKE_AWAY', customerName: null })
+    );
+
+    expect(result.responseAllowed).toBe(false);
+    expect(result.corrections).toContain('empty_agent_response');
+    expect(result.text).toBe(CUSTOMER_NAME_PROMPT_BOT_MESSAGE);
+    expect(result.text).not.toBe(PAYMENT_METHOD_PROMPT_BOT_MESSAGE);
+  });
+
+  it('step payment + texto vacío → prompt de pago (regresión V-25 / UI adjunta botones en el nodo)', () => {
+    const result = applyCheckoutResponsePolicy(
+      { text: '', signals: baseSignals() },
+      baseState({ fulfillmentType: 'TAKE_AWAY', customerName: 'Ana', paymentMethod: null })
+    );
+
+    expect(result.responseAllowed).toBe(false);
+    expect(result.text).toBe(PAYMENT_METHOD_PROMPT_BOT_MESSAGE);
+  });
+
+  it('orderId presente → deja pasar y habilita afirmaciones de orden', () => {
     const result = applyCheckoutResponsePolicy(
       { text: '¡Pedido confirmado!', signals: baseSignals() },
-      { fulfillmentType: 'DELIVERY', paymentMethod: 'cash', orderId: '12345' }
+      baseState({
+        fulfillmentType: 'DELIVERY',
+        paymentMethod: 'cash',
+        customerName: 'Ana',
+        orderId: '12345',
+      })
     );
 
     expect(result.responseAllowed).toBe(true);
@@ -27,64 +91,49 @@ describe('applyCheckoutResponsePolicy', () => {
     expect(result.text).toBe('¡Pedido confirmado!');
   });
 
-  it('Caso 2: no existe pedido (orderId null) y no hay señal reconocida → bloquea la respuesta y las afirmaciones de negocio', () => {
+  it('presentPaymentOptions no es requisito para enviar prosa tipable', () => {
     const result = applyCheckoutResponsePolicy(
-      { text: '¡Ya está todo listo!', signals: baseSignals() },
-      { fulfillmentType: 'DELIVERY', paymentMethod: 'cash', orderId: null }
-    );
-
-    expect(result.responseAllowed).toBe(false);
-    expect(result.completionClaimAllowed).toBe(false);
-    expect(result.orderConfirmationAllowed).toBe(false);
-    expect(result.corrections).toContain('closure_claim_without_evidence');
-    expect(result.text).not.toBe('¡Ya está todo listo!');
-  });
-
-  it('Caso 3: fulfillment seleccionado pero sin orderId ni señal → no confirma, pide el siguiente dato faltante', () => {
-    const result = applyCheckoutResponsePolicy(
-      { text: 'Perfecto, delivery entonces. ¡Todo listo!', signals: baseSignals() },
-      { fulfillmentType: 'DELIVERY', paymentMethod: null, orderId: null }
-    );
-
-    expect(result.responseAllowed).toBe(false);
-    expect(result.corrections).toContain('closure_claim_without_evidence');
-  });
-
-  it('Caso 4: presentPaymentOptions habilita enviar el texto, pero NO habilita afirmar datos completos ni orden confirmada', () => {
-    const result = applyCheckoutResponsePolicy(
-      { text: 'Perfecto, elegí cómo pagar.', signals: { ...baseSignals(), presentPaymentOptions: true } },
-      { fulfillmentType: 'DELIVERY', paymentMethod: null, orderId: null }
+      { text: '¿Me decís tu nombre?', signals: baseSignals() },
+      baseState({ customerName: null })
     );
 
     expect(result.responseAllowed).toBe(true);
-    expect(result.completionClaimAllowed).toBe(false);
-    expect(result.orderConfirmationAllowed).toBe(false);
-    expect(result.text).toBe('Perfecto, elegí cómo pagar.');
+    expect(result.text).toBe('¿Me decís tu nombre?');
   });
 
-  it('Caso 5: delegate_to_main habilita enviar el texto, pero NO habilita afirmar orden confirmada', () => {
+  it('delegate_to_main + texto → se envía; no habilita orden confirmada', () => {
     const result = applyCheckoutResponsePolicy(
       {
         text: 'Los horarios son de 12 a 23hs.',
-        signals: { ...baseSignals(), delegateToMain: true, delegateToMainReason: 'pregunta por horarios' },
+        signals: {
+          ...baseSignals(),
+          delegateToMain: true,
+          delegateToMainReason: 'pregunta por horarios',
+        },
       },
-      { fulfillmentType: null, paymentMethod: null, orderId: null }
+      baseState({ fulfillmentType: null })
     );
 
     expect(result.responseAllowed).toBe(true);
-    expect(result.completionClaimAllowed).toBe(false);
     expect(result.orderConfirmationAllowed).toBe(false);
     expect(result.text).toBe('Los horarios son de 12 a 23hs.');
   });
+});
 
-  it('Caso 6: señal paymentMethod (guardado, sin orderId todavía) habilita enviar el texto, pero no confirma la orden', () => {
-    const result = applyCheckoutResponsePolicy(
-      { text: 'Genial, pagás en efectivo.', signals: { ...baseSignals(), paymentMethod: 'cash' } },
-      { fulfillmentType: 'DELIVERY', paymentMethod: 'cash', orderId: null }
-    );
+describe('buildContinuationMessage', () => {
+  it('deriva del paso name, no salta a payment', () => {
+    expect(
+      buildContinuationMessage(
+        baseState({ fulfillmentType: 'TAKE_AWAY', customerName: null, paymentMethod: null })
+      )
+    ).toBe(CUSTOMER_NAME_PROMPT_BOT_MESSAGE);
+  });
 
-    expect(result.responseAllowed).toBe(true);
-    expect(result.orderConfirmationAllowed).toBe(false);
-    expect(result.text).toBe('Genial, pagás en efectivo.');
+  it('step payment → mensaje de pago', () => {
+    expect(
+      buildContinuationMessage(
+        baseState({ fulfillmentType: 'TAKE_AWAY', customerName: 'Ana', paymentMethod: null })
+      )
+    ).toBe(PAYMENT_METHOD_PROMPT_BOT_MESSAGE);
   });
 });

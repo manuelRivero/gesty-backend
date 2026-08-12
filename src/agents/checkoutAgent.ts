@@ -34,7 +34,9 @@ import { nextCheckoutStep } from '../services/checkout/nextCheckoutStep';
 import {
   resolveCheckoutPendingFromStep,
   logCheckoutGoal,
+  checkoutGoalForStep,
 } from '../services/checkout/checkoutGoal.service';
+import type { CheckoutStep } from '../services/checkout/nextCheckoutStep';
 import type { ConversationMetadata } from '../services/productQuery/types';
 import { getRefusalCount } from '../services/intent/intentRefusal.service';
 
@@ -61,6 +63,24 @@ const buildAgent = (personalityId: string, personalityPrompt: string) => {
 /** Solo para uso en tests: resetea el cache del agente de checkout. */
 export const resetCheckoutAgentCacheForTesting = (): void => {
   cachedAgents = new Map();
+};
+
+/** Acción esperada según el paso derivado — ledger tipable para el modelo. */
+export const expectedActionForCheckoutStep = (step: CheckoutStep): string => {
+  switch (step) {
+    case 'fulfillment':
+      return 'present_fulfillment_options (o save_fulfillment_type si ya eligió en texto)';
+    case 'address':
+      return 'pedir dirección en prosa; save_delivery_address cuando la provea';
+    case 'name':
+      return 'pedir nombre en prosa; save_customer_name cuando lo provea';
+    case 'payment':
+      return 'present_payment_options (o save_payment_method si ya eligió en texto)';
+    case 'confirm':
+      return 'resolve_order_confirmation si responde en texto a la confirmación';
+    case 'done':
+      return 'ninguna';
+  }
 };
 
 // ---------------------------------------------------------------------------
@@ -189,6 +209,13 @@ const buildCheckoutContextMessage = async (
     { deliveryEnabled: checkoutCtx.deliveryEnabled, takeawayEnabled: checkoutCtx.takeawayEnabled }
   );
   logCheckoutGoal({ conversationId, step });
+  const goal = checkoutGoalForStep(step);
+  lines.push(`- Paso actual: ${step}`);
+  if (goal) {
+    lines.push(`- Goal: ${goal}`);
+  }
+  lines.push(`- Acción esperada: ${expectedActionForCheckoutStep(step)}`);
+
   const resolvedPending = resolveCheckoutPendingFromStep(step);
 
   const pendingAction = resolvedPending.action;

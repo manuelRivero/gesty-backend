@@ -13,13 +13,18 @@
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { getReactContext } from './_context';
-import { patchConversationMetadata } from '../repositories/conversationState.repository';
+import {
+  findCustomerById,
+  findDefaultCustomerAddress,
+} from '../repositories/customer.repository';
 import { prisma } from '../lib/prisma';
 import type { RunnableConfig } from '@langchain/core/runnables';
 import { PAYMENT_METHOD_IDS, type PaymentMethodId } from '../domain/payment/paymentMethods';
 import { isPaymentMethodOffered } from '../services/paymentMethods.service';
 import { getBusinessConfig } from '../services/businessConfig.service';
 import { incrementRefusalCount } from '../services/intent/intentRefusal.service';
+import { resolveDeliveryContext } from '../services/deliveryFee.service';
+import { nextCheckoutStep, type CheckoutStep } from '../services/checkout/nextCheckoutStep';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -27,12 +32,34 @@ import { incrementRefusalCount } from '../services/intent/intentRefusal.service'
 
 const toJson = (data: unknown): string => JSON.stringify(data);
 
-/** Persiste el método de pago en el draft activo del cliente. */
+/** Error estructurado cuando falta un prerequisito antes de persistir el pago. */
+export type PaymentPrerequisiteError =
+  | 'fulfillment_required'
+  | 'address_required'
+  | 'name_required';
+
+const prerequisiteErrorForStep = (step: CheckoutStep): PaymentPrerequisiteError | null => {
+  if (step === 'fulfillment') return 'fulfillment_required';
+  if (step === 'address') return 'address_required';
+  if (step === 'name') return 'name_required';
+  return null;
+};
+
+/**
+ * Persiste el método de pago en el draft activo del cliente.
+ * Gate duro (ADR-0002): no escribe si `nextCheckoutStep` no es `payment`/`confirm`
+ * (faltan fulfillment, dirección o nombre).
+ */
 export const setDraftPaymentMethod = async (
   businessId: string,
   customerPhone: string,
-  method: PaymentMethodId
-): Promise<{ success: boolean; error?: string }> => {
+  method: PaymentMethodId,
+  options: { customerId: string }
+): Promise<{
+  success: boolean;
+  error?: string;
+  requiredStep?: CheckoutStep;
+}> => {
   const businessConfig = await getBusinessConfig(businessId);
   const offered = await isPaymentMethodOffered(businessId, method, {
     externalDeliveryEnabled: businessConfig.external_delivery_enabled,
@@ -43,11 +70,54 @@ export const setDraftPaymentMethod = async (
 
   const draft = await prisma.draft_order.findFirst({
     where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
-    select: { id: true },
+    select: { id: true, fulfillment_type: true, payment_method: true },
   });
   if (!draft) {
     return { success: false, error: 'no_active_cart' };
   }
+
+  const [customer, defaultAddress] = await Promise.all([
+    findCustomerById(options.customerId),
+    findDefaultCustomerAddress(options.customerId),
+  ]);
+  const fulfillmentType =
+    (draft.fulfillment_type as 'DELIVERY' | 'TAKE_AWAY' | null) ?? null;
+  const hasAddress = Boolean(defaultAddress?.street_address);
+  let isInCoverage = false;
+  if (hasAddress && fulfillmentType === 'DELIVERY') {
+    const deliveryCtx = await resolveDeliveryContext({
+      customerId: options.customerId,
+      businessId,
+      fulfillmentType: 'DELIVERY',
+    });
+    isInCoverage = deliveryCtx.zoneId !== null;
+  } else if (hasAddress) {
+    isInCoverage = true;
+  }
+
+  const step = nextCheckoutStep(
+    {
+      fulfillmentType,
+      hasAddress,
+      isInCoverage,
+      customerName: customer?.name?.trim() || null,
+      // Preguntar qué falta ANTES de payment (mismo criterio que validateCheckoutResponse).
+      paymentMethod: null,
+    },
+    {
+      deliveryEnabled: businessConfig.delivery_enabled || businessConfig.external_delivery_enabled,
+      takeawayEnabled: businessConfig.takeaway_enabled,
+    }
+  );
+  const prerequisiteError = prerequisiteErrorForStep(step);
+  if (prerequisiteError) {
+    return {
+      success: false,
+      error: prerequisiteError,
+      requiredStep: step,
+    };
+  }
+
   await prisma.draft_order.update({
     where: { id: draft.id },
     data: { payment_method: method },
@@ -212,15 +282,23 @@ export const savePaymentMethodTool = new DynamicStructuredTool<
     '"online", "tarjeta", "mercado pago", "con tarjeta" → online; ' +
     '"transferencia", "transfer", "CBU", "alias" → transfer. ' +
     'Solo usar cuando ya están completos tipo de entrega, dirección (si aplica) y nombre. ' +
+    'Si falta un prerequisito, devuelve error estructurado (fulfillment_required / address_required / name_required) ' +
+    'con requiredStep — pedí ese dato y no afirmes que el pago quedó guardado. ' +
     'IMPORTANTE: esto NO crea el pedido ni cobra — el sistema le muestra al cliente un resumen ' +
     'con el total real (incluyendo envío y el ajuste del método elegido) para que confirme antes ' +
     'de que se procese. No hace falta que vos redactes nada más después de llamar esta tool.',
   schema: savePaymentMethodSchema,
   func: async ({ method }: SavePaymentMethodInput, _runManager, config?: RunnableConfig) => {
-    const { businessId, customerPhone } = getReactContext(config);
-    const result = await setDraftPaymentMethod(businessId, customerPhone, method);
+    const { businessId, customerPhone, customerId } = getReactContext(config);
+    const result = await setDraftPaymentMethod(businessId, customerPhone, method, {
+      customerId,
+    });
     if (!result.success) {
-      return toJson({ success: false, error: result.error });
+      return toJson({
+        success: false,
+        error: result.error,
+        ...(result.requiredStep ? { requiredStep: result.requiredStep } : {}),
+      });
     }
     return toJson({
       success: true,

@@ -20,6 +20,8 @@ import {
 import {
   EMPTY_CART_BOT_MESSAGE,
   ADDRESS_OUT_OF_COVERAGE_BOT_MESSAGE,
+  ADDRESS_REQUIRED_BOT_MESSAGE,
+  CUSTOMER_NAME_PROMPT_BOT_MESSAGE,
 } from '../../../services/productQuery/botMessages';
 import { AddressService } from '../../../services/address.service';
 import { textResponse } from '../../../controllers/webhook/utils';
@@ -318,21 +320,34 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
         event: '[checkout-agent] validation_corrected',
         corrections: validation.corrections,
         conversationId,
+        currentStep,
+        toolSignals: {
+          presentFulfillmentOptions: agentResult.signals.presentFulfillmentOptions,
+          presentPaymentOptions: agentResult.signals.presentPaymentOptions,
+          paymentMethod: agentResult.signals.paymentMethod,
+          orderConfirmationResolved: agentResult.signals.orderConfirmationResolved,
+          delegateToMain: agentResult.signals.delegateToMain,
+          handback: agentResult.signals.handback,
+        },
       })
     );
   }
   const signals = validation.signals;
 
-  // ── Política de respuesta: sin señal reconocida y sin orden creada, el
-  // texto libre del LLM no puede afirmar el cierre del pedido. No se analiza
-  // el contenido del texto: se sustituye por un mensaje de continuación
-  // determinístico basado en el estado real del draft.
+  // ── Política de respuesta (D5-A): el copy tipable del agente se envía.
+  // Solo hay fallback residual si el texto llegó vacío, siempre vía
+  // nextCheckoutStep. El borde de cierre está en gates de write, no acá.
   const policyResult = applyCheckoutResponsePolicy(
     { text, signals },
     {
       fulfillmentType: draftState.fulfillmentType,
       paymentMethod: draftState.paymentMethod,
       orderId: null,
+      hasAddress: checkoutCtx.hasAddress,
+      isInCoverage: checkoutCtx.isInCoverage,
+      customerName,
+      deliveryEnabled: checkoutCtx.deliveryEnabled,
+      takeawayEnabled: checkoutCtx.takeawayEnabled,
     }
   );
   if (!policyResult.responseAllowed) {
@@ -341,6 +356,15 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
         event: '[checkout-agent] response_policy_corrected',
         corrections: policyResult.corrections,
         conversationId,
+        currentStep,
+        toolSignals: {
+          presentFulfillmentOptions: signals.presentFulfillmentOptions,
+          presentPaymentOptions: signals.presentPaymentOptions,
+          paymentMethod: signals.paymentMethod,
+          orderConfirmationResolved: signals.orderConfirmationResolved,
+          delegateToMain: signals.delegateToMain,
+          handback: signals.handback,
+        },
       })
     );
   }
@@ -639,9 +663,59 @@ export const checkoutAgentNode = async (
   const takeawayEnabled = businessConfig?.takeaway_enabled ?? false;
 
   // PAY_*: elegir el método NO cobra — ADR-0002. Muestra resumen y espera confirmación.
+  // Gate de write: setDraftPaymentMethod rechaza si faltan fulfillment/dirección/nombre.
   const payMethod = payloadId ? parsePayButtonId(payloadId) : null;
   if (payMethod) {
-    await setDraftPaymentMethod(business.id, phone, payMethod);
+    const saved = await setDraftPaymentMethod(business.id, phone, payMethod, {
+      customerId: customer.id,
+    });
+    if (!saved.success) {
+      console.log(
+        JSON.stringify({
+          event: '[checkout-agent] payment_write_blocked',
+          error: saved.error,
+          requiredStep: saved.requiredStep ?? null,
+          conversationId,
+        })
+      );
+      // Re-derivar UI del paso real (mismo criterio que el agente tipable).
+      const draftState = await getDraftCheckoutState(business.id, phone);
+      const step = nextCheckoutStep(
+        {
+          fulfillmentType: draftState.fulfillmentType,
+          hasAddress: state.hasAddress,
+          isInCoverage: state.isInCoverage,
+          customerName: customer.name?.trim() || null,
+          paymentMethod: draftState.paymentMethod,
+        },
+        { deliveryEnabled, takeawayEnabled }
+      );
+      if (step === 'fulfillment') {
+        return {
+          handlerResult: {
+            content: buildFulfillmentSelectionMessage(
+              'Antes de pagar necesitamos saber cómo querés recibir el pedido.'
+            ),
+            isInteractive: true,
+            skipBodyHumanization: true,
+          },
+          dataCollectionDelegated: true,
+        };
+      }
+      return {
+        handlerResult: {
+          content:
+            saved.error === 'name_required'
+              ? CUSTOMER_NAME_PROMPT_BOT_MESSAGE
+              : saved.error === 'address_required'
+                ? ADDRESS_REQUIRED_BOT_MESSAGE
+                : 'Todavía falta un dato para poder elegir el método de pago.',
+          isInteractive: false,
+          skipBodyHumanization: true,
+        },
+        dataCollectionDelegated: true,
+      };
+    }
     const confirmMessage = await buildOrderConfirmationMessage({
       businessId: business.id,
       customerId: customer.id,
