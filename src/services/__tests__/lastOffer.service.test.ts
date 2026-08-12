@@ -42,6 +42,8 @@ describe('lastOffer.service / CONFIRMAR_OFERTA (B.2)', () => {
     expect(lines.some((l) => l.includes('Oferta activa'))).toBe(true);
     expect(lines.some((l) => l.includes('Hint NLP'))).toBe(false);
     expect(lines.some((l) => l.includes('add_cart_item'))).toBe(true);
+    expect(lines.join('\n')).toMatch(/omití quantity/i);
+    expect(lines.join('\n')).not.toMatch(/usá la sugerida/i);
   });
 
   it('oferta vencida → no se inyecta (V-12)', () => {

@@ -6,6 +6,8 @@ export interface ReactAgentContext {
   customerPhone: string;
   conversationId: string;
   conversationStartedAt: string;
+  /** ISO del inicio de este turno ReAct (no reusar un pending abierto en el mismo loop). */
+  turnStartedAt?: string;
 }
 
 export const getReactContext = (config?: RunnableConfig): ReactAgentContext => {

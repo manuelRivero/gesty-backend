@@ -59,7 +59,9 @@ vi.mock('../../repositories', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../repositories')>();
   return {
     ...actual,
-    findOrCreateConversationState: vi.fn().mockResolvedValue({ metadata: {} }),
+    findOrCreateConversationState: vi.fn().mockResolvedValue({
+      metadata: { requestedPartySize: 1, peopleCount: 1 },
+    }),
   };
 });
 
@@ -67,6 +69,7 @@ vi.mock('../../services/pendingAddQuantity.service', () => ({
   setPendingAddQuantity: vi.fn(),
   clearPendingAddQuantity: vi.fn(),
   getPendingAddQuantity: vi.fn().mockReturnValue(null),
+  isPendingAddQuantityReply: vi.fn().mockReturnValue(false),
   buildPendingAddQuantityMessage: vi.fn().mockReturnValue('¿Cuántas?'),
 }));
 

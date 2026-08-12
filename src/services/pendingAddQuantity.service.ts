@@ -90,6 +90,27 @@ export const getPendingAddQuantity = (
 };
 
 /**
+ * El quantity del tool solo confirma si el pending se abrió en un turno
+ * anterior. Si se acaba de setear en este mismo loop ReAct, un retry con
+ * quantity copiado del party size no cuenta como respuesta del cliente.
+ */
+export function isPendingAddQuantityReply(params: {
+  pending: { productId: string; askedAt: string } | null;
+  productId: string;
+  quantity: number | null | undefined;
+  turnStartedAt?: string | null;
+}): boolean {
+  const { pending, productId, quantity, turnStartedAt } = params;
+  if (!pending || pending.productId !== productId) return false;
+  if (quantity == null || quantity < 1) return false;
+  if (!turnStartedAt) return true;
+  const askedMs = Date.parse(pending.askedAt);
+  const turnMs = Date.parse(turnStartedAt);
+  if (!Number.isFinite(askedMs) || !Number.isFinite(turnMs)) return true;
+  return askedMs < turnMs;
+}
+
+/**
  * Con cantidad pendiente, el turno debe ir al híbrido aunque NLP diga un
  * intent cerrado (p. ej. MODIFY_QUANTITY ante «quiero tres»). Es ruteo de
  * ledger, no interpretación del mensaje (norma tipables).

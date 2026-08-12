@@ -52,23 +52,33 @@ describe('needsAddQuantityConfirmation / isConfirmedAddQuantity', () => {
     ).toBe(false);
   });
 
-  it(':1 no confirma cuando suggested ≥ 2; :2 sí', () => {
+  it(':1 no confirma cuando suggested ≥ 2; quantity ≥ 2 tampoco sin pendingReply', () => {
     expect(
       isConfirmedAddQuantity({ quantity: 1, suggestedQuantity: 3 })
     ).toBe(false);
     expect(
       isConfirmedAddQuantity({ quantity: 2, suggestedQuantity: 3 })
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      isConfirmedAddQuantity({ quantity: 2, suggestedQuantity: 2 })
+    ).toBe(false);
     expect(
       isConfirmedAddQuantity({ quantity: 1, suggestedQuantity: 1 })
     ).toBe(true);
   });
 
-  it('con pendingReply, quantity 1 confirma aunque suggested ≥ 2', () => {
+  it('con pendingReply, quantity 1 o 2 confirma aunque suggested ≥ 2', () => {
     expect(
       isConfirmedAddQuantity({
         quantity: 1,
         suggestedQuantity: 3,
+        pendingReply: true,
+      })
+    ).toBe(true);
+    expect(
+      isConfirmedAddQuantity({
+        quantity: 2,
+        suggestedQuantity: 2,
         pendingReply: true,
       })
     ).toBe(true);

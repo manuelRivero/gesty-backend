@@ -519,9 +519,17 @@ export const runHybridReactAgent = async (
     messages: [...history, new HumanMessage(await buildContextMessage(ctx))],
   };
 
+  const turnStartedAt = new Date().toISOString();
   const out = await agent.invoke(inputs, {
     recursionLimit: 8,
-    configurable: { businessId, customerId, customerPhone, conversationId, conversationStartedAt },
+    configurable: {
+      businessId,
+      customerId,
+      customerPhone,
+      conversationId,
+      conversationStartedAt,
+      turnStartedAt,
+    },
   });
 
   const agentMessages = (out as { messages?: unknown[] }).messages ?? [];

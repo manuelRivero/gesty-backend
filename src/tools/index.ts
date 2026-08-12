@@ -66,6 +66,7 @@ import {
   buildPendingAddQuantityMessage,
   clearPendingAddQuantity,
   getPendingAddQuantity,
+  isPendingAddQuantityReply,
   setPendingAddQuantity,
 } from '../services/pendingAddQuantity.service';
 import {
@@ -1203,8 +1204,9 @@ const addCartItemSchema = z.object({
     .max(99)
     .optional()
     .describe(
-      'Cantidad a agregar. Omitila si el cliente no dijo un número: el sistema ' +
-        'sugerirá según personas/porciones y pedirá confirmación. Si dijo "dos"/"tres", pasá ese número.'
+      'Unidades a agregar, solo si el cliente las dijo en ESTE mensaje ' +
+        '("dos milanesas", "solo una"). NO uses el party size ni "para N personas". ' +
+        'Si no dijo unidades, omití el campo: el sistema sugerirá y pedirá confirmación.'
     ),
   variation: z
     .string()
@@ -1240,7 +1242,8 @@ export const addCartItemTool = new DynamicStructuredTool<
     _runManager,
     config?: RunnableConfig
   ) => {
-    const { businessId, customerPhone, conversationId } = getReactContext(config);
+    const { businessId, customerPhone, conversationId, turnStartedAt } =
+      getReactContext(config);
 
     // Obtener o crear draft
     let draft = await prisma.draft_order.findFirst({
@@ -1293,9 +1296,12 @@ export const addCartItemTool = new DynamicStructuredTool<
       const meta = normalizeMetadata(state.metadata);
       partySize = getRequestedPartySize(meta) ?? null;
       const pendingQty = getPendingAddQuantity(meta);
-      pendingReply = Boolean(
-        pendingQty && pendingQty.productId === productId && quantity != null
-      );
+      pendingReply = isPendingAddQuantityReply({
+        pending: pendingQty,
+        productId,
+        quantity: quantity ?? null,
+        turnStartedAt,
+      });
       // Gate duro: sin Fact de personas y Goal aún con presupuesto → no escribir carrito.
       const partyLedger = getPartySizeGoalLedger(meta);
       const partyGoal = derivePartySizeGoal(
@@ -1388,6 +1394,18 @@ export const addCartItemTool = new DynamicStructuredTool<
       conversationId &&
       needsAddQuantityConfirmation({ suggestedQuantity, partySize })
     ) {
+      if (quantity != null) {
+        console.log(
+          JSON.stringify({
+            event: '[add_cart_item] quantity_not_confirmed',
+            conversationId,
+            quantityArg: quantity,
+            suggestedQuantity,
+            partySize,
+            pendingReply,
+          })
+        );
+      }
       const pending = await setPendingAddQuantity({
         conversationId,
         productId,
@@ -1409,7 +1427,8 @@ export const addCartItemTool = new DynamicStructuredTool<
         askMessage: buildPendingAddQuantityMessage(pending),
         instruction:
           'Mostrá askMessage (o equivalente) pidiendo cuántas unidades, con la sugerencia. ' +
-          'NO digas que ya sumaste. NO llames present_complement_suggestions ni present_cart hasta confirmar.',
+          'NO digas que ya sumaste. NO reintentes add_cart_item con quantity en este mismo turno. ' +
+          'NO llames present_complement_suggestions ni present_cart hasta confirmar.',
       });
     }
 

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildPendingAddQuantityContextLines,
   buildPendingAddQuantityMessage,
+  isPendingAddQuantityReply,
   parsePendingAddQuantity,
   shouldForceHybridForPendingAddQuantity,
   type PendingAddQuantity,
@@ -64,6 +65,32 @@ describe('pendingAddQuantity.service', () => {
     expect(shouldForceHybridForPendingAddQuantity({})).toBe(false);
     expect(
       shouldForceHybridForPendingAddQuantity({ pendingAddQuantity: basePending() })
+    ).toBe(true);
+  });
+
+  it('isPendingAddQuantityReply: pending de este mismo turno no confirma', () => {
+    const turnStartedAt = '2026-08-12T20:00:00.000Z';
+    const pending = basePending({ askedAt: '2026-08-12T20:00:01.000Z' });
+    expect(
+      isPendingAddQuantityReply({
+        pending,
+        productId: pending.productId,
+        quantity: 2,
+        turnStartedAt,
+      })
+    ).toBe(false);
+  });
+
+  it('isPendingAddQuantityReply: pending de un turno anterior sí confirma', () => {
+    const turnStartedAt = '2026-08-12T20:01:00.000Z';
+    const pending = basePending({ askedAt: '2026-08-12T20:00:00.000Z' });
+    expect(
+      isPendingAddQuantityReply({
+        pending,
+        productId: pending.productId,
+        quantity: 2,
+        turnStartedAt,
+      })
     ).toBe(true);
   });
 });

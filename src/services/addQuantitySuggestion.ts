@@ -64,11 +64,15 @@ export function needsAddQuantityConfirmation(params: {
 
 /**
  * Qty del payload/tool cuenta como confirmada por el cliente (no abrir pending).
- * - n ≥ 2: siempre (vino de "dos", confirm tipable, etc.)
+ *
+ * Si suggested ≥ 2, un número que manda el LLM/CTA NO confirma: party size y
+ * “la primera” se copian como quantity y saltaban el pending. Solo confirma
+ * `pendingReply` (el cliente respondió al ask de unidades).
+ *
  * - n === 1 sin pending: solo si suggested < 2; si suggested ≥ 2, el `:1` del
  *   CTA es intención de sumar, no confirmación (abre pending).
- * - Con pendingReply (cliente respondiendo al ask): cualquier n ≥ 1 confirma,
- *   incluido 1 (“solo una” / tipar «1» tras la sugerencia de 3).
+ * - suggested < 2: cualquier n ≥ 1 se escribe (no hay pending que abrir).
+ * - Con pendingReply: cualquier n ≥ 1 confirma, incluido 1 (“solo una”).
  */
 export function isConfirmedAddQuantity(params: {
   quantity: number | null | undefined;
@@ -79,6 +83,5 @@ export function isConfirmedAddQuantity(params: {
   const q = params.quantity;
   if (q == null || q < 1) return false;
   if (params.pendingReply) return true;
-  if (q >= 2) return true;
   return params.suggestedQuantity < 2;
 }

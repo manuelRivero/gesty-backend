@@ -320,6 +320,29 @@ export const handleCheckoutFromWebhook = async (
 };
 
 /**
+ * Follow-ups post-confirmación unpaid.
+ * Transferencia: no decir que el pedido va a despacharse — falta el comprobante
+ * y la verificación del admin. El mensaje principal ya invita a mandar la foto.
+ */
+export function buildUnpaidCheckoutFollowUps(params: {
+  qrDataUrl: string;
+  includeQr: boolean;
+  isBankTransfer: boolean;
+}): HandlerFollowUp[] {
+  const followUps: HandlerFollowUp[] = [];
+  if (params.includeQr) {
+    followUps.push({ type: 'image', dataUrl: params.qrDataUrl });
+  }
+  if (!params.isBankTransfer) {
+    followUps.push({
+      type: 'text',
+      message: buildOrderDispatchThanksMessage(),
+    });
+  }
+  return followUps;
+}
+
+/**
  * Checkout unpaid (efectivo o transferencia): crea la orden y confirma.
  * Con delivery externo no se envía el QR (rider sin app propia).
  */
@@ -371,13 +394,11 @@ export const buildUnpaidCheckoutResult = async (
       isBankTransfer: def.collectionKind === 'bank_transfer',
     });
 
-    const followUps: HandlerFollowUp[] = [
-      ...(!externalDeliveryEnabled ? [{ type: 'image' as const, dataUrl: qrDataUrl }] : []),
-      {
-        type: 'text',
-        message: buildOrderDispatchThanksMessage(),
-      },
-    ];
+    const followUps = buildUnpaidCheckoutFollowUps({
+      qrDataUrl,
+      includeQr: !externalDeliveryEnabled,
+      isBankTransfer: def.collectionKind === 'bank_transfer',
+    });
 
     return { message: messageText, followUps, orderId };
   } catch (err: unknown) {

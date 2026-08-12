@@ -174,13 +174,14 @@ export const deriveConfirmOfferCandidate = (
 
 export const buildConfirmOfferHint = (offer: LastOffer): string =>
   [
-    `- Oferta activa (CONFIRMAR_OFERTA): sumar ${offer.suggestedQuantity}× *${offer.productName}* ` +
+    `- Oferta activa (CONFIRMAR_OFERTA): *${offer.productName}* ` +
       `(productId: ${offer.productId}). Origen: ${offer.source}.`,
     '- REGLA OBLIGATORIA: el turno anterior terminó con una oferta activa al cliente. ' +
       'Si el mensaje actual NO es explícitamente negativo ("no", "mejor no", "cancelá", etc.), ' +
       'SIEMPRE interpretarlo como confirmación y llamar add_cart_item inmediatamente con el productId de arriba. ' +
       'NO saludar, NO preguntar "¿en qué te puedo ayudar?", NO pedir más confirmación. ' +
-      'Cantidad: la que indique el cliente; si no especifica, usá la sugerida en la oferta.',
+      'Cantidad: pasá quantity solo si el cliente dijo unidades en ESTE mensaje. ' +
+      'Si no, omití quantity (no uses party size ni una cantidad sugerida). La tool pedirá confirmación si hace falta.',
   ].join('\n');
 
 /**
