@@ -33,6 +33,7 @@ import {
   COMPLEMENT_MENU_ONLY_TIPABLES,
   buildPendingTipablesPatch,
 } from './pendingTipables.service';
+import { resolveCartShippingBullet } from './cartShippingCopy';
 
 /** false si refused, esperando engaged tras 1ª ola, cooldown o TTL. */
 export function canSurfaceComplementOpportunity(metadata: unknown): boolean {
@@ -189,6 +190,8 @@ export function buildComplementConfirmTitle(params: {
 export function buildComplementConfirmBodyIntro(params: {
   totalAmount: string | number;
   pitch: string;
+  /** Viñeta de envío (retiro vs delivery) bajo el total. */
+  shippingBullet?: string;
 }): string {
   const totalRaw =
     typeof params.totalAmount === 'number'
@@ -198,7 +201,10 @@ export function buildComplementConfirmBodyIntro(params: {
     ? `$${totalRaw.toLocaleString('es-AR')}`
     : `$${String(params.totalAmount)}`;
   const pitch = params.pitch.trim();
-  const totalLine = `Total hasta ahora: ${totalLabel}.`;
+  const shipping = params.shippingBullet?.trim();
+  const totalLine = shipping
+    ? `Total hasta ahora: ${totalLabel}.\n${shipping}`
+    : `Total hasta ahora: ${totalLabel}.`;
   return pitch ? `${totalLine}\n\n${pitch}` : totalLine;
 }
 
@@ -426,8 +432,9 @@ export async function presentComplementSuggestionBundle(params: {
     items: Array<{ id: string; name: string; categoryName: string }>;
   };
   confirm?: ComplementAddConfirm | null;
+  shippingBullet?: string;
 }): Promise<WhatsAppListMessage | null> {
-  const { conversationId, metadata, bundle, confirm } = params;
+  const { conversationId, metadata, bundle, confirm, shippingBullet } = params;
   if (bundle.items.length === 0) return null;
 
   await persistComplementSuggestionSnapshot(conversationId, bundle.snapshot);
@@ -456,6 +463,7 @@ export async function presentComplementSuggestionBundle(params: {
     ? buildComplementConfirmBodyIntro({
         totalAmount: confirm.totalAmount,
         pitch,
+        shippingBullet,
       })
     : pitch;
 
@@ -490,6 +498,8 @@ export async function tryPresentComplementSuggestions(params: {
   /** Cantidad sumada en este add (si falta, se usa la cantidad de la línea). */
   addedQuantity?: number;
   maxItems?: number;
+  customerId?: string;
+  fulfillmentType?: 'DELIVERY' | 'TAKE_AWAY' | null;
 }): Promise<WhatsAppListMessage | null> {
   const {
     business,
@@ -499,6 +509,8 @@ export async function tryPresentComplementSuggestions(params: {
     lastAddedMenuItemId,
     addedQuantity,
     maxItems = 5,
+    customerId,
+    fulfillmentType,
   } = params;
 
   if (!canSurfaceComplementOpportunity(metadata)) {
@@ -525,7 +537,7 @@ export async function tryPresentComplementSuggestions(params: {
       }),
       prisma.draft_order.findUnique({
         where: { id: draftOrderId },
-        select: { total_amount: true },
+        select: { total_amount: true, fulfillment_type: true },
       }),
     ]);
 
@@ -542,10 +554,20 @@ export async function tryPresentComplementSuggestions(params: {
           }
         : null;
 
+    const shippingBullet = customerId
+      ? await resolveCartShippingBullet({
+          businessId: business.id,
+          customerId,
+          fulfillmentType:
+            fulfillmentType ?? draftTotals?.fulfillment_type ?? null,
+        })
+      : '';
+
     return presentComplementSuggestionBundle({
       conversationId,
       metadata,
       confirm,
+      shippingBullet,
       bundle: {
         snapshot: bundle.snapshot,
         bridgeMessagePlain: bundle.bridgeMessagePlain,

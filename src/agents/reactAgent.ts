@@ -568,6 +568,7 @@ export const runHybridReactAgent = async (
           draftOrderId: draft.id,
           lastAddedMenuItemId: lastProductId,
           maxItems: 5,
+          customerId: (ctx.customer as { id: string }).id,
         });
         if (listMsg) {
           console.log(

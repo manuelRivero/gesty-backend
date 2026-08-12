@@ -22,6 +22,7 @@ import type {
 } from '../domain/intent/whatsappTemplates';
 import { formatBotUserMessage } from './productQuery/utils';
 import { clearOrderSessionAfterCancel } from './orderSessionReset.service';
+import { DRAFT_CHECKOUT_COLLECTED_FACTS_RESET } from './checkout/draftCheckoutFacts';
 import { shortOrderRef } from './orderStatusNotification.service';
 
 export const handleOrderSearchPageFromWebhook = async (
@@ -138,6 +139,7 @@ async function cancelActiveDraft(draftOrderId: string): Promise<void> {
       data: {
         status: 'cancelled',
         total_amount: new Prisma.Decimal(0),
+        ...DRAFT_CHECKOUT_COLLECTED_FACTS_RESET,
       },
     });
   });

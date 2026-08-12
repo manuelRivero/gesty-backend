@@ -41,6 +41,7 @@ import { recordOpportunitySurfaced } from '../intent/opportunities.service';
 import { buildComplementarySuggestionsWithLlm } from '../ai/complementarySuggestion.ai.service';
 import {
   buildAddItemShortcutsFollowUpList,
+  buildComplementConfirmBodyIntro,
   buildComplementSuggestionsListMessage,
   canSurfaceComplementOpportunity,
   presentComplementSuggestionBundle,
@@ -144,6 +145,20 @@ describe('buildComplementSuggestionsListMessage', () => {
   });
 });
 
+describe('buildComplementConfirmBodyIntro', () => {
+  it('pone la viñeta de envío bajo el total y antes del pitch', () => {
+    const text = buildComplementConfirmBodyIntro({
+      totalAmount: 12000,
+      pitch: '¿Sumás una bebida?',
+      shippingBullet:
+        '• *Envío:* retiro en el local, sin cargo. Delivery según tu dirección; el monto se calcula al finalizar el pedido.',
+    });
+    expect(text).toMatch(/^Total hasta ahora: \$12[.\s]?000\./);
+    expect(text).toContain('• *Envío:*');
+    expect(text.indexOf('• *Envío:*')).toBeLessThan(text.indexOf('¿Sumás una bebida?'));
+  });
+});
+
 describe('presentComplementSuggestionBundle', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -160,6 +175,8 @@ describe('presentComplementSuggestionBundle', () => {
         quantity: 1,
         totalAmount: 80000,
       },
+      shippingBullet:
+        '• *Envío:* a tu dirección, $800. El retiro en el local es sin cargo.',
       bundle: {
         snapshot: {
           v: 1,
@@ -179,6 +196,7 @@ describe('presentComplementSuggestionBundle', () => {
     expect(list).not.toBeNull();
     expect(list!.body.text).toMatch(/¡Listo! Sumé Milanesa al pedido/i);
     expect(list!.body.text).toMatch(/Total hasta ahora/i);
+    expect(list!.body.text).toContain('• *Envío:* a tu dirección, $800');
     expect(list!.body.text).toContain('Probá un postre.');
     expect(list!.body.text).not.toMatch(/Ya sumaste la milanesa/i);
     expect(list!.body.text).not.toMatch(/O elegí de la lista/i);

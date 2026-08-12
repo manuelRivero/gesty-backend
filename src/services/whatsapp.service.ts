@@ -1560,7 +1560,10 @@ const handleCancelOrder = async (
       where: { id: draftOrder.id },
       data: {
         status: 'cancelled',
-        total_amount: new Prisma.Decimal(0)
+        total_amount: new Prisma.Decimal(0),
+        fulfillment_type: null,
+        payment_method: null,
+        delivery_fee: null,
       }
     });
   });

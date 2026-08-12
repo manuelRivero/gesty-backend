@@ -98,7 +98,7 @@ export function localizeFulfillmentOptionLabels(text: string): string {
 }
 
 /** Ver `FULFILLMENT_TYPE_SHORT_QUESTION`. */
-export const PAYMENT_METHOD_SHORT_QUESTION = '¿Efectivo o pago online?';
+export const PAYMENT_METHOD_SHORT_QUESTION = '¿Cómo querés pagar?';
 
 /** Pregunta corta para el paso de confirmación final del pedido (antes de crear la orden). */
 export const CONFIRM_ORDER_SHORT_QUESTION = '¿Confirmás tu pedido?';

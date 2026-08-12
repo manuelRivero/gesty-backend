@@ -27,6 +27,39 @@ export type CheckoutPendingActionConfig<T = unknown> = {
   actionDescription: string;
 };
 
+const PAYMENT_METHOD_SYNONYMS: Record<'cash' | 'online' | 'transfer', string> = {
+  cash: 'efectivo, en efectivo, cash, en mano, pago al recibir',
+  online: 'online, tarjeta, mercado pago, digital, con tarjeta',
+  transfer: 'transferencia, transfer, CBU, alias, banco',
+};
+
+/**
+ * Hints del extractor acotados a lo que el local ofrece ahora.
+ * Sin esto el LLM/atajo determinístico trata "efectivo" como fulfilled
+ * aunque el negocio solo tenga transferencia.
+ */
+export function buildPaymentMethodExtractorHints(offeredIds: string[]): {
+  valueHints: string;
+  actionDescription: string;
+} {
+  const ids = (['cash', 'online', 'transfer'] as const).filter((id) =>
+    offeredIds.includes(id)
+  );
+  if (ids.length === 0) {
+    return {
+      valueHints: `{ "method": never }\nNingún método activo: no extraigas un valor.`,
+      actionDescription:
+        'El local no tiene métodos de pago activos. No interpretes una elección de pago.',
+    };
+  }
+  const union = ids.map((id) => `"${id}"`).join(' | ');
+  const lines = ids.map((id) => `- ${id}: ${PAYMENT_METHOD_SYNONYMS[id]}`);
+  return {
+    valueHints: `{ "method": ${union} }\n${lines.join('\n')}`,
+    actionDescription: `El usuario debe elegir cómo pagar entre los métodos que ofrece este local: ${ids.join(', ')}. No extraigas un método que no esté en esa lista.`,
+  };
+}
+
 const PAYMENT_METHOD_CONFIG: CheckoutPendingActionConfig<PaymentMethodPendingValue> = {
   pendingAction: 'payment_method',
   defaultQuestion: PAYMENT_METHOD_PROMPT_BOT_MESSAGE,
@@ -38,7 +71,7 @@ const PAYMENT_METHOD_CONFIG: CheckoutPendingActionConfig<PaymentMethodPendingVal
 - online: online, tarjeta, mercado pago, digital, con tarjeta
 - transfer: transferencia, transfer, CBU, alias, banco`,
   actionDescription:
-    'El usuario debe elegir cómo pagar el pedido: efectivo, pago online (Mercado Pago) o transferencia bancaria.',
+    'El usuario debe elegir cómo pagar el pedido, solo entre los métodos que ofrece el local (ver catálogo del turno).',
 };
 
 const FULFILLMENT_TYPE_CONFIG: CheckoutPendingActionConfig<FulfillmentTypePendingValue> = {

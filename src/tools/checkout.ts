@@ -70,6 +70,8 @@ export const getDraftCheckoutState = async (
 
 /**
  * Snapshot fresco de Facts del checkout (post tool-calls).
+ * Nombre = `customer.name` en BD (lo que el cliente dio en un pedido anterior
+ * o vía save_customer_name). No es el perfil de WhatsApp.
  * No usar `enrichedCtx.customer` / `state.hasAddress`: quedan stale si el
  * agente guardó nombre o dirección en este mismo turno.
  */
@@ -306,10 +308,8 @@ export const savePaymentMethodTool = new DynamicStructuredTool<
   name: 'save_payment_method',
   description:
     'Guarda el método de pago elegido por el cliente en texto libre durante el checkout. ' +
-    'Llamá esta tool cuando el cliente indique cómo quiere pagar: ' +
-    '"efectivo", "en efectivo", "cash" → cash; ' +
-    '"online", "tarjeta", "mercado pago", "con tarjeta" → online; ' +
-    '"transferencia", "transfer", "CBU", "alias" → transfer. ' +
+    'method debe ser un id que el local ofrece ahora (cash, online o transfer según config). ' +
+    'Si el método no está ofrecido, devuelve payment_method_not_offered: llamá present_payment_options. ' +
     'Solo usar cuando ya están completos tipo de entrega, dirección (si aplica) y nombre. ' +
     'Si falta un prerequisito, devuelve error estructurado (fulfillment_required / address_required / name_required) ' +
     'con requiredStep — pedí ese dato y no afirmes que el pago quedó guardado. ' +
@@ -346,8 +346,8 @@ type PresentPaymentOptionsInput = z.infer<typeof presentPaymentOptionsSchema>;
 
 /**
  * Señal para que el nodo adjunte los botones de método de pago
- * (Pago online / Efectivo). Solo llamar cuando todos los datos obligatorios
- * ya fueron completados (tipo de entrega, dirección si aplica, nombre si se puede).
+ * que el local ofrece ahora. Solo llamar cuando todos los datos obligatorios
+ * ya fueron completados (tipo de entrega, dirección si aplica, nombre).
  */
 export const presentPaymentOptionsTool = new DynamicStructuredTool<
   typeof presentPaymentOptionsSchema,
@@ -355,9 +355,9 @@ export const presentPaymentOptionsTool = new DynamicStructuredTool<
 >({
   name: 'present_payment_options',
   description:
-    'Muestra al cliente los botones de método de pago (online o efectivo) para finalizar el pedido. ' +
+    'Muestra al cliente los botones de los métodos de pago que ofrece ESTE local (no asumas efectivo u online). ' +
     'Solo llamá esta tool cuando ya tenés: tipo de entrega definido, dirección (si es delivery), y nombre (si disponible). ' +
-    'No escribas los botones en el texto: esta tool los adjunta automáticamente.',
+    'No escribas los métodos en el texto: esta tool los adjunta automáticamente.',
   schema: presentPaymentOptionsSchema,
   func: async (_input: PresentPaymentOptionsInput, _runManager, config?: RunnableConfig) => {
     getReactContext(config); // validar contexto

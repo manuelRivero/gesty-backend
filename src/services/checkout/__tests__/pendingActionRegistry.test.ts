@@ -3,6 +3,7 @@ import {
   getCheckoutPendingActionConfig,
   PaymentMethodPendingSchema,
   ConfirmOrderPendingSchema,
+  buildPaymentMethodExtractorHints,
 } from '../pendingActionRegistry';
 
 describe('pendingActionRegistry', () => {
@@ -11,8 +12,7 @@ describe('pendingActionRegistry', () => {
     expect(config).not.toBeNull();
     expect(config?.pendingAction).toBe('payment_method');
     expect(config?.defaultQuestion.length).toBeGreaterThan(0);
-    expect(config?.valueHints).toContain('cash');
-    expect(config?.valueHints).toContain('online');
+    expect(config?.actionDescription).toMatch(/métodos que ofrece el local/i);
     const parsed = config!.schema.safeParse({ method: 'cash' });
     expect(parsed.success).toBe(true);
   });
@@ -48,5 +48,14 @@ describe('pendingActionRegistry', () => {
   it('ConfirmOrderPendingSchema rechaza valores inválidos', () => {
     expect(ConfirmOrderPendingSchema.safeParse({ confirmed: true }).success).toBe(true);
     expect(ConfirmOrderPendingSchema.safeParse({ confirmed: 'yes' }).success).toBe(false);
+  });
+
+  it('buildPaymentMethodExtractorHints solo incluye métodos ofrecidos', () => {
+    const onlyTransfer = buildPaymentMethodExtractorHints(['transfer']);
+    expect(onlyTransfer.valueHints).toContain('transfer');
+    expect(onlyTransfer.valueHints).not.toContain('cash');
+    expect(onlyTransfer.valueHints).not.toContain('online');
+    expect(onlyTransfer.actionDescription).toContain('transfer');
+    expect(onlyTransfer.actionDescription).not.toContain('cash');
   });
 });

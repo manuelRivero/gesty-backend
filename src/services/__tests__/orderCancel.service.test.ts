@@ -66,9 +66,16 @@ describe('buildCancelOrderMessage', () => {
     vi.clearAllMocks();
   });
 
-  it('solo draft → cancela draft, no notifica admin de orden', async () => {
+  it('solo draft → cancela draft y borra Facts de checkout', async () => {
     vi.mocked(prisma.orders.findFirst).mockResolvedValue(null as never);
     vi.mocked(prisma.draft_order.findFirst).mockResolvedValue({ id: 'draft-1' } as never);
+    const txUpdate = vi.fn();
+    vi.mocked(prisma.$transaction).mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({
+        draft_order_item: { deleteMany: vi.fn() },
+        draft_order: { update: txUpdate },
+      })
+    );
 
     const result = await buildCancelOrderMessage(CONVERSATION, 'biz-1', '+54911');
 
@@ -77,6 +84,15 @@ describe('buildCancelOrderMessage', () => {
     expect(clearOrderSessionAfterCancel).toHaveBeenCalledWith('conv-1');
     expect(emitAdminOrderStatusChanged).not.toHaveBeenCalled();
     expect(prisma.orders.update).not.toHaveBeenCalled();
+    expect(txUpdate).toHaveBeenCalledWith({
+      where: { id: 'draft-1' },
+      data: expect.objectContaining({
+        status: 'cancelled',
+        fulfillment_type: null,
+        payment_method: null,
+        delivery_fee: null,
+      }),
+    });
   });
 
   it('solo orden creada → cancela y notifica admin con mensaje', async () => {

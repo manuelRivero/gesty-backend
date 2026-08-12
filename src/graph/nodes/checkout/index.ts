@@ -66,6 +66,7 @@ import {
   logCheckoutGoal,
 } from '../../../services/checkout/checkoutGoal.service';
 import { buildOrderConfirmationMessage } from '../../../services/checkout/orderConfirmationMessage';
+import { resetActiveDraftCheckoutFacts } from '../../../services/checkout/draftCheckoutFacts';
 import { buildResumeFollowUp } from '../session/buildResumeFollowUp';
 import { buildDiscardedReentryMessage } from '../session/discardedSignalMessage';
 import { withOrphanPayloadAsText } from '../session/orphanPayload';
@@ -775,6 +776,7 @@ export const checkoutAgentNode = async (
   }
 
   if (payloadId === 'CANCEL_CHECKOUT') {
+    await resetActiveDraftCheckoutFacts(business.id, phone);
     await clearCheckoutSession(conversationId);
     return {
       handlerResult:

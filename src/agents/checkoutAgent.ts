@@ -21,7 +21,7 @@ import {
   saveCustomerNameTool,
   saveDeliveryAddressTool,
 } from '../tools';
-import { allCheckoutTools } from '../tools/checkout';
+import { allCheckoutTools, loadLiveCheckoutFacts } from '../tools/checkout';
 import type { EnrichedContext } from '../controllers/webhook/types';
 import { formatBotUserMessage, normalizeMetadata } from '../services/productQuery/utils';
 import { prisma } from '../lib/prisma';
@@ -29,7 +29,12 @@ import {
   extractPendingTurnResponse,
   formatPendingExtractionBlock,
 } from '../services/ai/extractPendingTurnResponse';
-import { getCheckoutPendingActionConfig } from '../services/checkout/pendingActionRegistry';
+import { getBusinessConfig } from '../services/businessConfig.service';
+import { listOfferedPaymentMethods } from '../services/paymentMethods.service';
+import {
+  getCheckoutPendingActionConfig,
+  buildPaymentMethodExtractorHints,
+} from '../services/checkout/pendingActionRegistry';
 import { nextCheckoutStep } from '../services/checkout/nextCheckoutStep';
 import {
   resolveCheckoutPendingFromStep,
@@ -99,16 +104,32 @@ const buildCheckoutContextMessage = async (
   checkoutCtx: CheckoutAgentContext
 ): Promise<string> => {
   const userMsg = ctx.message?.text?.body ?? '';
-  const customerName = (ctx.customer as { name?: string | null })?.name?.trim() || null;
   const businessId =
     typeof ctx.business === 'object' && ctx.business
       ? (ctx.business as { id: string }).id
+      : '';
+  const customerId =
+    typeof ctx.customer === 'object' && ctx.customer
+      ? (ctx.customer as { id: string }).id
       : '';
   const customerPhone =
     typeof ctx.customer === 'object' && ctx.customer
       ? (ctx.customer as { phone_number?: string }).phone_number ?? ctx.to
       : ctx.to;
   const conversationId = ctx.conversationId ?? '';
+
+  // Fact de nombre = fila `customer` en BD (save_customer_name / pedidos previos).
+  // No usar perfil de WhatsApp ni el objeto stale del grafo.
+  let customerName: string | null = null;
+  if (businessId && customerId && customerPhone) {
+    try {
+      const live = await loadLiveCheckoutFacts({ businessId, customerId, customerPhone });
+      customerName = live.customerName;
+    } catch {
+      customerName =
+        (ctx.customer as { name?: string | null })?.name?.trim() || null;
+    }
+  }
 
   // Estado del carrito resumido
   let cartSummary = 'sin datos (usá get_cart para obtenerlo)';
@@ -183,12 +204,29 @@ const buildCheckoutContextMessage = async (
     ? `${addressStatus} (rechazó ${addressRefusalCount} ${addressRefusalCount === 1 ? 'vez' : 'veces'})`
     : addressStatus;
 
+  let offeredPaymentLabel = 'sin datos';
+  let offeredPaymentIds = new Set<string>();
+  try {
+    const bizCfg = await getBusinessConfig(businessId);
+    const offered = await listOfferedPaymentMethods(businessId, {
+      externalDeliveryEnabled: bizCfg.external_delivery_enabled,
+    });
+    offeredPaymentIds = new Set(offered.map((m) => m.id));
+    offeredPaymentLabel =
+      offered.length > 0
+        ? offered.map((m) => `${m.id} (${m.label})`).join(', ')
+        : 'ninguno configurado';
+  } catch {
+    // El agente puede caer a get_cart.paymentOptions
+  }
+
   const lines = [
     `[ESTADO DEL CHECKOUT]`,
     `- Nombre del cliente: ${nameLabel}`,
     `- Tipo de entrega: ${fulfillmentType} (opciones habilitadas: ${fulfillmentOptionsLabel})`,
     `- Dirección de entrega: ${addressLabel}`,
     `- Método de pago: ${paymentMethod}`,
+    `- Métodos de pago ofrecidos por el local: ${offeredPaymentLabel}`,
     `- Carrito:\n${cartSummary}`,
   ];
 
@@ -223,14 +261,35 @@ const buildCheckoutContextMessage = async (
     const config = getCheckoutPendingActionConfig(pendingAction);
     if (config) {
       const botQuestion = resolvedPending.question || config.defaultQuestion;
-      const extraction = await extractPendingTurnResponse({
+      const paymentHints =
+        pendingAction === 'payment_method'
+          ? buildPaymentMethodExtractorHints([...offeredPaymentIds])
+          : null;
+      let extraction = await extractPendingTurnResponse({
         userMessage: userText,
         pendingAction: config.pendingAction,
         botQuestion,
         schema: config.schema,
-        valueHints: config.valueHints,
-        actionDescription: config.actionDescription,
+        valueHints: paymentHints?.valueHints ?? config.valueHints,
+        actionDescription: paymentHints?.actionDescription ?? config.actionDescription,
       });
+      if (pendingAction === 'payment_method' && extraction.status === 'fulfilled') {
+        const method =
+          extraction.value &&
+          typeof extraction.value === 'object' &&
+          extraction.value !== null &&
+          'method' in extraction.value
+            ? String((extraction.value as { method: unknown }).method)
+            : null;
+        if (method && offeredPaymentIds.size > 0 && !offeredPaymentIds.has(method)) {
+          extraction = {
+            ...extraction,
+            status: 'reprompt',
+            value: null,
+            reason: 'metodo_no_ofrecido',
+          };
+        }
+      }
       console.log(
         JSON.stringify({
           event: '[checkout-pending] extraction',

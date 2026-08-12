@@ -53,6 +53,7 @@ import { handleDraftOrder, handleDraftOrderItem } from "./order.service";
 import { computeOrderPricing, formatItemPriceForChat } from "./pricing.service";
 import { resolveEffectivePrice } from "../helpers/menuItemPrice.helper";
 import { resolveDeliveryContext } from "./deliveryFee.service";
+import { resolveCartShippingBullet } from "./cartShippingCopy";
 import {
   formatCartGuidanceBlock,
   syncOrderCoverageToConversationState,
@@ -442,9 +443,15 @@ export const buildAddItemMessage = async (
     mode === 'set'
       ? `Ahora tenés ${qtyLine}${itemBold}${variationLine} en tu pedido.`
       : `${qtyLine}${itemBold}${variationLine} sumado a tu pedido.`;
+  const shippingBullet = await resolveCartShippingBullet({
+    businessId: business.id,
+    customerId: customer.id,
+    fulfillmentType,
+  });
+  const shippingBlock = shippingBullet ? `\n${shippingBullet}` : '';
   const mainInner =
     `${actionLine}${discountLine}\n\n${orderSectionsBlock}${guidanceSuffix}` +
-    `Total: $${total._sum.total_price || 0}${addressLine}\n\n` +
+    `Total: $${total._sum.total_price || 0}${addressLine}${shippingBlock}\n\n` +
     `En el siguiente mensaje tenés las opciones para seguir.`;
 
   const mainText = formatBotUserMessage(
@@ -473,6 +480,8 @@ export const buildAddItemMessage = async (
     lastAddedMenuItemId: menuItemId,
     addedQuantity: qty,
     maxItems: 5,
+    customerId: customer.id,
+    fulfillmentType,
   });
   if (suggestionList) {
     // La lista ya trae confirmación + total + pitch (mensaje único).
@@ -1011,6 +1020,12 @@ export const buildCartSummaryMessage = async (params: {
     ? `Subtotal: $${(pricing.subtotal - pricing.productDiscounts).toFixed(2)}\nEnvío: $${pricing.deliveryFee.toFixed(2)}\n`
     : '';
   const totalLine = `${subtotalLine}*Total: $${pricing.total.toFixed(2)} ${currencyCode ?? 'ARS'}*`;
+  const shippingBullet = await resolveCartShippingBullet({
+    businessId,
+    customerId,
+    fulfillmentType,
+  });
+  const shippingBlock = shippingBullet ? `\n${shippingBullet}` : '';
 
   const includeAddress = fulfillmentType === 'DELIVERY' && hasDeliveryAddress;
   const shortcutsBody = buildAddItemShortcutsFollowUpBody({
@@ -1058,7 +1073,7 @@ export const buildCartSummaryMessage = async (params: {
     type: 'list',
     header: { type: 'text', text: '🤖\n\n*Tu pedido actual* 🛒' },
     body: {
-      text: `${orderSectionsBlock}${guidanceMid}${totalLine}${deliveryLine}\n\n${shortcutsBody}`,
+      text: `${orderSectionsBlock}${guidanceMid}${totalLine}${deliveryLine}${shippingBlock}\n\n${shortcutsBody}`,
     },
     footer: { text: 'Elegí o escribí' },
     action: {
