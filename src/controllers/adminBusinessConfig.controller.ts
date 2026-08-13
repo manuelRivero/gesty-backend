@@ -43,7 +43,8 @@ const configPatchSchema = z.object({
   orders_when_closed: z.boolean().optional(),
   external_delivery_enabled: z.boolean().optional(),
   bot_personality_id: z.string().uuid().optional(),
-  ambassadors_enabled: z.boolean().optional()
+  ambassadors_enabled: z.boolean().optional(),
+  owner_whatsapp_phones: z.array(z.string()).optional()
 });
 
 export async function getAdminBusinessConfig(req: Request, res: Response) {

@@ -38,6 +38,12 @@ import {
   formatReservationDateDb,
   formatDbTimeReservation,
 } from '../../../services/reservations/utils';
+import {
+  patchReservationDraft,
+  readReservationDraft,
+  type ReservationDraftData,
+} from '../../../services/reservations/draft.repository';
+import { nextReservationStep } from '../../../services/reservations/nextReservationStep';
 import { buildListMessageFromButtons } from '../../../whatsappBuilders';
 import { delegateToMainWithDetection } from '../session/delegateToMain';
 import { buildResumeFollowUp } from '../session/buildResumeFollowUp';
@@ -129,8 +135,13 @@ interface ConfirmationData {
   customerName?: string;
 }
 
+/**
+ * D4: el texto del LLM va como *body* del interactivo, no como mensaje
+ * separado + followUp — un solo mensaje, sin redacción propia del resumen.
+ */
 function buildConfirmationButtonsMessage(
-  data: ConfirmationData
+  data: ConfirmationData,
+  leadText?: string | null
 ): WhatsAppInteractiveMessage {
   const summary = [
     `📅 Fecha: ${data.date}`,
@@ -140,12 +151,14 @@ function buildConfirmationButtonsMessage(
     ...(data.customerName ? [`👤 Nombre: ${data.customerName}`] : []),
   ].join('\n');
 
+  const lead = leadText?.trim() ? `${leadText.trim()}\n\n` : '🤖\n\n';
+
   return {
     type: 'interactive',
     interactive: {
       type: 'button',
       body: {
-        text: `🤖\n\n*Confirmá tu reserva* ✅\n\nRevisá los datos:\n\n${summary}`,
+        text: `${lead}*Confirmá tu reserva* ✅\n\nRevisá los datos:\n\n${summary}`,
       },
       footer: { text: 'Seleccioná una opción' },
       action: {
@@ -175,6 +188,138 @@ async function resolveEnvironmentName(
 }
 
 // ---------------------------------------------------------------------------
+// Confirmación / cancelación — una sola función por canal (V-20, P1.2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Crea la reserva a partir del draft. La usan por igual el payload de botón
+ * `RESERVATION_CONFIRM` y la señal `resolve_reservation_confirmation(true)`
+ * en texto libre — una sola fuente de verdad de "qué pasa al confirmar".
+ */
+async function executeReservationConfirmation(params: {
+  conversationId: string;
+  businessId: string;
+  customerId: string;
+  customerName: string | null;
+  draft: ReservationDraftData | undefined;
+}): Promise<HandlerResult> {
+  const { conversationId, businessId, customerId, customerName, draft } = params;
+
+  if (!draft?.date || !draft?.slotId || !draft?.time || !draft?.endTime || draft?.partySize == null) {
+    await clearReservationSession(conversationId);
+    return (
+      textResponse(
+        '🤖\n\n*Error* ❌\n\nFaltaban datos de la reserva. Iniciá de nuevo cuando quieras.'
+      ) ?? { content: '', isInteractive: false }
+    );
+  }
+
+  try {
+    const parsedDate = normalizeDate(draft.date);
+    const slot = await fetchActiveReservationSlotById(draft.slotId, businessId);
+    if (!slot) {
+      return (
+        textResponse(
+          '🤖\n\n*Horario no disponible* ❌\n\nEl horario elegido ya no está disponible. Empecemos de nuevo para elegir otro.'
+        ) ?? { content: '', isInteractive: false }
+      );
+    }
+
+    const startDateTime = buildDateTime(parsedDate, slot.start_time);
+    const endDateTime = buildDateTime(parsedDate, slot.end_time);
+
+    const tables = await findActiveTablesByBusinessAndEnvironment(
+      businessId,
+      draft.environmentId ?? undefined
+    );
+    const suitable = tables.filter((t) => t.capacity >= draft.partySize!);
+    const availableTables: typeof suitable = [];
+    for (const table of suitable) {
+      const overlap = await findOverlappingReservationForTable(table.id, parsedDate, startDateTime);
+      if (overlap) continue;
+      const block = await findReservationBlockAtStart(
+        table.id,
+        draft.environmentId ?? null,
+        parsedDate,
+        startDateTime
+      );
+      if (block) continue;
+      availableTables.push(table);
+    }
+
+    const selected = selectTables(availableTables, draft.partySize);
+    if (!selected) {
+      return (
+        textResponse(
+          '🤖\n\n*Sin disponibilidad* ❌\n\nYa no hay mesas disponibles para esa fecha y horario. Intentá con otra fecha u horario.'
+        ) ?? { content: '', isInteractive: false }
+      );
+    }
+
+    const created = await createReservationWithTables({
+      businessId,
+      customerId,
+      conversationId,
+      partySize: draft.partySize,
+      reservationDate: parsedDate,
+      startDateTime,
+      endDateTime,
+      tableIds: selected.map((t) => t.id),
+    });
+
+    await clearReservationSession(conversationId);
+
+    const dateStr = formatReservationDateDb(created.reservation_date);
+    const timeStr = formatDbTimeReservation(created.start_time as Date);
+    const successText = [
+      `🤖\n\n*¡Reserva confirmada!* 🎉`,
+      ``,
+      `📅 ${dateStr}`,
+      `⏰ ${timeStr}`,
+      `👥 ${created.party_size}`,
+      ...(customerName ? [`👤 ${customerName}`] : []),
+      ``,
+      `¡Te esperamos! 😊`,
+    ].join('\n');
+
+    let followUps: HandlerResult['followUps'];
+    try {
+      const checkinToken = (created as unknown as { checkin_token: string }).checkin_token;
+      const qrDataUrl = await generateReservationQR(checkinToken);
+      followUps = [{ type: 'image', dataUrl: qrDataUrl } as HandlerFollowUp];
+    } catch {
+      console.error('[reservation-agent] No se pudo generar el QR');
+    }
+
+    return {
+      content: successText,
+      isInteractive: false,
+      ...(followUps ? { followUps } : {}),
+    };
+  } catch (err) {
+    const isConflict = err instanceof Error && err.message === 'TABLES_ALREADY_BOOKED';
+    await clearReservationSession(conversationId);
+    return (
+      textResponse(
+        isConflict
+          ? '🤖\n\n*Mesa ocupada* ❌\n\nAlguien acaba de reservar esa mesa. Iniciá de nuevo para elegir otro horario o fecha.'
+          : '🤖\n\n*Error al confirmar* ❌\n\nHubo un problema al crear la reserva. Intentá de nuevo en unos minutos.'
+      ) ?? { content: '', isInteractive: false }
+    );
+  }
+}
+
+/** La usan por igual `RESERVATION_CANCEL` y `resolve_reservation_confirmation(false)`. */
+async function executeReservationCancellation(conversationId: string): Promise<HandlerResult> {
+  await clearReservationSession(conversationId);
+  return (
+    textResponse(
+      '🤖\n\n*Reserva cancelada* 👋\n\nNo hay problema. Avisame si querés hacer una reserva en otro momento.'
+    ) ?? { content: '', isInteractive: false }
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Nodo principal
 // ---------------------------------------------------------------------------
 
@@ -195,142 +340,20 @@ export const reservationAgentNode = async (
 
   // ── RESERVATION_CONFIRM — flujo determinístico de creación ────────────────
   if (payloadId === 'RESERVATION_CONFIRM') {
-    const draft = wsMeta.reservation_draft;
-    if (
-      !draft?.date ||
-      !draft?.slotId ||
-      !draft?.time ||
-      !draft?.endTime ||
-      draft?.partySize == null
-    ) {
-      await clearReservationSession(conversationId);
-      return {
-        handlerResult: textResponse(
-          '🤖\n\n*Error* ❌\n\nFaltaban datos de la reserva. Iniciá de nuevo cuando quieras.'
-        ) ?? undefined,
-        dataCollectionDelegated: true,
-      };
-    }
-
-    try {
-      const parsedDate = normalizeDate(draft.date);
-      const slot = await fetchActiveReservationSlotById(draft.slotId, business.id);
-      if (!slot) {
-        return {
-          handlerResult: textResponse(
-            '🤖\n\n*Horario no disponible* ❌\n\nEl horario elegido ya no está disponible. Empecemos de nuevo para elegir otro.'
-          ) ?? undefined,
-          dataCollectionDelegated: true,
-        };
-      }
-
-      const startDateTime = buildDateTime(parsedDate, slot.start_time);
-      const endDateTime = buildDateTime(parsedDate, slot.end_time);
-
-      // Buscar mesas disponibles
-      const tables = await findActiveTablesByBusinessAndEnvironment(
-        business.id,
-        draft.environmentId ?? undefined
-      );
-      const suitable = tables.filter((t) => t.capacity >= draft.partySize!);
-      const availableTables: typeof suitable = [];
-      for (const table of suitable) {
-        const overlap = await findOverlappingReservationForTable(
-          table.id,
-          parsedDate,
-          startDateTime
-        );
-        if (overlap) continue;
-        const block = await findReservationBlockAtStart(
-          table.id,
-          draft.environmentId ?? null,
-          parsedDate,
-          startDateTime
-        );
-        if (block) continue;
-        availableTables.push(table);
-      }
-
-      const selected = selectTables(availableTables, draft.partySize);
-      if (!selected) {
-        return {
-          handlerResult: textResponse(
-            '🤖\n\n*Sin disponibilidad* ❌\n\nYa no hay mesas disponibles para esa fecha y horario. Intentá con otra fecha u horario.'
-          ) ?? undefined,
-          dataCollectionDelegated: true,
-        };
-      }
-
-      const created = await createReservationWithTables({
-        businessId: business.id,
-        customerId,
-        conversationId,
-        partySize: draft.partySize,
-        reservationDate: parsedDate,
-        startDateTime,
-        endDateTime,
-        tableIds: selected.map((t) => t.id),
-      });
-
-      await clearReservationSession(conversationId);
-
-      // Generar QR
-      const dateStr = formatReservationDateDb(created.reservation_date);
-      const timeStr = formatDbTimeReservation(created.start_time as Date);
-      const successText = [
-        `🤖\n\n*¡Reserva confirmada!* 🎉`,
-        ``,
-        `📅 ${dateStr}`,
-        `⏰ ${timeStr}`,
-        `👥 ${created.party_size}`,
-        ...(customerName ? [`👤 ${customerName}`] : []),
-        ``,
-        `¡Te esperamos! 😊`,
-      ].join('\n');
-
-      let followUps: HandlerResult['followUps'];
-      try {
-        const checkinToken = (created as unknown as { checkin_token: string }).checkin_token;
-        const qrDataUrl = await generateReservationQR(checkinToken);
-        followUps = [{ type: 'image', dataUrl: qrDataUrl } as HandlerFollowUp];
-      } catch {
-        console.error('[reservation-agent] No se pudo generar el QR');
-      }
-
-      return {
-        handlerResult: {
-          content: successText,
-          isInteractive: false,
-          ...(followUps ? { followUps } : {}),
-        },
-        dataCollectionDelegated: true,
-      };
-    } catch (err) {
-      const isConflict =
-        err instanceof Error && err.message === 'TABLES_ALREADY_BOOKED';
-      await clearReservationSession(conversationId);
-      return {
-        handlerResult: textResponse(
-          isConflict
-            ? '🤖\n\n*Mesa ocupada* ❌\n\nAlguien acaba de reservar esa mesa. Iniciá de nuevo para elegir otro horario o fecha.'
-            : '🤖\n\n*Error al confirmar* ❌\n\nHubo un problema al crear la reserva. Intentá de nuevo en unos minutos.'
-        ) ?? undefined,
-        dataCollectionDelegated: true,
-      };
-    }
+    const handlerResult = await executeReservationConfirmation({
+      conversationId,
+      businessId: business.id,
+      customerId,
+      customerName,
+      draft: wsMeta.reservation_draft,
+    });
+    return { handlerResult, dataCollectionDelegated: true };
   }
 
-  // ── RESERVATION_CANCEL — limpiar sesión o cancelar reserva activa ─────────
+  // ── RESERVATION_CANCEL — limpiar sesión ───────────────────────────────────
   if (payloadId === 'RESERVATION_CANCEL') {
-    await clearReservationSession(conversationId);
-    // Si el draft tenía una reserva existente en DB, cancelarla
-    // (esto aplica cuando se está gestionando una reserva preexistente)
-    return {
-      handlerResult: textResponse(
-        '🤖\n\n*Reserva cancelada* 👋\n\nNo hay problema. Avisame si querés hacer una reserva en otro momento.'
-      ) ?? undefined,
-      dataCollectionDelegated: true,
-    };
+    const handlerResult = await executeReservationCancellation(conversationId);
+    return { handlerResult, dataCollectionDelegated: true };
   }
 
   // ── RESERVATION_RESET — limpiar draft y reiniciar con el agente ───────────
@@ -340,42 +363,28 @@ export const reservationAgentNode = async (
   }
 
   // ── Payloads de botón: RESERVATION_SLOT:{id} ─────────────────────────────
+  // P0.2 (R-B): el merge queda persistido en DB; el agente lo lee con
+  // lectura fresca en buildReservationContextMessage — ya no hace falta
+  // "refrescar" ningún objeto local (ese bloque no mutaba nada).
   if (payloadId?.startsWith('RESERVATION_SLOT:')) {
     const slotId = payloadId.split(':')[1];
     const slot = await fetchActiveReservationSlotById(slotId, business.id);
     if (slot) {
-      const currentDraft = wsMeta.reservation_draft ?? {};
-      await patchConversationMetadata(conversationId, {
-        reservation_draft: {
-          ...currentDraft,
-          slotId: slot.id,
-          time: slot.start_time,
-          endTime: slot.end_time,
-        },
+      await patchReservationDraft(conversationId, {
+        slotId: slot.id,
+        time: slot.start_time,
+        endTime: slot.end_time,
       });
-    }
-    // Continúa al agente con metadata actualizada (el ctx ya trae conversationState anterior)
-    // El agente verá el slot en [ESTADO DE LA RESERVA] del próximo turno al invocar.
-    // Para el turno actual, refrescamos el estado local.
-    if (slot && state.workingConversationState?.metadata) {
-      const m = normalizeMetadata(state.workingConversationState.metadata);
-      m.reservation_draft = { ...(m.reservation_draft ?? {}), slotId: slot.id, time: slot.start_time, endTime: slot.end_time };
     }
   }
 
   // ── Payloads de botón: RESERVATION_ENV:{id} o RESERVATION_ENV_NONE ───────
   if (payloadId?.startsWith('RESERVATION_ENV:')) {
     const envId = payloadId.split(':')[1];
-    const currentDraft = wsMeta.reservation_draft ?? {};
-    await patchConversationMetadata(conversationId, {
-      reservation_draft: { ...currentDraft, environmentId: envId },
-    });
+    await patchReservationDraft(conversationId, { environmentId: envId });
   }
   if (payloadId === 'RESERVATION_ENV_NONE') {
-    const currentDraft = wsMeta.reservation_draft ?? {};
-    await patchConversationMetadata(conversationId, {
-      reservation_draft: { ...currentDraft, environmentId: null },
-    });
+    await patchReservationDraft(conversationId, { environmentId: null });
   }
 
   // ── Activar sesión en el primer turno ────────────────────────────────────
@@ -548,6 +557,30 @@ export const reservationAgentNode = async (
     };
   }
 
+  // ── Señal: confirmación en texto libre (D3) ──────────────────────────────
+  // Misma función que RESERVATION_CONFIRM/RESERVATION_CANCEL, sin importar
+  // el canal (V-20): "sí, confirmo" en texto ya no queda sin salida (R-C).
+  if (signals.confirmReservationResolved !== null) {
+    const freshDraft = await readReservationDraft(conversationId);
+    console.log(
+      JSON.stringify({
+        event: '[reservation-agent] resolve_reservation_confirmation',
+        confirmed: signals.confirmReservationResolved,
+        conversationId,
+      })
+    );
+    const handlerResult = signals.confirmReservationResolved
+      ? await executeReservationConfirmation({
+          conversationId,
+          businessId: business.id,
+          customerId,
+          customerName,
+          draft: freshDraft,
+        })
+      : await executeReservationCancellation(conversationId);
+    return { handlerResult, dataCollectionDelegated: true };
+  }
+
   // ── Señal: mostrar lista de horarios disponibles ───────────────────────────
   if (signals.presentSlots && signals.presentSlotsDate) {
     try {
@@ -617,15 +650,25 @@ export const reservationAgentNode = async (
     };
   }
 
-  // ── Señal: mostrar confirmación ───────────────────────────────────────────
-  if (signals.presentConfirmation) {
-    // Leer draft actualizado de la DB
-    const freshState = await prisma.conversation_state.findFirst({
-      where: { conversation_id: conversationId },
-      select: { metadata: true },
-    });
-    const freshMeta = normalizeMetadata(freshState?.metadata);
-    const draft = freshMeta.reservation_draft;
+  // ── Señal o backup por estado: mostrar confirmación (D4) ─────────────────
+  // La tarjeta sale con o sin señal del LLM: si el paso derivado es
+  // `confirm` y el draft está completo, se adjunta igual — mismo criterio
+  // que checkout (V-25) y onboarding (V-24). Un solo mensaje, con el texto
+  // del agente como body (no content + followUp — V-19/R-D).
+  const freshDraftForConfirm = await readReservationDraft(conversationId);
+  const derivedStep = nextReservationStep(
+    {
+      date: freshDraftForConfirm.date,
+      slotId: freshDraftForConfirm.slotId,
+      partySize: freshDraftForConfirm.partySize,
+      environmentId: freshDraftForConfirm.environmentId,
+    },
+    { hasEnvironments: environments.length > 0 }
+  );
+  const shouldPresentConfirmation = signals.presentConfirmation || derivedStep === 'confirm';
+
+  if (shouldPresentConfirmation) {
+    const draft = freshDraftForConfirm;
 
     if (!draft?.date || !draft?.time || !draft?.endTime || draft?.partySize == null) {
       return {
@@ -634,30 +677,25 @@ export const reservationAgentNode = async (
       };
     }
 
-    const environmentName = await resolveEnvironmentName(
-      draft.environmentId,
-      business.id
+    const environmentName = await resolveEnvironmentName(draft.environmentId, business.id);
+
+    const confirmationMsg = buildConfirmationButtonsMessage(
+      {
+        date: draft.date,
+        time: draft.time,
+        endTime: draft.endTime,
+        partySize: draft.partySize,
+        environmentName,
+        customerName: customerName ?? undefined,
+      },
+      text
     );
-
-    const confirmationMsg = buildConfirmationButtonsMessage({
-      date: draft.date,
-      time: draft.time,
-      endTime: draft.endTime,
-      partySize: draft.partySize,
-      environmentName,
-      customerName: customerName ?? undefined,
-    });
-
-    const followUp: HandlerFollowUp = {
-      type: 'interactive',
-      message: confirmationMsg as any,
-    };
 
     return {
       handlerResult: {
-        content: text,
-        isInteractive: false,
-        followUps: [followUp],
+        content: confirmationMsg,
+        isInteractive: true,
+        skipBodyHumanization: true,
       },
       dataCollectionDelegated: true,
     };

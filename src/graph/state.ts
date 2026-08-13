@@ -63,7 +63,8 @@ export type ContextRoute =
   | 'interactive'
   | 'nlp'
   | 'checkout'
-  | 'payment_proof';
+  | 'payment_proof'
+  | 'owner_assistant';
 
 /** Decisión de routing tras NLP / payload mapping. */
 export type IntentRoute =
@@ -250,6 +251,15 @@ export const AgentStateAnnotation = Annotation.Root({
   awaitingTransferProofOrder: Annotation<OrderAwaitingTransferProof | null>({
     reducer: (_prev, next) => next,
     default: () => null,
+  }),
+
+  /**
+   * El remitente está en `owner_whatsapp_phones`. Gana a toda la cadena de
+   * clientes (PLAN-ACCION-OWNER-ASSISTANT.md). No es un flag de sesión.
+   */
+  isOwnerAssistant: Annotation<boolean>({
+    reducer: (_prev, next) => next,
+    default: () => false,
   }),
 });
 

@@ -28,7 +28,8 @@ import { getBusinessOpenInfo } from '../../../services/businessHours.service';
 import { formatInboundMessageForLog } from '../../../controllers/webhook/utils/messageLog';
 import { sendTypingIndicator } from '../../../services/whatsappTypingIndicator.service';
 import { normalizeMetadata } from '../../../services/productQuery/utils';
-import { isCheckoutAgentEnabled, isReservationAgentEnabled, isOnboardingAgentEnabled } from '../../../config/env';
+import { isCheckoutAgentEnabled, isReservationAgentEnabled, isOnboardingAgentEnabled, isOwnerAssistantEnabled } from '../../../config/env';
+import { isOwnerPhone } from '../../../services/ownerAssistant/matchOwnerPhone';
 import {
   clearCheckoutSessionIfStale,
 } from '../checkout';
@@ -104,7 +105,11 @@ export const resolveCustomerNode = async (
   const ctx = state.webhookContext!;
   const business = state.business!;
   const customer = await findOrCreateCustomer(business.id, ctx.to);
-  return { customer };
+  const allowlist = state.businessConfig?.owner_whatsapp_phones ?? [];
+  const isOwnerAssistant =
+    isOwnerAssistantEnabled() &&
+    isOwnerPhone(customer.phone_number ?? ctx.to, allowlist);
+  return { customer, isOwnerAssistant };
 };
 
 /** Nodo 5: calcula si el negocio está abierto en su timezone. */
@@ -119,6 +124,9 @@ export const businessOpenInfoNode = async (
   });
 
   if (!businessStatus.isOpen) {
+    if (state.isOwnerAssistant) {
+      return { businessStatus };
+    }
     if (!businessConfig.operate_when_closed) {
       return { businessStatus, earlyExit: 'business_closed' };
     }
@@ -199,8 +207,8 @@ export const buildDetectionContextNode = async (
     const workingConversationState = conversationState;
 
     if (
-      !businessConfig.bot_enabled ||
-      workingConversationState.is_human_handled
+      !state.isOwnerAssistant &&
+      (!businessConfig.bot_enabled || workingConversationState.is_human_handled)
     ) {
       console.log(
         '[Orchestrator] Bot deshabilitado (config negocio o modo humano), no se responde automáticamente',
@@ -329,11 +337,13 @@ export const buildDetectionContextNode = async (
         ctx.payloadId === 'ONBOARDING_CONFIRM_ADDRESS' ||
         ctx.payloadId === 'ONBOARDING_EDIT_ADDRESS');
 
-    // Comprobante de transferencia (D1): prioridad máxima. Una imagen nunca
-    // es un turno de checkout/onboarding/reserva normal, así que no compite
-    // con esas ramas. El guard (`messageTypeGuardNode`) ya calculó y cacheó
-    // la orden candidata; acá solo la leemos.
-    if (state.awaitingTransferProofOrder) {
+    // Identidad del dueño gana a toda la cadena de clientes (no es sesión:
+    // el teléfono está en owner_whatsapp_phones). Después, comprobante de
+    // transferencia (D1): una imagen nunca es un turno de checkout/onboarding/
+    // reserva normal. El guard ya cacheó la orden candidata.
+    if (state.isOwnerAssistant) {
+      contextRoute = 'owner_assistant';
+    } else if (state.awaitingTransferProofOrder) {
       contextRoute = 'payment_proof';
     } else if (isPendingDelegatedAddressConfirmation) {
       contextRoute = 'delegated_address_confirmation';

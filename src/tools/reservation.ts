@@ -12,10 +12,7 @@
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { getReactContext } from './_context';
-import {
-  patchConversationMetadata,
-  omitConversationMetadataKeys,
-} from '../repositories/conversationState.repository';
+import { omitConversationMetadataKeys } from '../repositories/conversationState.repository';
 import {
   fetchReservationSlotsForBusinessDate,
   findAnyFutureOccupyingReservationForCustomer,
@@ -25,6 +22,7 @@ import {
   findReservationBlockAtStart,
 } from '../repositories/reservation.repository';
 import { buildDateTime, normalizeDate } from '../services/reservations/utils';
+import { patchReservationDraft } from '../services/reservations/draft.repository';
 import { prisma } from '../lib/prisma';
 import type { RunnableConfig } from '@langchain/core/runnables';
 
@@ -33,6 +31,33 @@ import type { RunnableConfig } from '@langchain/core/runnables';
 // ---------------------------------------------------------------------------
 
 const toJson = (data: unknown): string => JSON.stringify(data);
+
+/**
+ * Gate en el borde (D7/R-G): formato DD/MM/AAAA válido y no en el pasado.
+ * El prompt ya le pedía esto al modelo; acá se garantiza aunque lo ignore.
+ */
+function validateReservationDateGate(
+  date: string
+): { ok: true } | { ok: false; error: 'invalid_date' | 'past_date' } {
+  let parsed: Date;
+  try {
+    parsed = normalizeDate(date);
+  } catch {
+    return { ok: false, error: 'invalid_date' };
+  }
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  if (parsed < today) {
+    return { ok: false, error: 'past_date' };
+  }
+  return { ok: true };
+}
+
+/** Capacidad máxima combinable del negocio (suma de mesas activas). D7/R-G. */
+async function getMaxCombinablePartySize(businessId: string): Promise<number> {
+  const tables = await findActiveTablesByBusinessAndEnvironment(businessId);
+  return tables.reduce((sum, t) => sum + t.capacity, 0);
+}
 
 // ---------------------------------------------------------------------------
 // ESCRITURA: save_reservation_date
@@ -51,14 +76,18 @@ export const saveReservationDateTool = new DynamicStructuredTool<
 >({
   name: 'save_reservation_date',
   description:
-    'Persiste la fecha de la reserva (formato DD/MM/AAAA) en el borrador. ' +
-    'Solo llamar después de haber obtenido la fecha via resolve_date y confirmado con el cliente.',
+    'Persiste la fecha de la reserva (formato DD/MM/AAAA) en el borrador, sin perder horario/personas/ambiente ya cargados. ' +
+    'Preferí resolve_date para obtenerla, pero si devuelve null y ya la resolviste vos mismo con el contexto (fecha actual del ledger), llamá esta tool directo con DD/MM/AAAA. ' +
+    'Devuelve { saved: false, error: "invalid_date" | "past_date" } si el formato es inválido o la fecha ya pasó.',
   schema: saveReservationDateSchema,
   func: async ({ date }: SaveReservationDateInput, _runManager, config?: RunnableConfig) => {
     const { conversationId } = getReactContext(config);
-    await patchConversationMetadata(conversationId, {
-      reservation_draft: { date },
-    });
+    const gate = validateReservationDateGate(date);
+    if (!gate.ok) {
+      return toJson({ saved: false, error: gate.error });
+    }
+    // Merge con el draft existente (P0.1/D1): nunca pisar slotId/partySize/environmentId.
+    await patchReservationDraft(conversationId, { date });
     return toJson({ saved: true, date });
   },
 });
@@ -83,25 +112,16 @@ export const saveReservationPartySizeTool = new DynamicStructuredTool<
   name: 'save_reservation_party_size',
   description:
     'Persiste la cantidad de personas de la reserva en el borrador. ' +
-    'Llamar cuando el cliente indique cuántas personas asistirán.',
+    'Llamar cuando el cliente indique cuántas personas asistirán. ' +
+    'Devuelve { saved: false, error: "party_size_too_large", max } si excede la capacidad combinable del local.',
   schema: saveReservationPartySizeSchema,
   func: async ({ count }: SaveReservationPartySizeInput, _runManager, config?: RunnableConfig) => {
-    const { conversationId } = getReactContext(config);
-    // Merge con el draft existente para no pisar otros campos
-    const cs = await prisma.conversation_state.findFirst({
-      where: { conversation_id: conversationId },
-      select: { metadata: true },
-    });
-    const existing =
-      cs && typeof cs.metadata === 'object' && cs.metadata !== null
-        ? ((cs.metadata as Record<string, unknown>).reservation_draft as Record<
-            string,
-            unknown
-          > | undefined) ?? {}
-        : {};
-    await patchConversationMetadata(conversationId, {
-      reservation_draft: { ...existing, partySize: count },
-    });
+    const { conversationId, businessId } = getReactContext(config);
+    const max = await getMaxCombinablePartySize(businessId);
+    if (max > 0 && count > max) {
+      return toJson({ saved: false, error: 'party_size_too_large', max });
+    }
+    await patchReservationDraft(conversationId, { partySize: count });
     return toJson({ saved: true, partySize: count });
   },
 });
@@ -131,20 +151,7 @@ export const saveReservationEnvironmentTool = new DynamicStructuredTool<
   schema: saveReservationEnvironmentSchema,
   func: async ({ environmentId }: SaveReservationEnvironmentInput, _runManager, config?: RunnableConfig) => {
     const { conversationId } = getReactContext(config);
-    const cs = await prisma.conversation_state.findFirst({
-      where: { conversation_id: conversationId },
-      select: { metadata: true },
-    });
-    const existing =
-      cs && typeof cs.metadata === 'object' && cs.metadata !== null
-        ? ((cs.metadata as Record<string, unknown>).reservation_draft as Record<
-            string,
-            unknown
-          > | undefined) ?? {}
-        : {};
-    await patchConversationMetadata(conversationId, {
-      reservation_draft: { ...existing, environmentId },
-    });
+    await patchReservationDraft(conversationId, { environmentId });
     return toJson({ saved: true, environmentId });
   },
 });
@@ -509,6 +516,44 @@ export const presentConfirmationTool = new DynamicStructuredTool<
 });
 
 // ---------------------------------------------------------------------------
+// SEÑAL: resolve_reservation_confirmation (D3, R-C/R-D)
+// ---------------------------------------------------------------------------
+
+const resolveReservationConfirmationSchema = z.object({
+  confirmed: z
+    .boolean()
+    .describe('true si el cliente confirmó la reserva en texto, false si la canceló.'),
+});
+type ResolveReservationConfirmationInput = z.infer<
+  typeof resolveReservationConfirmationSchema
+>;
+
+/**
+ * Señal: el cliente respondió "sí, confirmo" / "no, cancelá" en texto libre
+ * en vez de tocar los botones. Es una señal, nunca crea ni cancela la
+ * reserva por sí misma (ADR-0004) — el nodo ejecuta la misma función que
+ * usa para RESERVATION_CONFIRM / RESERVATION_CANCEL, sin importar el canal.
+ */
+export const resolveReservationConfirmationTool = new DynamicStructuredTool<
+  typeof resolveReservationConfirmationSchema,
+  ResolveReservationConfirmationInput
+>({
+  name: 'resolve_reservation_confirmation',
+  description:
+    'Llamar cuando el cliente responde en TEXTO a la confirmación de la reserva (ej. "sí, confirmo", "dale", "no, mejor no") ' +
+    'en vez de tocar los botones. Nunca listes esto como pregunta al cliente: solo interpretá su respuesta y llamá esta tool.',
+  schema: resolveReservationConfirmationSchema,
+  func: async (
+    { confirmed }: ResolveReservationConfirmationInput,
+    _runManager,
+    config?: RunnableConfig
+  ) => {
+    getReactContext(config); // validar contexto
+    return toJson({ signal: 'resolve_reservation_confirmation', confirmed });
+  },
+});
+
+// ---------------------------------------------------------------------------
 // SALIDA: delegate_to_main (temporal — no limpia reservation_agent_active)
 // ---------------------------------------------------------------------------
 
@@ -636,6 +681,7 @@ export const allReservationTools = [
   getAvailableSlotsTool,
   getAvailableEnvironmentsTool,
   presentConfirmationTool,
+  resolveReservationConfirmationTool,
   delegateToMainTool,
   handbackReservationTool,
   abandonReservationTool,

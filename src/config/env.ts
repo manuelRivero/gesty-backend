@@ -56,6 +56,16 @@ const envSchema = z.object({
     .transform((v) => v === 'true' || v === '1'),
 
   /**
+   * Habilita el ReAct agent del dueño (métricas por WhatsApp).
+   * Requiere AGENT_MODE=hybrid. Sin teléfonos en
+   * business_config.owner_whatsapp_phones nadie entra (fail closed).
+   */
+  OWNER_ASSISTANT_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true' || v === '1'),
+
+  /**
    * Habilita la capa de CTA determinístico post-ReAct.
    * En false (default), runHybridReactAgent devuelve solo texto (comportamiento actual).
    */
@@ -235,6 +245,9 @@ export const isReservationAgentEnabled = (): boolean =>
 
 export const isOnboardingAgentEnabled = (): boolean =>
   isHybridAgentMode() && env.ONBOARDING_AGENT_ENABLED === true;
+
+export const isOwnerAssistantEnabled = (): boolean =>
+  isHybridAgentMode() && env.OWNER_ASSISTANT_ENABLED === true;
 
 export const isDryRunWhatsAppSend = (): boolean =>
   env.DRY_RUN_WHATSAPP_SEND === true;

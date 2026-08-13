@@ -10,7 +10,7 @@
  * escalationGate (→ send) →
  * ambassadorReferral →
  * buildDetectionContext →
- * { reservationWizard | reservationAgent | onboardingAgent | onboardingByState | addressCapture | checkoutAgent | interactive | nlp } →
+ * { ownerAssistant | reservationWizard | reservationAgent | onboardingAgent | onboardingByState | addressCapture | checkoutAgent | interactive | nlp } →
  * sendResponse → persistAIMessage → END.
  *
  * `messageTypeGuard` filtra mensajes no procesables (imágenes, audio, video,
@@ -56,6 +56,7 @@ import { paymentProofNode } from './nodes/paymentProof';
 import { delegatedAddressConfirmationNode } from './nodes/session/delegatedAddressConfirmation';
 import { reservationAgentNode } from './nodes/reservation';
 import { onboardingAgentNode } from './nodes/onboarding';
+import { ownerAssistantAgentNode } from './nodes/ownerAssistant';
 import { sendResponseNode, persistAIMessageNode } from './nodes/send';
 import {
   NODE,
@@ -99,6 +100,7 @@ const builder = new StateGraph(AgentStateAnnotation)
   .addNode(NODE.CHECKOUT_AGENT, checkoutAgentNode)
   .addNode(NODE.PAYMENT_PROOF, paymentProofNode)
   .addNode(NODE.RESERVATION_AGENT, reservationAgentNode)
+  .addNode(NODE.OWNER_ASSISTANT, ownerAssistantAgentNode)
   .addNode(NODE.FULFILLMENT_SELECTION, fulfillmentSelectionNode)
   .addNode(NODE.ADDRESS_COLLECTION, addressCollectionNode)
   .addNode(NODE.NAME_COLLECTION, nameCollectionNode)
@@ -169,6 +171,7 @@ builder.addConditionalEdges(
     [NODE.DELEGATED_ADDRESS_CONFIRMATION]: NODE.DELEGATED_ADDRESS_CONFIRMATION,
     [NODE.CHECKOUT_AGENT]: NODE.CHECKOUT_AGENT,
     [NODE.PAYMENT_PROOF]: NODE.PAYMENT_PROOF,
+    [NODE.OWNER_ASSISTANT]: NODE.OWNER_ASSISTANT,
     [NODE.INTERACTIVE]: NODE.INTERACTIVE,
     [NODE.NLP]: NODE.NLP,
     [END]: END,
@@ -185,6 +188,7 @@ for (const node of [
   NODE.CHECKOUT_AGENT,
   NODE.PAYMENT_PROOF,
   NODE.RESERVATION_AGENT,
+  NODE.OWNER_ASSISTANT,
 ] as const) {
   builder.addConditionalEdges(node, routeAfterHandlerOrSubflow, {
     [NODE.FULFILLMENT_SELECTION]: NODE.FULFILLMENT_SELECTION,

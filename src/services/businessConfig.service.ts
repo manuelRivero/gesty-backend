@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import {
   assertActiveBotPersonalityId,
@@ -9,6 +10,10 @@ import {
   assertValidPaymentMethodCombination,
 } from "../domain/payment/paymentMethodRules";
 import { listActivePaymentMethodSnapshots } from "./paymentMethods.service";
+import {
+  normalizePhoneDigits,
+  sanitizeOwnerPhones,
+} from "./ownerAssistant/matchOwnerPhone";
 
 export type BusinessConfig = {
   bot_enabled: boolean;
@@ -37,6 +42,7 @@ export type BusinessConfig = {
   external_delivery_enabled: boolean;
   bot_personality_id: string;
   ambassadors_enabled: boolean;
+  owner_whatsapp_phones: string[];
 };
 
 const DEFAULT_CONFIG: BusinessConfig = {
@@ -66,6 +72,7 @@ const DEFAULT_CONFIG: BusinessConfig = {
   external_delivery_enabled: false,
   bot_personality_id: NEUTRAL_PERSONALITY_ID,
   ambassadors_enabled: false,
+  owner_whatsapp_phones: [],
 };
 
 export type BusinessConfigPatch = Partial<BusinessConfig>;
@@ -103,10 +110,43 @@ function normalizePickupInstructions(
   return trimmed === "" ? null : trimmed;
 }
 
+function parseOwnerPhonesOrThrow(phones: unknown): string[] {
+  if (!Array.isArray(phones)) {
+    throw new BusinessConfigValidationError(
+      "owner_whatsapp_phones debe ser un array de teléfonos"
+    );
+  }
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of phones) {
+    if (typeof raw !== "string") {
+      throw new BusinessConfigValidationError(
+        "Cada teléfono de dueño debe ser texto"
+      );
+    }
+    const digits = normalizePhoneDigits(raw);
+    if (digits.length < 8 || digits.length > 15) {
+      throw new BusinessConfigValidationError(
+        `Teléfono de dueño inválido: "${raw}". Usá dígitos con código de país (8–15).`
+      );
+    }
+    if (seen.has(digits)) continue;
+    seen.add(digits);
+    out.push(digits);
+  }
+  return out;
+}
+
+function toPgTextArray(values: string[]): Prisma.Sql {
+  if (values.length === 0) return Prisma.sql`ARRAY[]::text[]`;
+  return Prisma.sql`ARRAY[${Prisma.join(values)}]::text[]`;
+}
+
 function applyBusinessConfigRules(config: BusinessConfig): BusinessConfig {
   const next: BusinessConfig = {
     ...config,
-    pickup_instructions: normalizePickupInstructions(config.pickup_instructions) ?? null
+    pickup_instructions: normalizePickupInstructions(config.pickup_instructions) ?? null,
+    owner_whatsapp_phones: sanitizeOwnerPhones(config.owner_whatsapp_phones ?? []),
   };
 
   if (!next.operate_when_closed) {
@@ -161,7 +201,8 @@ async function fetchBusinessConfigRow(
       orders_when_closed,
       external_delivery_enabled,
       bot_personality_id,
-      ambassadors_enabled
+      ambassadors_enabled,
+      owner_whatsapp_phones
     FROM business_config
     WHERE business_id = ${businessId}::uuid
     LIMIT 1
@@ -174,6 +215,9 @@ export async function getBusinessConfig(businessId: string): Promise<BusinessCon
   const merged = row ? { ...DEFAULT_CONFIG, ...row } : { ...DEFAULT_CONFIG };
   merged.bot_personality_id =
     merged.bot_personality_id || (await getDefaultNeutralPersonalityId());
+  merged.owner_whatsapp_phones = sanitizeOwnerPhones(
+    merged.owner_whatsapp_phones ?? []
+  );
   return merged;
 }
 
@@ -186,6 +230,11 @@ export async function upsertBusinessConfig(
     ...current,
     ...patch,
   };
+  if (patch.owner_whatsapp_phones !== undefined) {
+    nextRaw.owner_whatsapp_phones = parseOwnerPhonesOrThrow(
+      patch.owner_whatsapp_phones
+    );
+  }
   if (patch.bot_personality_id !== undefined) {
     nextRaw.bot_personality_id = await normalizeBotPersonalityId(
       patch.bot_personality_id
@@ -253,7 +302,8 @@ export async function upsertBusinessConfig(
       orders_when_closed,
       external_delivery_enabled,
       bot_personality_id,
-      ambassadors_enabled
+      ambassadors_enabled,
+      owner_whatsapp_phones
     ) VALUES (
       ${businessId}::uuid,
       ${next.bot_enabled},
@@ -281,7 +331,8 @@ export async function upsertBusinessConfig(
       ${next.orders_when_closed},
       ${next.external_delivery_enabled},
       ${next.bot_personality_id}::uuid,
-      ${next.ambassadors_enabled}
+      ${next.ambassadors_enabled},
+      ${toPgTextArray(next.owner_whatsapp_phones)}
     )
     ON CONFLICT (business_id)
     DO UPDATE SET
@@ -310,7 +361,8 @@ export async function upsertBusinessConfig(
       orders_when_closed = EXCLUDED.orders_when_closed,
       external_delivery_enabled = EXCLUDED.external_delivery_enabled,
       bot_personality_id = EXCLUDED.bot_personality_id,
-      ambassadors_enabled = EXCLUDED.ambassadors_enabled
+      ambassadors_enabled = EXCLUDED.ambassadors_enabled,
+      owner_whatsapp_phones = EXCLUDED.owner_whatsapp_phones
   `;
 
   return next;

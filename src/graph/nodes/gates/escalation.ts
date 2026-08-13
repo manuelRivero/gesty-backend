@@ -41,6 +41,8 @@ const matchesEscalation = (text: string | undefined): boolean => {
 export const escalationGateNode = async (
   state: AgentState
 ): Promise<AgentStateUpdate> => {
+  if (state.isOwnerAssistant) return {};
+
   const message = state.webhookContext?.message;
   const messageType: string | undefined =
     message && typeof message.type === 'string' ? message.type : undefined;

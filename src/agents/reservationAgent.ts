@@ -24,7 +24,19 @@ import { buildReservationAgentSystemPrompt } from '../prompts/botPersonality';
 import { resolvePersonalityForBusiness } from '../services/botPersonality.service';
 import { allReservationTools } from '../tools/reservation';
 import type { EnrichedContext } from '../controllers/webhook/types';
-import { formatBotUserMessage, normalizeMetadata } from '../services/productQuery/utils';
+import { formatBotUserMessage } from '../services/productQuery/utils';
+import { readReservationDraft } from '../services/reservations/draft.repository';
+import {
+  nextReservationStep,
+  expectedActionForReservationStep,
+} from '../services/reservations/nextReservationStep';
+import { z } from 'zod';
+import {
+  extractPendingTurnResponse,
+  formatPendingExtractionBlock,
+} from '../services/ai/extractPendingTurnResponse';
+
+const ConfirmReservationPendingSchema = z.object({ confirmed: z.boolean() });
 
 // ---------------------------------------------------------------------------
 // Cache de agentes por personalidad (mismo patrón que checkoutAgent.ts)
@@ -63,12 +75,18 @@ export interface ReservationAgentContext {
 
 const DAY_NAMES_ES = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 
-const buildReservationContextMessage = (
+/**
+ * P0.2 (R-B): lectura fresca desde la DB, no `ctx.conversationState?.metadata`
+ * (snapshot previo al turno). Sin esto, un payload `RESERVATION_SLOT:x`
+ * persistido en el mismo turno no se veía hasta el turno siguiente.
+ */
+const buildReservationContextMessage = async (
   ctx: EnrichedContext,
   reservationCtx: ReservationAgentContext
-): string => {
+): Promise<string> => {
   const userMsg = ctx.message?.text?.body ?? '';
   const customerName = (ctx.customer as { name?: string | null })?.name?.trim() || null;
+  const conversationId = ctx.conversationId ?? '';
 
   // Fecha actual con día de semana
   const now = new Date();
@@ -78,9 +96,7 @@ const buildReservationContextMessage = (
   const yyyy = now.getFullYear();
   const currentDateLabel = `${dd}/${mm}/${yyyy} (${dayName})`;
 
-  // Estado del borrador desde metadata
-  const meta = normalizeMetadata(ctx.conversationState?.metadata);
-  const draft = meta.reservation_draft ?? {};
+  const draft = conversationId ? await readReservationDraft(conversationId) : {};
 
   const dateLabel = draft.date ?? 'no elegida';
   const slotLabel =
@@ -101,6 +117,18 @@ const buildReservationContextMessage = (
     environmentLabel = 'no elegido';
   }
 
+  // Paso derivado (D5): única fuente de verdad del orden, ya no vive
+  // duplicado entre el prompt y `nextReservationDraftQuestion`.
+  const step = nextReservationStep(
+    {
+      date: draft.date,
+      slotId: draft.slotId,
+      partySize: draft.partySize,
+      environmentId: draft.environmentId,
+    },
+    { hasEnvironments: reservationCtx.hasEnvironments }
+  );
+
   const lines = [
     `[ESTADO DE LA RESERVA]`,
     `- Fecha actual: ${currentDateLabel}`,
@@ -109,9 +137,60 @@ const buildReservationContextMessage = (
     `- Personas: ${partySizeLabel}`,
     `- Ambiente: ${environmentLabel}`,
     `- Nombre del cliente: ${customerName ?? 'no informado'}`,
+    `- Paso actual: ${step}`,
+    `- Acción esperada: ${expectedActionForReservationStep(step)}`,
   ];
 
-  return `${lines.join('\n')}\n\n${userMsg}`;
+  // Confirmación en texto libre (D3/P1.2): cuando el paso es `confirm` y el
+  // cliente respondió en prosa a la confirmación, se inyecta la extracción
+  // determinística/LLM — mismo mecanismo que checkout (extractPendingTurnResponse).
+  const userText = userMsg.trim();
+  const hasPayload = Boolean(ctx.payloadId?.trim());
+  let extractionBlock = '';
+  if (step === 'confirm' && userText && !hasPayload) {
+    try {
+      const extraction = await extractPendingTurnResponse({
+        userMessage: userText,
+        pendingAction: 'confirm_reservation',
+        botQuestion: '¿Confirmás la reserva?',
+        schema: ConfirmReservationPendingSchema,
+        valueHints: `{
+  "confirmed": true | false
+}
+- true: sí, dale, confirmo, ok, adelante, listo, procedé
+- false: no, cancelá, mejor no, esperá, todavía no, pará`,
+        actionDescription:
+          'El usuario debe confirmar o cancelar la reserva antes de que se cree en la base de datos.',
+      });
+      console.log(
+        JSON.stringify({
+          event: '[reservation-pending] extraction',
+          action: 'confirm_reservation',
+          status: extraction.status,
+          confidence: extraction.confidence,
+          source: extraction.source,
+          conversationId,
+        })
+      );
+      extractionBlock = formatPendingExtractionBlock({
+        pendingAction: 'confirm_reservation',
+        botQuestion: '¿Confirmás la reserva?',
+        status: extraction.status,
+        confidence: extraction.confidence,
+        value: extraction.value,
+        reason: extraction.reason,
+      });
+    } catch (err) {
+      console.error('[reservation-agent] error en extractPendingTurnResponse:', err);
+    }
+  }
+
+  const contextParts = [lines.join('\n')];
+  if (extractionBlock) {
+    contextParts.push('', extractionBlock);
+  }
+  contextParts.push('', userMsg);
+  return contextParts.join('\n');
 };
 
 // ---------------------------------------------------------------------------
@@ -123,6 +202,8 @@ export interface ReservationAgentSignals {
   presentSlotsDate: string | null;
   presentEnvironments: boolean;
   presentConfirmation: boolean;
+  /** `null` = no se resolvió este turno; `true`/`false` = confirmó o canceló en texto (D3). */
+  confirmReservationResolved: boolean | null;
   delegateToMain: boolean;
   delegateToMainReason: string | null;
   handbackReservation: boolean;
@@ -137,6 +218,7 @@ const extractSignals = (messages: unknown[]): ReservationAgentSignals => {
     presentSlotsDate: null,
     presentEnvironments: false,
     presentConfirmation: false,
+    confirmReservationResolved: null,
     delegateToMain: false,
     delegateToMainReason: null,
     handbackReservation: false,
@@ -158,7 +240,11 @@ const extractSignals = (messages: unknown[]): ReservationAgentSignals => {
         signal?: string;
         date?: string;
         reason?: string;
+        confirmed?: boolean;
       };
+      if (data.signal === 'resolve_reservation_confirmation') {
+        signals.confirmReservationResolved = data.confirmed === true;
+      }
       if (data.signal === 'present_slots') {
         signals.presentSlots = true;
         signals.presentSlotsDate = data.date ?? null;
@@ -257,7 +343,7 @@ export const runReservationAgent = async (
       ? (ctx.conversation as { started_at?: Date }).started_at?.toISOString() ?? ''
       : '';
 
-  const contextMessage = buildReservationContextMessage(ctx, reservationCtx);
+  const contextMessage = await buildReservationContextMessage(ctx, reservationCtx);
 
   const history = await buildAgentHistoryMessages({
     conversationId,

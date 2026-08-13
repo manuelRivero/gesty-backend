@@ -10,6 +10,8 @@
  * texto del LLM), el follow-up a anexar después de la respuesta lateral.
  */
 
+import { nextReservationStep } from '../../../services/reservations/nextReservationStep';
+
 export type CheckoutPendingAction = 'fulfillment_type' | 'payment_method' | 'confirm_order';
 
 export interface ReservationDraft {
@@ -66,15 +68,29 @@ export function nextReservationDraftQuestion(
   draft: ReservationDraft | undefined,
   hasEnvironments: boolean
 ): string | null {
-  // Mismo orden de recolección que el system prompt del agente de reservas
-  // (buildReservationAgentSystemPrompt): fecha → horario → personas → ambiente.
-  if (!draft?.date) return '¿para qué día querés reservar?';
-  if (!draft?.slotId) return '¿en qué horario?';
-  if (draft?.partySize == null) return '¿para cuántas personas?';
-  if (hasEnvironments && draft?.environmentId === undefined) {
-    return '¿preferís algún ambiente en particular?';
+  // Deriva de nextReservationStep (D5) — única fuente de verdad del orden.
+  const step = nextReservationStep(
+    {
+      date: draft?.date,
+      slotId: draft?.slotId,
+      partySize: draft?.partySize,
+      environmentId: draft?.environmentId,
+    },
+    { hasEnvironments }
+  );
+  switch (step) {
+    case 'date':
+      return '¿para qué día querés reservar?';
+    case 'slot':
+      return '¿en qué horario?';
+    case 'party_size':
+      return '¿para cuántas personas?';
+    case 'environment':
+      return '¿preferís algún ambiente en particular?';
+    case 'confirm':
+    case 'done':
+      return null;
   }
-  return null;
 }
 
 export function buildResumeFollowUp(input: ResumeFollowUpInput): ResumeFollowUp {

@@ -37,6 +37,7 @@ export const NODE = {
   NAME_COLLECTION: 'nameCollection',
   SEND: 'sendResponse',
   PERSIST_AI: 'persistAIMessage',
+  OWNER_ASSISTANT: 'ownerAssistant',
 } as const;
 
 export type NodeName = (typeof NODE)[keyof typeof NODE];
@@ -138,6 +139,8 @@ export const routeAfterDetectionContext = (
       return NODE.CHECKOUT_AGENT;
     case 'payment_proof':
       return NODE.PAYMENT_PROOF;
+    case 'owner_assistant':
+      return NODE.OWNER_ASSISTANT;
     case 'interactive':
       return NODE.INTERACTIVE;
     case 'nlp':

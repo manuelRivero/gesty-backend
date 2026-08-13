@@ -82,6 +82,16 @@ describe('escalationGateNode — interrupt determinista (V-02)', () => {
     expect(updateConversationState).not.toHaveBeenCalled();
   });
 
+  it('no dispara si el remitente es el dueño (owner_assistant)', async () => {
+    const state = withText('quiero hablar con un humano');
+    state.isOwnerAssistant = true;
+
+    const result = await escalationGateNode(state);
+
+    expect(result).toEqual({});
+    expect(updateConversationState).not.toHaveBeenCalled();
+  });
+
   it('no revienta si falta conversationId', async () => {
     const state = withText('quiero hablar con un humano');
     (state as { conversationId: string | null }).conversationId = null;
