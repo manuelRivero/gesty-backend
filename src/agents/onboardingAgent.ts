@@ -31,6 +31,8 @@ import {
   formatPendingExtractionBlock,
 } from '../services/ai/extractPendingTurnResponse';
 import type { EnrichedContext } from '../controllers/webhook/types';
+import { nextOnboardingStep } from '../services/onboarding/nextOnboardingStep';
+import { loadOnboardingStepState } from '../services/onboarding/loadOnboardingStepState';
 
 // ---------------------------------------------------------------------------
 // Paso pendiente: confirmar la dirección staged (mismo patrón que checkout —
@@ -79,6 +81,20 @@ export const resetOnboardingAgentCacheForTesting = (): void => {
 // Context message [ESTADO DEL ONBOARDING]
 // ---------------------------------------------------------------------------
 
+/** Acción esperada según el paso derivado — ledger tipable para el modelo (H-E/P1.1). */
+const expectedActionForOnboardingStep = (
+  step: ReturnType<typeof nextOnboardingStep>
+): string => {
+  switch (step) {
+    case 'capture':
+      return 'pedir la dirección en prosa; check_address_coverage(text) cuando la provea';
+    case 'confirm':
+      return 'preguntar si la dirección propuesta es correcta (el sistema adjunta los botones); resolve_address_confirmation si responde en texto';
+    case 'done':
+      return 'ninguna';
+  }
+};
+
 const buildOnboardingContextMessage = async (ctx: EnrichedContext): Promise<string> => {
   const userMsg = ctx.message?.text?.body ?? '';
   const customerName = (ctx.customer as { name?: string | null })?.name?.trim() || null;
@@ -92,11 +108,32 @@ const buildOnboardingContextMessage = async (ctx: EnrichedContext): Promise<stri
   const stagedAddressLabel = hasStagedAddress && tempAddress ? tempAddress : 'no informada';
   const coverageLabel = hasStagedAddress ? 'en cobertura (pendiente de confirmar)' : 'sin evaluar';
 
+  const customerId =
+    typeof ctx.customer === 'object' && ctx.customer
+      ? (ctx.customer as { id: string }).id
+      : '';
+  const conversationId = ctx.conversationId ?? '';
+  let step: ReturnType<typeof nextOnboardingStep> = hasStagedAddress ? 'confirm' : 'capture';
+  if (conversationId && customerId) {
+    try {
+      const stepState = await loadOnboardingStepState({ conversationId, customerId });
+      step = nextOnboardingStep(stepState);
+    } catch (err) {
+      console.error('[onboarding-agent] error derivando paso para el ledger:', err);
+    }
+  }
+  console.log(
+    JSON.stringify({ event: '[onboarding-agent] step', step, conversationId })
+  );
+
   const lines = [
     `[ESTADO DEL ONBOARDING]`,
     `- Dirección propuesta: ${stagedAddressLabel}`,
     `- Estado de cobertura: ${coverageLabel}`,
     `- Nombre del cliente: ${customerName ?? 'no informado'}`,
+    `- Paso actual: ${step}`,
+    `- Goal: OBTENER_DIRECCION`,
+    `- Acción esperada: ${expectedActionForOnboardingStep(step)}`,
   ];
 
   const userText = userMsg.trim();

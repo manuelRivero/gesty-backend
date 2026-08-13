@@ -136,6 +136,40 @@ export class AddressService {
   }
 
   /**
+   * Equivalente a `resolveAndStageAddress` pero para el pin de ubicación de
+   * WhatsApp (`message.type === 'location'`) — mismo staging (`temp_*` +
+   * `onboarding_step`), mismo criterio que el camino de texto (P0.4/H-C).
+   * Reemplaza a `.process()`/`.handleLocation()` (LEGACY, wizard por pasos)
+   * para el agente de onboarding ReAct: la UI de confirmación la construye
+   * el nodo (`onboardingAgentNode`) con `buildConfirmAddressMessage`, igual
+   * que en el camino de texto — un solo copy para ambos canales.
+   */
+  async resolveAndStageAddressFromLocation(params: {
+    businessId: string;
+    conversationId: string;
+    lat: number;
+    lng: number;
+  }): Promise<
+    | { status: 'in_coverage'; formattedAddress: string }
+    | { status: 'out_of_coverage' }
+  > {
+    const formattedAddress = await this.reverseGeocode(params.lat, params.lng);
+
+    const zone = await this.getCoverage(params.lat, params.lng, params.businessId);
+    if (!zone) return { status: 'out_of_coverage' };
+
+    await patchConversationMetadata(params.conversationId, {
+      onboarding_step: 'CONFIRM',
+      temp_address: formattedAddress,
+      temp_lat: params.lat,
+      temp_lng: params.lng,
+      temp_zone_id: zone.id,
+    });
+
+    return { status: 'in_coverage', formattedAddress };
+  }
+
+  /**
    * Versión directa para el ReAct agent: geocodifica, valida cobertura y persiste
    * la dirección en una sola llamada, sin el flujo de confirmación por botones.
    * El agente describe la dirección encontrada en su respuesta de texto.

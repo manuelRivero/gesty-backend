@@ -21,6 +21,8 @@ export interface ReservationDraft {
   environmentId?: string | null;
 }
 
+export type OnboardingResumeStep = 'capture' | 'confirm' | 'done';
+
 export type ResumeFollowUpInput =
   | {
       kind: 'checkout';
@@ -32,13 +34,21 @@ export type ResumeFollowUpInput =
       draft: ReservationDraft | undefined;
       hasEnvironments: boolean;
     }
-  | { kind: 'onboarding' };
+  | {
+      kind: 'onboarding';
+      /** Paso derivado por `nextOnboardingStep` — única fuente de verdad (D3). */
+      step: OnboardingResumeStep;
+      /** Dirección staged (`temp_address`) cuando `step === 'confirm'`. */
+      stagedAddress: string | null;
+    };
 
 export interface ResumeFollowUp {
   /** `null` cuando no hay nada pendiente que retomar (no anexar nada al turno). */
   text: string | null;
   /** Solo para checkout: qué botones re-adjuntar junto al texto. */
   checkoutPendingAction?: CheckoutPendingAction;
+  /** Solo para onboarding en paso `confirm`: dirección a re-adjuntar con botones Confirmar/Editar. */
+  onboardingStagedAddress?: string;
 }
 
 const RESUME_PREFIX = {
@@ -83,9 +93,17 @@ export function buildResumeFollowUp(input: ResumeFollowUpInput): ResumeFollowUp 
       if (!question) return { text: null };
       return { text: `${RESUME_PREFIX.reservation} ${question}` };
     }
-    case 'onboarding':
+    case 'onboarding': {
+      if (input.step === 'done') return { text: null };
+      if (input.step === 'confirm' && input.stagedAddress) {
+        return {
+          text: `${RESUME_PREFIX.onboarding} ¿es correcta esta dirección?\n${input.stagedAddress}`,
+          onboardingStagedAddress: input.stagedAddress,
+        };
+      }
       return {
         text: `${RESUME_PREFIX.onboarding} decime tu dirección o compartí tu ubicación 📍`,
       };
+    }
   }
 }

@@ -30,6 +30,8 @@ import { runHybridReactAgent } from '../../../agents/reactAgent';
 import { detectIntentWithConfidence } from '../../../services/ai/detection.service';
 import { findOrCreateConversationState } from '../../../repositories';
 import { normalizeMetadata } from '../../../services/productQuery/utils';
+import { nextOnboardingStep } from '../../../services/onboarding/nextOnboardingStep';
+import { loadOnboardingStepState } from '../../../services/onboarding/loadOnboardingStepState';
 import type { HandlerResult } from '../../../controllers/webhook/types';
 import type { EnrichedContext } from '../../../controllers/webhook/types';
 import type { AgentState, AgentStateUpdate } from '../../state';
@@ -139,14 +141,42 @@ export const onboardingAgentNode = async (
     };
   }
 
-  // ── Mensaje tipo `location` — procesado determinístico ────────────────────
+  // ── Mensaje tipo `location` — mismo camino de staging que el texto ────────
+  // El pin es un payload estructurado (D4/H-C): reverse-geocode + validar
+  // zona + staging, sin pasar por `.process()`/`.handleLocation()` (wizard
+  // legacy por `onboarding_step`, `@deprecated`). Mismo copy con botones que
+  // el camino de texto — no un tercer mensaje distinto.
   if (ctx.message?.type === 'location') {
-    const result = await addressService.process(enrichedBase);
-    if (!result) {
+    const location = (ctx.message as { location?: { lat: number; lng: number } }).location;
+    const businessId =
+      typeof enrichedBase.business === 'object' && enrichedBase.business
+        ? (enrichedBase.business as { id: string }).id
+        : '';
+    if (!location || !businessId) {
       return { dataCollectionDelegated: true };
     }
+
+    const staged = await addressService.resolveAndStageAddressFromLocation({
+      businessId,
+      conversationId,
+      lat: location.lat,
+      lng: location.lng,
+    });
+
+    if (staged.status === 'out_of_coverage') {
+      return {
+        handlerResult: textResponse(
+          '🚫 Lo siento, no tenemos cobertura en esa zona.\n\nProbá con otra dirección.'
+        ) ?? undefined,
+        dataCollectionDelegated: true,
+      };
+    }
+
+    const confirmationMsg = addressService.buildConfirmAddressMessage(
+      `📍 Detecté tu ubicación:\n${staged.formattedAddress}\n\n¿Es correcta?`
+    );
     return {
-      handlerResult: normalizeToHandlerResult(result),
+      handlerResult: { content: confirmationMsg, isInteractive: true, skipBodyHumanization: true },
       dataCollectionDelegated: true,
     };
   }
@@ -217,18 +247,68 @@ export const onboardingAgentNode = async (
 
     // Anexar (no reemplazar) el recordatorio de que falta la dirección,
     // para que el usuario no tenga que adivinar que el onboarding sigue activo (H-03).
-    const resume = buildResumeFollowUp({ kind: 'onboarding' });
+    // Paso derivado del estado real (H-B/P0.3), no de una frase fija: si había
+    // una dirección staged, se retoma SU confirmación con botones, no un
+    // "decime tu dirección" desde cero.
+    const customerId =
+      typeof enrichedBase.customer === 'object' && enrichedBase.customer
+        ? (enrichedBase.customer as { id: string }).id
+        : '';
+    let onboardingStep: ReturnType<typeof nextOnboardingStep> = 'capture';
+    let stagedAddressForResume: string | null = null;
+    if (customerId) {
+      try {
+        const stepState = await loadOnboardingStepState({ conversationId, customerId });
+        onboardingStep = nextOnboardingStep(stepState);
+        stagedAddressForResume = stepState.stagedAddress;
+      } catch (err) {
+        console.error('[onboarding-agent] error derivando paso para el resume:', err);
+      }
+    }
+    console.log(
+      JSON.stringify({
+        event: '[onboarding-agent] resume_after_delegate',
+        step: onboardingStep,
+        conversationId,
+      })
+    );
+    const resume = buildResumeFollowUp({
+      kind: 'onboarding',
+      step: onboardingStep,
+      stagedAddress: stagedAddressForResume,
+    });
+
+    if (!resume.text) {
+      return { handlerResult: baseResult, dataCollectionDelegated: true };
+    }
+
+    // Paso `confirm`: un solo mensaje interactivo (respuesta lateral + resume
+    // como body + botones Confirmar/Editar), en vez de texto plano seguido de
+    // un followUp que reabra la pregunta por separado (mismo criterio que el
+    // checkout con `resume.checkoutPendingAction`).
+    if (
+      resume.onboardingStagedAddress &&
+      typeof baseResult.content === 'string'
+    ) {
+      const combinedBody = `${baseResult.content}\n\n${resume.text}`;
+      return {
+        handlerResult: {
+          content: addressService.buildConfirmAddressMessage(combinedBody),
+          isInteractive: true,
+          skipBodyHumanization: true,
+        },
+        dataCollectionDelegated: true,
+      };
+    }
 
     return {
-      handlerResult: resume.text
-        ? {
-            ...baseResult,
-            content:
-              typeof baseResult.content === 'string'
-                ? `${baseResult.content}\n\n${resume.text}`
-                : baseResult.content,
-          }
-        : baseResult,
+      handlerResult: {
+        ...baseResult,
+        content:
+          typeof baseResult.content === 'string'
+            ? `${baseResult.content}\n\n${resume.text}`
+            : baseResult.content,
+      },
       dataCollectionDelegated: true,
     };
   }
@@ -324,6 +404,13 @@ export const onboardingAgentNode = async (
       : null;
 
   if (tempAddress) {
+    console.log(
+      JSON.stringify({
+        event: '[onboarding-agent] confirmation_buttons_attached',
+        hadRawText: Boolean(rawText?.trim()),
+        conversationId,
+      })
+    );
     const confirmBody =
       rawText?.trim() || `Encontré esta dirección:\n${tempAddress}\n\n¿Es correcta?`;
     const confirmationMsg = addressService.buildConfirmAddressMessage(confirmBody);
