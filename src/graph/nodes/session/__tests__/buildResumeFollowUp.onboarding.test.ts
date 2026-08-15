@@ -8,13 +8,14 @@ import { describe, expect, it } from 'vitest';
 import { buildResumeFollowUp } from '../buildResumeFollowUp';
 
 describe('buildResumeFollowUp (kind: onboarding)', () => {
-  it('paso capture → pide la dirección desde cero', () => {
+  it('paso capture → pide la dirección con framing soft', () => {
     const resume = buildResumeFollowUp({
       kind: 'onboarding',
       step: 'capture',
       stagedAddress: null,
     });
-    expect(resume.text).toContain('decime tu dirección');
+    expect(resume.text).toMatch(/dirección/i);
+    expect(resume.text).toMatch(/menú|reservar|omitir/i);
     expect(resume.onboardingStagedAddress).toBeUndefined();
   });
 
@@ -29,13 +30,14 @@ describe('buildResumeFollowUp (kind: onboarding)', () => {
     expect(resume.onboardingStagedAddress).toBe('Calle Falsa 123');
   });
 
-  it('paso name → pide el nombre', () => {
+  it('paso name → pregunta con qué nombre agendar', () => {
     const resume = buildResumeFollowUp({
       kind: 'onboarding',
       step: 'name',
       stagedAddress: null,
     });
-    expect(resume.text).toContain('nombre');
+    expect(resume.text).toMatch(/nombre.*agende|agende.*nombre/i);
+    expect(resume.text).not.toMatch(/perfil/i);
     expect(resume.onboardingStagedAddress).toBeUndefined();
   });
 

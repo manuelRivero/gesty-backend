@@ -18,6 +18,32 @@ export function formatBotUserMessage(
   return `🤖\n\n*${title}* ${emoji}\n\n${safeBody}`;
 }
 
+/**
+ * Garantiza el formato estándar. Si `raw` ya parsea, se normaliza;
+ * si trae un `🤖` suelto o prosa sin título, se reenvuelve con title/emoji.
+ */
+export function ensureBotUserMessageFormat(
+  raw: string | null | undefined,
+  boldTitle: string,
+  emoji: string,
+  fallbackBody: string
+): string {
+  const trimmed = raw?.trim() ?? '';
+  if (!trimmed) {
+    return formatBotUserMessage(boldTitle, emoji, fallbackBody);
+  }
+  const parsed = parseBotUserMessage(trimmed);
+  if (parsed) {
+    return formatBotUserMessage(
+      parsed.title || boldTitle,
+      parsed.emoji || emoji,
+      parsed.body || fallbackBody
+    );
+  }
+  const withoutRobot = trimmed.replace(/^🤖\s*/u, '').trim();
+  return formatBotUserMessage(boldTitle, emoji, withoutRobot || fallbackBody);
+}
+
 export type ParsedBotUserMessage = {
   title: string;
   emoji: string;

@@ -56,7 +56,7 @@ export interface ResumeFollowUp {
 const RESUME_PREFIX = {
   checkout: 'Volviendo a tu pedido:',
   reservation: 'Seguimos con tu reserva:',
-  onboarding: 'Seguimos con tu perfil:',
+  onboarding: 'Seguimos:',
 } as const;
 
 /**
@@ -119,11 +119,15 @@ export function buildResumeFollowUp(input: ResumeFollowUpInput): ResumeFollowUp 
       }
       if (input.step === 'name') {
         return {
-          text: `${RESUME_PREFIX.onboarding} ¿cómo es tu nombre?`,
+          text: '¿Con qué nombre te gustaría que te agende?',
         };
       }
       return {
-        text: `${RESUME_PREFIX.onboarding} decime tu dirección o compartí tu ubicación 📍`,
+        text:
+          `${RESUME_PREFIX.onboarding} si querés hacer un pedido con delivery, ` +
+          `necesito tu dirección para validar la zona de entrega. ` +
+          `Si solo querés ver el menú, reservar o consultar, podés omitirla por ahora ` +
+          `(después la podés agregar o cambiar). Decime tu dirección o compartí tu ubicación 📍`,
       };
     }
   }

@@ -1,7 +1,7 @@
 /**
  * Fuente de verdad determinística del paso de onboarding.
- * Orden de Facts (agent-factory / OWNERSHIP-ENTRY D1-B):
- *   capture → confirm → name → done
+ * Orden de Facts: name → capture → confirm → done
+ * (nombre primero; dirección después, omitible vía finish_onboarding).
  */
 
 export type OnboardingStep = 'capture' | 'confirm' | 'name' | 'done';
@@ -15,10 +15,10 @@ export interface OnboardingStepState {
 }
 
 export function nextOnboardingStep(state: OnboardingStepState): OnboardingStep {
+  if (!state.hasCustomerName) return 'name';
   if (!state.hasSavedAddress) {
     if (state.stagedAddress) return 'confirm';
     return 'capture';
   }
-  if (!state.hasCustomerName) return 'name';
   return 'done';
 }

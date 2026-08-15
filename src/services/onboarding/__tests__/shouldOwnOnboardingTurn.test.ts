@@ -19,8 +19,17 @@ const base = (
 });
 
 describe('shouldOwnOnboardingTurn', () => {
-  it('wipe / sin dirección ni nombre, refusal 0 → facts_missing_address', () => {
+  it('wipe / sin dirección ni nombre, refusal 0 → facts_missing_name (nombre primero)', () => {
     expect(shouldOwnOnboardingTurn(base())).toEqual({
+      shouldOwn: true,
+      reason: 'facts_missing_name',
+    });
+  });
+
+  it('con nombre, sin dirección, refusal dirección 0 → facts_missing_address', () => {
+    expect(
+      shouldOwnOnboardingTurn(base({ hasCustomerName: true, hasUsableDefaultAddress: false }))
+    ).toEqual({
       shouldOwn: true,
       reason: 'facts_missing_address',
     });
@@ -46,20 +55,28 @@ describe('shouldOwnOnboardingTurn', () => {
     });
   });
 
-  it('tras address_refused → no reentra por Facts de dirección', () => {
-    expect(shouldOwnOnboardingTurn(base({ addressRefusalCount: 1 }))).toEqual({
+  it('tras name_refused sin dirección → no reentra por Facts de nombre', () => {
+    expect(
+      shouldOwnOnboardingTurn(
+        base({
+          hasUsableDefaultAddress: false,
+          hasCustomerName: false,
+          nameRefusalCount: 1,
+        })
+      )
+    ).toEqual({
       shouldOwn: false,
       reason: 'skipped_refusal',
     });
   });
 
-  it('con dirección y name_refused → no reentra por Facts de nombre', () => {
+  it('tras address_refused con nombre → no reentra por Facts de dirección', () => {
     expect(
       shouldOwnOnboardingTurn(
         base({
-          hasUsableDefaultAddress: true,
-          hasCustomerName: false,
-          nameRefusalCount: 1,
+          hasCustomerName: true,
+          hasUsableDefaultAddress: false,
+          addressRefusalCount: 1,
         })
       )
     ).toEqual({

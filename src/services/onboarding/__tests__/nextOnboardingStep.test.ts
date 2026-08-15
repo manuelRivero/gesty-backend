@@ -10,35 +10,35 @@ const state = (overrides: Partial<OnboardingStepState> = {}): OnboardingStepStat
 });
 
 describe('nextOnboardingStep', () => {
-  it('sin dirección ni staged → capture', () => {
-    expect(nextOnboardingStep(state())).toBe('capture');
+  it('sin nombre → name (aunque falte dirección)', () => {
+    expect(nextOnboardingStep(state())).toBe('name');
   });
 
-  it('con dirección staged y sin guardar → confirm', () => {
-    expect(nextOnboardingStep(state({ stagedAddress: 'Calle Falsa 123' }))).toBe('confirm');
+  it('con nombre, sin dirección ni staged → capture', () => {
+    expect(nextOnboardingStep(state({ hasCustomerName: true }))).toBe('capture');
   });
 
-  it('con dirección guardada y sin nombre → name', () => {
-    expect(nextOnboardingStep(state({ hasSavedAddress: true }))).toBe('name');
-  });
-
-  it('con dirección y nombre → done (staging no importa)', () => {
+  it('con nombre y dirección staged → confirm', () => {
     expect(
       nextOnboardingStep(
-        state({
-          hasSavedAddress: true,
-          hasCustomerName: true,
-          stagedAddress: 'Calle Falsa 123',
-        })
+        state({ hasCustomerName: true, stagedAddress: 'Calle Falsa 123' })
       )
+    ).toBe('confirm');
+  });
+
+  it('con nombre y dirección guardada → done', () => {
+    expect(
+      nextOnboardingStep(state({ hasCustomerName: true, hasSavedAddress: true }))
     ).toBe('done');
   });
 
-  it('dirección guardada gana sobre staging → name si falta nombre', () => {
+  it('nombre primero: sin nombre ignora staging de dirección', () => {
     expect(
-      nextOnboardingStep(
-        state({ hasSavedAddress: true, hasCustomerName: false, stagedAddress: 'X' })
-      )
+      nextOnboardingStep(state({ stagedAddress: 'Calle Falsa 123' }))
     ).toBe('name');
+  });
+
+  it('dirección guardada sin nombre → name', () => {
+    expect(nextOnboardingStep(state({ hasSavedAddress: true }))).toBe('name');
   });
 });

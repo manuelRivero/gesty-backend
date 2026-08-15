@@ -60,18 +60,19 @@ export function shouldOwnOnboardingTurn(
     return { shouldOwn: true, reason: 'staged' };
   }
 
-  if (!facts.hasUsableDefaultAddress) {
-    if (facts.addressRefusalCount > ONBOARDING_AUTO_ENTRY_MAX_REFUSAL) {
-      return { shouldOwn: false, reason: 'skipped_refusal' };
-    }
-    return { shouldOwn: true, reason: 'facts_missing_address' };
-  }
-
+  // Nombre primero (mismo orden que nextOnboardingStep).
   if (!facts.hasCustomerName) {
     if (facts.nameRefusalCount > ONBOARDING_AUTO_ENTRY_MAX_REFUSAL) {
       return { shouldOwn: false, reason: 'skipped_refusal' };
     }
     return { shouldOwn: true, reason: 'facts_missing_name' };
+  }
+
+  if (!facts.hasUsableDefaultAddress) {
+    if (facts.addressRefusalCount > ONBOARDING_AUTO_ENTRY_MAX_REFUSAL) {
+      return { shouldOwn: false, reason: 'skipped_refusal' };
+    }
+    return { shouldOwn: true, reason: 'facts_missing_address' };
   }
 
   return { shouldOwn: false, reason: 'skipped_profile_complete' };

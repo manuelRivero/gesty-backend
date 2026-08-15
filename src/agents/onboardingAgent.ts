@@ -18,8 +18,7 @@ import { buildAgentHistoryMessages } from './conversationHistory';
 import { buildOnboardingAgentSystemPrompt } from '../prompts/botPersonality';
 import { resolvePersonalityForBusiness } from '../services/botPersonality.service';
 import { allOnboardingTools } from '../tools/onboarding';
-import { normalizeMetadata } from '../services/productQuery/utils';
-import { formatBotUserMessage } from '../services/productQuery/utils';
+import { normalizeMetadata, ensureBotUserMessageFormat } from '../services/productQuery/utils';
 import { z } from 'zod';
 import {
   extractPendingTurnResponse,
@@ -46,6 +45,18 @@ export const CONFIRM_ADDRESS_VALUE_HINTS = `{
 - false: no, esa no es, editar, cambiar, quiero cambiarla`;
 export const CONFIRM_ADDRESS_ACTION_DESCRIPTION =
   'El cliente debe confirmar si la dirección propuesta es correcta o pedir editarla.';
+
+/** Clasificador tipable de confirmación (para ledger del agente y short-circuit del nodo). */
+export async function extractConfirmAddressPending(userMessage: string) {
+  return extractPendingTurnResponse({
+    userMessage,
+    pendingAction: 'confirm_address',
+    botQuestion: CONFIRM_ADDRESS_QUESTION,
+    schema: ConfirmAddressPendingSchema,
+    valueHints: CONFIRM_ADDRESS_VALUE_HINTS,
+    actionDescription: CONFIRM_ADDRESS_ACTION_DESCRIPTION,
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Cache de agentes por personalidad
@@ -81,12 +92,16 @@ const expectedActionForOnboardingStep = (
   step: ReturnType<typeof nextOnboardingStep>
 ): string => {
   switch (step) {
-    case 'capture':
-      return 'pedir la dirección en prosa; check_address_coverage(text) cuando la provea';
-    case 'confirm':
-      return 'preguntar si la dirección propuesta es correcta (el sistema adjunta los botones); resolve_address_confirmation si responde en texto';
     case 'name':
-      return 'pedir el nombre en prosa; save_customer_name cuando lo provea';
+      return 'pedir con qué nombre agendarlo; save_customer_name cuando lo provea';
+    case 'capture':
+      return (
+        'explicar que la dirección sirve para validar zona si pide delivery; ' +
+        'ofrecer omitir si solo menú/reserva/consulta (finish_onboarding); ' +
+        'check_address_coverage(text) si la da'
+      );
+    case 'confirm':
+      return 'preguntar si la dirección propuesta es correcta (botones); resolve_address_confirmation si responde en texto';
     case 'done':
       return 'ninguna';
   }
@@ -96,11 +111,11 @@ const goalForOnboardingStep = (
   step: ReturnType<typeof nextOnboardingStep>
 ): string => {
   switch (step) {
+    case 'name':
+      return 'OBTENER_NOMBRE';
     case 'capture':
     case 'confirm':
       return 'OBTENER_DIRECCION';
-    case 'name':
-      return 'OBTENER_NOMBRE';
     case 'done':
       return 'ninguno';
   }
@@ -154,14 +169,7 @@ const buildOnboardingContextMessage = async (ctx: EnrichedContext): Promise<stri
   let extractionBlock = '';
 
   if (hasStagedAddress && userText && !hasPayload) {
-    const extraction = await extractPendingTurnResponse({
-      userMessage: userText,
-      pendingAction: 'confirm_address',
-      botQuestion: CONFIRM_ADDRESS_QUESTION,
-      schema: ConfirmAddressPendingSchema,
-      valueHints: CONFIRM_ADDRESS_VALUE_HINTS,
-      actionDescription: CONFIRM_ADDRESS_ACTION_DESCRIPTION,
-    });
+    const extraction = await extractConfirmAddressPending(userText);
     console.log(
       JSON.stringify({
         event: '[onboarding-pending] extraction',
@@ -203,8 +211,8 @@ export interface OnboardingAgentSignals {
   delegateToMainReason: string | null;
   finishOnboarding: boolean;
   finishOnboardingReason: string | null;
-  /** Tras save_customer_name con perfil completo. */
-  profileComplete: boolean;
+  /** Tras save_customer_name (el nodo deriva si sigue capture o cierra). */
+  customerNameSaved: boolean;
 }
 
 const extractSignals = (messages: unknown[]): OnboardingAgentSignals => {
@@ -214,7 +222,7 @@ const extractSignals = (messages: unknown[]): OnboardingAgentSignals => {
     delegateToMainReason: null,
     finishOnboarding: false,
     finishOnboardingReason: null,
-    profileComplete: false,
+    customerNameSaved: false,
   };
 
   for (const msg of messages) {
@@ -242,8 +250,8 @@ const extractSignals = (messages: unknown[]): OnboardingAgentSignals => {
         signals.finishOnboarding = true;
         signals.finishOnboardingReason = data.reason ?? null;
       }
-      if (data.signal === 'onboarding_profile_complete') {
-        signals.profileComplete = true;
+      if (data.signal === 'customer_name_saved') {
+        signals.customerNameSaved = true;
       }
     } catch {
       /* ignorar mensajes no-JSON */
@@ -351,15 +359,36 @@ export const runOnboardingAgent = async (
   const agentMessages = (out as { messages?: unknown[] }).messages ?? [];
   const signals = extractSignals(agentMessages);
 
-  const text = rawText
-    ? rawText.startsWith('🤖')
-      ? rawText
-      : formatBotUserMessage('Dirección de entrega', '📍', rawText)
-    : formatBotUserMessage(
-        'Dirección de entrega',
-        '📍',
-        'Necesito tu dirección de entrega para continuar con el pedido. ¿Me la podés dar?'
+  let formatTitle = 'Bienvenida';
+  let formatEmoji = '👋';
+  let formatFallback =
+    'Necesito algunos datos para atenderte mejor. ¿Con qué nombre te gustaría que te agende?';
+  if (conversationId && customerId) {
+    try {
+      const step = nextOnboardingStep(
+        await loadLiveOnboardingFacts({ conversationId, customerId })
       );
+      if (step === 'capture' || step === 'confirm') {
+        formatTitle = 'Dirección de entrega';
+        formatEmoji = '📍';
+        formatFallback =
+          'Si querés un pedido con delivery, necesito tu dirección para validar la zona. Si solo mirás el menú o reservás, podés omitirla por ahora.';
+      } else if (step === 'name') {
+        formatTitle = 'Tu nombre';
+        formatEmoji = '👋';
+        formatFallback = '¿Con qué nombre te gustaría que te agende?';
+      }
+    } catch {
+      /* fallback de título arriba */
+    }
+  }
+
+  const text = ensureBotUserMessageFormat(
+    rawText,
+    formatTitle,
+    formatEmoji,
+    formatFallback
+  );
 
   return { text, rawText, signals };
 };

@@ -583,7 +583,7 @@ export class AddressService {
     return formatBotUserMessage(
       'Dirección guardada',
       '✅',
-      '¿En qué te ayudo ahora?'
+      'Listo, ya la anoté.'
     );
   }
 

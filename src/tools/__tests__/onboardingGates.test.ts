@@ -1,6 +1,6 @@
 /**
  * Gates de onboarding (withGate): bloqueo sin efecto; happy path mockeado.
- * Sin regex sobre mensajes del usuario.
+ * Orden de pasos: name → capture → confirm → done.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -61,10 +61,8 @@ describe('onboarding tool gates (withGate)', () => {
     vi.clearAllMocks();
   });
 
-  it('check_address_coverage bloquea si el paso no es capture', async () => {
-    vi.mocked(loadLiveOnboardingFacts).mockResolvedValue(
-      facts({ hasSavedAddress: true, hasCustomerName: false })
-    );
+  it('check_address_coverage bloquea si falta nombre (paso name)', async () => {
+    vi.mocked(loadLiveOnboardingFacts).mockResolvedValue(facts());
     const out = JSON.parse(
       await checkAddressCoverageTool.func({ text: 'Calle 1' }, undefined, config)
     );
@@ -72,7 +70,7 @@ describe('onboarding tool gates (withGate)', () => {
   });
 
   it('check_address_coverage permite en capture', async () => {
-    vi.mocked(loadLiveOnboardingFacts).mockResolvedValue(facts());
+    vi.mocked(loadLiveOnboardingFacts).mockResolvedValue(facts({ hasCustomerName: true }));
     const out = JSON.parse(
       await checkAddressCoverageTool.func({ text: 'Calle 1' }, undefined, config)
     );
@@ -80,7 +78,7 @@ describe('onboarding tool gates (withGate)', () => {
   });
 
   it('resolve_address_confirmation bloquea si el paso no es confirm', async () => {
-    vi.mocked(loadLiveOnboardingFacts).mockResolvedValue(facts());
+    vi.mocked(loadLiveOnboardingFacts).mockResolvedValue(facts({ hasCustomerName: true }));
     const out = JSON.parse(
       await resolveAddressConfirmationTool.func({ confirmed: true }, undefined, config)
     );
@@ -88,7 +86,7 @@ describe('onboarding tool gates (withGate)', () => {
   });
 
   it('save_customer_name bloquea si el paso no es name', async () => {
-    vi.mocked(loadLiveOnboardingFacts).mockResolvedValue(facts());
+    vi.mocked(loadLiveOnboardingFacts).mockResolvedValue(facts({ hasCustomerName: true }));
     const out = JSON.parse(
       await saveCustomerNameOnboardingTool.func({ name: 'Ana' }, undefined, config)
     );
@@ -97,16 +95,14 @@ describe('onboarding tool gates (withGate)', () => {
   });
 
   it('save_customer_name persiste en paso name', async () => {
-    vi.mocked(loadLiveOnboardingFacts).mockResolvedValue(
-      facts({ hasSavedAddress: true, hasCustomerName: false })
-    );
+    vi.mocked(loadLiveOnboardingFacts).mockResolvedValue(facts());
     const out = JSON.parse(
       await saveCustomerNameOnboardingTool.func({ name: 'Ana' }, undefined, config)
     );
     expect(out).toEqual({
       success: true,
       name: 'Ana',
-      signal: 'onboarding_profile_complete',
+      signal: 'customer_name_saved',
     });
     expect(updateCustomerName).toHaveBeenCalledWith('cust-1', 'Ana');
   });

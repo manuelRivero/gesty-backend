@@ -131,8 +131,8 @@ const saveCustomerNameInner = new DynamicStructuredTool<
 >({
   name: 'save_customer_name',
   description:
-    'Guarda el nombre del cliente cuando lo menciona. Solo en el paso name ' +
-    '(después de confirmar la dirección). Si el perfil queda completo, el sistema cierra la sesión.',
+    'Guarda el nombre del cliente cuando lo menciona. Solo en el paso name (primero del flujo). ' +
+    'Si aún falta la dirección, el sistema sigue en onboarding; si el perfil ya está completo, cierra la sesión.',
   schema: saveCustomerNameSchema,
   func: async ({ name }: SaveCustomerNameInput, _runManager, config?: RunnableConfig) => {
     const { customerId } = getReactContext(config);
@@ -141,7 +141,7 @@ const saveCustomerNameInner = new DynamicStructuredTool<
     return toJson({
       success: true,
       name: trimmed,
-      signal: 'onboarding_profile_complete',
+      signal: 'customer_name_saved',
     });
   },
 });
