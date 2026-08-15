@@ -30,6 +30,8 @@ import { sendTypingIndicator } from '../../../services/whatsappTypingIndicator.s
 import { normalizeMetadata } from '../../../services/productQuery/utils';
 import { isCheckoutAgentEnabled, isReservationAgentEnabled, isOnboardingAgentEnabled, isOwnerAssistantEnabled } from '../../../config/env';
 import { isOwnerPhone } from '../../../services/ownerAssistant/matchOwnerPhone';
+import { getRefusalCount } from '../../../services/intent/intentRefusal.service';
+import { shouldOwnOnboardingTurn } from '../../../services/onboarding/shouldOwnOnboardingTurn';
 import {
   clearCheckoutSessionIfStale,
 } from '../checkout';
@@ -324,18 +326,65 @@ export const buildDetectionContextNode = async (
         ctx.payloadId?.startsWith('RESERVATION_') === true ||
         ctx.payloadId === 'VIEW_RESERVATION');
 
-    // Onboarding solo con sesión/wizard explícitos o botones de confirmación.
-    // NO usar `awaiting_address` solo: ese flag lo encendía el gate de carrito
-    // del híbrido y robaba turnos (ver pedido → captura de dirección).
-    const isOnboardingAgentSession =
-      isOnboardingAgentEnabled() &&
-      !reservationBlocksRouting &&
-      !isReservationAgentSession &&
-      !isCheckoutSession &&
-      (wsMeta.onboarding_agent_active === true ||
-        wsMeta.onboarding_step != null ||
-        ctx.payloadId === 'ONBOARDING_CONFIRM_ADDRESS' ||
-        ctx.payloadId === 'ONBOARDING_EDIT_ADDRESS');
+    // Ownership onboarding: Facts (sin dirección usable + refusal 0) o
+    // sesión/staging/payload. NO usar `awaiting_address` como ruteador.
+    // Ver `shouldOwnOnboardingTurn` / PLAN-ACCION-ONBOARDING-OWNERSHIP-ENTRY.
+    const blockedByHigherOwnerForOnboarding =
+      Boolean(state.isOwnerAssistant) ||
+      Boolean(state.awaitingTransferProofOrder) ||
+      isPendingDelegatedAddressConfirmation ||
+      reservationBlocksRouting ||
+      isReservationAgentSession ||
+      isCheckoutSession;
+
+    const defaultAddressForRouting = await findDefaultCustomerAddress(customer.id);
+    hasAddress = Boolean(defaultAddressForRouting);
+    const hasCustomerName = Boolean(
+      typeof customer.name === 'string' && customer.name.trim()
+    );
+    const addressRefusalCount = getRefusalCount(wsMeta, 'OBTENER_DIRECCION');
+    const nameRefusalCount = getRefusalCount(wsMeta, 'OBTENER_NOMBRE');
+
+    const onboardingOwnership =
+      isOnboardingAgentEnabled()
+        ? shouldOwnOnboardingTurn({
+            hasUsableDefaultAddress: hasAddress,
+            hasCustomerName,
+            addressRefusalCount,
+            nameRefusalCount,
+            onboardingAgentActive: wsMeta.onboarding_agent_active === true,
+            hasStagedOnboarding: wsMeta.onboarding_step != null,
+            isOnboardingPayload:
+              ctx.payloadId === 'ONBOARDING_CONFIRM_ADDRESS' ||
+              ctx.payloadId === 'ONBOARDING_EDIT_ADDRESS',
+            blockedByHigherOwner: blockedByHigherOwnerForOnboarding,
+          })
+        : null;
+
+    const isOnboardingAgentSession = onboardingOwnership?.shouldOwn === true;
+
+    if (onboardingOwnership) {
+      console.log(
+        JSON.stringify({
+          event: '[context] onboarding_ownership',
+          reason: onboardingOwnership.reason,
+          shouldOwn: onboardingOwnership.shouldOwn,
+          conversationId: conversation.id,
+        })
+      );
+      if (
+        onboardingOwnership.reason === 'facts_missing_address' ||
+        onboardingOwnership.reason === 'facts_missing_name'
+      ) {
+        console.log(
+          JSON.stringify({
+            event: '[context] onboarding_owned_by_facts',
+            reason: onboardingOwnership.reason,
+            conversationId: conversation.id,
+          })
+        );
+      }
+    }
 
     // Identidad del dueño gana a toda la cadena de clientes (no es sesión:
     // el teléfono está en owner_whatsapp_phones). Después, comprobante de
@@ -358,10 +407,11 @@ export const buildDetectionContextNode = async (
     } else if (isCheckoutSession) {
       // El agente de checkout captura el turno completo (texto e interactivos)
       // y gestiona dirección, nombre, tipo de entrega y pago.
-      const defaultAddress = await findDefaultCustomerAddress(customer.id);
-      hasAddress = !!defaultAddress;
-      if (defaultAddress) {
-        const zone = await findCoverageZoneForAddress(defaultAddress.id, business.id);
+      if (defaultAddressForRouting) {
+        const zone = await findCoverageZoneForAddress(
+          defaultAddressForRouting.id,
+          business.id
+        );
         // Exige zona real (V-21): una dirección sin `delivery_zone_id` asignado
         // NO se considera "en cobertura" solo por compatibilidad con registros
         // viejos — eso dejaba avanzar el checkout más allá del paso de
@@ -369,14 +419,14 @@ export const buildDetectionContextNode = async (
         // no podía cotizar, mostrando "sin envío" en el resumen final y un
         // mensaje genérico de "no hay dirección" al preguntar el costo.
         isInCoverage = zone !== null;
-        if (zone !== null && defaultAddress.delivery_zone_id !== zone.id) {
+        if (zone !== null && defaultAddressForRouting.delivery_zone_id !== zone.id) {
           await prisma.customer_address.update({
-            where: { id: defaultAddress.id },
+            where: { id: defaultAddressForRouting.id },
             data: { delivery_zone_id: zone.id },
           });
-        } else if (zone === null && defaultAddress.delivery_zone_id !== null) {
+        } else if (zone === null && defaultAddressForRouting.delivery_zone_id !== null) {
           await prisma.customer_address.update({
-            where: { id: defaultAddress.id },
+            where: { id: defaultAddressForRouting.id },
             data: { delivery_zone_id: null },
           });
           isInCoverage = false;
@@ -384,41 +434,37 @@ export const buildDetectionContextNode = async (
       }
       contextRoute = 'checkout';
     } else {
-      const defaultAddress = await findDefaultCustomerAddress(customer.id);
-      hasAddress = !!defaultAddress;
-      // Sin dirección: menú/carrito/híbrido siguen; la dirección se pide en
-      // onboarding (sesión explícita) o checkout — no en address_capture acá.
-      if (!defaultAddress) {
-        contextRoute = ctx.message?.type === 'interactive' ? 'interactive' : 'nlp';
-        console.log(`[Orchestrator] Route: ${contextRoute} (no address, non-blocking)`);
-      } else {
+      if (defaultAddressForRouting) {
         // Re-validar cobertura en tiempo real: las zonas pueden haber cambiado
-        const zone = await findCoverageZoneForAddress(defaultAddress.id, business.id);
+        const zone = await findCoverageZoneForAddress(
+          defaultAddressForRouting.id,
+          business.id
+        );
         if (zone !== null) {
           isInCoverage = true;
           // Actualizar delivery_zone_id si cambió (zona reorganizada o promovida)
-          if (defaultAddress.delivery_zone_id !== zone.id) {
+          if (defaultAddressForRouting.delivery_zone_id !== zone.id) {
             await prisma.customer_address.update({
-              where: { id: defaultAddress.id },
+              where: { id: defaultAddressForRouting.id },
               data: { delivery_zone_id: zone.id },
             });
           }
-        } else if (defaultAddress.delivery_zone_id !== null) {
+        } else if (defaultAddressForRouting.delivery_zone_id !== null) {
           // La dirección tenía zona pero ya no hay intersección → marcar sin cobertura
           await prisma.customer_address.update({
-            where: { id: defaultAddress.id },
+            where: { id: defaultAddressForRouting.id },
             data: { delivery_zone_id: null },
           });
           isInCoverage = false;
         }
         // Sin `zone` ni `delivery_zone_id` previo: sigue sin cobertura real
         // (V-21) — sin fallback legacy, ver nota arriba en la rama de checkout.
-        contextRoute = ctx.message?.type === 'interactive' ? 'interactive' : 'nlp';
-        if (contextRoute === 'interactive') {
-          console.log('[Orchestrator] Route: Interactive');
-        } else {
-          console.log('[Orchestrator] Route: NLP (text message)');
-        }
+      }
+      contextRoute = ctx.message?.type === 'interactive' ? 'interactive' : 'nlp';
+      if (contextRoute === 'interactive') {
+        console.log('[Orchestrator] Route: Interactive');
+      } else {
+        console.log('[Orchestrator] Route: NLP (text message)');
       }
     }
 

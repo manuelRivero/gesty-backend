@@ -29,6 +29,16 @@ describe('buildResumeFollowUp (kind: onboarding)', () => {
     expect(resume.onboardingStagedAddress).toBe('Calle Falsa 123');
   });
 
+  it('paso name → pide el nombre', () => {
+    const resume = buildResumeFollowUp({
+      kind: 'onboarding',
+      step: 'name',
+      stagedAddress: null,
+    });
+    expect(resume.text).toContain('nombre');
+    expect(resume.onboardingStagedAddress).toBeUndefined();
+  });
+
   it('paso done → no anexa nada (la sesión ya no está en onboarding)', () => {
     const resume = buildResumeFollowUp({
       kind: 'onboarding',

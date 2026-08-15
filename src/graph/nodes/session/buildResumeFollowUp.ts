@@ -23,7 +23,7 @@ export interface ReservationDraft {
   environmentId?: string | null;
 }
 
-export type OnboardingResumeStep = 'capture' | 'confirm' | 'done';
+export type OnboardingResumeStep = 'capture' | 'confirm' | 'name' | 'done';
 
 export type ResumeFollowUpInput =
   | {
@@ -56,7 +56,7 @@ export interface ResumeFollowUp {
 const RESUME_PREFIX = {
   checkout: 'Volviendo a tu pedido:',
   reservation: 'Seguimos con tu reserva:',
-  onboarding: 'Seguimos con tu dirección:',
+  onboarding: 'Seguimos con tu perfil:',
 } as const;
 
 /**
@@ -115,6 +115,11 @@ export function buildResumeFollowUp(input: ResumeFollowUpInput): ResumeFollowUp 
         return {
           text: `${RESUME_PREFIX.onboarding} ¿es correcta esta dirección?\n${input.stagedAddress}`,
           onboardingStagedAddress: input.stagedAddress,
+        };
+      }
+      if (input.step === 'name') {
+        return {
+          text: `${RESUME_PREFIX.onboarding} ¿cómo es tu nombre?`,
         };
       }
       return {

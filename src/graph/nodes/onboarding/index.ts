@@ -1,15 +1,16 @@
 /**
  * Nodo LangGraph del agente de onboarding dedicado.
  *
- * Captura todos los turnos mientras `metadata.onboarding_agent_active` está
- * activo y los delega al `onboardingAgent`.
+ * Captura todos los turnos mientras el router asigna `onboarding_agent`
+ * (Facts incompletos, sesión activa, staging o payloads) y los delega al
+ * `onboardingAgent`.
  *
  * Responsabilidades del nodo (no del agente):
  *  - Interceptar payloads determinísticos ANTES de invocar al agente:
  *      ONBOARDING_CONFIRM_ADDRESS → guardar dirección vía AddressService.
  *      ONBOARDING_EDIT_ADDRESS   → volver a pedir dirección.
  *      message.type === 'location' → reverse geocode + staging + botones.
- *  - Activar `onboarding_agent_active` en el primer turno.
+ *  - Activar `onboarding_agent_active` en el primer turno (incl. apertura por Facts).
  *  - Adjuntar botones WhatsApp cuando el agente devuelve señal `present_address_confirmation`.
  *  - Llamar runHybridReactAgent inline para señal `delegate_to_main` sin limpiar sesión.
  *  - Limpiar `onboarding_agent_active` cuando la dirección queda guardada.
@@ -31,7 +32,7 @@ import { detectIntentWithConfidence } from '../../../services/ai/detection.servi
 import { findOrCreateConversationState } from '../../../repositories';
 import { normalizeMetadata } from '../../../services/productQuery/utils';
 import { nextOnboardingStep } from '../../../services/onboarding/nextOnboardingStep';
-import { loadOnboardingStepState } from '../../../services/onboarding/loadOnboardingStepState';
+import { loadLiveOnboardingFacts } from '../../../services/onboarding/loadLiveOnboardingFacts';
 import type { HandlerResult } from '../../../controllers/webhook/types';
 import type { EnrichedContext } from '../../../controllers/webhook/types';
 import type { AgentState, AgentStateUpdate } from '../../state';
@@ -54,16 +55,10 @@ const clearOnboardingSession = async (conversationId: string): Promise<void> => 
 };
 
 /**
- * Tras guardar la dirección (fuera del caso CHECKOUT, ya resuelto
- * determinísticamente por `AddressService`), "qué sigue" es responsabilidad
- * del híbrido — nunca de un agente de dominio (ADR-0002: ownership por
- * borde, no por prosa de prompt). El híbrido ya trae el Goal COMPLETAR_PEDIDO
- * (`orderCompletionGoal.service.ts`) para ofrecer continuar el pedido si
- * corresponde, con su propio presupuesto anti-insistencia — no hace falta
- * duplicar esa lógica acá. Mismo patrón que `finish_onboarding` (invocar
- * inline, sin limpiar la sesión antes de tener el resultado).
+ * Tras completar el perfil (dirección + nombre), "qué sigue" es del híbrido
+ * (ADR-0002). Mismo patrón que finish_onboarding inline.
  */
-const invokeHybridAfterAddressSaved = async (params: {
+const invokeHybridAfterProfileComplete = async (params: {
   enrichedBase: EnrichedContext;
   conversationId: string;
   detectionContext: AgentState['detectionContext'];
@@ -82,9 +77,92 @@ const invokeHybridAfterAddressSaved = async (params: {
     });
     return hybrid?.kind === 'response' ? hybrid.handlerResult : fallbackResult;
   } catch (err) {
-    console.error('[onboarding-agent] error invocando híbrido tras guardar dirección:', err);
+    console.error('[onboarding-agent] error invocando híbrido tras completar perfil:', err);
     return fallbackResult;
   }
+};
+
+/**
+ * Tras confirmar dirección: si falta el nombre, se mantiene Ownership y se
+ * pide el nombre; si el perfil está completo, se libera e invoca al híbrido.
+ */
+const continueAfterAddressSaved = async (params: {
+  enrichedBase: EnrichedContext;
+  conversationId: string;
+  customerId: string;
+  detectionContext: AgentState['detectionContext'];
+  userMessage: string;
+  ackResult: HandlerResult | undefined;
+}): Promise<HandlerResult | undefined> => {
+  const {
+    enrichedBase,
+    conversationId,
+    customerId,
+    detectionContext,
+    userMessage,
+    ackResult,
+  } = params;
+
+  const facts = await loadLiveOnboardingFacts({ conversationId, customerId });
+  const step = nextOnboardingStep(facts);
+
+  if (step === 'name') {
+    await patchConversationMetadata(conversationId, { onboarding_agent_active: true });
+    const resume = buildResumeFollowUp({
+      kind: 'onboarding',
+      step: 'name',
+      stagedAddress: null,
+    });
+    const ackText =
+      typeof ackResult?.content === 'string'
+        ? ackResult.content
+        : '✅ Dirección guardada.';
+    const body = resume.text ? `${ackText}\n\n${resume.text}` : ackText;
+    console.log(
+      JSON.stringify({
+        event: '[onboarding-agent] continue_to_name',
+        conversationId,
+      })
+    );
+    return { content: body, isInteractive: false };
+  }
+
+  await clearOnboardingSession(conversationId);
+  return invokeHybridAfterProfileComplete({
+    enrichedBase,
+    conversationId,
+    detectionContext,
+    userMessage,
+    fallbackResult: ackResult,
+  });
+};
+
+/**
+ * Gate de confirmación (botón o señal): solo persistir si el paso derivado
+ * es `confirm` y hay staging. Evita writes huérfanas (agent-factory §3.10).
+ */
+const assertConfirmStepOrBlock = async (params: {
+  conversationId: string;
+  customerId: string;
+}): Promise<HandlerResult | null> => {
+  const facts = await loadLiveOnboardingFacts(params);
+  const step = nextOnboardingStep(facts);
+  if (step !== 'confirm' || !facts.stagedAddress) {
+    console.log(
+      JSON.stringify({
+        event: '[onboarding-agent] confirm_gate_blocked',
+        step,
+        hasStaged: Boolean(facts.stagedAddress),
+        conversationId: params.conversationId,
+      })
+    );
+    return (
+      textResponse(
+        'Todavía no tengo una dirección para confirmar. ¿Me la decís o compartís tu ubicación?'
+      ) ?? null
+    );
+  }
+  return null;
 };
 
 // ---------------------------------------------------------------------------
@@ -101,21 +179,33 @@ export const onboardingAgentNode = async (
   const payloadId = ctx.payloadId;
   const addressService = new AddressService();
 
+  const customerId =
+    typeof enrichedBase.customer === 'object' && enrichedBase.customer
+      ? (enrichedBase.customer as { id: string }).id
+      : '';
+
   // ── ONBOARDING_CONFIRM_ADDRESS — guardado determinístico ──────────────────
   // Misma fuente de verdad que el camino de texto libre (resolveStagedAddressConfirmation):
   // `addressService.process()` es el método LEGACY (ver @deprecated) y no
   // pasa `skipSmallTalkMenu`, por eso mostraba el saludo de bienvenida
   // completo al confirmar por botón (bug real, visto en pruebas manuales).
   if (payloadId === 'ONBOARDING_CONFIRM_ADDRESS') {
+    if (!customerId) {
+      return { dataCollectionDelegated: true };
+    }
+    const blocked = await assertConfirmStepOrBlock({ conversationId, customerId });
+    if (blocked) {
+      return { handlerResult: blocked, dataCollectionDelegated: true };
+    }
     const result = await addressService.resolveStagedAddressConfirmation(enrichedBase, true);
-    await clearOnboardingSession(conversationId);
     const ackResult = normalizeToHandlerResult(result);
-    const finalResult = await invokeHybridAfterAddressSaved({
+    const finalResult = await continueAfterAddressSaved({
       enrichedBase,
       conversationId,
+      customerId,
       detectionContext: state.detectionContext,
       userMessage: ctx.message?.text?.body?.trim() ?? '',
-      fallbackResult: ackResult,
+      ackResult,
     });
     return {
       handlerResult: finalResult,
@@ -152,8 +242,29 @@ export const onboardingAgentNode = async (
       typeof enrichedBase.business === 'object' && enrichedBase.business
         ? (enrichedBase.business as { id: string }).id
         : '';
-    if (!location || !businessId) {
+    if (!location || !businessId || !customerId) {
       return { dataCollectionDelegated: true };
+    }
+
+    const facts = await loadLiveOnboardingFacts({ conversationId, customerId });
+    const step = nextOnboardingStep(facts);
+    if (step !== 'capture') {
+      console.log(
+        JSON.stringify({
+          event: '[onboarding-agent] location_gate_blocked',
+          step,
+          conversationId,
+        })
+      );
+      return {
+        handlerResult:
+          textResponse(
+            step === 'name'
+              ? 'Ya tengo tu ubicación/dirección. ¿Cómo es tu nombre?'
+              : 'Ahora no estoy pidiendo una dirección nueva. ¿En qué te ayudo?'
+          ) ?? undefined,
+        dataCollectionDelegated: true,
+      };
     }
 
     const staged = await addressService.resolveAndStageAddressFromLocation({
@@ -183,8 +294,21 @@ export const onboardingAgentNode = async (
 
   // ── Activar sesión en el primer turno ────────────────────────────────────
   const wsMeta = normalizeMetadata(state.workingConversationState?.metadata);
-  if (!wsMeta.onboarding_agent_active) {
+  const sessionJustOpened = !wsMeta.onboarding_agent_active;
+  if (sessionJustOpened) {
     await patchConversationMetadata(conversationId, { onboarding_agent_active: true });
+    const openedByFacts =
+      wsMeta.onboarding_step == null &&
+      payloadId !== 'ONBOARDING_CONFIRM_ADDRESS' &&
+      payloadId !== 'ONBOARDING_EDIT_ADDRESS';
+    if (openedByFacts) {
+      console.log(
+        JSON.stringify({
+          event: '[onboarding] session_opened_by_facts',
+          conversationId,
+        })
+      );
+    }
   }
 
   // ── Invocar el agente de onboarding ──────────────────────────────────────
@@ -206,6 +330,24 @@ export const onboardingAgentNode = async (
   }
 
   const { text, rawText, signals } = agentResult;
+
+  // P1.2 — regresión conversacional en el primer turno: sin texto ni señal de
+  // salida/confirmación. Pedir dirección en prosa (happy path) produce texto
+  // y no dispara esto; no hay matcher de frases.
+  if (
+    sessionJustOpened &&
+    !text.trim() &&
+    !signals.finishOnboarding &&
+    !signals.delegateToMain &&
+    signals.addressConfirmationResolved === null
+  ) {
+    console.log(
+      JSON.stringify({
+        event: '[onboarding-agent] first_turn_no_signal',
+        conversationId,
+      })
+    );
+  }
 
   // ── Señal: delegar turno al agente principal (off-topic temporal) ─────────
   if (signals.delegateToMain) {
@@ -245,20 +387,14 @@ export const onboardingAgentNode = async (
 
     const baseResult = mainResult ?? { content: text, isInteractive: false };
 
-    // Anexar (no reemplazar) el recordatorio de que falta la dirección,
-    // para que el usuario no tenga que adivinar que el onboarding sigue activo (H-03).
-    // Paso derivado del estado real (H-B/P0.3), no de una frase fija: si había
-    // una dirección staged, se retoma SU confirmación con botones, no un
-    // "decime tu dirección" desde cero.
-    const customerId =
-      typeof enrichedBase.customer === 'object' && enrichedBase.customer
-        ? (enrichedBase.customer as { id: string }).id
-        : '';
+    // Anexar (no reemplazar) el recordatorio del paso pendiente (dirección o
+    // nombre), para que el usuario no tenga que adivinar que el onboarding
+    // sigue activo (H-03). Paso derivado del estado real (H-B/P0.3).
     let onboardingStep: ReturnType<typeof nextOnboardingStep> = 'capture';
     let stagedAddressForResume: string | null = null;
     if (customerId) {
       try {
-        const stepState = await loadOnboardingStepState({ conversationId, customerId });
+        const stepState = await loadLiveOnboardingFacts({ conversationId, customerId });
         onboardingStep = nextOnboardingStep(stepState);
         stagedAddressForResume = stepState.stagedAddress;
       } catch (err) {
@@ -360,6 +496,15 @@ export const onboardingAgentNode = async (
         conversationId,
       })
     );
+    if (!customerId) {
+      return { dataCollectionDelegated: true };
+    }
+    if (signals.addressConfirmationResolved) {
+      const blocked = await assertConfirmStepOrBlock({ conversationId, customerId });
+      if (blocked) {
+        return { handlerResult: blocked, dataCollectionDelegated: true };
+      }
+    }
     const result = await addressService.resolveStagedAddressConfirmation(
       enrichedBase,
       signals.addressConfirmationResolved
@@ -371,14 +516,37 @@ export const onboardingAgentNode = async (
       };
     }
 
-    await clearOnboardingSession(conversationId);
     const ackResult = normalizeToHandlerResult(result);
-    const finalResult = await invokeHybridAfterAddressSaved({
+    const finalResult = await continueAfterAddressSaved({
+      enrichedBase,
+      conversationId,
+      customerId,
+      detectionContext: state.detectionContext,
+      userMessage: ctx.message?.text?.body?.trim() ?? '',
+      ackResult,
+    });
+    return {
+      handlerResult: finalResult,
+      dataCollectionDelegated: true,
+    };
+  }
+
+  // ── Señal: nombre guardado → perfil completo ──────────────────────────────
+  if (signals.profileComplete) {
+    console.log(
+      JSON.stringify({
+        event: '[onboarding-agent] onboarding_profile_complete',
+        conversationId,
+      })
+    );
+    await clearOnboardingSession(conversationId);
+    const fallback: HandlerResult = { content: text, isInteractive: false };
+    const finalResult = await invokeHybridAfterProfileComplete({
       enrichedBase,
       conversationId,
       detectionContext: state.detectionContext,
       userMessage: ctx.message?.text?.body?.trim() ?? '',
-      fallbackResult: ackResult,
+      fallbackResult: fallback,
     });
     return {
       handlerResult: finalResult,

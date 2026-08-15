@@ -4,23 +4,41 @@ import type { OnboardingStepState } from '../nextOnboardingStep';
 
 const state = (overrides: Partial<OnboardingStepState> = {}): OnboardingStepState => ({
   hasSavedAddress: false,
+  hasCustomerName: false,
   stagedAddress: null,
   ...overrides,
 });
 
 describe('nextOnboardingStep', () => {
-  it('sin dirección guardada ni staged → capture', () => {
+  it('sin dirección ni staged → capture', () => {
     expect(nextOnboardingStep(state())).toBe('capture');
   });
 
-  it('con dirección staged (CONFIRM) y sin guardar → confirm', () => {
+  it('con dirección staged y sin guardar → confirm', () => {
     expect(nextOnboardingStep(state({ stagedAddress: 'Calle Falsa 123' }))).toBe('confirm');
   });
 
-  it('con dirección guardada → done, sin importar el staging', () => {
+  it('con dirección guardada y sin nombre → name', () => {
+    expect(nextOnboardingStep(state({ hasSavedAddress: true }))).toBe('name');
+  });
+
+  it('con dirección y nombre → done (staging no importa)', () => {
     expect(
-      nextOnboardingStep(state({ hasSavedAddress: true, stagedAddress: 'Calle Falsa 123' }))
+      nextOnboardingStep(
+        state({
+          hasSavedAddress: true,
+          hasCustomerName: true,
+          stagedAddress: 'Calle Falsa 123',
+        })
+      )
     ).toBe('done');
-    expect(nextOnboardingStep(state({ hasSavedAddress: true }))).toBe('done');
+  });
+
+  it('dirección guardada gana sobre staging → name si falta nombre', () => {
+    expect(
+      nextOnboardingStep(
+        state({ hasSavedAddress: true, hasCustomerName: false, stagedAddress: 'X' })
+      )
+    ).toBe('name');
   });
 });

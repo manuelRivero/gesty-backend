@@ -1,19 +1,14 @@
 /**
- * Agente ReAct dedicado al onboarding (captura de dirección de entrega).
+ * Agente ReAct dedicado al onboarding (perfil mínimo: dirección + nombre).
  *
- * Se invoca desde `onboardingAgentNode` cuando `metadata.onboarding_agent_active`
- * está activo o el cliente no tiene dirección y el flag ONBOARDING_AGENT_ENABLED
- * está habilitado.
+ * Se invoca desde `onboardingAgentNode` cuando el router asigna
+ * `contextRoute = 'onboarding_agent'`: Ownership por Facts (sin dirección
+ * usable o sin nombre, con refusal del Goal faltante en 0) o por sesión /
+ * staging / payloads Confirmar|Editar. Ver `shouldOwnOnboardingTurn` y
+ * `PLAN-ACCION-ONBOARDING-OWNERSHIP-ENTRY.md`.
  *
- * Diferencias clave respecto al agente de reservas:
- *  - Un solo dato a recolectar: la dirección de entrega.
- *  - `delegate_to_main` (temporal) → el nodo llama `runHybridReactAgent` inline
- *    sin limpiar `onboarding_agent_active`; el próximo turno vuelve al agente.
- *  - `finish_onboarding` (permanente) → el nodo limpia la sesión.
- *  - Dirección staged sin confirmar (`onboarding_step === 'CONFIRM'`) → el nodo
- *    adjunta los botones Confirmar/Editar al propio texto del LLM (sin reemplazarlo).
- *  - Confirmación/edición de la dirección se hacen determinísticamente en el nodo
- *    (payloads ONBOARDING_CONFIRM_ADDRESS / ONBOARDING_EDIT_ADDRESS).
+ * Writes con `withGate` contra `nextOnboardingStep(loadLiveOnboardingFacts)`.
+ * Handshake: `delegate_to_main` (temporal) / `finish_onboarding` (permanente).
  */
 
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
@@ -32,7 +27,7 @@ import {
 } from '../services/ai/extractPendingTurnResponse';
 import type { EnrichedContext } from '../controllers/webhook/types';
 import { nextOnboardingStep } from '../services/onboarding/nextOnboardingStep';
-import { loadOnboardingStepState } from '../services/onboarding/loadOnboardingStepState';
+import { loadLiveOnboardingFacts } from '../services/onboarding/loadLiveOnboardingFacts';
 
 // ---------------------------------------------------------------------------
 // Paso pendiente: confirmar la dirección staged (mismo patrón que checkout —
@@ -90,21 +85,36 @@ const expectedActionForOnboardingStep = (
       return 'pedir la dirección en prosa; check_address_coverage(text) cuando la provea';
     case 'confirm':
       return 'preguntar si la dirección propuesta es correcta (el sistema adjunta los botones); resolve_address_confirmation si responde en texto';
+    case 'name':
+      return 'pedir el nombre en prosa; save_customer_name cuando lo provea';
     case 'done':
       return 'ninguna';
   }
 };
 
+const goalForOnboardingStep = (
+  step: ReturnType<typeof nextOnboardingStep>
+): string => {
+  switch (step) {
+    case 'capture':
+    case 'confirm':
+      return 'OBTENER_DIRECCION';
+    case 'name':
+      return 'OBTENER_NOMBRE';
+    case 'done':
+      return 'ninguno';
+  }
+};
+
 const buildOnboardingContextMessage = async (ctx: EnrichedContext): Promise<string> => {
   const userMsg = ctx.message?.text?.body ?? '';
-  const customerName = (ctx.customer as { name?: string | null })?.name?.trim() || null;
 
   const meta = normalizeMetadata(ctx.conversationState?.metadata);
   const rawTempAddress = meta.temp_address;
   const tempAddress = typeof rawTempAddress === 'string' ? rawTempAddress.trim() : null;
-  const onboardingStep = meta.onboarding_step ?? null;
+  const onboardingStepMeta = meta.onboarding_step ?? null;
 
-  const hasStagedAddress = Boolean(tempAddress) && onboardingStep === 'CONFIRM';
+  const hasStagedAddress = Boolean(tempAddress) && onboardingStepMeta === 'CONFIRM';
   const stagedAddressLabel = hasStagedAddress && tempAddress ? tempAddress : 'no informada';
   const coverageLabel = hasStagedAddress ? 'en cobertura (pendiente de confirmar)' : 'sin evaluar';
 
@@ -114,10 +124,13 @@ const buildOnboardingContextMessage = async (ctx: EnrichedContext): Promise<stri
       : '';
   const conversationId = ctx.conversationId ?? '';
   let step: ReturnType<typeof nextOnboardingStep> = hasStagedAddress ? 'confirm' : 'capture';
+  let customerName: string | null =
+    (ctx.customer as { name?: string | null })?.name?.trim() || null;
   if (conversationId && customerId) {
     try {
-      const stepState = await loadOnboardingStepState({ conversationId, customerId });
+      const stepState = await loadLiveOnboardingFacts({ conversationId, customerId });
       step = nextOnboardingStep(stepState);
+      if (!stepState.hasCustomerName) customerName = null;
     } catch (err) {
       console.error('[onboarding-agent] error derivando paso para el ledger:', err);
     }
@@ -132,7 +145,7 @@ const buildOnboardingContextMessage = async (ctx: EnrichedContext): Promise<stri
     `- Estado de cobertura: ${coverageLabel}`,
     `- Nombre del cliente: ${customerName ?? 'no informado'}`,
     `- Paso actual: ${step}`,
-    `- Goal: OBTENER_DIRECCION`,
+    `- Goal: ${goalForOnboardingStep(step)}`,
     `- Acción esperada: ${expectedActionForOnboardingStep(step)}`,
   ];
 
@@ -190,6 +203,8 @@ export interface OnboardingAgentSignals {
   delegateToMainReason: string | null;
   finishOnboarding: boolean;
   finishOnboardingReason: string | null;
+  /** Tras save_customer_name con perfil completo. */
+  profileComplete: boolean;
 }
 
 const extractSignals = (messages: unknown[]): OnboardingAgentSignals => {
@@ -199,6 +214,7 @@ const extractSignals = (messages: unknown[]): OnboardingAgentSignals => {
     delegateToMainReason: null,
     finishOnboarding: false,
     finishOnboardingReason: null,
+    profileComplete: false,
   };
 
   for (const msg of messages) {
@@ -225,6 +241,9 @@ const extractSignals = (messages: unknown[]): OnboardingAgentSignals => {
       if (data.signal === 'finish_onboarding') {
         signals.finishOnboarding = true;
         signals.finishOnboardingReason = data.reason ?? null;
+      }
+      if (data.signal === 'onboarding_profile_complete') {
+        signals.profileComplete = true;
       }
     } catch {
       /* ignorar mensajes no-JSON */
