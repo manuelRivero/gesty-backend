@@ -31,15 +31,20 @@ import {
   extractConfirmAddressPending,
   runOnboardingAgent,
 } from '../../../agents/onboardingAgent';
+import { runReservationAgent } from '../../../agents/reservationAgent';
 import { runHybridReactAgent } from '../../../agents/reactAgent';
 import { detectIntentWithConfidence } from '../../../services/ai/detection.service';
 import { findOrCreateConversationState } from '../../../repositories';
+import { findActiveEnvironmentsByBusinessId } from '../../../repositories/reservation.repository';
 import {
   formatBotUserMessage,
   normalizeMetadata,
 } from '../../../services/productQuery/utils';
 import { nextOnboardingStep } from '../../../services/onboarding/nextOnboardingStep';
 import { loadLiveOnboardingFacts } from '../../../services/onboarding/loadLiveOnboardingFacts';
+import { incrementRefusalCount } from '../../../services/intent/intentRefusal.service';
+import { ConversationIntent } from '../../../types/conversationIntent';
+import { isReservationAgentEnabled } from '../../../config/env';
 import type { HandlerResult } from '../../../controllers/webhook/types';
 import type { EnrichedContext } from '../../../controllers/webhook/types';
 import type { AgentState, AgentStateUpdate } from '../../state';
@@ -59,6 +64,94 @@ const clearOnboardingSession = async (conversationId: string): Promise<void> => 
     'awaiting_address',
     'pending_address_action',
   ]);
+};
+
+/** Intents que en paso `capture` liberan onboarding (dirección omitible). */
+const SKIP_ADDRESS_INTENTS = new Set<string>([
+  ConversationIntent.RESERVATION,
+  ConversationIntent.VIEW_RESERVATION,
+  ConversationIntent.VIEW_MENU,
+  ConversationIntent.BUSINESS_HOURS,
+  ConversationIntent.ASK_QUESTION,
+]);
+
+/**
+ * Misma liberación que finish_onboarding(not_needed): refusal + clear sesión.
+ */
+const liberateOnboardingNotNeeded = async (conversationId: string): Promise<void> => {
+  await incrementRefusalCount(conversationId, 'OBTENER_DIRECCION');
+  await incrementRefusalCount(conversationId, 'OBTENER_NOMBRE');
+  await clearOnboardingSession(conversationId);
+};
+
+/**
+ * Tras liberar onboarding: reserva → agente de reservas; resto → híbrido.
+ * Evita que "quiero reservar" quede en el híbrido sin abrir la sesión de reserva.
+ */
+const handoffAfterOnboardingLiberated = async (params: {
+  enrichedBase: EnrichedContext;
+  conversationId: string;
+  detectionContext: AgentState['detectionContext'];
+  userMessage: string;
+  fallbackText: string;
+}): Promise<HandlerResult> => {
+  const { enrichedBase, conversationId, detectionContext, userMessage, fallbackText } =
+    params;
+  const fallback: HandlerResult = {
+    content: fallbackText,
+    isInteractive: false,
+  };
+  if (!detectionContext || !userMessage.trim()) return fallback;
+
+  try {
+    const detection = await detectIntentWithConfidence(userMessage, detectionContext);
+    const freshState = await findOrCreateConversationState(conversationId);
+    const enrichedCtx: EnrichedContext = {
+      ...enrichedBase,
+      detection,
+      conversationState: freshState,
+    };
+
+    if (
+      isReservationAgentEnabled() &&
+      (detection.intent === ConversationIntent.RESERVATION ||
+        detection.intent === ConversationIntent.VIEW_RESERVATION)
+    ) {
+      await patchConversationMetadata(conversationId, {
+        reservation_agent_active: true,
+      });
+      const bizId =
+        typeof enrichedBase.business === 'object' && enrichedBase.business
+          ? (enrichedBase.business as { id: string }).id
+          : '';
+      const environments = bizId
+        ? await findActiveEnvironmentsByBusinessId(bizId)
+        : [];
+      console.log(
+        JSON.stringify({
+          event: '[onboarding-agent] handoff_reservation',
+          intent: detection.intent,
+          conversationId,
+        })
+      );
+      const agentResult = await runReservationAgent(enrichedCtx, {
+        hasEnvironments: environments.length > 0,
+        environmentNames: environments.map((e) => ({ id: e.id, name: e.name })),
+      });
+      if (agentResult?.text) {
+        return { content: agentResult.text, isInteractive: false };
+      }
+    }
+
+    const hybrid = await runHybridReactAgent({
+      ...enrichedCtx,
+      conversationState: freshState,
+    });
+    return hybrid?.kind === 'response' ? hybrid.handlerResult : fallback;
+  } catch (err) {
+    console.error('[onboarding-agent] error en handoff tras liberar:', err);
+    return fallback;
+  }
 };
 
 /** Cierre de perfil: welcome de menú, sin re-procesar el tipable en el híbrido. */
@@ -366,6 +459,51 @@ export const onboardingAgentNode = async (
     };
   }
 
+  // ── Paso capture: menú / reserva / consulta → liberar sin esperar al ReAct ─
+  // Clasificador de intent (no regex). Misma liberación que finish(not_needed).
+  if (
+    customerId &&
+    !payloadId &&
+    ctx.message?.type !== 'location' &&
+    state.detectionContext
+  ) {
+    const tipableText = ctx.message?.text?.body?.trim() ?? '';
+    if (tipableText) {
+      const factsForSkip = await loadLiveOnboardingFacts({
+        conversationId,
+        customerId,
+      });
+      if (nextOnboardingStep(factsForSkip) === 'capture') {
+        const detection = await detectIntentWithConfidence(
+          tipableText,
+          state.detectionContext
+        );
+        if (SKIP_ADDRESS_INTENTS.has(detection.intent)) {
+          console.log(
+            JSON.stringify({
+              event: '[onboarding-agent] skip_address_by_intent',
+              intent: detection.intent,
+              conversationId,
+            })
+          );
+          await liberateOnboardingNotNeeded(conversationId);
+          const handoff = await handoffAfterOnboardingLiberated({
+            enrichedBase,
+            conversationId,
+            detectionContext: state.detectionContext,
+            userMessage: tipableText,
+            fallbackText: formatBotUserMessage(
+              'Listo',
+              '✅',
+              'Dale, seguimos sin la dirección por ahora. ¿En qué te ayudo?'
+            ),
+          });
+          return { handlerResult: handoff, dataCollectionDelegated: true };
+        }
+      }
+    }
+  }
+
   // ── Tipable confirm (sí/no) — mismo borde que el botón, sin esperar al ReAct ─
   if (customerId && !payloadId) {
     const tipableText = ctx.message?.text?.body?.trim() ?? '';
@@ -563,28 +701,17 @@ export const onboardingAgentNode = async (
         conversationId,
       })
     );
-    // La tool `finish_onboarding` ya limpió metadata. Si el cliente pidió algo
-    // concreto en el mismo mensaje ("mostrame el menú"), invocar al híbrido
-    // inline (mismo patrón que `handback_to_main` en checkout) para que reciba
-    // una respuesta real en este turno, no solo el texto de despedida del LLM
-    // de onboarding (que no tiene tools para mostrar menú/CTAs).
+    // La tool ya limpió metadata + refusal. Handoff: reserva → agente; resto → híbrido.
     const userMessage = ctx.message?.text?.body?.trim() ?? '';
-    let hybridResult: HandlerResult | null = null;
-    if (state.detectionContext && userMessage) {
-      try {
-        const freshState = await findOrCreateConversationState(conversationId);
-        const hybrid = await runHybridReactAgent({
-          ...enrichedBase,
-          detection: await detectIntentWithConfidence(userMessage, state.detectionContext),
-          conversationState: freshState,
-        });
-        hybridResult = hybrid?.kind === 'response' ? hybrid.handlerResult : null;
-      } catch (err) {
-        console.error('[onboarding-agent] error en finish_onboarding inline hybrid:', err);
-      }
-    }
+    const handoff = await handoffAfterOnboardingLiberated({
+      enrichedBase,
+      conversationId,
+      detectionContext: state.detectionContext,
+      userMessage,
+      fallbackText: text,
+    });
     return {
-      handlerResult: hybridResult ?? { content: text, isInteractive: false },
+      handlerResult: handoff,
       dataCollectionDelegated: true,
     };
   }

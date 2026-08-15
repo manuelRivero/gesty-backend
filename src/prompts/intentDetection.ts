@@ -35,7 +35,7 @@ Available intents:
 - ASK_QUESTION: general question (e.g., "dónde están?", "cuál es el horario?")
 - SUPPORT: user explicitly asks to talk to a person, agent, or human support (e.g., "necesito hablar con alguien", "quiero atención personalizada", "háblenme", "necesito soporte", "me comunican con un asesor?")
 - BUSINESS_HOURS: asks for business hours (e.g., "horarios", "a qué hora abren?")
-- EDIT_ADDRESS: wants to change or update the delivery address (e.g., "quiero cambiar mi dirección")
+- EDIT_ADDRESS: wants to change or update the delivery address (e.g., "quiero cambiar mi dirección", "editar dirección", "cambiar dirección", standalone "editar" / "Editar" when the bot just offered an "Editar dirección" option). Do NOT use EDIT_ADDRESS for editing the cart/order — that is VIEW_CART_FOR_EDITION.
 - RESERVATION: wants to reserve a table OR manage an existing reservation (e.g., "reservar mesa", "gestionar reserva", "modificar reserva", "cancelar reserva", "mesa para 4"). Use RESERVATION for any change/cancel/manage intent about a booking, not only new bookings.
 - VIEW_RESERVATION: wants to only see reservation details without managing (e.g., "ver mi reserva", "mostrar mi reserva", "consultar datos de mi reserva", "mi reserva" when asking to display info). Do NOT use VIEW_RESERVATION for "gestionar", "modificar", "cancelar", "editar" reserva — those are RESERVATION.
 - VIEW_QR: wants to view reservation QR code (e.g., "ver qr", "mostrar codigo qr", "pasame el qr")
