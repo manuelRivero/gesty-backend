@@ -14,6 +14,14 @@ import { resolvePersonalityForBusiness } from '../services/botPersonality.servic
 import { allOwnerAssistantTools } from '../tools/ownerAssistant';
 import { formatBotUserMessage } from '../services/productQuery/utils';
 import { calendarDateInTz } from '../services/ownerAssistant/resolveOwnerPeriod';
+import {
+  appendOwnerShortcutsToMessage,
+  buildOwnerAmbiguityFallbackBody,
+  buildOwnerShortcutLedgerLines,
+  buildOwnerShortcutsBody,
+  extractOwnerToolInvocations,
+  resolveUsedOwnerShortcutIds,
+} from '../services/ownerAssistant/ownerShortcuts.service';
 import type { EnrichedContext } from '../controllers/webhook/types';
 
 let cachedAgents = new Map<string, ReturnType<typeof createReactAgent>>();
@@ -89,14 +97,11 @@ const buildOwnerAssistantContextMessage = (ctx: EnrichedContext): string => {
     `- Timezone: ${tz}`,
     '- Canal: asistente operativo del dueño (no el bot de clientes)',
     '- Acción esperada: interpretar la consulta y llamar la tool del nivel de detalle pedido. No inventar números.',
+    ...buildOwnerShortcutLedgerLines(),
     '',
     userMsg,
   ];
   return lines.join('\n');
-};
-
-const extractSignals = (_messages: unknown[]): Record<string, never> => {
-  return {};
 };
 
 const extractFinalText = (result: unknown): string | null => {
@@ -120,6 +125,20 @@ const extractFinalText = (result: unknown): string | null => {
     );
   }
   return null;
+};
+
+const withOwnerShortcuts = (
+  formattedMessage: string,
+  messages: unknown[]
+): string => {
+  const invocations = extractOwnerToolInvocations(messages);
+  const used = resolveUsedOwnerShortcutIds(invocations);
+  const mode = invocations.length === 0 ? 'menu' : 'remaining';
+  const shortcutsBody = buildOwnerShortcutsBody({
+    usedActionIds: used,
+    mode,
+  });
+  return appendOwnerShortcutsToMessage(formattedMessage, shortcutsBody);
 };
 
 export interface OwnerAssistantAgentResult {
@@ -179,18 +198,26 @@ export const runOwnerAssistantAgent = async (
     }
   );
 
+  const messages = (out as { messages?: unknown[] }).messages ?? [];
   const rawText = extractFinalText(out);
-  extractSignals((out as { messages?: unknown[] }).messages ?? []);
 
-  const text = rawText
-    ? rawText.startsWith('🤖')
-      ? rawText
-      : formatBotUserMessage('Tu local', '📊', rawText)
-    : formatBotUserMessage(
+  if (!rawText) {
+    return {
+      text: formatBotUserMessage(
         'Tu local',
         '📊',
-        'No pude armar el resumen ahora. ¿Probamos de nuevo?'
-      );
+        buildOwnerAmbiguityFallbackBody()
+      ),
+      signals: {},
+    };
+  }
 
-  return { text, signals: {} };
+  const formatted = rawText.startsWith('🤖')
+    ? rawText
+    : formatBotUserMessage('Tu local', '📊', rawText);
+
+  return {
+    text: withOwnerShortcuts(formatted, messages),
+    signals: {},
+  };
 };

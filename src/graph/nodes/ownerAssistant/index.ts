@@ -7,8 +7,13 @@
 
 import { textResponse } from '../../../controllers/webhook/utils/index';
 import { runOwnerAssistantAgent } from '../../../agents/ownerAssistantAgent';
+import { formatBotUserMessage } from '../../../services/productQuery/utils';
+import { buildOwnerAmbiguityFallbackBody } from '../../../services/ownerAssistant/ownerShortcuts.service';
 import type { EnrichedContext } from '../../../controllers/webhook/types';
 import type { AgentState, AgentStateUpdate } from '../../state';
+
+const ownerErrorFallback = () =>
+  formatBotUserMessage('Tu local', '📊', buildOwnerAmbiguityFallbackBody());
 
 export const ownerAssistantAgentNode = async (
   state: AgentState
@@ -38,9 +43,7 @@ export const ownerAssistantAgentNode = async (
       })
     );
     return {
-      handlerResult: textResponse(
-        '🤖\n\n*Tu local* 📊\n\nNo pude armar el resumen ahora. ¿Probamos de nuevo?'
-      ),
+      handlerResult: textResponse(ownerErrorFallback()),
       dataCollectionDelegated: true,
     };
   }

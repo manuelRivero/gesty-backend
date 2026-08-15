@@ -38,12 +38,15 @@ describe('ownerAssistantAgentNode', () => {
     });
   });
 
-  it('si el agente falla, el texto de fallback sale intacto (no se reemplaza por otra FSM)', async () => {
+  it('si el agente falla, el fallback ofrece atajos (no un mensaje muerto)', async () => {
     vi.mocked(runOwnerAssistantAgent).mockRejectedValue(new Error('llm down'));
 
     const result = await ownerAssistantAgentNode(baseState());
 
     expect(result.dataCollectionDelegated).toBe(true);
-    expect(String(result.handlerResult?.content)).toContain('No pude armar el resumen');
+    const content = String(result.handlerResult?.content);
+    expect(content).toContain('*Resumen*');
+    expect(content).toContain('*Cola*');
+    expect(content).toContain('atajo');
   });
 });

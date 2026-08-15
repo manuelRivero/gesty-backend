@@ -13,14 +13,10 @@ import { withGate } from './_withGate';
 import { isOwnerAssistantEnabled } from '../config/env';
 import { getBusinessConfig } from '../services/businessConfig.service';
 import { isOwnerPhone } from '../services/ownerAssistant/matchOwnerPhone';
-import {
-  resolveOwnerPeriod,
-  type OwnerPeriodPreset,
-} from '../services/ownerAssistant/resolveOwnerPeriod';
-import { getOwnerBriefing } from '../services/ownerAssistant/ownerBriefing.service';
+import type { OwnerPeriodPreset } from '../services/ownerAssistant/resolveOwnerPeriod';
+import { buildOwnerMetricsSnapshot } from '../services/ownerAssistant/buildOwnerMetricsSnapshot';
 import { getLiveOrdersSnapshot } from '../services/ownerAssistant/ownerOrdersSnapshot.service';
 import { getOwnerOrderDetail } from '../services/ownerAssistant/ownerOrderDetail.service';
-import { prisma } from '../lib/prisma';
 
 const toJson = (data: unknown): string => JSON.stringify(data);
 
@@ -37,20 +33,12 @@ const withOwnerGate = withGate({
   },
 });
 
-const loadBusinessTz = async (businessId: string): Promise<string> => {
-  const row = await prisma.business.findUnique({
-    where: { id: businessId },
-    select: { timezone: true },
-  });
-  return row?.timezone ?? 'America/Argentina/Buenos_Aires';
-};
-
 const periodSchema = z.object({
   period: z
     .enum(['today', 'yesterday', 'this_week', 'custom'])
     .default('today')
     .describe(
-      'Período. today = default si el dueño no especifica. this_week = lunes a hoy. custom exige from y to.'
+      'Período. today = default si el dueño no especifica. this_week = lunes a ahora. custom exige from y to.'
     ),
   from: z
     .string()
@@ -62,6 +50,12 @@ const periodSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional()
     .describe('YYYY-MM-DD. Solo para period=custom.'),
+  topProductsLimit: z
+    .union([z.literal(1), z.literal(3)])
+    .optional()
+    .describe(
+      'Cantidad de productos top por unidades. Default 1. Usá 3 solo si el dueño pide el top 3.'
+    ),
 });
 type PeriodInput = z.infer<typeof periodSchema>;
 
@@ -69,27 +63,22 @@ export const getOwnerBriefingTool = withOwnerGate(
   new DynamicStructuredTool<typeof periodSchema, PeriodInput>({
     name: 'get_owner_briefing',
     description:
-      'Resumen operativo del período (default hoy): pedidos, δ% vs período equivalente, estados, pagos, reservas, revenue, quejas (sentimiento FRUSTRATED/NEEDS_HUMAN) y pedidos en vuelo ahora. ' +
-      'Usala para saludos, "cómo va", "resumen", "números de hoy/ayer/esta semana". headlineHints son ingredientes para una línea; no los leas en voz alta como JSON.',
+      'Snapshot de métricas V1 del período (default hoy): ventas, pedidos, ticket promedio, cancelaciones, producto más vendido, atención y pedidos en vuelo AHORA. ' +
+      'Los totales, δ% y tasas ya vienen calculados: no los recalcules. ' +
+      'Usala para saludos, "cómo va", "resumen", "números de hoy/ayer/esta semana", "qué se vendió más". ' +
+      'historical = período pedido; live = ahora. No mezcles pedidos del período con en vuelo.',
     schema: periodSchema,
     func: async (input, _runManager, config?: RunnableConfig) => {
       const { businessId, customerId } = getReactContext(config);
-      const tz = await loadBusinessTz(businessId);
-      const period = resolveOwnerPeriod({
+      const snapshot = await buildOwnerMetricsSnapshot({
+        businessId,
         period: (input.period ?? 'today') as OwnerPeriodPreset,
         from: input.from,
         to: input.to,
-        tz,
-      });
-      if ('error' in period) return toJson(period);
-      const briefing = await getOwnerBriefing({
-        businessId,
-        from: period.from,
-        to: period.to,
-        tz,
+        topProductsLimit: input.topProductsLimit === 3 ? 3 : 1,
         excludeCustomerId: customerId,
       });
-      return toJson({ ...briefing, periodPreset: period.preset });
+      return toJson(snapshot);
     },
   })
 );
@@ -102,7 +91,8 @@ export const getLiveOrdersTool = withOwnerGate(
     name: 'get_live_orders',
     description:
       'Cola operativa AHORA: pedidos en cola, cocina, listos para retirar o en camino. No filtra por fecha de creación. ' +
-      'Usala cuando el dueño pregunta por envíos, cocina, "qué hay pendiente", "cómo van los deliveries".',
+      'Usala cuando el dueño pregunta por envíos, cocina, "qué hay pendiente", "cómo van los deliveries". ' +
+      'El conteo agregado ya viene en get_owner_briefing.live.inFlightOrders; esta tool es para el detalle/lista.',
     schema: liveOrdersSchema,
     func: async (_input, _runManager, config?: RunnableConfig) => {
       const { businessId } = getReactContext(config);

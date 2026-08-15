@@ -38,7 +38,7 @@ export const calendarDateInTz = (tz: string, now: Date = new Date()): string => 
   }
 };
 
-const shiftCalendarDate = (isoDate: string, days: number): string => {
+export const shiftCalendarDate = (isoDate: string, days: number): string => {
   const [y, m, d] = isoDate.split('-').map(Number);
   const utcNoon = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
   utcNoon.setUTCDate(utcNoon.getUTCDate() + days);
@@ -46,7 +46,7 @@ const shiftCalendarDate = (isoDate: string, days: number): string => {
 };
 
 /** Lunes de la semana ISO de `isoDate` (domingo → lunes anterior). */
-const mondayOf = (isoDate: string): string => {
+export const mondayOf = (isoDate: string): string => {
   const [y, m, d] = isoDate.split('-').map(Number);
   const utcNoon = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
   const dow = utcNoon.getUTCDay();
