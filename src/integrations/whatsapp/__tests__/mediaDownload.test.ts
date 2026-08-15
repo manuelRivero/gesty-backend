@@ -15,10 +15,13 @@ vi.mock('../../../config/env', () => ({
 
 import {
   ALLOWED_INBOUND_MEDIA_MIMES,
+  ALLOWED_INBOUND_AUDIO_MIMES,
   MAX_INBOUND_MEDIA_BYTES,
+  MAX_INBOUND_AUDIO_BYTES,
   WHATSAPP_GRAPH_BASE_URL,
   WhatsAppMediaError,
   downloadWhatsAppMedia,
+  downloadWhatsAppAudio,
 } from '../mediaDownload';
 
 // Header PNG válido (8 bytes) + relleno para pasar el mínimo de detección de magic bytes.
@@ -130,5 +133,92 @@ describe('downloadWhatsAppMedia', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(downloadWhatsAppMedia('media-4')).rejects.toBeInstanceOf(WhatsAppMediaError);
+  });
+});
+
+describe('downloadWhatsAppAudio', () => {
+  beforeEach(() => {
+    envState.WHATSAPP_ACCESS_TOKEN = 'test-token';
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('acepta audio/ogg con parámetro de codec y devuelve el buffer', async () => {
+    const fetchMock = vi.fn();
+    const oggBytes = Buffer.from('fake-ogg-opus-bytes-000000000000');
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        url: 'https://lookaside.fbsbx.com/whatsapp_media/audio1',
+        mime_type: 'audio/ogg; codecs=opus',
+        sha256: 'abc123',
+        file_size: oggBytes.length,
+        id: 'audio-media-1',
+      })
+    );
+    fetchMock.mockResolvedValueOnce(bufferResponse(oggBytes));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await downloadWhatsAppAudio('audio-media-1');
+
+    expect(result.mimeType).toBe('audio/ogg');
+    expect(result.sha256).toBe('abc123');
+    expect(result.buffer.equals(oggBytes)).toBe(true);
+    expect(ALLOWED_INBOUND_AUDIO_MIMES).toContain(result.mimeType);
+  });
+
+  it('rechaza un MIME de audio no permitido antes de bajar los bytes', async () => {
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        url: 'https://lookaside.fbsbx.com/whatsapp_media/audio2',
+        mime_type: 'video/mp4',
+        sha256: 'abc123',
+        file_size: 20,
+        id: 'audio-media-2',
+      })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(downloadWhatsAppAudio('audio-media-2')).rejects.toMatchObject({
+      code: 'MEDIA_UNSUPPORTED_TYPE',
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rechaza un audio cuyo file_size declarado supera el tope, sin bajar bytes', async () => {
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        url: 'https://lookaside.fbsbx.com/whatsapp_media/audio3',
+        mime_type: 'audio/ogg; codecs=opus',
+        sha256: 'abc123',
+        file_size: MAX_INBOUND_AUDIO_BYTES + 1,
+        id: 'audio-media-3',
+      })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(downloadWhatsAppAudio('audio-media-3')).rejects.toMatchObject({
+      code: 'MEDIA_TOO_LARGE',
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('no comparte allowlist con downloadWhatsAppMedia (imagen sigue rechazando audio)', () => {
+    for (const audioMime of ALLOWED_INBOUND_AUDIO_MIMES) {
+      expect(ALLOWED_INBOUND_MEDIA_MIMES as readonly string[]).not.toContain(audioMime);
+    }
+  });
+
+  it('lanza WhatsAppMediaError si falla el request de metadata', async () => {
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'nope' }, false, 404));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(downloadWhatsAppAudio('audio-media-4')).rejects.toBeInstanceOf(
+      WhatsAppMediaError
+    );
   });
 });

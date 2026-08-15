@@ -47,7 +47,8 @@ export type EarlyExitReason =
   | 'awaiting_people_count_invalid'
   | 'asked_intent_confirmation'
   | 'asked_people_count'
-  | 'no_handler_match';
+  | 'no_handler_match'
+  | 'owner_audio_duplicate';
 
 /**
  * Decisión de routing tras los gates de contexto. La consume el conditional
@@ -260,6 +261,18 @@ export const AgentStateAnnotation = Annotation.Root({
   isOwnerAssistant: Annotation<boolean>({
     reducer: (_prev, next) => next,
     default: () => false,
+  }),
+
+  /**
+   * Mensaje amable a devolver al dueño cuando `normalizeOwnerAudioNode` no
+   * pudo transcribir su audio (descarga, cuota de IA, STT, o transcript
+   * vacío — ver PLAN-ACCION-OWNER-AUDIO.md §9). `messageTypeGuardNode` lo usa
+   * en vez del aviso genérico "No puedo procesar este tipo de mensaje" para
+   * el caso puntual de audio del dueño. Ephemeral: solo este turno.
+   */
+  ownerAudioBlockedMessage: Annotation<string | null>({
+    reducer: (_prev, next) => next,
+    default: () => null,
   }),
 });
 

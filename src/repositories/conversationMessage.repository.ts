@@ -69,6 +69,19 @@ export const findByWhatsappMessageId = async (
   });
 };
 
+/**
+ * Idempotencia del path de audio del dueño (D4, PLAN-ACCION-OWNER-AUDIO.md):
+ * chequea si el `wamid` (`message.id` de WhatsApp) ya generó un mensaje
+ * persistido antes de gastar download/STT en un webhook duplicado.
+ */
+export const findByExternalMessageId = async (
+  externalMessageId: string
+): Promise<conversation_message | null> => {
+  return prisma.conversation_message.findUnique({
+    where: { externalMessageId }
+  });
+};
+
 export const getRecentMessagesByConversationId = async (
   conversationId: string,
   limit: number,

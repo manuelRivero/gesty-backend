@@ -5,13 +5,19 @@
  * [src/controllers/webhook/orchestrator.ts] del backend original:
  *
  * extract → resolveBusiness → businessConfig → resolveCustomer →
- * businessOpenInfo (→ closedBusiness → send) → persistUserMessage →
+ * businessOpenInfo (→ closedBusiness → send) → normalizeOwnerAudio (→ end si
+ * wamid duplicado) → persistUserMessage →
  * subscriptionAccessGate (→ send) → messageTypeGuard (→ send) →
  * escalationGate (→ send) →
  * ambassadorReferral →
  * buildDetectionContext →
  * { ownerAssistant | reservationWizard | reservationAgent | onboardingAgent | onboardingByState | addressCapture | checkoutAgent | interactive | nlp } →
  * sendResponse → persistAIMessage → END.
+ *
+ * `normalizeOwnerAudio` (PLAN-ACCION-OWNER-AUDIO.md): si el remitente es el
+ * dueño autorizado y el mensaje es audio, descarga + transcribe y muta
+ * `webhookContext.message` a texto antes de persistir — el resto del grafo
+ * no distingue audio de texto del dueño. No-op para cualquier otro caso.
  *
  * `messageTypeGuard` filtra mensajes no procesables (imágenes, audio, video,
  * contactos, documentos, ubicación fuera de un flujo de captura de dirección,
@@ -47,6 +53,7 @@ import { nameCollectionNode } from './nodes/gates/nameCollection';
 import { messageTypeGuardNode } from './nodes/gates/messageTypeGuard';
 import { escalationGateNode } from './nodes/gates/escalation';
 import { ambassadorReferralNode } from './nodes/ambassador';
+import { normalizeOwnerAudioNode } from './nodes/ownerAudio';
 import {
   interactiveSubgraphNode,
   nlpSubgraphNode,
@@ -69,6 +76,7 @@ import {
   routeAfterEscalationGate,
   routeAfterMessageTypeGuard,
   routeAfterNameCollection,
+  routeAfterOwnerAudio,
   routeAfterPersistUser,
   routeAfterResolveBusiness,
   routeAfterReservation,
@@ -83,6 +91,7 @@ const builder = new StateGraph(AgentStateAnnotation)
   .addNode(NODE.RESOLVE_CUSTOMER, resolveCustomerNode)
   .addNode(NODE.BIZ_OPEN, businessOpenInfoNode)
   .addNode(NODE.CLOSED_BIZ, closedBusinessNode)
+  .addNode(NODE.OWNER_AUDIO, normalizeOwnerAudioNode)
   .addNode(NODE.PERSIST_USER, persistUserMessageNode)
   .addNode(NODE.SUBSCRIPTION_GATE, subscriptionAccessGateNode)
   .addNode(NODE.MESSAGE_TYPE_GUARD, messageTypeGuardNode)
@@ -124,13 +133,18 @@ builder.addEdge(NODE.RESOLVE_CUSTOMER, NODE.BIZ_OPEN);
 
 builder.addConditionalEdges(NODE.BIZ_OPEN, routeAfterBusinessOpen, {
   [NODE.CLOSED_BIZ]: NODE.CLOSED_BIZ,
-  [NODE.PERSIST_USER]: NODE.PERSIST_USER,
+  [NODE.OWNER_AUDIO]: NODE.OWNER_AUDIO,
   [END]: END,
 });
 
 builder.addConditionalEdges(NODE.CLOSED_BIZ, routeAfterHandlerOrSubflow, {
   [NODE.FULFILLMENT_SELECTION]: NODE.FULFILLMENT_SELECTION,
   [NODE.SEND]: NODE.SEND,
+  [END]: END,
+});
+
+builder.addConditionalEdges(NODE.OWNER_AUDIO, routeAfterOwnerAudio, {
+  [NODE.PERSIST_USER]: NODE.PERSIST_USER,
   [END]: END,
 });
 

@@ -16,6 +16,7 @@ export const NODE = {
   RESOLVE_CUSTOMER: 'resolveCustomer',
   BIZ_OPEN: 'businessOpenInfo',
   CLOSED_BIZ: 'closedBusiness',
+  OWNER_AUDIO: 'normalizeOwnerAudio',
   PERSIST_USER: 'persistUserMessage',
   SUBSCRIPTION_GATE: 'subscriptionAccessGate',
   MESSAGE_TYPE_GUARD: 'messageTypeGuard',
@@ -64,6 +65,21 @@ export const routeAfterBusinessOpen = (
   state: AgentState
 ): NodeName | typeof END => {
   if (state.earlyExit === 'business_closed') return NODE.CLOSED_BIZ;
+  if (state.earlyExit) return END;
+  return NODE.OWNER_AUDIO;
+};
+
+/**
+ * Tras `normalizeOwnerAudio` (PLAN-ACCION-OWNER-AUDIO.md, D4). Un `wamid`
+ * duplicado corta directo a `END`: ya se procesó en un invoke anterior, no
+ * hay nada más que hacer (ni persistir, ni re-transcribir, ni responder de
+ * nuevo). En cualquier otro caso (no-op, éxito con mutación a texto, o
+ * fallo con `ownerAudioBlockedMessage` seteado) sigue el camino normal.
+ */
+export const routeAfterOwnerAudio = (
+  state: AgentState
+): NodeName | typeof END => {
+  if (state.earlyExit === 'owner_audio_duplicate') return END;
   if (state.earlyExit) return END;
   return NODE.PERSIST_USER;
 };

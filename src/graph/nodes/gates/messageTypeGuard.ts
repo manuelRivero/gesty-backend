@@ -26,6 +26,12 @@
  * consulta y un único reply button que permite al usuario pedir ayuda
  * (payload `SUPPORT`). El motivo por el que existe el botón —p. ej. clientes
  * que no pueden escribir— se omite intencionalmente del cuerpo del mensaje.
+ *
+ * Excepción — audio del dueño (PLAN-ACCION-OWNER-AUDIO.md): si
+ * `normalizeOwnerAudioNode` ya transcribió el audio, el mensaje llega acá
+ * mutado a `type: 'text'` y pasa por el camino normal. Si en cambio no pudo
+ * transcribir (descarga/cuota/STT), deja `state.ownerAudioBlockedMessage`
+ * con un texto puntual para el dueño — se usa en vez del aviso genérico.
  */
 
 import { findOrCreateConversationState } from '../../../repositories';
@@ -145,6 +151,20 @@ export const messageTypeGuardNode = async (
     if (awaitingTransferProofOrder) {
       return { awaitingTransferProofOrder };
     }
+  }
+
+  if (type === 'audio' && state.isOwnerAssistant && state.ownerAudioBlockedMessage) {
+    console.log('[MessageTypeGuard] Owner audio could not be transcribed, replying with reason:', {
+      payloadId: state.webhookContext?.payloadId,
+      conversationId: state.conversationId,
+    });
+    return {
+      handlerResult: {
+        content: state.ownerAudioBlockedMessage,
+        isInteractive: false,
+      },
+      earlyExit: 'unsupported_message_type',
+    };
   }
 
   console.log('[MessageTypeGuard] Unsupported message type, replying with notice:', {

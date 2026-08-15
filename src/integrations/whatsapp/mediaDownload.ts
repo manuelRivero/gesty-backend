@@ -148,3 +148,75 @@ export const downloadWhatsAppMedia = async (
     sizeBytes: buffer.length,
   };
 };
+
+/**
+ * Tope duro de tamaño para audio entrante (límite de audio de WhatsApp Cloud
+ * API). Deliberadamente distinto al de imágenes (D8, PLAN-ACCION-OWNER-AUDIO.md).
+ */
+export const MAX_INBOUND_AUDIO_BYTES = 16 * 1024 * 1024; // 16 MB
+
+/**
+ * MIME base (sin parámetros `; codecs=...`) que acepta el pipeline de audio
+ * del dueño. WhatsApp envía voice notes típicamente como
+ * `audio/ogg; codecs=opus`.
+ */
+export const ALLOWED_INBOUND_AUDIO_MIMES = [
+  'audio/aac',
+  'audio/mp4',
+  'audio/mpeg',
+  'audio/amr',
+  'audio/ogg',
+] as const;
+
+function extractBaseMime(mimeType: string | undefined | null): string {
+  return (mimeType ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
+}
+
+/**
+ * Descarga un audio entrante de WhatsApp (D8: función separada de
+ * `downloadWhatsAppMedia`, no reutiliza `detectImageMime` ni el allowlist de
+ * imágenes). A diferencia de la imagen, el MIME se valida contra el
+ * `mime_type` declarado por Meta en la metadata — no hay magic-byte sniffing
+ * de contenedores de audio en este repo.
+ */
+export const downloadWhatsAppAudio = async (
+  mediaId: string
+): Promise<WhatsAppMediaFile> => {
+  const token = requireAccessToken();
+
+  const metadata = await fetchMediaMetadata(mediaId, token);
+
+  const baseMime = extractBaseMime(metadata.mime_type);
+  if (!(ALLOWED_INBOUND_AUDIO_MIMES as readonly string[]).includes(baseMime)) {
+    throw new WhatsAppMediaError(
+      'MEDIA_UNSUPPORTED_TYPE',
+      `Tipo de audio no permitido: ${metadata.mime_type ?? 'desconocido'}`
+    );
+  }
+
+  if (
+    typeof metadata.file_size === 'number' &&
+    metadata.file_size > MAX_INBOUND_AUDIO_BYTES
+  ) {
+    throw new WhatsAppMediaError(
+      'MEDIA_TOO_LARGE',
+      `El audio supera el tamaño máximo de ${MAX_INBOUND_AUDIO_BYTES} bytes (declarado: ${metadata.file_size})`
+    );
+  }
+
+  const buffer = await fetchMediaBytes(metadata.url, token);
+
+  if (buffer.length > MAX_INBOUND_AUDIO_BYTES) {
+    throw new WhatsAppMediaError(
+      'MEDIA_TOO_LARGE',
+      `El audio descargado supera el tamaño máximo de ${MAX_INBOUND_AUDIO_BYTES} bytes`
+    );
+  }
+
+  return {
+    buffer,
+    mimeType: baseMime,
+    sha256: metadata.sha256,
+    sizeBytes: buffer.length,
+  };
+};

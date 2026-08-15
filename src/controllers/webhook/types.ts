@@ -20,6 +20,13 @@ export interface WhatsAppWebhookPayload {
             button_reply?: { id: string; title?: string };
             list_reply?: { id: string; title?: string };
           };
+          /** Voice note o audio adjunto (solo dueño, ver PLAN-ACCION-OWNER-AUDIO.md). */
+          audio?: {
+            id: string;
+            mime_type?: string;
+            voice?: boolean;
+            sha256?: string;
+          };
         }>;
       };
     }>;

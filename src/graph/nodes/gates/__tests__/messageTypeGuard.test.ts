@@ -79,4 +79,32 @@ describe('messageTypeGuardNode — excepción de imagen (D1)', () => {
       expect(mockedFindOrderAwaitingTransferProof).not.toHaveBeenCalled();
     }
   );
+
+  it('audio de cliente (no dueño) sigue bloqueado con el aviso genérico', async () => {
+    const result = await messageTypeGuardNode(
+      baseState({
+        isOwnerAssistant: false,
+        webhookContext: { message: { type: 'audio' } } as never,
+      })
+    );
+
+    expect(result.earlyExit).toBe('unsupported_message_type');
+    expect(result.handlerResult?.isInteractive).toBe(true);
+  });
+
+  it('audio del dueño con ownerAudioBlockedMessage responde el texto puntual (no el aviso genérico)', async () => {
+    const result = await messageTypeGuardNode(
+      baseState({
+        isOwnerAssistant: true,
+        ownerAudioBlockedMessage: 'No pude transcribir tu audio.',
+        webhookContext: { message: { type: 'audio' } } as never,
+      })
+    );
+
+    expect(result.earlyExit).toBe('unsupported_message_type');
+    expect(result.handlerResult).toEqual({
+      content: 'No pude transcribir tu audio.',
+      isInteractive: false,
+    });
+  });
 });
