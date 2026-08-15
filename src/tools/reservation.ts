@@ -147,6 +147,7 @@ export const saveReservationEnvironmentTool = new DynamicStructuredTool<
   name: 'save_reservation_environment',
   description:
     'Persiste la preferencia de ambiente de la reserva. ' +
+    'Pasá el id del catálogo del [ESTADO] / get_available_environments cuando el cliente nombre un ambiente en prosa. ' +
     'Pasá null cuando el cliente diga que no tiene preferencia o que le da lo mismo.',
   schema: saveReservationEnvironmentSchema,
   func: async ({ environmentId }: SaveReservationEnvironmentInput, _runManager, config?: RunnableConfig) => {
@@ -471,7 +472,8 @@ type GetAvailableEnvironmentsInput = z.infer<typeof getAvailableEnvironmentsSche
 
 /**
  * Señal: el nodo adjunta la lista de ambientes del negocio.
- * El agente NO los menciona en texto.
+ * También devuelve el catálogo id↔nombre para que el agente pueda
+ * mapear prosa ("salón principal") a `save_reservation_environment`.
  */
 export const getAvailableEnvironmentsTool = new DynamicStructuredTool<
   typeof getAvailableEnvironmentsSchema,
@@ -480,11 +482,16 @@ export const getAvailableEnvironmentsTool = new DynamicStructuredTool<
   name: 'get_available_environments',
   description:
     'Muestra al cliente los ambientes disponibles del restaurante para que elija. ' +
-    'NUNCA listes los ambientes en texto: siempre llamá esta tool.',
+    'NUNCA listes los ambientes en texto: siempre llamá esta tool. ' +
+    'Devuelve el catálogo con id para usar en save_reservation_environment si el cliente responde en prosa.',
   schema: getAvailableEnvironmentsSchema,
   func: async (_input: GetAvailableEnvironmentsInput, _runManager, config?: RunnableConfig) => {
-    getReactContext(config); // validar contexto
-    return toJson({ signal: 'present_environments' });
+    const { businessId } = getReactContext(config);
+    const environments = await findActiveEnvironmentsByBusinessId(businessId);
+    return toJson({
+      signal: 'present_environments',
+      environments: environments.map((e) => ({ id: e.id, name: e.name })),
+    });
   },
 });
 

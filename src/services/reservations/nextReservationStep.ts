@@ -57,9 +57,9 @@ export const expectedActionForReservationStep = (step: ReservationStep): string 
     case 'party_size':
       return 'pedir cantidad de personas; save_reservation_party_size cuando la indique';
     case 'environment':
-      return 'get_available_environments() para mostrar ambientes';
+      return 'aceptar ambiente en prosa o lista; save_reservation_environment(id|null) / tipable select_environment';
     case 'confirm':
-      return 'present_confirmation() (o resolve_reservation_confirmation si responde en texto)';
+      return 'present_confirmation() (tipable confirm_reservation o resolve_reservation_confirmation en texto)';
     case 'done':
       return 'ninguna';
   }

@@ -7,6 +7,8 @@
  * Responsabilidades del nodo (no del agente):
  *  - Activar `reservation_agent_active` en el primer turno.
  *  - Persistir slot/ambiente en `reservation_draft` cuando llegan payloads de botón.
+ *  - Tipables fulfilled (§3.11): ambiente y confirmación en prosa → mismo efecto
+ *    que el botón, ANTES del ReAct (`extractPendingTurnResponse`).
  *  - Ejecutar la confirmación determinística (createReservationWithTables + QR).
  *  - Manejar RESERVATION_CANCEL y RESERVATION_RESET.
  *  - Adjuntar listas/botones WhatsApp cuando el agente devuelve señales.
@@ -52,12 +54,18 @@ import { withOrphanPayloadAsText } from '../session/orphanPayload';
 import { findOrCreateConversationState } from '../../../repositories';
 import {
   runReservationAgent,
+  extractConfirmReservationPending,
+  extractSelectEnvironmentPending,
+  isValidEnvironmentSelection,
   type ReservationAgentContext,
 } from '../../../agents/reservationAgent';
 import { runHybridReactAgent } from '../../../agents/reactAgent';
 import { detectIntentWithConfidence } from '../../../services/ai/detection.service';
 import { isHybridAgentMode } from '../../../config/env';
-import { normalizeMetadata } from '../../../services/productQuery/utils';
+import {
+  formatBotUserMessage,
+  normalizeMetadata,
+} from '../../../services/productQuery/utils';
 import {
   getReservationCompletionLedger,
   reviveReservationCompletionIfAbandoned,
@@ -403,10 +411,117 @@ export const reservationAgentNode = async (
 
   // ── Obtener ambientes disponibles ─────────────────────────────────────────
   const environments = await findActiveEnvironmentsByBusinessId(business.id);
+  const envCatalog = environments.map((e) => ({ id: e.id, name: e.name }));
   const reservationCtx: ReservationAgentContext = {
     hasEnvironments: environments.length > 0,
-    environmentNames: environments.map((e) => ({ id: e.id, name: e.name })),
+    environmentNames: envCatalog,
   };
+
+  // ── Tipables fulfilled en el nodo (§3.11) — ANTES del ReAct ───────────────
+  // Mismo borde que el botón: extractPendingTurnResponse → efecto, sin esperar
+  // a que el modelo llame resolve_* / save_reservation_environment.
+  const tipableText = ctx.message?.text?.body?.trim() ?? '';
+  const tipableMessageType = ctx.message?.type;
+  if (tipableText && !payloadId && tipableMessageType !== 'location') {
+    const tipableDraft = await readReservationDraft(conversationId);
+    const tipableStep = nextReservationStep(
+      {
+        date: tipableDraft.date,
+        slotId: tipableDraft.slotId,
+        partySize: tipableDraft.partySize,
+        environmentId: tipableDraft.environmentId,
+      },
+      { hasEnvironments: environments.length > 0 }
+    );
+
+    if (tipableStep === 'environment' && environments.length > 0) {
+      const extraction = await extractSelectEnvironmentPending(tipableText, envCatalog);
+      console.log(
+        JSON.stringify({
+          event: '[reservation-agent] select_environment_tipable_extraction',
+          status: extraction.status,
+          confidence: extraction.confidence,
+          source: extraction.source,
+          conversationId,
+        })
+      );
+      if (
+        extraction.status === 'fulfilled' &&
+        extraction.value &&
+        isValidEnvironmentSelection(extraction.value.environmentId, envCatalog)
+      ) {
+        await patchReservationDraft(conversationId, {
+          environmentId: extraction.value.environmentId,
+        });
+        const freshDraft = await readReservationDraft(conversationId);
+        if (
+          freshDraft.date &&
+          freshDraft.time &&
+          freshDraft.endTime &&
+          freshDraft.partySize != null
+        ) {
+          const environmentName = await resolveEnvironmentName(
+            freshDraft.environmentId,
+            business.id
+          );
+          const envLabel =
+            extraction.value.environmentId === null
+              ? 'sin preferencia'
+              : environmentName ?? 'ambiente elegido';
+          const ack = formatBotUserMessage(
+            'Ambiente',
+            '🏡',
+            `Listo, anoté *${envLabel}*.`
+          );
+          const confirmationMsg = buildConfirmationButtonsMessage(
+            {
+              date: freshDraft.date,
+              time: freshDraft.time,
+              endTime: freshDraft.endTime,
+              partySize: freshDraft.partySize,
+              environmentName,
+              customerName: customerName ?? undefined,
+            },
+            ack
+          );
+          return {
+            handlerResult: {
+              content: confirmationMsg,
+              isInteractive: true,
+              skipBodyHumanization: true,
+            },
+            dataCollectionDelegated: true,
+          };
+        }
+        // Draft sin time/endTime: seguir al ReAct sin re-extraer el tipable.
+        reservationCtx.skipPendingExtraction = true;
+      }
+    } else if (tipableStep === 'confirm') {
+      const extraction = await extractConfirmReservationPending(tipableText);
+      console.log(
+        JSON.stringify({
+          event: '[reservation-agent] confirm_tipable_extraction',
+          status: extraction.status,
+          confidence: extraction.confidence,
+          source: extraction.source,
+          conversationId,
+        })
+      );
+      if (extraction.status === 'fulfilled' && extraction.value) {
+        const freshDraft = await readReservationDraft(conversationId);
+        const handlerResult = extraction.value.confirmed
+          ? await executeReservationConfirmation({
+              conversationId,
+              businessId: business.id,
+              customerId,
+              customerName,
+              draft: freshDraft,
+            })
+          : await executeReservationCancellation(conversationId);
+        return { handlerResult, dataCollectionDelegated: true };
+      }
+    }
+  }
 
   // Payload interactivo huérfano (H-09): con `reservation_agent_active` este
   // nodo captura CUALQUIER interactivo, no solo `RESERVATION_*` — un botón/lista

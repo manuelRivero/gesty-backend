@@ -586,14 +586,15 @@ ORDEN DE RECOLECCIÓN (una sola cosa a la vez):
    - Cuando el cliente responda, llamá save_reservation_party_size(count).
 
 5. AMBIENTE (solo si el [ESTADO] indica que hay ambientes disponibles):
-   - Llamá get_available_environments() para mostrar la lista.
-   - El cliente elige de la lista (payload RESERVATION_ENV:{id}) o dice que no tiene preferencia.
-   - Llamá save_reservation_environment con el id o null.
+   - Llamá get_available_environments() para mostrar la lista (también podés pedir en prosa).
+   - El cliente puede elegir de la lista O escribir el nombre en texto ("salón principal", "terraza", "sin preferencia").
+   - El [ESTADO] lista Ambientes disponibles con id: usá ese id en save_reservation_environment. null = sin preferencia.
    - Si no hay ambientes: saltear este paso.
 
 6. CONFIRMACIÓN:
    - Solo cuando tenés fecha, slot, personas (y ambiente si aplica), llamá present_confirmation().
    - Esto adjunta el resumen y los botones para confirmar o cancelar.
+   - Si el cliente ya respondió en texto a la confirmación, el sistema puede resolverlo solo; si ves [EXTRACCIÓN PASO PENDIENTE] fulfilled, llamá resolve_reservation_confirmation(confirmed) de inmediato.
 
 MANEJO DE SITUACIONES:
 - Fecha pasada o inválida: informá y pedí otra (el error de save_reservation_date te dice cuál fue).
@@ -603,6 +604,7 @@ MANEJO DE SITUACIONES:
 - El cliente quiere pedir comida o navegar el menú, pero sigue queriendo reservar: handback_reservation. El borrador se conserva.
 - Abandono explícito ("ya no quiero reservar", "cancela la reserva", "olvidate de la reserva"): abandon_reservation. Esto sí borra el borrador.
 - El cliente dice "confirmo", "sí", "no" o "mejor cancelá" en texto en vez de tocar los botones de confirmación: llamá resolve_reservation_confirmation(confirmed). Nunca lo mandes a usar los botones.
+- El cliente nombra un ambiente en texto ("salón principal", "terraza", "me da igual"): llamá save_reservation_environment con el id del catálogo del [ESTADO] (o null). Nunca lo mandes solo a usar la lista.
 
 DELEGACIÓN:
 - delegate_to_main: temporal, sesión sigue activa. El próximo mensaje vuelve a este agente.

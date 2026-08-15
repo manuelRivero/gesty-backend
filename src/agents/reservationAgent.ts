@@ -36,7 +36,83 @@ import {
   formatPendingExtractionBlock,
 } from '../services/ai/extractPendingTurnResponse';
 
-const ConfirmReservationPendingSchema = z.object({ confirmed: z.boolean() });
+// ---------------------------------------------------------------------------
+// Pendings tipables (§3.11) — extractores compartidos por nodo (short-circuit)
+// y ledger del agente (reprompt / delegate).
+// ---------------------------------------------------------------------------
+
+export const ConfirmReservationPendingSchema = z.object({ confirmed: z.boolean() });
+export type ConfirmReservationPendingValue = z.infer<typeof ConfirmReservationPendingSchema>;
+
+export const CONFIRM_RESERVATION_QUESTION = '¿Confirmás la reserva?';
+export const CONFIRM_RESERVATION_VALUE_HINTS = `{
+  "confirmed": true | false
+}
+- true: sí, dale, confirmo, ok, adelante, listo, procedé
+- false: no, cancelá, mejor no, esperá, todavía no, pará`;
+export const CONFIRM_RESERVATION_ACTION_DESCRIPTION =
+  'El usuario debe confirmar o cancelar la reserva antes de que se cree en la base de datos.';
+
+/** Clasificador tipable de confirmación (nodo + ledger). */
+export async function extractConfirmReservationPending(userMessage: string) {
+  return extractPendingTurnResponse({
+    userMessage,
+    pendingAction: 'confirm_reservation',
+    botQuestion: CONFIRM_RESERVATION_QUESTION,
+    schema: ConfirmReservationPendingSchema,
+    valueHints: CONFIRM_RESERVATION_VALUE_HINTS,
+    actionDescription: CONFIRM_RESERVATION_ACTION_DESCRIPTION,
+  });
+}
+
+export const SelectEnvironmentPendingSchema = z.object({
+  /** UUID del ambiente, o null = sin preferencia. */
+  environmentId: z.string().nullable(),
+});
+export type SelectEnvironmentPendingValue = z.infer<typeof SelectEnvironmentPendingSchema>;
+
+export const SELECT_ENVIRONMENT_QUESTION = '¿En qué ambiente preferís reservar?';
+
+export function buildSelectEnvironmentValueHints(
+  environments: Array<{ id: string; name: string }>
+): { valueHints: string; actionDescription: string } {
+  const lines = environments.map((e) => `- "${e.id}": ${e.name}`);
+  return {
+    valueHints: `{
+  "environmentId": <uuid del catálogo> | null
+}
+${lines.join('\n')}
+- null: sin preferencia, cualquiera, me da igual, lo que sea, no importa
+Usá el uuid exacto del catálogo cuando el usuario nombre un ambiente (ej. "salón principal").`,
+    actionDescription:
+      'El usuario debe elegir un ambiente del catálogo del local, o indicar que no tiene preferencia (environmentId null).',
+  };
+}
+
+/** Clasificador tipable de ambiente (nodo + ledger). Catálogo acotado al negocio. */
+export async function extractSelectEnvironmentPending(
+  userMessage: string,
+  environments: Array<{ id: string; name: string }>
+) {
+  const { valueHints, actionDescription } = buildSelectEnvironmentValueHints(environments);
+  return extractPendingTurnResponse({
+    userMessage,
+    pendingAction: 'select_environment',
+    botQuestion: SELECT_ENVIRONMENT_QUESTION,
+    schema: SelectEnvironmentPendingSchema,
+    valueHints,
+    actionDescription,
+  });
+}
+
+/** True si el valor fulfilled apunta a un ambiente del catálogo o a "sin preferencia". */
+export function isValidEnvironmentSelection(
+  environmentId: string | null,
+  environments: Array<{ id: string; name: string }>
+): boolean {
+  if (environmentId === null) return true;
+  return environments.some((e) => e.id === environmentId);
+}
 
 // ---------------------------------------------------------------------------
 // Cache de agentes por personalidad (mismo patrón que checkoutAgent.ts)
@@ -71,6 +147,11 @@ export interface ReservationAgentContext {
   /** Hay ambientes activos configurados en el negocio (determina si se muestra paso de ambiente). */
   hasEnvironments: boolean;
   environmentNames: Array<{ id: string; name: string }>;
+  /**
+   * Tras un tipable de ambiente fulfilled en el mismo turno: no re-interpretar
+   * el mensaje del usuario como confirm_reservation (el texto era el salón).
+   */
+  skipPendingExtraction?: boolean;
 }
 
 const DAY_NAMES_ES = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
@@ -141,45 +222,71 @@ const buildReservationContextMessage = async (
     `- Acción esperada: ${expectedActionForReservationStep(step)}`,
   ];
 
-  // Confirmación en texto libre (D3/P1.2): cuando el paso es `confirm` y el
-  // cliente respondió en prosa a la confirmación, se inyecta la extracción
-  // determinística/LLM — mismo mecanismo que checkout (extractPendingTurnResponse).
+  // Catálogo id↔nombre: sin esto el ReAct no puede mapear "salón principal"
+  // a un UUID para save_reservation_environment (la señal de UI no lo devuelve).
+  if (reservationCtx.hasEnvironments && reservationCtx.environmentNames.length > 0) {
+    lines.push(
+      `- Ambientes disponibles: ${reservationCtx.environmentNames
+        .map((e) => `${e.name} (id: ${e.id})`)
+        .join('; ')}`
+    );
+  }
+
+  // Tipables (confirm / ambiente): el nodo ya short-circuitea fulfilled (§3.11).
+  // Acá solo inyectamos el bloque para reprompt/delegate cuando el ReAct corre.
   const userText = userMsg.trim();
   const hasPayload = Boolean(ctx.payloadId?.trim());
   let extractionBlock = '';
-  if (step === 'confirm' && userText && !hasPayload) {
+  if (userText && !hasPayload && !reservationCtx.skipPendingExtraction) {
     try {
-      const extraction = await extractPendingTurnResponse({
-        userMessage: userText,
-        pendingAction: 'confirm_reservation',
-        botQuestion: '¿Confirmás la reserva?',
-        schema: ConfirmReservationPendingSchema,
-        valueHints: `{
-  "confirmed": true | false
-}
-- true: sí, dale, confirmo, ok, adelante, listo, procedé
-- false: no, cancelá, mejor no, esperá, todavía no, pará`,
-        actionDescription:
-          'El usuario debe confirmar o cancelar la reserva antes de que se cree en la base de datos.',
-      });
-      console.log(
-        JSON.stringify({
-          event: '[reservation-pending] extraction',
-          action: 'confirm_reservation',
+      if (step === 'confirm') {
+        const extraction = await extractConfirmReservationPending(userText);
+        console.log(
+          JSON.stringify({
+            event: '[reservation-pending] extraction',
+            action: 'confirm_reservation',
+            status: extraction.status,
+            confidence: extraction.confidence,
+            source: extraction.source,
+            conversationId,
+          })
+        );
+        extractionBlock = formatPendingExtractionBlock({
+          pendingAction: 'confirm_reservation',
+          botQuestion: CONFIRM_RESERVATION_QUESTION,
           status: extraction.status,
           confidence: extraction.confidence,
-          source: extraction.source,
-          conversationId,
-        })
-      );
-      extractionBlock = formatPendingExtractionBlock({
-        pendingAction: 'confirm_reservation',
-        botQuestion: '¿Confirmás la reserva?',
-        status: extraction.status,
-        confidence: extraction.confidence,
-        value: extraction.value,
-        reason: extraction.reason,
-      });
+          value: extraction.value,
+          reason: extraction.reason,
+        });
+      } else if (
+        step === 'environment' &&
+        reservationCtx.hasEnvironments &&
+        reservationCtx.environmentNames.length > 0
+      ) {
+        const extraction = await extractSelectEnvironmentPending(
+          userText,
+          reservationCtx.environmentNames
+        );
+        console.log(
+          JSON.stringify({
+            event: '[reservation-pending] extraction',
+            action: 'select_environment',
+            status: extraction.status,
+            confidence: extraction.confidence,
+            source: extraction.source,
+            conversationId,
+          })
+        );
+        extractionBlock = formatPendingExtractionBlock({
+          pendingAction: 'select_environment',
+          botQuestion: SELECT_ENVIRONMENT_QUESTION,
+          status: extraction.status,
+          confidence: extraction.confidence,
+          value: extraction.value,
+          reason: extraction.reason,
+        });
+      }
     } catch (err) {
       console.error('[reservation-agent] error en extractPendingTurnResponse:', err);
     }
