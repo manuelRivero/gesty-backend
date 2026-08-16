@@ -14,6 +14,13 @@
  *  - Adjuntar botones WhatsApp cuando el agente devuelve señal `present_address_confirmation`.
  *  - Llamar runHybridReactAgent inline para señal `delegate_to_main` sin limpiar sesión.
  *  - Limpiar `onboarding_agent_active` cuando la dirección queda guardada.
+ *
+ * El nodo NO interpreta el texto libre: salir del onboarding porque el cliente
+ * quiere otra cosa (menú, reserva, consulta, omitir la dirección) es
+ * `finish_onboarding(not_needed)` del agente. No reintroducir un clasificador
+ * de intents pre-ReAct acá: colapsa la distinción entre salida temporal
+ * (`delegate_to_main`) y permanente, y los refusals de un cierre espurio
+ * impiden que Ownership vuelva a abrir el onboarding.
  */
 
 import {
@@ -32,7 +39,6 @@ import {
   runOnboardingAgent,
 } from '../../../agents/onboardingAgent';
 import { runHybridReactAgent } from '../../../agents/reactAgent';
-import { detectIntentWithConfidence } from '../../../services/ai/detection.service';
 import { findOrCreateConversationState } from '../../../repositories';
 import {
   formatBotUserMessage,
@@ -40,8 +46,6 @@ import {
 } from '../../../services/productQuery/utils';
 import { nextOnboardingStep } from '../../../services/onboarding/nextOnboardingStep';
 import { loadLiveOnboardingFacts } from '../../../services/onboarding/loadLiveOnboardingFacts';
-import { incrementRefusalCount } from '../../../services/intent/intentRefusal.service';
-import { ConversationIntent } from '../../../types/conversationIntent';
 import type { HandlerResult } from '../../../controllers/webhook/types';
 import type { EnrichedContext } from '../../../controllers/webhook/types';
 import type { AgentState, AgentStateUpdate } from '../../state';
@@ -63,24 +67,6 @@ const clearOnboardingSession = async (conversationId: string): Promise<void> => 
   ]);
 };
 
-/** Intents que en paso `capture` liberan onboarding (dirección omitible). */
-const SKIP_ADDRESS_INTENTS = new Set<string>([
-  ConversationIntent.RESERVATION,
-  ConversationIntent.VIEW_RESERVATION,
-  ConversationIntent.VIEW_MENU,
-  ConversationIntent.BUSINESS_HOURS,
-  ConversationIntent.ASK_QUESTION,
-]);
-
-/**
- * Misma liberación que finish_onboarding(not_needed): refusal + clear sesión.
- */
-const liberateOnboardingNotNeeded = async (conversationId: string): Promise<void> => {
-  await incrementRefusalCount(conversationId, 'OBTENER_DIRECCION');
-  await incrementRefusalCount(conversationId, 'OBTENER_NOMBRE');
-  await clearOnboardingSession(conversationId);
-};
-
 /**
  * Tras liberar onboarding: híbrido inline, sin clasificar intent.
  * Abrir reserva en prosa = Fase B (`start_reservation_session`).
@@ -88,7 +74,6 @@ const liberateOnboardingNotNeeded = async (conversationId: string): Promise<void
 const handoffAfterOnboardingLiberated = async (params: {
   enrichedBase: EnrichedContext;
   conversationId: string;
-  detectionContext: AgentState['detectionContext'];
   userMessage: string;
   fallbackText: string;
 }): Promise<HandlerResult> => {
@@ -417,51 +402,6 @@ export const onboardingAgentNode = async (
     };
   }
 
-  // ── Paso capture: menú / reserva / consulta → liberar sin esperar al ReAct ─
-  // Clasificador de intent (no regex). Misma liberación que finish(not_needed).
-  if (
-    customerId &&
-    !payloadId &&
-    ctx.message?.type !== 'location' &&
-    state.detectionContext
-  ) {
-    const tipableText = ctx.message?.text?.body?.trim() ?? '';
-    if (tipableText) {
-      const factsForSkip = await loadLiveOnboardingFacts({
-        conversationId,
-        customerId,
-      });
-      if (nextOnboardingStep(factsForSkip) === 'capture') {
-        const detection = await detectIntentWithConfidence(
-          tipableText,
-          state.detectionContext
-        );
-        if (SKIP_ADDRESS_INTENTS.has(detection.intent)) {
-          console.log(
-            JSON.stringify({
-              event: '[onboarding-agent] skip_address_by_intent',
-              intent: detection.intent,
-              conversationId,
-            })
-          );
-          await liberateOnboardingNotNeeded(conversationId);
-          const handoff = await handoffAfterOnboardingLiberated({
-            enrichedBase,
-            conversationId,
-            detectionContext: state.detectionContext,
-            userMessage: tipableText,
-            fallbackText: formatBotUserMessage(
-              'Listo',
-              '✅',
-              'Dale, seguimos sin la dirección por ahora. ¿En qué te ayudo?'
-            ),
-          });
-          return { handlerResult: handoff, dataCollectionDelegated: true };
-        }
-      }
-    }
-  }
-
   // ── Tipable confirm (sí/no) — mismo borde que el botón, sin esperar al ReAct ─
   if (customerId && !payloadId) {
     const tipableText = ctx.message?.text?.body?.trim() ?? '';
@@ -664,7 +604,6 @@ export const onboardingAgentNode = async (
     const handoff = await handoffAfterOnboardingLiberated({
       enrichedBase,
       conversationId,
-      detectionContext: state.detectionContext,
       userMessage,
       fallbackText: text,
     });

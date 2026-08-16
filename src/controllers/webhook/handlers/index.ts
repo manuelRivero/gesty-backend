@@ -19,22 +19,12 @@ import { ViewCategoriesHandler } from './viewCategoriesHandler';
 import { ConfirmRemoveActionHandler } from './confirmRemoveActionHandler';
 import { CancelRemoveActionHandler } from './cancelRemoveActionHandler';
 
-// Handlers de intención (NLP)
-import { OrderFoodHandler } from './orderFoodHandler';
-import { RemoveItemHandler } from './removeItemHandler';
-import { ProductQueryHandler } from './productQueryHandler';
-import { RecommendationRequestHandler } from './recommendationRequestHandler';
 import { FeaturedPageHandler } from './featuredPageHandler';
-import { ProductAttributeQuestionHandler } from './productAttributeQuestionHandler';
-import { SmallTalkHandler } from './smallTalkHandler';
 import { EditAddressHandler } from './editAddressHandler';
 import { BusinessHoursHandler } from './businessHoursHandler';
 import { ReservationHandler } from './reservationHandler';
 import { ViewReservationHandler } from './viewReservationHandler';
 import { ViewQrHandler } from './viewQrHandler';
-
-import { ModifyQuantityHandler } from './modifyQuantityHandler';
-import { ProvideNameHandler } from './provideNameHandler';
 import { SupportHandler } from './supportHandler';
 
 // Fallback
@@ -86,20 +76,12 @@ export const handlers = [
   new PayOnlineHandler(),
   new PayCashHandler(),
   new PayTransferHandler(),
-  // === INTENCIONES (NLP) ===
-  new OrderFoodHandler(),
-  new SmallTalkHandler(),
+  // === BOTONES de sesión / negocio (payloadId, no prosa) ===
   new EditAddressHandler(),
   new BusinessHoursHandler(),
   new ViewReservationHandler(),
   new ViewQrHandler(),
   new ReservationHandler(),
-  new RemoveItemHandler(),
-  new ProductQueryHandler(),
-  new RecommendationRequestHandler(),
-  new ProductAttributeQuestionHandler(),
-  new ModifyQuantityHandler(),
-  new ProvideNameHandler(),
   new SupportHandler(),
 
   // === FALLBACK (siempre último) ===

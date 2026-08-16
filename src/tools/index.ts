@@ -1573,7 +1573,7 @@ export const addCartItemTool = new DynamicStructuredTool<
 // pueda setear en el mismo schema (eso sería confiar en el llamador).
 //
 // `pendingAction`/`pendingItemId` es la MISMA clave que usa el flujo
-// determinístico de botones (`cart.service.ts`, `RemoveItemHandler`) para su
+// determinístico de botones (`cart.service.ts`) para su
 // propia confirmación por UI. Antes esta Tool llevaba su propio
 // `pending_item_removal` separado — dos fuentes de verdad para "¿ya se
 // preguntó por este ítem?" que no se enteraban una de la otra. Un cliente que

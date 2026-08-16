@@ -3,7 +3,7 @@
  * sin evidencia de confirmación previa, sin importar lo que el modelo diga.
  *
  * La evidencia (`pendingAction`/`pendingItemId`) es la MISMA clave que usa
- * el flujo determinístico de botones (`cart.service.ts`, `RemoveItemHandler`)
+ * el flujo determinístico de botones (`cart.service.ts`)
  * — así cualquiera de los dos caminos que preguntó primero sirve de evidencia
  * para el otro, sin duplicar el estado de "¿ya se preguntó por este ítem?".
  *
@@ -120,7 +120,7 @@ describe('remove_cart_item — Constraint de confirmación (ADR-0002)', () => {
   });
 
   it('elimina directo cuando el pending lo dejó el flujo determinístico de botones', async () => {
-    // Reproduce el bug real: RemoveItemHandler (cart.service.ts) ya mostró la
+    // Reproduce el bug real: el handler de botón (cart.service.ts) ya mostró la
     // confirmación por botones y dejó pendingAction/pendingItemId en metadata.
     // El cliente responde en texto libre ("sí") en vez de tocar el botón, el
     // híbrido llama esta Tool — antes de la unificación, la Tool no sabía nada

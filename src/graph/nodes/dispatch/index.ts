@@ -4,7 +4,8 @@
  * Interactive: payloads de botón → mapper + handlers (sin ReAct).
  * NLP (texto libre, sin Ownership de sesión): un solo camino ReAct híbrido.
  * Sin clasificador de intent. Fallback a `dispatchIntent` solo si el agente
- * explota / 429.
+ * explota (el stub de detection es UNKNOWN → FallbackHandler). En 429 se
+ * responde un mensaje corto, sin despachar.
  */
 
 import { dispatchIntent, dispatchInteractive } from '../../../controllers/webhook/dispachers';
