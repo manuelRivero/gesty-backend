@@ -4,6 +4,8 @@
  * Ownership de sesión (checkout, reserva, onboarding, dueño) y payloads de
  * botón no llegan acá. Sin clasificador de intent ni fork de producto.
  * Checkout en prosa: tool `start_checkout_session` → señal `delegate_checkout`.
+ * Cambio de dirección en prosa: `start_address_edit_session` → onboarding (mismo
+ * efecto que el botón EDIT_ADDRESS).
  *
  * CTA de producto: el agente llama `present_product_cta` si quiere botones/lista.
  * El runtime valida IDs y arma el interactive.
@@ -38,6 +40,7 @@ import {
 import { patchConversationMetadata } from '../repositories';
 import { startCheckoutSessionTool } from '../tools/checkout';
 import { startReservationSessionTool } from '../tools/reservation';
+import { startAddressEditSessionTool } from '../tools/onboarding';
 import type { CtaPlan, CtaPlannerRaw } from './types';
 import { persistLastOffer } from '../services/lastOffer.service';
 import { buildCartSummaryMessage } from '../services/cart.service';
@@ -80,6 +83,7 @@ const buildAgent = (personalityId: string, personalityPrompt: string) => {
   if (!agent) {
     const tools = [
       ...allReactTools,
+      startAddressEditSessionTool,
       ...(checkoutDelegation ? [startCheckoutSessionTool] : []),
       ...(reservationDelegation ? [startReservationSessionTool] : []),
     ];
@@ -144,6 +148,9 @@ export interface HybridAgentSignals {
   /** Reserva en prosa (tool start_reservation_session): abre la sesión de reservas. */
   startReservationSession: boolean;
   startReservationReason: string | null;
+  /** Cambio de dirección en prosa (tool start_address_edit_session). */
+  startAddressEditSession: boolean;
+  startAddressEditReason: string | null;
   /** Escalado a humano en prosa (tool request_human_support); el efecto ya se aplicó. */
   requestHumanSupport: boolean;
   humanSupportMessage: string | null;
@@ -168,7 +175,8 @@ export interface HybridAgentSignals {
 export type HybridAgentRunResult =
   | { kind: 'response'; handlerResult: HandlerResult }
   | { kind: 'delegate_checkout'; reason: string | null }
-  | { kind: 'delegate_reservation'; reason: string | null };
+  | { kind: 'delegate_reservation'; reason: string | null }
+  | { kind: 'delegate_address_edit'; reason: string | null };
 
 const PRIMARY_KINDS = new Set(['ADD_ITEM', 'SELECT_FROM_LIST', 'VIEW_MENU', 'VIEW_FEATURED']);
 
@@ -224,6 +232,8 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
     startCheckoutReason: null,
     startReservationSession: false,
     startReservationReason: null,
+    startAddressEditSession: false,
+    startAddressEditReason: null,
     requestHumanSupport: false,
     humanSupportMessage: null,
     presentCart: false,
@@ -264,6 +274,10 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
       if (data.signal === 'start_reservation_session') {
         signals.startReservationSession = true;
         signals.startReservationReason = typeof data.reason === 'string' ? data.reason : null;
+      }
+      if (data.signal === 'start_address_edit_session') {
+        signals.startAddressEditSession = true;
+        signals.startAddressEditReason = typeof data.reason === 'string' ? data.reason : null;
       }
       if (data.signal === 'request_human_support') {
         signals.requestHumanSupport = true;
@@ -600,6 +614,20 @@ export const runHybridReactAgent = async (
     return {
       kind: 'delegate_reservation',
       reason: signals.startReservationReason,
+    };
+  }
+
+  if (signals.startAddressEditSession) {
+    console.log(
+      JSON.stringify({
+        event: '[hybrid-agent] delegate_to_address_edit',
+        reason: signals.startAddressEditReason,
+        conversationId,
+      })
+    );
+    return {
+      kind: 'delegate_address_edit',
+      reason: signals.startAddressEditReason,
     };
   }
 

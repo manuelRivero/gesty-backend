@@ -239,6 +239,37 @@ export const finishOnboardingTool = new DynamicStructuredTool<
 });
 
 // ---------------------------------------------------------------------------
+// start_address_edit_session (híbrido → onboarding, espejo del botón EDIT_ADDRESS)
+// ---------------------------------------------------------------------------
+
+const startAddressEditSessionSchema = z.object({
+  reason: z
+    .string()
+    .describe(
+      'Motivo de la delegación en una oración. ' +
+        'Ej: "el cliente quiere cambiar la dirección de entrega".'
+    ),
+});
+type StartAddressEditSessionInput = z.infer<typeof startAddressEditSessionSchema>;
+
+export const startAddressEditSessionTool = new DynamicStructuredTool<
+  typeof startAddressEditSessionSchema,
+  StartAddressEditSessionInput
+>({
+  name: 'start_address_edit_session',
+  description:
+    'Delega al agente de onboarding cuando el cliente quiere CAMBIAR o ACTUALIZAR su dirección de entrega ' +
+    '("quiero cambiar mi dirección", "mi dirección cambió", "actualizá la dirección", "esa ya no es"). ' +
+    'NO pidas cuántas personas comen ni gestiones vos la dirección nueva: solo delegá. ' +
+    'El sistema pide la calle/número (o el pin) con el mismo flujo que el botón Editar dirección. ' +
+    'Si el cliente YA escribió la dirección nueva en este mensaje, igual delegá.',
+  schema: startAddressEditSessionSchema,
+  func: async ({ reason }: StartAddressEditSessionInput) => {
+    return toJson({ signal: 'start_address_edit_session', reason });
+  },
+});
+
+// ---------------------------------------------------------------------------
 // Export
 // ---------------------------------------------------------------------------
 

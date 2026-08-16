@@ -43,6 +43,7 @@ import {
   resolveCheckoutAgentHandlerResult,
 } from '../checkout';
 import { ConversationIntent } from '../../../types/conversationIntent';
+import { EditAddressHandler } from '../../../controllers/webhook/handlers/editAddressHandler';
 import type {
   EnrichedContext,
   HandlerResult,
@@ -116,6 +117,19 @@ const resolveCheckoutHandoff = async (
  */
 type ReservationHandoff = () => Promise<HandlerResult | null>;
 
+const resolveAddressEditHandoff = async (
+  enrichedCtx: EnrichedContext
+): Promise<HandlerResult | null> => {
+  const result = await new EditAddressHandler().execute(enrichedCtx);
+  console.log(
+    JSON.stringify({
+      event: '[nlp] delegate_address_edit',
+      conversationId: enrichedCtx.conversation?.id,
+    })
+  );
+  return result;
+};
+
 const unwrapHybridRun = async (
   hybrid: HybridAgentRunResult | null,
   enrichedCtx: EnrichedContext,
@@ -143,6 +157,9 @@ const unwrapHybridRun = async (
       })
     );
     return null;
+  }
+  if (hybrid.kind === 'delegate_address_edit') {
+    return resolveAddressEditHandoff(enrichedCtx);
   }
   if (hybrid.kind === 'response') {
     return hybrid.handlerResult;
@@ -178,6 +195,7 @@ const dispatchOrHybrid = async (
         hybrid_kind: hybrid?.kind ?? null,
         checkout_delegated: hybrid?.kind === 'delegate_checkout',
         reservation_delegated: hybrid?.kind === 'delegate_reservation',
+        address_edit_delegated: hybrid?.kind === 'delegate_address_edit',
       })
     );
     const result = await unwrapHybridRun(

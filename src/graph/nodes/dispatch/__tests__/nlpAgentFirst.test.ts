@@ -22,6 +22,11 @@ vi.mock('../../../../repositories', () => ({
   findOrCreateConversationState: vi.fn(async () => ({ metadata: {} })),
 }));
 
+vi.mock('../../../../repositories/conversationState.repository', () => ({
+  patchConversationMetadata: vi.fn().mockResolvedValue(undefined),
+  omitConversationMetadataKeys: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock('../../../../repositories/reservation.repository', () => ({
   findActiveEnvironmentsByBusinessId: vi.fn().mockResolvedValue([]),
   fetchReservationSlotsForBusinessDate: vi.fn(),
@@ -50,6 +55,12 @@ vi.mock('../../reservation', () => ({
   reservationAgentNode: vi.fn(),
 }));
 
+vi.mock('../../../../services/address.service', () => ({
+  AddressService: class {
+    startEdit = vi.fn().mockResolvedValue('Perfecto, decime la calle y número nuevamente.');
+  },
+}));
+
 vi.mock('../../../../services/intentAmbiguityConfirmation.service', () => ({
   buildIntentAmbiguityInteractiveMessage: vi.fn(),
 }));
@@ -67,6 +78,7 @@ import {
 import { runHybridReactAgent } from '../../../../agents/reactAgent';
 import { dispatchIntent, dispatchInteractive } from '../../../../controllers/webhook/dispachers';
 import { patchConversationMetadata } from '../../../../repositories';
+import { patchConversationMetadata as patchConversationMetadataDirect } from '../../../../repositories/conversationState.repository';
 import {
   activateCheckoutSessionIfCartHasItems,
   resolveCheckoutAgentHandlerResult,
@@ -83,6 +95,7 @@ const nlpState = (message: string, metadata: Record<string, unknown> = {}): Agen
       to: '54911',
     },
     enrichedCtx: {
+      conversationId: 'conv-1',
       conversationState: { metadata },
       conversation: { id: 'conv-1' },
       business: { id: 'biz-1' },
@@ -209,6 +222,26 @@ describe('nlpSubgraphNode — agent-first', () => {
 
     expect(reservationAgentNode).not.toHaveBeenCalled();
     expect(dispatchIntent).toHaveBeenCalled();
+  });
+
+  it('cambiar dirección + señal start_address_edit_session abre onboarding (mismo efecto que EDIT_ADDRESS)', async () => {
+    vi.mocked(runHybridReactAgent).mockResolvedValue({
+      kind: 'delegate_address_edit',
+      reason: 'quiere cambiar la dirección',
+    } as never);
+
+    const update = await nlpSubgraphNode(
+      nlpState('Perfecto quiero cambiar mi dirección de entrega')
+    );
+
+    expect(detectIntentWithConfidence).not.toHaveBeenCalled();
+    expect(patchConversationMetadataDirect).toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({ onboarding_agent_active: true })
+    );
+    expect(dispatchIntent).not.toHaveBeenCalled();
+    expect(update.handlerResult?.content).toMatch(/calle y número/i);
+    expect(update.dataCollectionDelegated).toBe(true);
   });
 });
 
