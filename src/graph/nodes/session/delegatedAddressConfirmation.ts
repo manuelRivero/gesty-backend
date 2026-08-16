@@ -26,7 +26,6 @@ import {
 } from '../../../agents/onboardingAgent';
 import { delegateToMainWithDetection } from './delegateToMain';
 import { runHybridReactAgent } from '../../../agents/reactAgent';
-import { detectIntentWithConfidence } from '../../../services/ai/detection.service';
 import { findOrCreateConversationState } from '../../../repositories';
 import { getDraftCheckoutState } from '../../../tools/checkout';
 import { buildPaymentButtonsMessage } from '../checkout';
@@ -131,19 +130,17 @@ const buildCheckoutResumeResult = async (params: {
 const invokeHybridAfterAddressSaved = async (params: {
   enrichedBase: EnrichedContext;
   conversationId: string;
-  detectionContext: AgentState['detectionContext'];
   userMessage: string;
   fallbackText: string;
 }): Promise<HandlerResult> => {
-  const { enrichedBase, conversationId, detectionContext, userMessage, fallbackText } = params;
+  const { enrichedBase, conversationId, userMessage, fallbackText } = params;
   const fallback = textResponse(fallbackText) ?? { content: fallbackText, isInteractive: false };
-  if (!detectionContext || !userMessage.trim()) return fallback;
+  if (!userMessage.trim()) return fallback;
 
   try {
     const freshState = await findOrCreateConversationState(conversationId);
     const hybrid = await runHybridReactAgent({
       ...enrichedBase,
-      detection: await detectIntentWithConfidence(userMessage, detectionContext),
       conversationState: freshState,
     });
     return hybrid?.kind === 'response' ? hybrid.handlerResult : fallback;
@@ -211,7 +208,6 @@ export const delegatedAddressConfirmationNode = async (
     const finalResult = await invokeHybridAfterAddressSaved({
       enrichedBase,
       conversationId,
-      detectionContext: state.detectionContext,
       userMessage: ctx.message?.text?.body?.trim() ?? '',
       fallbackText: combinedLeading,
     });

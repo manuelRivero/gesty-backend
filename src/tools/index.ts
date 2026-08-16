@@ -102,6 +102,7 @@ import {
   ORDER_PAYMENT_STATUS_LABEL_ES,
 } from '../constants/orderWorkflow';
 import { hasVariations, matchVariation } from '../services/menu/menuItemVariations';
+import { SUPPORT_MESSAGE, handOverToHuman } from '../services/humanHandover.service';
 
 const toJson = (data: unknown): string => {
   try {
@@ -2681,6 +2682,61 @@ export const abandonPendingReservationTool = new DynamicStructuredTool<
   },
 });
 
+// ---------------------------------------------------------------------------
+// request_human_support (interrupt — escalado a humano desde el ReAct)
+// ---------------------------------------------------------------------------
+
+const requestHumanSupportSchema = z.object({
+  reason: z
+    .string()
+    .describe(
+      'Motivo del escalado en una oración. Ej: "el cliente pidió hablar con un asesor", ' +
+        '"el cliente quiere atención personalizada".'
+    ),
+});
+type RequestHumanSupportInput = z.infer<typeof requestHumanSupportSchema>;
+
+/**
+ * `escalationGateNode` sigue siendo el interrupt determinista que corre en todo
+ * turno (incluidas las sesiones donde el ReAct no llega). Esta tool cubre lo que
+ * ese gate deja pasar por diseño: pedidos de humano en prosa que no matchean sus
+ * patrones conservadores ("necesito soporte", "me pasan con un asesor?").
+ *
+ * Aplica el efecto acá (misma semántica que el gate y que el botón SUPPORT), no
+ * en el prompt: `is_human_handled` corta los turnos siguientes en
+ * `buildDetectionContextNode`.
+ */
+export const requestHumanSupportTool = new DynamicStructuredTool<
+  typeof requestHumanSupportSchema,
+  RequestHumanSupportInput
+>({
+  name: 'request_human_support',
+  description:
+    'Deriva la conversación a una persona del equipo cuando el cliente pide hablar con un humano, ' +
+    'un asesor, soporte o atención personalizada ("necesito hablar con alguien", "me comunican con un ' +
+    'asesor?", "quiero atención humana", "no quiero seguir con un bot"). ' +
+    'Tras llamarla el bot deja de responder hasta que un asesor retome: NO agregues más preguntas. ' +
+    'No la uses para consultas que podés resolver con tus otras tools (menú, precios, horarios, pedido).',
+  schema: requestHumanSupportSchema,
+  func: async (
+    { reason }: RequestHumanSupportInput,
+    _runManager,
+    config?: RunnableConfig
+  ) => {
+    const { conversationId, businessId, customerId, customerPhone } =
+      getReactContext(config);
+
+    await handOverToHuman({
+      conversationId,
+      businessId,
+      customer: { id: customerId, phone_number: customerPhone },
+      reason: `hybrid_tool:${reason}`,
+    });
+
+    return toJson({ signal: 'request_human_support', reason, message: SUPPORT_MESSAGE });
+  },
+});
+
 export const allReactTools = [
   searchProductsTool,
   getProductsDetailsByIdsTool,
@@ -2717,4 +2773,5 @@ export const allReactTools = [
   presentAddressConfirmationTool,
   checkDeliveryCoverageTool,
   getOrderStatusTool,
+  requestHumanSupportTool,
 ];

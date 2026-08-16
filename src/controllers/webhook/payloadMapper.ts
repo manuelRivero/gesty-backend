@@ -141,9 +141,6 @@ export const detectIntentFromPayload = (
   if (payloadId.startsWith('ONBOARDING_COMPLETE:')) {
     return buildInteractiveResult(ConversationIntent.ONBOARDING_COMPLETE, payloadId);
   }
-  if (payloadId.startsWith('ONBOARDING_START:')) {
-    return buildInteractiveResult(ConversationIntent.ONBOARDING_START, payloadId);
-  }
   if (payloadId.startsWith('ONBOARDING_CONFIRM_ADDRESS:')) {
     return buildInteractiveResult(ConversationIntent.ONBOARDING_CONFIRM_ADDRESS, payloadId);
   }

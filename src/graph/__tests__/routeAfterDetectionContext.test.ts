@@ -12,3 +12,17 @@ describe('routeAfterDetectionContext — owner_assistant', () => {
     );
   });
 });
+
+describe('routeAfterDetectionContext — Ownership vs prosa', () => {
+  it('texto libre (nlp) va al subgrafo NLP, no al Closer', () => {
+    expect(routeAfterDetectionContext(state('nlp'))).toBe(NODE.NLP);
+  });
+
+  it('sesión checkout no entra a nlp', () => {
+    expect(routeAfterDetectionContext(state('checkout'))).toBe(NODE.CHECKOUT_AGENT);
+  });
+
+  it('botón (interactive) va al mapper, no al ReAct', () => {
+    expect(routeAfterDetectionContext(state('interactive'))).toBe(NODE.INTERACTIVE);
+  });
+});

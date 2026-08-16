@@ -1,21 +1,12 @@
 /**
- * Hybrid ReAct agent (fase 2).
+ * Agente ReAct híbrido — único camino de prosa (agent-first).
  *
- * Sólo se invoca cuando `AGENT_MODE=hybrid` y el intent detectado por
- * `detectIntentWithConfidence` no está en `CLOSED_INTENTS` del dispatch
- * (flujos transaccionales / handover humano como `SUPPORT`, menú, carrito, etc.).
- * Los intents abiertos típicos son `ORDER_FOOD`, `PRODUCT_QUERY`,
- * `PRODUCT_ATTRIBUTE_QUESTION` o `UNKNOWN`.
- * `RECOMMENDATION_REQUEST` queda fuera a propósito (ver nota en `dispatch/index.ts`).
- *
- * El agente recibe el `EnrichedContext` (business + customer + conversation +
- * mensaje) en su HumanMessage, y un set de tools de **lectura** (`tools/index.ts`)
- * para inspeccionar menú, carrito y horarios. La respuesta final del agente
- * (último `AIMessage`) se traduce a un `HandlerResult` plano (texto), igual a
- * lo que produciría `FallbackHandler` en modo determinístico.
+ * Ownership de sesión (checkout, reserva, onboarding, dueño) y payloads de
+ * botón no llegan acá. Sin clasificador de intent ni fork de producto.
+ * Checkout en prosa: tool `start_checkout_session` → señal `delegate_checkout`.
  *
  * CTA de producto: el agente llama `present_product_cta` si quiere botones/lista.
- * El runtime valida IDs y arma el interactive (sin CTA Planner post-proceso).
+ * El runtime valida IDs y arma el interactive.
  */
 
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
@@ -35,6 +26,7 @@ import {
   isHybridCtaEnabled,
   isHybridCtaEnabledForBusiness,
   isCheckoutAgentEnabled,
+  isReservationAgentEnabled,
 } from '../config/env';
 import { resolveCta } from './ctaResolver';
 import {
@@ -45,6 +37,7 @@ import {
 } from '../whatsappBuilders/hybridCta';
 import { patchConversationMetadata } from '../repositories';
 import { startCheckoutSessionTool } from '../tools/checkout';
+import { startReservationSessionTool } from '../tools/reservation';
 import type { CtaPlan, CtaPlannerRaw } from './types';
 import { persistLastOffer } from '../services/lastOffer.service';
 import { buildCartSummaryMessage } from '../services/cart.service';
@@ -54,6 +47,7 @@ import { buildCategoryProductListMessage } from '../services/category.service';
 import { findOrCreateConversationState } from '../repositories';
 import { AddressService } from '../services/address.service';
 import { buildSmallTalkMenu } from '../services/smallTalk.service';
+import { SUPPORT_MESSAGE } from '../services/humanHandover.service';
 
 const markHybridResult = (result: HandlerResult): HandlerResult => ({
   ...result,
@@ -78,17 +72,23 @@ export type PresentProductCtaSignal = {
 
 const buildAgent = (personalityId: string, personalityPrompt: string) => {
   const checkoutDelegation = isCheckoutAgentEnabled();
-  const cacheKey = `${personalityId}:${checkoutDelegation ? 'checkout' : 'main'}`;
+  const reservationDelegation = isReservationAgentEnabled();
+  const cacheKey = `${personalityId}:${checkoutDelegation ? 'checkout' : 'main'}:${
+    reservationDelegation ? 'reservation' : 'noreservation'
+  }`;
   let agent = cachedAgents.get(cacheKey);
   if (!agent) {
-    const tools = checkoutDelegation
-      ? [...allReactTools, startCheckoutSessionTool]
-      : allReactTools;
+    const tools = [
+      ...allReactTools,
+      ...(checkoutDelegation ? [startCheckoutSessionTool] : []),
+      ...(reservationDelegation ? [startReservationSessionTool] : []),
+    ];
     agent = createReactAgent({
       llm: getReactReasonerLlm(),
       tools,
       prompt: buildHybridAgentSystemPrompt(personalityPrompt, {
         checkoutDelegationEnabled: checkoutDelegation,
+        reservationDelegationEnabled: reservationDelegation,
       }),
     });
     cachedAgents.set(cacheKey, agent);
@@ -141,6 +141,12 @@ const persistLastOfferFromCtaPlan = async (
 export interface HybridAgentSignals {
   startCheckoutSession: boolean;
   startCheckoutReason: string | null;
+  /** Reserva en prosa (tool start_reservation_session): abre la sesión de reservas. */
+  startReservationSession: boolean;
+  startReservationReason: string | null;
+  /** Escalado a humano en prosa (tool request_human_support); el efecto ya se aplicó. */
+  requestHumanSupport: boolean;
+  humanSupportMessage: string | null;
   presentCart: boolean;
   /** Cancela draft y/o orden creada (tool cancel_order). */
   cancelOrder: boolean;
@@ -161,7 +167,8 @@ export interface HybridAgentSignals {
 
 export type HybridAgentRunResult =
   | { kind: 'response'; handlerResult: HandlerResult }
-  | { kind: 'delegate_checkout'; reason: string | null };
+  | { kind: 'delegate_checkout'; reason: string | null }
+  | { kind: 'delegate_reservation'; reason: string | null };
 
 const PRIMARY_KINDS = new Set(['ADD_ITEM', 'SELECT_FROM_LIST', 'VIEW_MENU', 'VIEW_FEATURED']);
 
@@ -215,6 +222,10 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
   const signals: HybridAgentSignals = {
     startCheckoutSession: false,
     startCheckoutReason: null,
+    startReservationSession: false,
+    startReservationReason: null,
+    requestHumanSupport: false,
+    humanSupportMessage: null,
     presentCart: false,
     cancelOrder: false,
     cancelOrderTarget: null,
@@ -249,6 +260,17 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
       if (data.signal === 'start_checkout_session') {
         signals.startCheckoutSession = true;
         signals.startCheckoutReason = typeof data.reason === 'string' ? data.reason : null;
+      }
+      if (data.signal === 'start_reservation_session') {
+        signals.startReservationSession = true;
+        signals.startReservationReason = typeof data.reason === 'string' ? data.reason : null;
+      }
+      if (data.signal === 'request_human_support') {
+        signals.requestHumanSupport = true;
+        signals.humanSupportMessage =
+          typeof data.message === 'string' && data.message.trim().length > 0
+            ? data.message
+            : null;
       }
       if (data.signal === 'present_cart') {
         signals.presentCart = true;
@@ -535,6 +557,24 @@ export const runHybridReactAgent = async (
   const agentMessages = (out as { messages?: unknown[] }).messages ?? [];
   const signals = extractHybridSignals(agentMessages);
 
+  // Escalado a humano: la tool ya marcó `is_human_handled`. Cortamos acá para no
+  // dejar que el modelo siga conversando sobre un turno que ya no es suyo.
+  if (signals.requestHumanSupport) {
+    console.log(
+      JSON.stringify({
+        event: '[hybrid-agent] request_human_support',
+        conversationId,
+      })
+    );
+    return {
+      kind: 'response',
+      handlerResult: markHybridResult({
+        content: signals.humanSupportMessage ?? SUPPORT_MESSAGE,
+        isInteractive: false,
+      }),
+    };
+  }
+
   if (signals.startCheckoutSession) {
     console.log(
       JSON.stringify({
@@ -546,6 +586,20 @@ export const runHybridReactAgent = async (
     return {
       kind: 'delegate_checkout',
       reason: signals.startCheckoutReason,
+    };
+  }
+
+  if (signals.startReservationSession) {
+    console.log(
+      JSON.stringify({
+        event: '[hybrid-agent] delegate_to_reservation',
+        reason: signals.startReservationReason,
+        conversationId,
+      })
+    );
+    return {
+      kind: 'delegate_reservation',
+      reason: signals.startReservationReason,
     };
   }
 

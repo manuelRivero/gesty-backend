@@ -39,7 +39,8 @@ export interface OnboardingOwnershipDecision {
 
 /**
  * Decide si el turno es del agente de onboarding.
- * Asume que el caller ya chequeó `isOnboardingAgentEnabled()`.
+ * Corre en todo turno: el agente de onboarding es el único camino (no hay flag
+ * ni wizard legacy que lo apague).
  */
 export function shouldOwnOnboardingTurn(
   facts: ShouldOwnOnboardingTurnInput

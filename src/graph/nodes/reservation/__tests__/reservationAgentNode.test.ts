@@ -59,10 +59,6 @@ vi.mock('../../../../services/reservationCompletionGoal.service', () => ({
   reviveReservationCompletionIfAbandoned: vi.fn(),
 }));
 
-vi.mock('../../../../config/env', () => ({
-  isHybridAgentMode: vi.fn().mockReturnValue(false),
-}));
-
 // Cortar la cadena de imports pesada del agente principal (reactAgent →
 // tools/index → menu.service → openai.service) que instancia un cliente
 // OpenAI en el import y rompe el test sin OPENAI_API_KEY.

@@ -25,9 +25,7 @@ export const NODE = {
   BUILD_DETECTION_CTX: 'buildDetectionContext',
   RESERVATION: 'reservationWizard',
   RESERVATION_AGENT: 'reservationAgent',
-  ONBOARDING_BY_STATE: 'onboardingByState',
   ONBOARDING_AGENT: 'onboardingAgent',
-  ADDRESS_CAPTURE: 'addressCapture',
   DELEGATED_ADDRESS_CONFIRMATION: 'delegatedAddressConfirmation',
   INTERACTIVE: 'interactiveSubgraph',
   NLP: 'nlpSubgraph',
@@ -145,10 +143,6 @@ export const routeAfterDetectionContext = (
       return NODE.RESERVATION_AGENT;
     case 'onboarding_agent':
       return NODE.ONBOARDING_AGENT;
-    case 'onboarding_by_state':
-      return NODE.ONBOARDING_BY_STATE;
-    case 'address_capture':
-      return NODE.ADDRESS_CAPTURE;
     case 'delegated_address_confirmation':
       return NODE.DELEGATED_ADDRESS_CONFIRMATION;
     case 'checkout':

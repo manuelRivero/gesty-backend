@@ -9,12 +9,9 @@ Comparte la misma BD Postgres y el mismo `prisma/schema.prisma` que el backend o
 - Solo el flujo del **bot WhatsApp** (webhook + handlers + agente).
 - **No** incluye: auth, super admin, panel admin (orders/menu/config/whatsapp/dashboard), check-in, sockets ni email.
 
-## Modos del agente
+## Camino conversacional
 
-| `AGENT_MODE`     | Comportamiento                                                                 |
-|------------------|--------------------------------------------------------------------------------|
-| `deterministic` (default) | Router 1:1 al pipeline actual. Misma lógica, mismos prompts, mismo modelo. |
-| `hybrid`         | Para `ORDER_FOOD`, `PRODUCT_QUERY`, `PRODUCT_ATTRIBUTE_QUESTION` y `UNKNOWN` usa un agente ReAct (`@langchain/langgraph/prebuilt.createReactAgent`) con tools de **lectura** (search_products, get_categories, get_menu_by_category, get_cart, get_business_hours, get_recent_messages). El resto de intents siguen ruteando al handler determinístico. Si el agente falla, hay fallback automático al pipeline determinístico. |
+Texto libre (sin Ownership de sesión ni botón) va al **agente ReAct híbrido** con tools. Los payloads (`ADD_ITEM:`, `CHECKOUT`, `RESERVATION_*`, …) siguen el mapper. Las sesiones opcionales (Closer, reserva, dueño) se prenden con `CHECKOUT_AGENT_ENABLED`, `RESERVATION_AGENT_ENABLED`, `OWNER_ASSISTANT_ENABLED`. El onboarding no tiene flag: su agente es el único camino (el wizard legacy se borró).
 
 ### Pruebas de paridad
 

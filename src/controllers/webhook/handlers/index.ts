@@ -48,7 +48,6 @@ import { SelectDecreaseItemQuantityHandler } from './selectDecreaseItemQuantityH
 import { DecreaseItemHandler } from './decreaseItemHandler';
 import { SelectIncreaseItemQuantityHandler } from './selectIncreaseItemQuantityHandler';
 import { IncreaseItemHandler } from './increaseItemHandler';
-import { OnboardingStartHandler } from './onboardingStartHandler';
 import { SelectDeliveryHandler, SelectTakeAwayHandler } from './selectFulfillmentHandler';
 import { PayOnlineHandler } from './payOnlineHandler';
 import { PayCashHandler, PayTransferHandler } from './payCashHandler';
@@ -82,7 +81,6 @@ export const handlers = [
   new SelectDecreaseItemQuantityHandler(),
   new IncreaseItemHandler(),
   new SelectIncreaseItemQuantityHandler(),
-  new OnboardingStartHandler(),
   SelectDeliveryHandler,
   SelectTakeAwayHandler,
   new PayOnlineHandler(),

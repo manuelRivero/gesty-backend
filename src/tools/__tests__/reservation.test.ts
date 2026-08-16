@@ -29,13 +29,19 @@ vi.mock('../../repositories/reservation.repository', () => ({
   findReservationBlockAtStart: vi.fn(),
 }));
 
+vi.mock('../../services/businessConfig.service', () => ({
+  getBusinessConfig: vi.fn(),
+}));
+
 import { prisma } from '../../lib/prisma';
 import { patchConversationMetadata } from '../../repositories/conversationState.repository';
 import { findActiveTablesByBusinessAndEnvironment } from '../../repositories/reservation.repository';
+import { getBusinessConfig } from '../../services/businessConfig.service';
 import {
   saveReservationDateTool,
   saveReservationPartySizeTool,
   resolveReservationConfirmationTool,
+  startReservationSessionTool,
 } from '../reservation';
 
 const CONFIG = {
@@ -126,5 +132,39 @@ describe('resolve_reservation_confirmation — señal pura (D3)', () => {
       confirmed: true,
     });
     expect(mockedPatch).not.toHaveBeenCalled();
+  });
+});
+
+describe('start_reservation_session — entrada del híbrido (Fase B)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('devuelve la señal cuando el negocio toma reservas', async () => {
+    vi.mocked(getBusinessConfig).mockResolvedValue({ reservations_enabled: true } as never);
+
+    const raw = await startReservationSessionTool.func(
+      { reason: 'el cliente quiere reservar una mesa' },
+      undefined,
+      CONFIG
+    );
+
+    expect(JSON.parse(raw)).toEqual({
+      signal: 'start_reservation_session',
+      reason: 'el cliente quiere reservar una mesa',
+    });
+  });
+
+  it('gate: sin reservas habilitadas no emite la señal', async () => {
+    vi.mocked(getBusinessConfig).mockResolvedValue({ reservations_enabled: false } as never);
+
+    const raw = await startReservationSessionTool.func(
+      { reason: 'el cliente quiere reservar' },
+      undefined,
+      CONFIG
+    );
+    const parsed = JSON.parse(raw) as { success: boolean; error?: string; signal?: string };
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toBe('reservations_disabled');
+    expect(parsed.signal).toBeUndefined();
   });
 });

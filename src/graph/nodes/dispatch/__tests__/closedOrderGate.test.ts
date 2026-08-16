@@ -57,7 +57,6 @@ vi.mock('../../../../services/intentAmbiguityConfirmation.service', () => ({
 }));
 
 vi.mock('../../../../config/env', () => ({
-  isHybridAgentMode: vi.fn(() => false),
   isReservationAgentEnabled: vi.fn(() => false),
   isCheckoutAgentEnabled: vi.fn(() => false),
 }));

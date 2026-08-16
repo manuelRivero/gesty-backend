@@ -13,7 +13,6 @@ export const E2E_CUSTOMER_PHONE = process.env.WHATSAPP_TEST_TO ?? '5493413867990
 /** Aplica flags estándar de e2e (llamar antes de importar el grafo). */
 export const applyE2eEnv = (overrides?: Record<string, string>): void => {
   process.env.DRY_RUN_WHATSAPP_SEND = 'true';
-  process.env.AGENT_MODE = 'hybrid';
   if (overrides) {
     for (const [key, value] of Object.entries(overrides)) {
       process.env[key] = value;

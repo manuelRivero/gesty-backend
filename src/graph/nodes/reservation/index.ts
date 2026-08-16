@@ -60,8 +60,6 @@ import {
   type ReservationAgentContext,
 } from '../../../agents/reservationAgent';
 import { runHybridReactAgent } from '../../../agents/reactAgent';
-import { detectIntentWithConfidence } from '../../../services/ai/detection.service';
-import { isHybridAgentMode } from '../../../config/env';
 import {
   formatBotUserMessage,
   normalizeMetadata,
@@ -103,18 +101,13 @@ const invokeHybridAfterReservationHandback = async (params: {
   detectionContext: DetectionContext;
   userMessage: string;
 }): Promise<HandlerResult | null> => {
-  if (!isHybridAgentMode() || !params.userMessage.trim()) {
+  if (!params.userMessage.trim()) {
     return null;
   }
 
-  const detection = await detectIntentWithConfidence(
-    params.userMessage,
-    params.detectionContext
-  );
   const refreshedState = await findOrCreateConversationState(params.conversationId);
   const hybridCtx: EnrichedContext = {
     ...params.enrichedCtx,
-    detection,
     conversationState: refreshedState,
   };
 

@@ -1,15 +1,9 @@
 /**
  * Helper compartido entre los nodos de sesión (checkout, reservas, onboarding)
  * para la señal `delegate_to_main`: invoca al híbrido inline sin limpiar la
- * sesión activa.
- *
- * Corre `detectIntentWithConfidence` con el mensaje del turno antes de invocar
- * al híbrido, igual que ya hacía `invokeHybridAfterCheckoutHandback` para
- * `handback_to_main` — así el híbrido recibe `detection` real (mejores CTAs)
- * en vez de degradar a texto plano por falta de detección (H-01).
+ * sesión activa. Sin clasificador de intent: CTAs salen de tools.
  */
 
-import { detectIntentWithConfidence } from '../../../services/ai/detection.service';
 import type { DetectionContext } from '../../../services/ai/detection.service';
 import { runHybridReactAgent } from '../../../agents/reactAgent';
 import type { EnrichedContext, HandlerResult } from '../../../controllers/webhook/types';
@@ -32,15 +26,13 @@ export const delegateToMainWithDetection = async (params: {
   userMessage: string;
   detectionContext: DetectionContext | null | undefined;
 }): Promise<DelegateToMainResult> => {
-  const { enrichedCtx, userMessage, detectionContext } = params;
+  const { enrichedCtx, userMessage } = params;
 
-  let hybridCtx = enrichedCtx;
-  if (detectionContext && userMessage.trim()) {
-    const detection = await detectIntentWithConfidence(userMessage, detectionContext);
-    hybridCtx = { ...enrichedCtx, detection };
+  if (!userMessage.trim()) {
+    return { handlerResult: null, discardedReentrySignal: false };
   }
 
-  const hybrid = await runHybridReactAgent(hybridCtx);
+  const hybrid = await runHybridReactAgent(enrichedCtx);
   if (hybrid?.kind === 'response') {
     return { handlerResult: hybrid.handlerResult, discardedReentrySignal: false };
   }

@@ -11,7 +11,7 @@
  * escalationGate (→ send) →
  * ambassadorReferral →
  * buildDetectionContext →
- * { ownerAssistant | reservationWizard | reservationAgent | onboardingAgent | onboardingByState | addressCapture | checkoutAgent | interactive | nlp } →
+ * { ownerAssistant | reservationWizard | reservationAgent | onboardingAgent | checkoutAgent | interactive | nlp } →
  * sendResponse → persistAIMessage → END.
  *
  * `normalizeOwnerAudio` (PLAN-ACCION-OWNER-AUDIO.md): si el remitente es el
@@ -44,8 +44,6 @@ import {
   closedBusinessNode,
   subscriptionAccessGateNode,
   reservationWizardNode,
-  onboardingByStateNode,
-  addressCaptureNode,
 } from './nodes/gates';
 import { addressCollectionNode } from './nodes/gates/addressCollection';
 import { fulfillmentSelectionNode } from './nodes/gates/fulfillmentSelection';
@@ -101,8 +99,6 @@ const builder = new StateGraph(AgentStateAnnotation)
   // @deprecated NODE.RESERVATION = wizard legacy. Ver reservationWizardNode.
   .addNode(NODE.RESERVATION, reservationWizardNode)
   .addNode(NODE.ONBOARDING_AGENT, onboardingAgentNode)
-  .addNode(NODE.ONBOARDING_BY_STATE, onboardingByStateNode)
-  .addNode(NODE.ADDRESS_CAPTURE, addressCaptureNode)
   .addNode(NODE.DELEGATED_ADDRESS_CONFIRMATION, delegatedAddressConfirmationNode)
   .addNode(NODE.INTERACTIVE, interactiveSubgraphNode)
   .addNode(NODE.NLP, nlpSubgraphNode)
@@ -180,8 +176,6 @@ builder.addConditionalEdges(
     [NODE.RESERVATION]: NODE.RESERVATION,
     [NODE.RESERVATION_AGENT]: NODE.RESERVATION_AGENT,
     [NODE.ONBOARDING_AGENT]: NODE.ONBOARDING_AGENT,
-    [NODE.ONBOARDING_BY_STATE]: NODE.ONBOARDING_BY_STATE,
-    [NODE.ADDRESS_CAPTURE]: NODE.ADDRESS_CAPTURE,
     [NODE.DELEGATED_ADDRESS_CONFIRMATION]: NODE.DELEGATED_ADDRESS_CONFIRMATION,
     [NODE.CHECKOUT_AGENT]: NODE.CHECKOUT_AGENT,
     [NODE.PAYMENT_PROOF]: NODE.PAYMENT_PROOF,
@@ -194,8 +188,6 @@ builder.addConditionalEdges(
 
 for (const node of [
   NODE.ONBOARDING_AGENT,
-  NODE.ONBOARDING_BY_STATE,
-  NODE.ADDRESS_CAPTURE,
   NODE.DELEGATED_ADDRESS_CONFIRMATION,
   NODE.INTERACTIVE,
   NODE.NLP,

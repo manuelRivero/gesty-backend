@@ -23,6 +23,7 @@ import {
 } from '../repositories/reservation.repository';
 import { buildDateTime, normalizeDate } from '../services/reservations/utils';
 import { patchReservationDraft } from '../services/reservations/draft.repository';
+import { getBusinessConfig } from '../services/businessConfig.service';
 import { prisma } from '../lib/prisma';
 import type { RunnableConfig } from '@langchain/core/runnables';
 
@@ -671,6 +672,59 @@ export const abandonReservationTool = new DynamicStructuredTool<
       'reservation_draft',
     ]);
     return toJson({ signal: 'abandon_reservation', reason });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// ENTRADA: start_reservation_session (agente híbrido → reservas)
+// ---------------------------------------------------------------------------
+
+const startReservationSessionSchema = z.object({
+  reason: z
+    .string()
+    .describe(
+      'Motivo de la delegación en una oración. ' +
+        'Ej: "el cliente quiere reservar una mesa", "el cliente pidió ver su reserva".'
+    ),
+});
+type StartReservationSessionInput = z.infer<typeof startReservationSessionSchema>;
+
+/**
+ * Espejo de `start_checkout_session`: el híbrido no puede abrir la sesión de
+ * reservas por su cuenta, así que emite la señal y el nodo `nlpSubgraph`
+ * activa `reservation_agent_active` e invoca al agente en el mismo turno.
+ *
+ * Gate en el borde: si el negocio no tiene reservas habilitadas, no hay sesión
+ * que abrir (el prompt no alcanza — ADR-0002).
+ */
+export const startReservationSessionTool = new DynamicStructuredTool<
+  typeof startReservationSessionSchema,
+  StartReservationSessionInput
+>({
+  name: 'start_reservation_session',
+  description:
+    'Delega al agente de reservas cuando el cliente quiere RESERVAR una mesa o gestionar/ver una reserva ' +
+    '("quiero reservar", "tienen mesa para el sábado?", "mesa para 4", "ver mi reserva", "cancelar mi reserva"). ' +
+    'NO gestiones vos fecha, horario, personas ni ambiente de la reserva: solo delegá con esta tool. ' +
+    'No la uses para pedidos de comida (eso es carrito/menú).',
+  schema: startReservationSessionSchema,
+  func: async (
+    { reason }: StartReservationSessionInput,
+    _runManager,
+    config?: RunnableConfig
+  ) => {
+    const { businessId } = getReactContext(config);
+    const businessConfig = await getBusinessConfig(businessId);
+
+    if (!businessConfig.reservations_enabled) {
+      return toJson({
+        success: false,
+        error: 'reservations_disabled',
+        message: 'Este negocio no toma reservas; no se puede iniciar una sesión de reserva.',
+      });
+    }
+
+    return toJson({ signal: 'start_reservation_session', reason });
   },
 });
 

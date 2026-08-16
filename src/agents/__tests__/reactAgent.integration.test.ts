@@ -17,7 +17,6 @@ vi.mock('../../config/env', async (importOriginal) => {
     isHybridCtaEnabled: vi.fn(() => false),
     isHybridCtaEnabledForBusiness: vi.fn(() => false),
     getHybridCtaTargetIntents: vi.fn(() => new Set(['PRODUCT_ATTRIBUTE_QUESTION', 'PRODUCT_QUERY'])),
-    isHybridAgentMode: vi.fn(() => true),
     isDryRunWhatsAppSend: vi.fn(() => false),
   };
 });
@@ -425,5 +424,58 @@ describe('runHybridReactAgent', () => {
     expect(resolveCta).not.toHaveBeenCalled();
     expect(buildHybridCtaInteractive).not.toHaveBeenCalled();
     expect(prisma.menu_item.findMany).not.toHaveBeenCalled();
+  });
+
+  it('start_reservation_session → delegate_reservation (el nodo abre la sesión)', async () => {
+    vi.mocked(createReactAgent).mockReturnValue({
+      invoke: vi.fn().mockResolvedValue({
+        messages: [
+          {
+            tool_call_id: 'tc-res-1',
+            name: 'start_reservation_session',
+            content: JSON.stringify({
+              signal: 'start_reservation_session',
+              reason: 'quiere reservar una mesa',
+            }),
+          },
+          { content: 'te paso con las reservas' },
+        ],
+      }),
+    } as any);
+
+    const result = await runHybridReactAgent(
+      makeCtx({ message: { text: { body: 'quiero reservar una mesa' }, type: 'text' } }) as any
+    );
+
+    expect(result?.kind).toBe('delegate_reservation');
+    if (result?.kind === 'delegate_reservation') {
+      expect(result.reason).toBe('quiere reservar una mesa');
+    }
+  });
+
+  it('request_human_support → responde el mensaje de derivación y no sigue conversando', async () => {
+    vi.mocked(createReactAgent).mockReturnValue({
+      invoke: vi.fn().mockResolvedValue({
+        messages: [
+          {
+            tool_call_id: 'tc-sup-1',
+            name: 'request_human_support',
+            content: JSON.stringify({
+              signal: 'request_human_support',
+              reason: 'pidió un asesor',
+              message: 'derivado al equipo',
+            }),
+          },
+          { content: '¿te ayudo con algo más mientras esperás?' },
+        ],
+      }),
+    } as any);
+
+    const result = await runHybridReactAgent(
+      makeCtx({ message: { text: { body: 'me pasan con un asesor?' }, type: 'text' } }) as any
+    );
+
+    expect(result?.kind).toBe('response');
+    expect(unwrap(result)!.content).toBe('derivado al equipo');
   });
 });

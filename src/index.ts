@@ -79,7 +79,6 @@ app.get('/', (_req: Request, res: Response) => {
     name: 'food-service-agent',
     description:
       'Agente WhatsApp basado en LangGraph (paridad con food-service-backend)',
-    mode: env.AGENT_MODE,
     status: 'OK',
     docs: {
       pendingFeaturesHtml: `/docs/pending-features`,
@@ -101,7 +100,6 @@ app.get('/docs/PENDING-FEATURES.md', (_req: Request, res: Response) => {
 app.get('/health', (_req: Request, res: Response) => {
   res.json({
     status: 'healthy',
-    mode: env.AGENT_MODE,
     timestamp: new Date().toISOString(),
   });
 });
@@ -150,7 +148,7 @@ attachAdminSocket(httpServer);
 
 httpServer.listen(PORT, () => {
   console.log(
-    `[food-service-agent] listening on http://localhost:${PORT} (mode=${env.AGENT_MODE})`
+    `[food-service-agent] listening on http://localhost:${PORT}`
   );
   console.log(
     `[food-service-agent] pending features doc: http://localhost:${PORT}/docs/pending-features`

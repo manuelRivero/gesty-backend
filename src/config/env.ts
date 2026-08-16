@@ -19,14 +19,11 @@ const envSchema = z.object({
 
   OPENAI_API_KEY: z.string().min(1, 'OPENAI_API_KEY requerido'),
 
-  AGENT_MODE: z.enum(['deterministic', 'hybrid']).default('deterministic'),
-
   /**
    * Habilita el ReAct agent dedicado al checkout.
-   * Cuando está activo, el botón CHECKOUT inicia una "sesión de checkout"
-   * gestionada por un agente especializado que valida y pide los datos
-   * obligatorios (tipo de entrega, dirección, nombre) antes de cobrar.
-   * Requiere AGENT_MODE=hybrid para funcionar; en caso contrario se ignora.
+   * Cuando está activo, el botón CHECKOUT o la tool `start_checkout_session`
+   * inician una sesión gestionada por un agente especializado que valida y
+   * pide los datos obligatorios (tipo de entrega, dirección, nombre) antes de cobrar.
    */
   CHECKOUT_AGENT_ENABLED: z
     .string()
@@ -37,7 +34,6 @@ const envSchema = z.object({
    * Habilita el ReAct agent dedicado a reservas.
    * Cuando está activo, el agente gestiona la sesión completa de reserva en
    * lenguaje natural (fecha libre, party-size en texto, off-topic temporal).
-   * Requiere AGENT_MODE=hybrid para funcionar; en caso contrario se ignora.
    */
   RESERVATION_AGENT_ENABLED: z
     .string()
@@ -45,20 +41,8 @@ const envSchema = z.object({
     .transform((v) => v === 'true' || v === '1'),
 
   /**
-   * Habilita el ReAct agent dedicado al onboarding (captura de dirección de entrega).
-   * Cuando está activo, reemplaza el wizard determinístico por un agente conversacional
-   * que maneja texto libre, pausas/delegaciones y reanudaciones.
-   * Requiere AGENT_MODE=hybrid para funcionar; en caso contrario se ignora.
-   */
-  ONBOARDING_AGENT_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => v === 'true' || v === '1'),
-
-  /**
    * Habilita el ReAct agent del dueño (métricas por WhatsApp).
-   * Requiere AGENT_MODE=hybrid. Sin teléfonos en
-   * business_config.owner_whatsapp_phones nadie entra (fail closed).
+   * Sin teléfonos en business_config.owner_whatsapp_phones nadie entra (fail closed).
    */
   OWNER_ASSISTANT_ENABLED: z
     .string()
@@ -231,23 +215,18 @@ if (!parsed.success) {
 
 export const env: AppEnv = parsed.data;
 
-export const isHybridAgentMode = (): boolean => env.AGENT_MODE === 'hybrid';
-
 /** Worker de expiración de drafts / idle. Sin él, PEDIDO_POR_EXPIRAR no debe anunciarse. */
 export const isDraftOrderWorkerEnabled = (): boolean =>
   env.ENABLE_DRAFT_ORDER_WORKER === true;
 
 export const isCheckoutAgentEnabled = (): boolean =>
-  isHybridAgentMode() && env.CHECKOUT_AGENT_ENABLED === true;
+  env.CHECKOUT_AGENT_ENABLED === true;
 
 export const isReservationAgentEnabled = (): boolean =>
-  isHybridAgentMode() && env.RESERVATION_AGENT_ENABLED === true;
-
-export const isOnboardingAgentEnabled = (): boolean =>
-  isHybridAgentMode() && env.ONBOARDING_AGENT_ENABLED === true;
+  env.RESERVATION_AGENT_ENABLED === true;
 
 export const isOwnerAssistantEnabled = (): boolean =>
-  isHybridAgentMode() && env.OWNER_ASSISTANT_ENABLED === true;
+  env.OWNER_ASSISTANT_ENABLED === true;
 
 export const isDryRunWhatsAppSend = (): boolean =>
   env.DRY_RUN_WHATSAPP_SEND === true;

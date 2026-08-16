@@ -66,17 +66,14 @@ vi.mock('../../../../services/intentAmbiguityConfirmation.service', () => ({
 }));
 
 vi.mock('../../../../config/env', () => ({
-  isHybridAgentMode: vi.fn(() => true),
   isReservationAgentEnabled: vi.fn(() => false),
   isCheckoutAgentEnabled: vi.fn(() => false),
 }));
 
 import { nlpSubgraphNode } from '../index';
-import { detectIntentWithConfidence } from '../../../../services/ai/detection.service';
 import { runHybridReactAgent } from '../../../../agents/reactAgent';
 import { dispatchIntent } from '../../../../controllers/webhook/dispachers';
 import { findOrCreateConversationState } from '../../../../repositories';
-import { ConversationIntent } from '../../../../types/conversationIntent';
 import type { AgentState } from '../../../state';
 
 const pendingMeta = {
@@ -98,21 +95,6 @@ describe('gate pendingAddQuantity → híbrido', () => {
     vi.clearAllMocks();
     vi.mocked(findOrCreateConversationState).mockResolvedValue({
       metadata: pendingMeta,
-    } as never);
-    vi.mocked(detectIntentWithConfidence).mockResolvedValue({
-      intent: ConversationIntent.MODIFY_QUANTITY,
-      confidence: 0.8,
-      detectedProductName: null,
-      quantity: 3,
-      quantityMode: 'absolute',
-      addressText: null,
-      addressConfidence: null,
-      candidates: [],
-      alternatives: [{ intent: ConversationIntent.ORDER_FOOD, confidence: 0.4 }],
-      resolutionSource: 'rescued',
-      topCandidate: { intent: ConversationIntent.MODIFY_QUANTITY, confidence: 0.8 },
-      rescueMargin: 0.4,
-      raw: null,
     } as never);
     vi.mocked(runHybridReactAgent).mockResolvedValue({
       kind: 'response',

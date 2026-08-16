@@ -28,7 +28,7 @@ import { getBusinessOpenInfo } from '../../../services/businessHours.service';
 import { formatInboundMessageForLog } from '../../../controllers/webhook/utils/messageLog';
 import { sendTypingIndicator } from '../../../services/whatsappTypingIndicator.service';
 import { normalizeMetadata } from '../../../services/productQuery/utils';
-import { isCheckoutAgentEnabled, isReservationAgentEnabled, isOnboardingAgentEnabled, isOwnerAssistantEnabled } from '../../../config/env';
+import { isCheckoutAgentEnabled, isReservationAgentEnabled, isOwnerAssistantEnabled } from '../../../config/env';
 import { isOwnerPhone } from '../../../services/ownerAssistant/matchOwnerPhone';
 import { getRefusalCount } from '../../../services/intent/intentRefusal.service';
 import { shouldOwnOnboardingTurn } from '../../../services/onboarding/shouldOwnOnboardingTurn';
@@ -345,45 +345,42 @@ export const buildDetectionContextNode = async (
     const addressRefusalCount = getRefusalCount(wsMeta, 'OBTENER_DIRECCION');
     const nameRefusalCount = getRefusalCount(wsMeta, 'OBTENER_NOMBRE');
 
-    const onboardingOwnership =
-      isOnboardingAgentEnabled()
-        ? shouldOwnOnboardingTurn({
-            hasUsableDefaultAddress: hasAddress,
-            hasCustomerName,
-            addressRefusalCount,
-            nameRefusalCount,
-            onboardingAgentActive: wsMeta.onboarding_agent_active === true,
-            hasStagedOnboarding: wsMeta.onboarding_step != null,
-            isOnboardingPayload:
-              ctx.payloadId === 'ONBOARDING_CONFIRM_ADDRESS' ||
-              ctx.payloadId === 'ONBOARDING_EDIT_ADDRESS',
-            blockedByHigherOwner: blockedByHigherOwnerForOnboarding,
-          })
-        : null;
+    // El agente de onboarding es el único camino: no hay wizard legacy que
+    // resucitar, así que tampoco hay flag que lo apague.
+    const onboardingOwnership = shouldOwnOnboardingTurn({
+      hasUsableDefaultAddress: hasAddress,
+      hasCustomerName,
+      addressRefusalCount,
+      nameRefusalCount,
+      onboardingAgentActive: wsMeta.onboarding_agent_active === true,
+      hasStagedOnboarding: wsMeta.onboarding_step != null,
+      isOnboardingPayload:
+        ctx.payloadId === 'ONBOARDING_CONFIRM_ADDRESS' ||
+        ctx.payloadId === 'ONBOARDING_EDIT_ADDRESS',
+      blockedByHigherOwner: blockedByHigherOwnerForOnboarding,
+    });
 
-    const isOnboardingAgentSession = onboardingOwnership?.shouldOwn === true;
+    const isOnboardingAgentSession = onboardingOwnership.shouldOwn === true;
 
-    if (onboardingOwnership) {
+    console.log(
+      JSON.stringify({
+        event: '[context] onboarding_ownership',
+        reason: onboardingOwnership.reason,
+        shouldOwn: onboardingOwnership.shouldOwn,
+        conversationId: conversation.id,
+      })
+    );
+    if (
+      onboardingOwnership.reason === 'facts_missing_address' ||
+      onboardingOwnership.reason === 'facts_missing_name'
+    ) {
       console.log(
         JSON.stringify({
-          event: '[context] onboarding_ownership',
+          event: '[context] onboarding_owned_by_facts',
           reason: onboardingOwnership.reason,
-          shouldOwn: onboardingOwnership.shouldOwn,
           conversationId: conversation.id,
         })
       );
-      if (
-        onboardingOwnership.reason === 'facts_missing_address' ||
-        onboardingOwnership.reason === 'facts_missing_name'
-      ) {
-        console.log(
-          JSON.stringify({
-            event: '[context] onboarding_owned_by_facts',
-            reason: onboardingOwnership.reason,
-            conversationId: conversation.id,
-          })
-        );
-      }
     }
 
     // Identidad del dueño gana a toda la cadena de clientes (no es sesión:
@@ -402,8 +399,6 @@ export const buildDetectionContextNode = async (
       contextRoute = 'reservation_agent';
     } else if (isOnboardingAgentSession) {
       contextRoute = 'onboarding_agent';
-    } else if (onboardingStep) {
-      contextRoute = 'onboarding_by_state';
     } else if (isCheckoutSession) {
       // El agente de checkout captura el turno completo (texto e interactivos)
       // y gestiona dirección, nombre, tipo de entrega y pago.

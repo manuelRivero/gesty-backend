@@ -2,7 +2,7 @@ import { prisma } from '../../../lib/prisma';
 import { patchConversationMetadata } from '../../../repositories/conversationState.repository';
 import { normalizeMetadata } from '../../../services/productQuery/utils';
 import { detectIntentFromPayload } from '../../../controllers/webhook/payloadMapper';
-import { isHybridAgentMode } from '../../../config/env';
+import { isCheckoutAgentEnabled } from '../../../config/env';
 import { ConversationIntent } from '../../../types/conversationIntent';
 import { FULFILLMENT_TYPE_PROMPT_BOT_MESSAGE, localizeFulfillmentOptionLabels } from '../../../services/productQuery/botMessages';
 import type { WhatsAppInteractiveMessage } from '../../../domain/intent/whatsappTemplates';
@@ -54,15 +54,14 @@ export function buildFulfillmentSelectionMessage(bodyText?: string): WhatsAppInt
 /**
  * Gate legacy de selección de tipo de entrega post-carrito.
  *
- * En modo híbrido el checkout agent gestiona fulfillment al finalizar el pedido;
- * este nodo no intercepta el turno (evita botones de entrega tras ADD_ITEM).
- *
- * En modo determinístico mantiene el comportamiento anterior.
+ * El ReAct salta post-gates con `dataCollectionDelegated`. Si el Closer está
+ * prendido, fulfillment se pide al finalizar — no tras ADD_ITEM.
  */
 export const fulfillmentSelectionNode = async (
   state: AgentState
 ): Promise<AgentStateUpdate> => {
-  if (isHybridAgentMode()) return {};
+  if (state.dataCollectionDelegated) return {};
+  if (isCheckoutAgentEnabled()) return {};
 
   if (state.skipAIPersistence) return {};
   if (state.contextRoute !== 'interactive' && state.contextRoute !== 'nlp') return {};

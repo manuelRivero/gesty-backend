@@ -43,9 +43,7 @@ import type { CheckoutAgentContext } from '../../../agents/checkoutAgent';
 import { clearCaptureRefusalLedger } from '../../../services/intent/intentRefusal.service';
 import { runHybridReactAgent } from '../../../agents/reactAgent';
 import { delegateToMainWithDetection } from '../session/delegateToMain';
-import { detectIntentWithConfidence } from '../../../services/ai/detection.service';
 import { findOrCreateConversationState } from '../../../repositories';
-import { isHybridAgentMode } from '../../../config/env';
 import type { HandlerFollowUp, HandlerResult } from '../../../controllers/webhook/types';
 import type { EnrichedContext } from '../../../controllers/webhook/types';
 import type { WhatsAppInteractiveMessage } from '../../../domain/intent/whatsappTemplates';
@@ -205,18 +203,13 @@ const invokeHybridAfterCheckoutHandback = async (params: {
   detectionContext: DetectionContext;
   userMessage: string;
 }): Promise<HandlerResult | null> => {
-  if (!isHybridAgentMode() || !params.userMessage.trim()) {
+  if (!params.userMessage.trim()) {
     return null;
   }
 
-  const detection = await detectIntentWithConfidence(
-    params.userMessage,
-    params.detectionContext
-  );
   const refreshedState = await findOrCreateConversationState(params.conversationId);
   const hybridCtx: EnrichedContext = {
     ...params.enrichedCtx,
-    detection,
     conversationState: refreshedState,
   };
 
@@ -234,7 +227,7 @@ const invokeHybridAfterCheckoutHandback = async (params: {
 };
 
 // ---------------------------------------------------------------------------
-// Resolver respuesta del agente de checkout (compartido con NLP intercept)
+// Resolver respuesta del agente de checkout (compartido con start_checkout_session)
 // ---------------------------------------------------------------------------
 
 export const resolveCheckoutAgentHandlerResult = async (params: {
@@ -807,9 +800,8 @@ export const checkoutAgentNode = async (
   // ── Mensaje tipo `location` — procesado determinístico (H-08) ────────────
   // El agente de checkout pide la dirección de entrega y el cliente responde
   // con la forma más natural de compartirla en WhatsApp: la ubicación. Se
-  // guarda directo (no vía staging de onboarding_step, que secuestraría el
-  // routing del turno siguiente hacia onboarding_by_state — ver
-  // `resolveAndSaveFromLocation`).
+  // guarda directo (no vía staging de onboarding_step, que le daría Ownership
+  // del turno siguiente al onboardingAgent — ver `resolveAndSaveFromLocation`).
   if (ctx.message?.type === 'location' && ctx.message.location) {
     const { lat, lng } = ctx.message.location as { lat: number; lng: number };
     const result = await new AddressService().resolveAndSaveFromLocation({

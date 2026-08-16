@@ -11,7 +11,7 @@
  * Las instancias de aquí están pensadas para:
  * - El nodo `intentDetectionNode` cuando se quiera evolucionar a
  *   `withStructuredOutput`/Zod (sin cambiar el prompt).
- * - El agente ReAct híbrido de la fase 2 (`AGENT_MODE=hybrid`).
+ * - El agente ReAct híbrido (único camino de prosa).
  */
 
 import { ChatOpenAI, OpenAIEmbeddings } from '@langchain/openai';

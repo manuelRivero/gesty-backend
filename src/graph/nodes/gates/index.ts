@@ -7,9 +7,10 @@
  * - `subscriptionAccessGateNode`: evalúa la suscripción/trial; bloquea con
  *   mensaje si no aplica.
  * - `reservationWizardNode`: `processReservationWizardIfActive`.
- * - `onboardingByStateNode`: `processOnboardingByConversationStateIfActive`.
- * - `addressCaptureNode`: `runOnboardingAddressCaptureFlow` (cuando el cliente
- *   no tiene `customer_address`).
+ *
+ * El onboarding no tiene nodo acá: lo maneja `onboardingAgentNode` en todo
+ * turno que Ownership le asigne (el wizard legacy por `onboarding_step` y su
+ * clasificador de intent se borraron).
  *
  * Todos los nodos se limitan a producir un parche del estado: el envío real
  * de WhatsApp y la persistencia del mensaje AI lo hace `sendResponseNode` +
@@ -29,23 +30,13 @@ import {
 import { handleReservationIntent } from '../../../services/reservations';
 import { reservationStepQuestion } from '../../../services/reservations/reservation.service';
 import { classifyReservationTurn } from '../../../services/reservations/turnClassifier.service';
-import { AddressService } from '../../../services/address.service';
-import { detectIntentWithConfidence } from '../../../services/ai/detection.service';
-import { dispatchIntent } from '../../../controllers/webhook/dispachers';
-import { ConversationIntent } from '../../../types/conversationIntent';
 import { normalizeToHandlerResult } from '../../../controllers/webhook/utils';
 import { normalizeMetadata } from '../../../services/productQuery/utils';
 import { patchConversationMetadata } from '../../../repositories/conversationState.repository';
 import { formatInboundMessageForLog } from '../../../controllers/webhook/utils/messageLog';
-import type {
-  EnrichedContext,
-  HandlerResult,
-} from '../../../controllers/webhook/types';
+import type { EnrichedContext } from '../../../controllers/webhook/types';
 import type { AgentState, AgentStateUpdate } from '../../state';
 import type { ReservationState } from '../../../services/reservations/types';
-
-const ONBOARDING_REMINDER =
-  'Para continuar con un pedido necesito tu dirección.';
 
 /** Nodo para `businessStatus.isOpen === false`. */
 export const closedBusinessNode = async (
@@ -179,125 +170,4 @@ export const reservationWizardNode = async (
   return { handlerResult, earlyExit: 'reservation_handled' };
 };
 
-/**
- * @deprecated LEGACY — ver nota en `AddressService.process()`. Solo se
- * alcanza con `ONBOARDING_AGENT_ENABLED=false` o sesiones viejas con
- * `onboarding_step` ya en curso desde antes del agente ReAct. Pendiente de
- * eliminación completa junto con `addressCaptureNode`/`runOnboardingAddressCapture`.
- *
- * Nodo de onboarding forzado por `metadata.onboarding_step`. Reusa exactamente
- * el flujo de `runOnboardingAddressCaptureFlow` (mismo helper que el captura
- * sin dirección).
- */
-export const onboardingByStateNode = async (
-  state: AgentState
-): Promise<AgentStateUpdate> => {
-  const enrichedBase = state.enrichedCtx as unknown as EnrichedContext;
-  const onboardingStep =
-    enrichedBase.conversationState?.metadata?.onboarding_step;
-  console.log('[Orchestrator] Onboarding active → bypass NLP', {
-    step: onboardingStep,
-    hasTempAddress: Boolean(
-      enrichedBase.conversationState?.metadata?.temp_address
-    ),
-    messageType: state.webhookContext?.message?.type,
-    payloadId: state.webhookContext?.payloadId,
-  });
-  return runOnboardingAddressCapture(state, 'onboarding_handled');
-};
-
-/**
- * @deprecated LEGACY — ver nota en `AddressService.process()` /
- * `onboardingByStateNode`. Pendiente de eliminación completa.
- *
- * Nodo de captura de dirección del onboarding inicial (cuando el cliente no
- * tiene `customer_address`). Comparte la implementación con
- * `onboardingByStateNode`.
- */
-export const addressCaptureNode = async (
-  state: AgentState
-): Promise<AgentStateUpdate> => {
-  return runOnboardingAddressCapture(state, 'address_capture_handled');
-};
-
-/**
- * Helper compartido por `onboardingByStateNode` y `addressCaptureNode`,
- * traducción 1:1 de `runOnboardingAddressCaptureFlow` del orquestador.
- */
-const runOnboardingAddressCapture = async (
-  state: AgentState,
-  exitReason: AgentStateUpdate['earlyExit']
-): Promise<AgentStateUpdate> => {
-  const ctx = state.webhookContext!;
-  const enrichedBase = state.enrichedCtx as unknown as EnrichedContext;
-  const detectionContext = state.detectionContext!;
-
-  const onboardingCtx: EnrichedContext = {
-    ...enrichedBase,
-    detection: {
-      intent: ConversationIntent.ONBOARDING_START,
-      confidence: 1,
-      detectedProductName: null,
-      quantity: null,
-      candidates: [],
-      alternatives: [],
-      resolutionSource: 'direct',
-      topCandidate: { intent: ConversationIntent.ONBOARDING_START, confidence: 1 },
-      rescueMargin: null,
-      raw: null,
-    },
-  };
-
-  if (ctx.message?.type === 'text') {
-    const userMessage = ctx.message?.text?.body || '';
-    const detection = await detectIntentWithConfidence(
-      userMessage,
-      detectionContext
-    );
-
-    if (detection.addressText) {
-      const serviceResult = await new AddressService().processWithAddressText(
-        onboardingCtx,
-        detection.addressText
-      );
-      if (!serviceResult) {
-        return { earlyExit: exitReason };
-      }
-      return {
-        handlerResult: normalizeToHandlerResult(serviceResult),
-        detection,
-        earlyExit: exitReason,
-      };
-    }
-
-    if (detection.intent !== ConversationIntent.UNKNOWN) {
-      const enrichedCtx: EnrichedContext = {
-        ...enrichedBase,
-        detection,
-      };
-      const result = await dispatchIntent(enrichedCtx);
-      if (!result) {
-        return { earlyExit: exitReason };
-      }
-      const augmented: HandlerResult = { ...result };
-      if (typeof augmented.content === 'string') {
-        augmented.content = `${augmented.content}\n\n${ONBOARDING_REMINDER}`;
-      }
-      return { handlerResult: augmented, detection, earlyExit: exitReason };
-    }
-
-    const askResult = normalizeToHandlerResult(
-      'Necesito tu dirección para continuar.\n\nIndicame calle y número o compartí tu ubicación.'
-    );
-    return { handlerResult: askResult, earlyExit: exitReason };
-  }
-
-  const result = await dispatchIntent(onboardingCtx);
-  if (!result) {
-    return { earlyExit: exitReason };
-  }
-  return { handlerResult: result, earlyExit: exitReason };
-};
-
-export { ONBOARDING_REMINDER };
 export { updateConversationLastMessageAt }; // re-export para nodos send/persist

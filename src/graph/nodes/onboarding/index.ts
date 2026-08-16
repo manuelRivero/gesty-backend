@@ -31,11 +31,9 @@ import {
   extractConfirmAddressPending,
   runOnboardingAgent,
 } from '../../../agents/onboardingAgent';
-import { runReservationAgent } from '../../../agents/reservationAgent';
 import { runHybridReactAgent } from '../../../agents/reactAgent';
 import { detectIntentWithConfidence } from '../../../services/ai/detection.service';
 import { findOrCreateConversationState } from '../../../repositories';
-import { findActiveEnvironmentsByBusinessId } from '../../../repositories/reservation.repository';
 import {
   formatBotUserMessage,
   normalizeMetadata,
@@ -44,7 +42,6 @@ import { nextOnboardingStep } from '../../../services/onboarding/nextOnboardingS
 import { loadLiveOnboardingFacts } from '../../../services/onboarding/loadLiveOnboardingFacts';
 import { incrementRefusalCount } from '../../../services/intent/intentRefusal.service';
 import { ConversationIntent } from '../../../types/conversationIntent';
-import { isReservationAgentEnabled } from '../../../config/env';
 import type { HandlerResult } from '../../../controllers/webhook/types';
 import type { EnrichedContext } from '../../../controllers/webhook/types';
 import type { AgentState, AgentStateUpdate } from '../../state';
@@ -85,8 +82,8 @@ const liberateOnboardingNotNeeded = async (conversationId: string): Promise<void
 };
 
 /**
- * Tras liberar onboarding: reserva → agente de reservas; resto → híbrido.
- * Evita que "quiero reservar" quede en el híbrido sin abrir la sesión de reserva.
+ * Tras liberar onboarding: híbrido inline, sin clasificar intent.
+ * Abrir reserva en prosa = Fase B (`start_reservation_session`).
  */
 const handoffAfterOnboardingLiberated = async (params: {
   enrichedBase: EnrichedContext;
@@ -95,56 +92,17 @@ const handoffAfterOnboardingLiberated = async (params: {
   userMessage: string;
   fallbackText: string;
 }): Promise<HandlerResult> => {
-  const { enrichedBase, conversationId, detectionContext, userMessage, fallbackText } =
-    params;
+  const { enrichedBase, conversationId, userMessage, fallbackText } = params;
   const fallback: HandlerResult = {
     content: fallbackText,
     isInteractive: false,
   };
-  if (!detectionContext || !userMessage.trim()) return fallback;
+  if (!userMessage.trim()) return fallback;
 
   try {
-    const detection = await detectIntentWithConfidence(userMessage, detectionContext);
     const freshState = await findOrCreateConversationState(conversationId);
-    const enrichedCtx: EnrichedContext = {
-      ...enrichedBase,
-      detection,
-      conversationState: freshState,
-    };
-
-    if (
-      isReservationAgentEnabled() &&
-      (detection.intent === ConversationIntent.RESERVATION ||
-        detection.intent === ConversationIntent.VIEW_RESERVATION)
-    ) {
-      await patchConversationMetadata(conversationId, {
-        reservation_agent_active: true,
-      });
-      const bizId =
-        typeof enrichedBase.business === 'object' && enrichedBase.business
-          ? (enrichedBase.business as { id: string }).id
-          : '';
-      const environments = bizId
-        ? await findActiveEnvironmentsByBusinessId(bizId)
-        : [];
-      console.log(
-        JSON.stringify({
-          event: '[onboarding-agent] handoff_reservation',
-          intent: detection.intent,
-          conversationId,
-        })
-      );
-      const agentResult = await runReservationAgent(enrichedCtx, {
-        hasEnvironments: environments.length > 0,
-        environmentNames: environments.map((e) => ({ id: e.id, name: e.name })),
-      });
-      if (agentResult?.text) {
-        return { content: agentResult.text, isInteractive: false };
-      }
-    }
-
     const hybrid = await runHybridReactAgent({
-      ...enrichedCtx,
+      ...enrichedBase,
       conversationState: freshState,
     });
     return hybrid?.kind === 'response' ? hybrid.handlerResult : fallback;
