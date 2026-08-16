@@ -114,10 +114,47 @@ import {
   getReadersForBusinessHandler,
 } from "../controllers/adminAnnouncements.controller";
 import { authenticateJwt, requireRoles } from "../middleware/auth.middleware";
+import {
+  createPromotionHandler,
+  deletePromotionHandler,
+  getPromotionByIdHandler,
+  interpretPromotionHandler,
+  listPromotionsHandler,
+  patchPromotionHandler,
+  resolvePromotionEntitiesHandler
+} from "../controllers/adminPromotions.controller";
+import { promotionAudioUploadMiddleware } from "../middleware/audioUpload.middleware";
 
 const router = Router();
 
 router.use(authenticateJwt);
+
+/**
+ * Interpreta una promoción en lenguaje natural (texto JSON o audio multipart).
+ * No persiste — solo pipeline STT + interpreter V1.
+ */
+router.post(
+  "/promotions/interpret",
+  requireRoles("OWNER", "ADMIN"),
+  (req, res, next) => {
+    const ct = String(req.headers["content-type"] ?? "").toLowerCase();
+    if (ct.includes("multipart/form-data")) {
+      return promotionAudioUploadMiddleware(req, res, next);
+    }
+    next();
+  },
+  interpretPromotionHandler
+);
+router.post(
+  "/promotions/resolve-entities",
+  requireRoles("OWNER", "ADMIN"),
+  resolvePromotionEntitiesHandler
+);
+router.get("/promotions", requireRoles("OWNER", "ADMIN"), listPromotionsHandler);
+router.post("/promotions", requireRoles("OWNER", "ADMIN"), createPromotionHandler);
+router.get("/promotions/:id", requireRoles("OWNER", "ADMIN"), getPromotionByIdHandler);
+router.patch("/promotions/:id", requireRoles("OWNER", "ADMIN"), patchPromotionHandler);
+router.delete("/promotions/:id", requireRoles("OWNER", "ADMIN"), deletePromotionHandler);
 
 router.get("/orders", getOrders);
 router.get("/orders/:id", getOrderById);

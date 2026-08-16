@@ -49,6 +49,7 @@ model business {
   payment_intent            payment_intent[]
   payment_method_config     payment_method_config[]
   payment_proof             payment_proof[]
+  promotion                 promotion[]
   reservation               reservation[]
   reservation_block         reservation_block[]
   reservation_config        reservation_config?
@@ -243,8 +244,63 @@ model menu_item {
   menu_item_ai_metadata menu_item_ai_metadata?
   menu_item_price       menu_item_price[]
   order_item            order_item[]
+  promotion_product     promotion_product[]
 
   @@index([embedding])
+}
+
+/// Promoción interpretada desde lenguaje natural (texto o audio del dueño) en el
+/// panel admin. `offer` guarda el StructuredOffer V1 completo porque el contrato
+/// todavía no está congelado; las columnas escalares son cache derivada para
+/// filtrar y ordenar (ver PLAN-ACCION-PROMOCIONES-PERSISTENCIA.md, D1).
+/// Nada la aplica a pedidos todavía: no hay motor de descuentos.
+model promotion {
+  id           String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id  String              @db.Uuid
+  name         String
+  /// draft | active | paused | archived (TEXT, no enum — D11)
+  status       String              @default("draft")
+  offer        Json
+  benefit_type String?
+  starts_at    DateTime?           @db.Timestamptz(6)
+  ends_at      DateTime?           @db.Timestamptz(6)
+  /// 0=domingo … 6=sábado, igual que `Date.getDay()`
+  days_of_week Int[]               @db.SmallInt
+  time_from    String?
+  time_to      String?
+  /// text | audio. El audio nunca se persiste, solo su transcripción.
+  source_type  String              @default("text")
+  source_text  String?
+  created_by   String?             @db.Uuid
+  created_at   DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime            @default(now()) @updatedAt @db.Timestamptz(6)
+  business     business            @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  products     promotion_product[]
+
+  @@index([business_id, status])
+  @@index([business_id, created_at])
+}
+
+/// Vínculo confirmado por el dueño entre un nombre que dijo ("papas fritas") y
+/// un platillo real del menú. `source_text` queda congelado como texto para que
+/// un renombre del catálogo no borre lo que se pidió originalmente (D2).
+model promotion_product {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  promotion_id String    @db.Uuid
+  menu_item_id String    @db.Uuid
+  /// condition = producto que activa la promo; benefit = producto regalado
+  role         String
+  /// path dentro del offer, ej. offer.conditions[0].value.productName
+  offer_path   String
+  source_text  String
+  quantity     Int?
+  created_at   DateTime  @default(now()) @db.Timestamptz(6)
+  menu_item    menu_item @relation(fields: [menu_item_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  promotion    promotion @relation(fields: [promotion_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([promotion_id, offer_path, menu_item_id], map: "uq_promotion_product_path_item")
+  @@index([promotion_id])
+  @@index([menu_item_id])
 }
 
 model business_hours {

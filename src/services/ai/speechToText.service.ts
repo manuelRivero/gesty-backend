@@ -9,31 +9,28 @@
  * caller decida el mensaje al dueño.
  *
  * D7: sin TTS. Solo transcripción de audio a texto.
+ *
+ * La llamada al proveedor vive en `audioTranscription.service.ts` (genérico).
  */
 
-import OpenAI, { toFile } from 'openai';
 import type { business as Business } from '@prisma/client';
 import { evaluateSubscriptionForBotAi } from '../subscriptionBotAccess.service';
 import { getEffectiveAiTokenLimit } from './aiLimits';
 import { incrementUsage } from './aiUsage.service';
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+import {
+  AUDIO_TRANSCRIPTION_MODEL,
+  AudioTranscriptionError,
+  extensionForAudioMime,
+  transcribeAudio,
+} from './audioTranscription.service';
 
 export const SPEECH_TO_TEXT_TIMEOUT_MS = 30_000;
-export const SPEECH_TO_TEXT_MODEL = 'gpt-4o-mini-transcribe';
+export const SPEECH_TO_TEXT_MODEL = AUDIO_TRANSCRIPTION_MODEL;
 export const SPEECH_TO_TEXT_MIN_TRANSCRIPT_CHARS = 2;
 
 export type SpeechToTextOutcome =
   | { ok: true; transcript: string }
   | { ok: false; reason: 'no_quota' | 'empty' | 'stt_failed' };
-
-const MIME_TO_EXT: Record<string, string> = {
-  'audio/ogg': 'ogg',
-  'audio/mpeg': 'mp3',
-  'audio/mp4': 'm4a',
-  'audio/aac': 'aac',
-  'audio/amr': 'amr',
-};
 
 /**
  * Gate de uso de IA del negocio (D6): mismo criterio que
@@ -77,20 +74,14 @@ export const transcribeOwnerAudio = async (params: {
   }
 
   try {
-    const ext = MIME_TO_EXT[mimeType] ?? 'ogg';
-    const file = await toFile(audioBuffer, `owner-audio.${ext}`, { type: mimeType });
+    const result = await transcribeAudio({
+      audioBuffer,
+      mimeType,
+      language: 'es',
+      filename: `owner-audio.${extensionForAudioMime(mimeType)}`,
+    });
 
-    const response = await openai.audio.transcriptions.create(
-      {
-        file,
-        model: SPEECH_TO_TEXT_MODEL,
-        language: 'es',
-      },
-      { timeout: SPEECH_TO_TEXT_TIMEOUT_MS }
-    );
-
-    const totalTokens =
-      (response as unknown as { usage?: { total_tokens?: number } }).usage?.total_tokens ?? 0;
+    const totalTokens = result.usageTokens ?? 0;
     if (totalTokens > 0) {
       await incrementUsage(business.id, totalTokens).catch((error) => {
         console.error(
@@ -103,16 +94,14 @@ export const transcribeOwnerAudio = async (params: {
       });
     }
 
-    const transcript = (response.text ?? '').trim();
-    if (transcript.length < SPEECH_TO_TEXT_MIN_TRANSCRIPT_CHARS) {
+    return { ok: true, transcript: result.text };
+  } catch (error) {
+    if (error instanceof AudioTranscriptionError && error.code === 'EMPTY_TRANSCRIPT') {
       console.log(
         JSON.stringify({ event: '[speech-to-text] empty_transcript', businessId: business.id })
       );
       return { ok: false, reason: 'empty' };
     }
-
-    return { ok: true, transcript };
-  } catch (error) {
     console.error(
       JSON.stringify({
         event: '[speech-to-text] call_failed',
