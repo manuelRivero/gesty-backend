@@ -117,12 +117,14 @@ export async function buildPendingProductSelectionLines(
         ]
       : []),
     '- Selección de producto pendiente: el turno anterior ofreció elegir entre varios platos. ' +
-      'El mensaje actual del cliente probablemente responde cuál quiere (nombre parcial, ' +
-      '"el primero", "el de la plancha", etc.).',
+      'El mensaje puede ser (a) una elección de cuál quiere, o (b) una pregunta de atributo sobre uno o varios candidatos.',
     `- Candidatos (usá estos productId; no inventes otros): ${labeled.join(' | ')}.`,
-    '- Si matchea uno con claridad: present_product_cta(ADD_ITEM) o add_cart_item con ese productId. ' +
-      'Si queda ambiguo entre candidatos, pedí aclaración nombrándolos. ' +
-      'Si rechaza o cambia de tema, no insistas con la lista.',
+    '- Elección con match claro: present_product_cta(ADD_ITEM) o add_cart_item con ese productId. ' +
+      'Elección ambigua: pedí aclaración nombrándolos.',
+    '- Pregunta de atributo que NOMBRA un candidato ("el tacu tacu es picante?", "qué trae el lomo"): ' +
+      'get_products_details_by_ids de ESE productId; respondé solo de ese plato. ' +
+      'NO preguntes "¿sobre cuál?" ni relistes el resto del shortlist.',
+    '- Pregunta de atributo SIN nombrar cuál ("qué trae?"): los candidatos son el foco; resumí o preguntá a cuál de esa lista.',
     '- PRIORIDAD: si el mensaje es gestión tipable (menú, ver pedido, modificar, finalizar, nota) ' +
       'o pide otro plato / instrucción de preparación ("poca sal"), NO fuerces add_cart_item del shortlist.',
   ];

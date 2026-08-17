@@ -95,6 +95,9 @@ describe('botPersonality', () => {
     const hybrid = buildHybridAgentSystemPrompt();
     expect(hybrid).toMatch(/SELECCIÓN PENDIENTE/i);
     expect(hybrid).toMatch(/Selección de producto pendiente/i);
+    expect(hybrid).toMatch(/Pregunta de atributo/i);
+    expect(hybrid).toMatch(/NOMBRA un candidato/i);
+    expect(hybrid).toMatch(/get_products_details_by_ids/i);
   });
 
   it('complementary prompt pide intro corta sin listar platos', () => {

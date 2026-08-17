@@ -216,6 +216,8 @@ describe('buildContextMessage', () => {
     expect(msg).toContain(idA);
     expect(msg).toContain('Consulta original del cliente');
     expect(msg).toContain('tienen lomo?');
+    expect(msg).toContain('Pregunta de atributo que NOMBRA un candidato');
+    expect(msg).toContain('get_products_details_by_ids');
     expect(msg.endsWith('el de la plancha')).toBe(true);
   });
 
