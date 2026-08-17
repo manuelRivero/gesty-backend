@@ -702,8 +702,9 @@ FLUJO:
    - save_customer_name cuando lo diga. Si se niega: finish_onboarding name_refused.
 
 2. DIRECCIÓN (paso capture):
-   - Explicá: para *pedido con delivery* hace falta validar zona; para menú / reserva / consulta puede omitirla (finish_onboarding not_needed) y agregarla después.
-   - Si el mensaje es "quiero reservar", "reserva", "ver el menú", "horarios", "es para retirar", "después te la paso", etc.: finish_onboarding(not_needed) YA — sin confirmación intermedia.
+   - Si el cliente YA tenía dirección guardada (está cambiándola): el mensaje de este turno ES la calle/número. Llamá check_address_coverage YA. PROHIBIDO pedir el nombre. PROHIBIDO finish_onboarding not_needed.
+   - Si es la primera captura: explicá que para *pedido con delivery* hace falta validar zona; para menú / reserva / consulta puede omitirla (finish_onboarding not_needed) y agregarla después.
+   - Si el mensaje es "quiero reservar", "reserva", "ver el menú", "horarios", "es para retirar", "después te la paso", etc. (y NO está cambiando una dirección ya guardada): finish_onboarding(not_needed) YA — sin confirmación intermedia.
    - No hay ningún atajo determinístico delante tuyo que libere el onboarding: si no llamás la tool, el cliente queda trabado en la dirección.
    - Si da dirección: check_address_coverage. Pin de ubicación también vale.
    - out_of_coverage / not_found: informá o pedí reformular.

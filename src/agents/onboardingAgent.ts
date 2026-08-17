@@ -89,12 +89,16 @@ export const resetOnboardingAgentCacheForTesting = (): void => {
 
 /** Acción esperada según el paso derivado — ledger tipable para el modelo (H-E/P1.1). */
 const expectedActionForOnboardingStep = (
-  step: ReturnType<typeof nextOnboardingStep>
+  step: ReturnType<typeof nextOnboardingStep>,
+  addressEdit: boolean
 ): string => {
   switch (step) {
     case 'name':
       return 'pedir con qué nombre agendarlo; save_customer_name cuando lo provea';
     case 'capture':
+      if (addressEdit) {
+        return 'está CAMBIANDO la dirección ya guardada: check_address_coverage(text) con lo que escribió; NO pidas nombre ni ofrezcas omitir';
+      }
       return (
         'explicar que la dirección sirve para validar zona si pide delivery; ' +
         'ofrecer omitir si solo menú/reserva/consulta (finish_onboarding); ' +
@@ -141,11 +145,13 @@ const buildOnboardingContextMessage = async (ctx: EnrichedContext): Promise<stri
   let step: ReturnType<typeof nextOnboardingStep> = hasStagedAddress ? 'confirm' : 'capture';
   let customerName: string | null =
     (ctx.customer as { name?: string | null })?.name?.trim() || null;
+  let addressEdit = false;
   if (conversationId && customerId) {
     try {
       const stepState = await loadLiveOnboardingFacts({ conversationId, customerId });
       step = nextOnboardingStep(stepState);
       if (!stepState.hasCustomerName) customerName = null;
+      addressEdit = stepState.hasSavedAddress && (step === 'capture' || step === 'confirm');
     } catch (err) {
       console.error('[onboarding-agent] error derivando paso para el ledger:', err);
     }
@@ -161,7 +167,7 @@ const buildOnboardingContextMessage = async (ctx: EnrichedContext): Promise<stri
     `- Nombre del cliente: ${customerName ?? 'no informado'}`,
     `- Paso actual: ${step}`,
     `- Goal: ${goalForOnboardingStep(step)}`,
-    `- Acción esperada: ${expectedActionForOnboardingStep(step)}`,
+    `- Acción esperada: ${expectedActionForOnboardingStep(step, addressEdit)}`,
   ];
 
   const userText = userMsg.trim();

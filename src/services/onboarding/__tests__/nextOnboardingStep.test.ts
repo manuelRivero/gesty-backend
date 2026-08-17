@@ -6,6 +6,7 @@ const state = (overrides: Partial<OnboardingStepState> = {}): OnboardingStepStat
   hasSavedAddress: false,
   hasCustomerName: false,
   stagedAddress: null,
+  addressCaptureActive: false,
   ...overrides,
 });
 
@@ -40,5 +41,29 @@ describe('nextOnboardingStep', () => {
 
   it('dirección guardada sin nombre → name', () => {
     expect(nextOnboardingStep(state({ hasSavedAddress: true }))).toBe('name');
+  });
+
+  it('edición: dirección ya guardada + CAPTURE activo → capture (no done)', () => {
+    expect(
+      nextOnboardingStep(
+        state({
+          hasCustomerName: true,
+          hasSavedAddress: true,
+          addressCaptureActive: true,
+        })
+      )
+    ).toBe('capture');
+  });
+
+  it('edición: dirección ya guardada + staged CONFIRM → confirm (no done)', () => {
+    expect(
+      nextOnboardingStep(
+        state({
+          hasCustomerName: true,
+          hasSavedAddress: true,
+          stagedAddress: 'Corrientes 1840',
+        })
+      )
+    ).toBe('confirm');
   });
 });

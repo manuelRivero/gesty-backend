@@ -53,6 +53,7 @@ const facts = (overrides: Partial<OnboardingStepState> = {}): OnboardingStepStat
   hasSavedAddress: false,
   hasCustomerName: false,
   stagedAddress: null,
+  addressCaptureActive: false,
   ...overrides,
 });
 
@@ -69,10 +70,12 @@ describe('onboarding tool gates (withGate)', () => {
     expect(out).toEqual({ error: 'name_required', missing: 'name' });
   });
 
-  it('check_address_coverage permite en capture', async () => {
-    vi.mocked(loadLiveOnboardingFacts).mockResolvedValue(facts({ hasCustomerName: true }));
+  it('check_address_coverage permite en capture aunque ya haya dirección guardada (edición)', async () => {
+    vi.mocked(loadLiveOnboardingFacts).mockResolvedValue(
+      facts({ hasCustomerName: true, hasSavedAddress: true, addressCaptureActive: true })
+    );
     const out = JSON.parse(
-      await checkAddressCoverageTool.func({ text: 'Calle 1' }, undefined, config)
+      await checkAddressCoverageTool.func({ text: 'Corrientes 1840' }, undefined, config)
     );
     expect(out.status).toBe('in_coverage');
   });

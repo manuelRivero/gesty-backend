@@ -32,6 +32,7 @@ export const loadLiveOnboardingFacts = async (params: {
     hasSavedAddress: Boolean(defaultAddress),
     hasCustomerName: Boolean(customer?.name?.trim()),
     stagedAddress,
+    addressCaptureActive: meta.onboarding_step === 'CAPTURE',
   };
 };
 
