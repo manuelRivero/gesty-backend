@@ -16,6 +16,7 @@
     "embed:seed": "ts-node -r dotenv/config scripts/embedding/create-menu_item-vector.ts",
     "seed:reservation-slots": "ts-node -r dotenv/config scripts/reservation/seed-reservation-slots.ts",
     "seed:bot-personality-samples": "ts-node -r dotenv/config scripts/seed-bot-personality-samples.ts",
+    "inspect:conversation": "ts-node --transpile-only -r dotenv/config scripts/inspect-conversation-state.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",

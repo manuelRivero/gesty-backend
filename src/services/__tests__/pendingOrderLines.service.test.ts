@@ -9,6 +9,7 @@ import {
   getActiveOrderLine,
   getPendingOrderLines,
   hasOpenOrderLines,
+  normalizeOrderLineInput,
   ORDER_LINES_MAX,
   parsePendingOrderLines,
   resolveOrderLineForProduct,
@@ -86,6 +87,64 @@ describe('pendingOrderLines.service', () => {
       'conv-1',
       expect.objectContaining({ pendingOrderLines: expect.any(Object) })
     );
+  });
+
+  describe('normalizeOrderLineInput (cantidad dentro del hint)', () => {
+    it('extrae el número que el modelo dejó en el hint', () => {
+      expect(normalizeOrderLineInput({ hint: '2 papas a la huancaína' })).toEqual({
+        hint: 'papas a la huancaína',
+        requestedQuantity: 2,
+      });
+      expect(normalizeOrderLineInput({ hint: '1 ceviche' })).toEqual({
+        hint: 'ceviche',
+        requestedQuantity: 1,
+      });
+      expect(normalizeOrderLineInput({ hint: '3x lomo saltado' })).toEqual({
+        hint: 'lomo saltado',
+        requestedQuantity: 3,
+      });
+    });
+
+    it('limpia el número del hint y respeta la cantidad explícita del modelo', () => {
+      expect(
+        normalizeOrderLineInput({ hint: '2 papas', requestedQuantity: 4 })
+      ).toEqual({ hint: 'papas', requestedQuantity: 4 });
+    });
+
+    it('sin número no invita cantidad: artículo no es cantidad (D4)', () => {
+      expect(normalizeOrderLineInput({ hint: 'una bebida' })).toEqual({
+        hint: 'una bebida',
+        requestedQuantity: null,
+      });
+      expect(normalizeOrderLineInput({ hint: 'ceviche' })).toEqual({
+        hint: 'ceviche',
+        requestedQuantity: null,
+      });
+    });
+
+    it('no deja el hint vacío ni acepta restos muy cortos', () => {
+      expect(normalizeOrderLineInput({ hint: '2' })).toEqual({
+        hint: '2',
+        requestedQuantity: null,
+      });
+      expect(normalizeOrderLineInput({ hint: '2 ok' })).toEqual({
+        hint: '2 ok',
+        requestedQuantity: null,
+      });
+    });
+  });
+
+  it('setPendingOrderLines normaliza cantidades embebidas en el hint', async () => {
+    const pending = await setPendingOrderLines({
+      conversationId: 'conv-1',
+      lines: [{ hint: '1 ceviche' }, { hint: '2 papas a la huancaína' }],
+      sourceMessage: '1 ceviche, 2 papas a la huancaína',
+    });
+    expect(pending.lines[0]).toMatchObject({ hint: 'ceviche', requestedQuantity: 1 });
+    expect(pending.lines[1]).toMatchObject({
+      hint: 'papas a la huancaína',
+      requestedQuantity: 2,
+    });
   });
 
   it('setPendingOrderLines topea en ORDER_LINES_MAX líneas', async () => {

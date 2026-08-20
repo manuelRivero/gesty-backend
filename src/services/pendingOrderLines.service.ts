@@ -174,6 +174,47 @@ export const countOpenOrderLines = (pending: PendingOrderLines | null): number =
 };
 
 /**
+ * Normaliza un argumento de `plan_order_lines`: el modelo tiende a dejar la
+ * cantidad dentro del hint ("2 papas a la huancaína") y `requestedQuantity`
+ * vacío. La línea queda entonces "sin cantidad" y D3 vuelve blocking el Goal de
+ * personas, así que el bot pregunta personas por un pedido que ya venía con las
+ * unidades dichas (evidencia: conversación del 20/8 19:20).
+ *
+ * Es parsing de un **argumento de tool**, no del mensaje del cliente: la norma
+ * lo permite igual que `matchVariation` o `resolveOrderLineForProduct`.
+ *
+ * Solo dígitos: "una bebida" sigue siendo línea sin cantidad (D4 — el artículo
+ * no es un número dicho). Riesgo conocido: un hint que empiece con número por
+ * el nombre del plato ("3 quesos") se lee como cantidad; el modelo debería
+ * mandar el plato completo ("pizza 3 quesos").
+ */
+export const normalizeOrderLineInput = (line: {
+  hint: string;
+  requestedQuantity?: number | null;
+}): { hint: string; requestedQuantity: number | null } => {
+  const explicit =
+    line.requestedQuantity != null && line.requestedQuantity >= 1
+      ? Math.min(99, Math.floor(line.requestedQuantity))
+      : null;
+
+  const trimmed = line.hint.trim();
+  const match = /^(\d{1,2})\s*(?:[x×]\s*)?(.{3,})$/.exec(trimmed);
+  if (!match) {
+    return { hint: trimmed, requestedQuantity: explicit };
+  }
+
+  const parsed = Number(match[1]);
+  const rest = match[2].trim();
+  if (!Number.isFinite(parsed) || parsed < 1 || rest.length < 3) {
+    return { hint: trimmed, requestedQuantity: explicit };
+  }
+
+  // El hint pierde el número siempre (mejora el search y el match de línea);
+  // la cantidad explícita del modelo, si vino, manda sobre la del hint.
+  return { hint: rest, requestedQuantity: explicit ?? Math.min(99, parsed) };
+};
+
+/**
  * Alta de la cola (D2). Con 1 sola línea no vale la pena persistir cola:
  * el llamador decide si igual quiere crearla (p. ej. para no reescribir la
  * tool); acá solo se valida y arma el objeto.
@@ -184,13 +225,7 @@ export const setPendingOrderLines = async (params: {
   sourceMessage: string;
 }): Promise<PendingOrderLines> => {
   const cleaned = params.lines
-    .map((l) => ({
-      hint: l.hint.trim(),
-      requestedQuantity:
-        l.requestedQuantity != null && l.requestedQuantity >= 1
-          ? Math.min(99, Math.floor(l.requestedQuantity))
-          : null,
-    }))
+    .map(normalizeOrderLineInput)
     .filter((l) => l.hint.length > 0)
     .slice(0, ORDER_LINES_MAX);
 

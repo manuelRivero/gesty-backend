@@ -2479,8 +2479,9 @@ const planOrderLinesSchema = z.object({
           .string()
           .min(1)
           .describe(
-            'Pedido de búsqueda de UN plato/categoría tal como lo dijo el cliente ' +
-              '(ej. "lomo saltado", "ceviche", "una bebida"). NO es un productId.'
+            'Solo el NOMBRE del plato/categoría a buscar, SIN el número de unidades ' +
+              '(ej. "lomo saltado", "ceviche", "bebida"). El número va en requestedQuantity, ' +
+              'nunca acá. NO es un productId.'
           ),
         requestedQuantity: z
           .number()
@@ -2489,8 +2490,11 @@ const planOrderLinesSchema = z.object({
           .max(99)
           .optional()
           .describe(
-            'Unidades que el cliente pidió para ESTA línea en el mismo mensaje (ej. "3 lomos" → 3). ' +
-              'Omití si no dijo número para esta línea.'
+            'Unidades que el cliente pidió para ESTA línea en el mismo mensaje. ' +
+              '"3 lomos" → { hint: "lomo saltado", requestedQuantity: 3 }. ' +
+              '"1 ceviche" → { hint: "ceviche", requestedQuantity: 1 }. ' +
+              'Omití solo si no dijo número ("quiero ceviche", "una bebida"). ' +
+              'Mandarlo mal obliga al bot a preguntar cuántas personas comen: el dato importa.'
           ),
       })
     )
