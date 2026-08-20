@@ -91,6 +91,76 @@ export const getActiveOrderLine = (pending: PendingOrderLines | null): OrderLine
   );
 };
 
+const STOPWORDS = new Set([
+  'de',
+  'del',
+  'la',
+  'las',
+  'el',
+  'los',
+  'un',
+  'una',
+  'unos',
+  'unas',
+  'con',
+  'sin',
+  'al',
+  'a',
+  'y',
+  'e',
+  'en',
+  'para',
+  'por',
+]);
+
+/** Tokens comparables: sin acentos, sin stopwords, singular simple (papas → papa). */
+const matchTokens = (value: string): Set<string> => {
+  const tokens = value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((t) => t.length >= 3 && !STOPWORDS.has(t))
+    .map((t) => (t.endsWith('s') ? t.slice(0, -1) : t));
+  return new Set(tokens);
+};
+
+/**
+ * Qué línea abierta de la cola corresponde al producto que se está agregando.
+ *
+ * Determinístico y permitido por la norma: valida un **argumento de tool**
+ * (`productId` → nombre del catálogo) contra el Fact de sesión; NO parsea el
+ * mensaje del cliente. Se busca entre todas las líneas abiertas (no solo la
+ * activa) porque el drenaje de unívocos (D5) puede cerrar varias en un turno.
+ * Sin solapamiento de tokens devuelve null: mejor caer al flujo de hoy que
+ * aplicar la cantidad de otra línea.
+ */
+export const resolveOrderLineForProduct = (
+  pending: PendingOrderLines | null,
+  productName: string
+): OrderLine | null => {
+  if (!pending) return null;
+  const productTokens = matchTokens(productName);
+  if (productTokens.size === 0) return null;
+
+  const open = pending.lines.filter(
+    (l) => l.status === 'queued' || l.status === 'active'
+  );
+
+  let best: { line: OrderLine; score: number } | null = null;
+  for (const line of open) {
+    let score = 0;
+    for (const token of matchTokens(line.hint)) {
+      if (productTokens.has(token)) score += 1;
+    }
+    if (score === 0) continue;
+    // Empate: gana la línea activa (o la primera abierta, por orden del pedido).
+    if (!best || score > best.score) best = { line, score };
+  }
+  return best?.line ?? null;
+};
+
 /** Cualquier línea aún sin cerrar (D7): gate para COMPLETAR_PEDIDO / SUGERIR_COMPLEMENTO. */
 export const hasOpenOrderLines = (metadata: unknown): boolean => {
   const pending = getPendingOrderLines(metadata);

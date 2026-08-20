@@ -81,9 +81,12 @@ import {
   cancelOrderLine,
   clearPendingOrderLines,
   getActiveOrderLine,
+  getPendingOrderLines,
   hasOpenOrderLines,
   ORDER_LINES_MAX,
+  resolveOrderLineForProduct,
   setPendingOrderLines,
+  type OrderLine,
 } from '../services/pendingOrderLines.service';
 import {
   isConfirmedAddQuantity,
@@ -1303,6 +1306,7 @@ export const addCartItemTool = new DynamicStructuredTool<
     let partySize: number | null = null;
     let pendingReply = false;
     let partySizeGoalBlocksAdd = false;
+    let orderLine: OrderLine | null = null;
     if (conversationId) {
       const state = await findOrCreateConversationState(conversationId);
       const meta = normalizeMetadata(state.metadata);
@@ -1314,6 +1318,7 @@ export const addCartItemTool = new DynamicStructuredTool<
         quantity: quantity ?? null,
         turnStartedAt,
       });
+      orderLine = resolveOrderLineForProduct(getPendingOrderLines(meta), item.name);
       // Gate duro: sin Fact de personas y Goal aún con presupuesto → no escribir carrito.
       const partyLedger = getPartySizeGoalLedger(meta);
       const partyGoal = derivePartySizeGoal(
@@ -1325,8 +1330,14 @@ export const addCartItemTool = new DynamicStructuredTool<
         partyLedger
       );
       const maxSurfaces = getIntentCatalogEntry(PARTY_SIZE_GOAL_TYPE).maxSurfaces;
+      // La línea de la cola con cantidad explícita ya resuelve para qué servía
+      // el Fact de personas (sugerir unidades): no tiene sentido bloquear el
+      // add para preguntar algo que no vamos a usar. Las líneas SIN cantidad
+      // ("una bebida") siguen bajo el Goal blocking.
       partySizeGoalBlocksAdd =
-        partyGoal.open && partyLedger.surfaceCount < maxSurfaces;
+        partyGoal.open &&
+        partyLedger.surfaceCount < maxSurfaces &&
+        orderLine?.requestedQuantity == null;
     }
 
     if (partySizeGoalBlocksAdd) {
@@ -1345,15 +1356,34 @@ export const addCartItemTool = new DynamicStructuredTool<
       partySize,
       servesPeople: item.serves_people,
     });
-    const qtyConfirmed = isConfirmedAddQuantity({
-      quantity: quantity ?? null,
-      suggestedQuantity,
-      pendingReply,
-    });
+    // D4 — la cantidad de la línea de la cola la escribió `plan_order_lines`
+    // (Fact de sesión, no un número que el modelo pudo copiar del party size en
+    // un retry): cuenta como cantidad dicha por el cliente. Si en este turno
+    // manda otra (corrección: "mejor 3 papas"), gana la del turno.
+    const lineQuantity = orderLine?.requestedQuantity ?? null;
+    const qtyConfirmed =
+      lineQuantity != null ||
+      isConfirmedAddQuantity({
+        quantity: quantity ?? null,
+        suggestedQuantity,
+        pendingReply,
+      });
+    const qty = qtyConfirmed
+      ? Math.min(99, Math.max(1, Math.floor(quantity ?? lineQuantity ?? 1)))
+      : 1;
+    if (lineQuantity != null && quantity != null && quantity !== lineQuantity) {
+      console.log(
+        JSON.stringify({
+          event: '[add_cart_item] order_line_quantity_overridden',
+          conversationId,
+          lineHint: orderLine?.hint ?? null,
+          lineQuantity,
+          quantityArg: quantity,
+        })
+      );
+    }
     // Placeholder para variation_required (aún no confirmamos cantidad).
-    const qtyForVariationPending = qtyConfirmed
-      ? Math.min(99, Math.max(1, Math.floor(quantity!)))
-      : suggestedQuantity;
+    const qtyForVariationPending = qtyConfirmed ? qty : suggestedQuantity;
 
     // D5 — el agente híbrido no adivina la variación: la tool lo obliga a
     // preguntar. Se resuelve ANTES de tocar draft_order_item, para que un
@@ -1444,9 +1474,6 @@ export const addCartItemTool = new DynamicStructuredTool<
       });
     }
 
-    const qty = qtyConfirmed
-      ? Math.min(99, Math.max(1, Math.floor(quantity!)))
-      : 1;
     // Producto sin variaciones: si el modelo mandó una de todos modos, se
     // ignora (no es un error; el modelo a veces manda campos de más).
 
@@ -1531,6 +1558,7 @@ export const addCartItemTool = new DynamicStructuredTool<
         const nextPending = await advanceAfterLineClose({
           conversationId,
           metadata: stateForRevival?.metadata,
+          lineId: orderLine?.id ?? null,
           closeStatus: 'done',
         });
         if (nextPending) {

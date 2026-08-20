@@ -11,6 +11,7 @@ import {
   hasOpenOrderLines,
   ORDER_LINES_MAX,
   parsePendingOrderLines,
+  resolveOrderLineForProduct,
   setPendingOrderLines,
   type PendingOrderLines,
 } from '../pendingOrderLines.service';
@@ -181,6 +182,49 @@ describe('pendingOrderLines.service', () => {
 
   it('buildPendingOrderLinesContextLines vacío sin cola', () => {
     expect(buildPendingOrderLinesContextLines({})).toEqual([]);
+  });
+
+  describe('resolveOrderLineForProduct', () => {
+    const pending = basePending({
+      lines: [
+        { id: 'l1', hint: 'ceviche', requestedQuantity: 1, status: 'active' },
+        { id: 'l2', hint: 'papas a la huancaína', requestedQuantity: 2, status: 'queued' },
+        { id: 'l3', hint: 'una chicha morada', requestedQuantity: 1, status: 'queued' },
+      ],
+    });
+
+    it('matchea la línea por nombre del catálogo, tolerando acentos y plural', () => {
+      expect(resolveOrderLineForProduct(pending, 'Ceviche Clásico')).toMatchObject({ id: 'l1' });
+      expect(resolveOrderLineForProduct(pending, 'Papa a la huancaina')).toMatchObject({
+        id: 'l2',
+        requestedQuantity: 2,
+      });
+      expect(resolveOrderLineForProduct(pending, 'Chicha morada')).toMatchObject({ id: 'l3' });
+    });
+
+    it('matchea líneas queued, no solo la activa (drenaje de unívocos D5)', () => {
+      expect(resolveOrderLineForProduct(pending, 'Papa a la huancaina')?.status).toBe('queued');
+    });
+
+    it('null si el producto no corresponde a ninguna línea abierta', () => {
+      expect(resolveOrderLineForProduct(pending, 'Lomo saltado')).toBeNull();
+      expect(resolveOrderLineForProduct(pending, 'Flan')).toBeNull();
+      expect(resolveOrderLineForProduct(null, 'Ceviche Clásico')).toBeNull();
+    });
+
+    it('ignora líneas ya cerradas', () => {
+      const closed = basePending({
+        lines: [{ id: 'l1', hint: 'ceviche', requestedQuantity: 1, status: 'done' }],
+      });
+      expect(resolveOrderLineForProduct(closed, 'Ceviche Clásico')).toBeNull();
+    });
+
+    it('no matchea por stopwords compartidas ("a la", "de")', () => {
+      const soloStopwords = basePending({
+        lines: [{ id: 'l1', hint: 'papas a la huancaína', requestedQuantity: 2, status: 'active' }],
+      });
+      expect(resolveOrderLineForProduct(soloStopwords, 'Pollo a la brasa')).toBeNull();
+    });
   });
 
   it('getPendingOrderLines lee metadata normalizada', () => {
