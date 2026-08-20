@@ -17,6 +17,12 @@ import { normalizeMetadata } from './productQuery/utils';
 export interface OrderCompletionFacts {
   hasItems: boolean;
   checkoutActive: boolean;
+  /**
+   * Cola de líneas de pedido abierta (D7 de PLAN-ACCION-PEDIDO-MULTI-LINEA.md):
+   * el cliente todavía tiene platos por resolver de un mismo mensaje — no es
+   * momento de plantear "cerramos el pedido".
+   */
+  hasOpenOrderLines?: boolean;
 }
 
 export interface OrderCompletionLedger {
@@ -46,7 +52,11 @@ export const deriveOrderCompletionGoal = (
   facts: OrderCompletionFacts,
   ledger: OrderCompletionLedger
 ): OrderCompletionGoal => ({
-  open: facts.hasItems && !facts.checkoutActive && !ledger.abandonment,
+  open:
+    facts.hasItems &&
+    !facts.checkoutActive &&
+    !facts.hasOpenOrderLines &&
+    !ledger.abandonment,
 });
 
 /** Presupuesto de insistencia (ADR-0008): 3 → enmudece, no muere. */

@@ -34,6 +34,7 @@ const ORDER_SESSION_OMIT_KEYS = [
   'pendingVariation',
   'pendingAddQuantity',
   'pendingItemNote',
+  'pendingOrderLines',
   // Confirmación quitar ítem
   'pendingAction',
   'pendingItemId',

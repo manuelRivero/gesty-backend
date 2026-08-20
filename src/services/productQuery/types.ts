@@ -93,6 +93,21 @@ export type ConversationMetadata = {
     source: 'tipable' | 'payload' | 'hybrid';
   } | null;
   /**
+   * Cola de líneas de pedido (varios platos en un mismo mensaje). Sesión, no
+   * negocio (D1 de PLAN-ACCION-PEDIDO-MULTI-LINEA.md); alta por la tool
+   * `plan_order_lines`. La línea activa la deriva `pendingOrderLines.service`.
+   */
+  pendingOrderLines?: {
+    lines: Array<{
+      id: string;
+      hint: string;
+      requestedQuantity: number | null;
+      status: 'queued' | 'active' | 'done' | 'cancelled';
+    }>;
+    sourceMessage: string;
+    createdAt: string;
+  } | null;
+  /**
    * Confirmación pendiente sobre un ítem del carrito (`cart.service.ts`).
    * `CONFIRM_REMOVE` es el Constraint de borde de `remove_cart_item`
    * (ADR-0002): fuente única, compartida entre el flujo determinístico de

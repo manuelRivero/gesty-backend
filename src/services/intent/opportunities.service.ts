@@ -26,6 +26,8 @@ export type SuggestComplementFacts = {
   /** Tags presentes en el carrito (MAIN, DRINK, …). */
   cartTags: ReadonlySet<MenuCategoryTag>;
   checkoutActive: boolean;
+  /** D7 de PLAN-ACCION-PEDIDO-MULTI-LINEA.md: cola de líneas abierta → no ofrecer complemento. */
+  hasOpenOrderLines?: boolean;
 };
 
 export type SuggestComplementPermissionDenial =
@@ -92,6 +94,7 @@ export const computeSuggestComplementPermission = (
 /** Cualquier ítem en carrito con huecos STARTER/MAIN/DRINK/DESSERT → Opportunity abierta. */
 export const deriveSuggestComplementOpen = (facts: SuggestComplementFacts): boolean => {
   if (facts.checkoutActive) return false;
+  if (facts.hasOpenOrderLines) return false;
   if (facts.cartTags.size === 0) return false;
   return getMissingMenuCompleteTags(facts.cartTags).length > 0;
 };
@@ -164,6 +167,7 @@ export const resolvePostAddComplementOpportunity = async (params: {
   draftOrderId: string;
   businessId: string;
   metadata: unknown;
+  hasOpenOrderLines?: boolean;
 }): Promise<PostAddComplementOpportunity | null> => {
   const meta = normalizeMetadata(params.metadata);
   const checkoutActive = meta.checkout_active === true;
@@ -173,7 +177,7 @@ export const resolvePostAddComplementOpportunity = async (params: {
       params.businessId
     );
     return buildPostAddComplementOpportunity(
-      { cartTags, checkoutActive },
+      { cartTags, checkoutActive, hasOpenOrderLines: params.hasOpenOrderLines },
       meta.intentLedger?.SUGERIR_COMPLEMENTO
     );
   } catch (err) {

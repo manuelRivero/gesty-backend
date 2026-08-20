@@ -75,6 +75,17 @@ import {
   setPendingItemNote,
 } from '../services/pendingItemNote.service';
 import {
+  activateNextOrderLine,
+  advanceAfterLineClose,
+  buildOrderLinesContinueOrCancelHint,
+  cancelOrderLine,
+  clearPendingOrderLines,
+  getActiveOrderLine,
+  hasOpenOrderLines,
+  ORDER_LINES_MAX,
+  setPendingOrderLines,
+} from '../services/pendingOrderLines.service';
+import {
   isConfirmedAddQuantity,
   needsAddQuantityConfirmation,
   suggestAddQuantity,
@@ -1491,6 +1502,7 @@ export const addCartItemTool = new DynamicStructuredTool<
     // inicio del turno; si acaba de crearse, ya se inicializó más arriba.
 
     let postAddOpportunity: PostAddComplementOpportunity | null = null;
+    let queueFollowUp: { nextHint: string; remaining: number; instruction: string } | null = null;
     if (conversationId) {
       await clearPendingVariation(conversationId);
       await clearPendingAddQuantity(conversationId);
@@ -1510,12 +1522,31 @@ export const addCartItemTool = new DynamicStructuredTool<
         conversationId,
         getOrderCompletionLedger(stateForRevival?.metadata)
       );
+
+      // D6/D7 — si este add cierra la línea activa de la cola de pedido,
+      // avanzamos (el código, no el modelo) y decidimos si queda resto.
+      let metadataAfterAdvance = stateForRevival?.metadata;
+      let openOrderLinesAfterAdvance = false;
+      if (hasOpenOrderLines(stateForRevival?.metadata)) {
+        const nextPending = await advanceAfterLineClose({
+          conversationId,
+          metadata: stateForRevival?.metadata,
+          closeStatus: 'done',
+        });
+        if (nextPending) {
+          openOrderLinesAfterAdvance = true;
+          queueFollowUp = buildOrderLinesContinueOrCancelHint(nextPending);
+          metadataAfterAdvance = { ...(stateForRevival?.metadata as object), pendingOrderLines: nextPending };
+        }
+      }
+
       // El ESTADO DEL CLIENTE del turno se armó antes del add: reinyectamos
       // la Opportunity en la observación para el mismo turno ReAct.
       postAddOpportunity = await resolvePostAddComplementOpportunity({
         draftOrderId: draft.id,
         businessId,
-        metadata: stateForRevival?.metadata,
+        metadata: metadataAfterAdvance,
+        hasOpenOrderLines: openOrderLinesAfterAdvance,
       });
     }
 
@@ -1549,16 +1580,18 @@ export const addCartItemTool = new DynamicStructuredTool<
           notes: it.notes ?? null,
         })),
       },
-      ...(postAddOpportunity
-        ? { opportunity: postAddOpportunity }
-        : {
-            followUp: {
-              nextAction: 'present_cart',
-              instruction:
-                'No hay ola de complemento ahora. Llamá present_cart para confirmar el add ' +
-                'con el pedido completo. PROHIBIDO listar categorías (Bebidas/Postres/Entradas) en prosa.',
-            },
-          }),
+      ...(queueFollowUp
+        ? { queueFollowUp }
+        : postAddOpportunity
+          ? { opportunity: postAddOpportunity }
+          : {
+              followUp: {
+                nextAction: 'present_cart',
+                instruction:
+                  'No hay ola de complemento ahora. Llamá present_cart para confirmar el add ' +
+                  'con el pedido completo. PROHIBIDO listar categorías (Bebidas/Postres/Entradas) en prosa.',
+              },
+            }),
     });
   },
 });
@@ -2406,6 +2439,194 @@ export const clearPendingItemNoteTool = new DynamicStructuredTool<
 });
 
 // ---------------------------------------------------------------------------
+// plan_order_lines — cola de líneas de pedido (D1/D2 de
+// PLAN-ACCION-PEDIDO-MULTI-LINEA.md)
+// ---------------------------------------------------------------------------
+
+const planOrderLinesSchema = z.object({
+  lines: z
+    .array(
+      z.object({
+        hint: z
+          .string()
+          .min(1)
+          .describe(
+            'Pedido de búsqueda de UN plato/categoría tal como lo dijo el cliente ' +
+              '(ej. "lomo saltado", "ceviche", "una bebida"). NO es un productId.'
+          ),
+        requestedQuantity: z
+          .number()
+          .int()
+          .min(1)
+          .max(99)
+          .optional()
+          .describe(
+            'Unidades que el cliente pidió para ESTA línea en el mismo mensaje (ej. "3 lomos" → 3). ' +
+              'Omití si no dijo número para esta línea.'
+          ),
+      })
+    )
+    .min(2)
+    .max(ORDER_LINES_MAX)
+    .describe(
+      `Entre 2 y ${ORDER_LINES_MAX} líneas, una por cada plato/categoría distinto que el cliente pidió en el mensaje.`
+    ),
+});
+type PlanOrderLinesInput = z.infer<typeof planOrderLinesSchema>;
+
+export const planOrderLinesTool = new DynamicStructuredTool<
+  typeof planOrderLinesSchema,
+  PlanOrderLinesInput
+>({
+  name: 'plan_order_lines',
+  description:
+    'Partí el pedido del cliente en líneas cuando el mensaje trae 2 o más platos/categorías distintos ' +
+    '(ej. "quiero 3 lomos, 2 ceviches y una bebida" → 3 líneas). NO uses esta tool si es un solo plato ' +
+    '(aunque pida varias unidades del mismo, ej. "2 pizzas" es 1 línea, no la necesitás). ' +
+    'Llamala UNA sola vez por mensaje, ANTES de resolver ningún producto. Después de llamarla, trabajá ' +
+    'SOLO la línea activa que te indique la respuesta (o [ESTADO DEL CLIENTE] en el siguiente turno): ' +
+    'search_products/find_products_by_filter con su hint, variación y cantidad como el flujo normal — ' +
+    'las demás líneas esperan en cola, no las menciones como shortlist.',
+  schema: planOrderLinesSchema,
+  func: async (
+    { lines }: PlanOrderLinesInput,
+    _runManager,
+    config?: RunnableConfig
+  ) => {
+    const { conversationId } = getReactContext(config);
+    if (!conversationId) {
+      return toJson({ success: false, error: 'no_conversation' });
+    }
+    const pending = await setPendingOrderLines({
+      conversationId,
+      lines,
+      sourceMessage: lines.map((l) => l.hint).join(', '),
+    });
+    const active = getActiveOrderLine(pending);
+    return toJson({
+      success: true,
+      activeLine: active
+        ? { hint: active.hint, requestedQuantity: active.requestedQuantity }
+        : null,
+      queuedCount: pending.lines.filter((l) => l.status === 'queued').length,
+      instruction: active
+        ? `Trabajá ahora SOLO "${active.hint}"${
+            active.requestedQuantity ? ` (${active.requestedQuantity}×)` : ''
+          } con search_products/find_products_by_filter. No listes ni menciones las demás líneas todavía.`
+        : 'Sin línea activa (inesperado): revisá con get_cart.',
+    });
+  },
+});
+
+const continueOrderLineSchema = z.object({});
+type ContinueOrderLineInput = z.infer<typeof continueOrderLineSchema>;
+
+export const continueOrderLineTool = new DynamicStructuredTool<
+  typeof continueOrderLineSchema,
+  ContinueOrderLineInput
+>({
+  name: 'continue_order_line',
+  description:
+    'El cliente confirmó que seguimos con la próxima línea de la cola de pedido ("seguí", "dale con el ceviche", "sí"). ' +
+    'Actívala (el sistema decide cuál es) y devuelve su hint/cantidad para que llames search_products/find_products_by_filter ' +
+    'en este mismo turno. Si no hay cola o ya hay una línea activa, no hace nada.',
+  schema: continueOrderLineSchema,
+  func: async (
+    _input: ContinueOrderLineInput,
+    _runManager,
+    config?: RunnableConfig
+  ) => {
+    const { conversationId } = getReactContext(config);
+    if (!conversationId) {
+      return toJson({ success: false, error: 'no_conversation' });
+    }
+    const state = await findOrCreateConversationState(conversationId);
+    const pending = await activateNextOrderLine(conversationId, state.metadata);
+    const active = getActiveOrderLine(pending);
+    if (!active) {
+      return toJson({ success: false, error: 'no_pending_order_lines' });
+    }
+    return toJson({
+      success: true,
+      activeLine: { hint: active.hint, requestedQuantity: active.requestedQuantity },
+      instruction: `Trabajá ahora "${active.hint}"${
+        active.requestedQuantity ? ` (${active.requestedQuantity}×)` : ''
+      } con search_products/find_products_by_filter.`,
+    });
+  },
+});
+
+const cancelOrderLineSchema = z.object({
+  hint: z
+    .string()
+    .optional()
+    .describe(
+      'Texto de la línea a cancelar si el cliente nombró cuál (ej. "el ceviche"). ' +
+        'Omití para cancelar la línea activa.'
+    ),
+});
+type CancelOrderLineInput = z.infer<typeof cancelOrderLineSchema>;
+
+export const cancelOrderLineTool = new DynamicStructuredTool<
+  typeof cancelOrderLineSchema,
+  CancelOrderLineInput
+>({
+  name: 'cancel_order_line',
+  description:
+    'Cancela UNA línea puntual de la cola de pedido (el cliente no quiere ese plato: "el ceviche no", ' +
+    '"mejor sin bebida"). Para cancelar TODO el resto de la cola usá clear_pending_order_lines en cambio.',
+  schema: cancelOrderLineSchema,
+  func: async (
+    { hint }: CancelOrderLineInput,
+    _runManager,
+    config?: RunnableConfig
+  ) => {
+    const { conversationId } = getReactContext(config);
+    if (!conversationId) {
+      return toJson({ success: false, error: 'no_conversation' });
+    }
+    const state = await findOrCreateConversationState(conversationId);
+    const nextPending = await cancelOrderLine({
+      conversationId,
+      metadata: state.metadata,
+      hint: hint ?? null,
+    });
+    const queueFollowUp = nextPending
+      ? buildOrderLinesContinueOrCancelHint(nextPending)
+      : null;
+    return toJson({
+      cancelled: true,
+      ...(queueFollowUp ? { queueFollowUp } : { queueEmpty: true }),
+    });
+  },
+});
+
+const clearPendingOrderLinesSchema = z.object({});
+type ClearPendingOrderLinesInput = z.infer<typeof clearPendingOrderLinesSchema>;
+
+export const clearPendingOrderLinesTool = new DynamicStructuredTool<
+  typeof clearPendingOrderLinesSchema,
+  ClearPendingOrderLinesInput
+>({
+  name: 'clear_pending_order_lines',
+  description:
+    'Cancela TODO el resto de la cola de pedido (el cliente dijo "nada más", "cancelá el resto", "listo así"). ' +
+    'No toca lo que ya está en el carrito. Llamá ANTES de responder.',
+  schema: clearPendingOrderLinesSchema,
+  func: async (
+    _input: ClearPendingOrderLinesInput,
+    _runManager,
+    config?: RunnableConfig
+  ) => {
+    const { conversationId } = getReactContext(config);
+    if (conversationId) {
+      await clearPendingOrderLines(conversationId);
+    }
+    return toJson({ cleared: true });
+  },
+});
+
+// ---------------------------------------------------------------------------
 // present_category (señal-UI — misma lista que el botón CATEGORY)
 // ---------------------------------------------------------------------------
 
@@ -2764,6 +2985,10 @@ export const allReactTools = [
   clearPendingAddQuantityTool,
   clearPendingVariationTool,
   clearPendingItemNoteTool,
+  planOrderLinesTool,
+  continueOrderLineTool,
+  cancelOrderLineTool,
+  clearPendingOrderLinesTool,
   presentCategoryTool,
   presentWelcomeOptionsTool,
   presentProductCtaTool,

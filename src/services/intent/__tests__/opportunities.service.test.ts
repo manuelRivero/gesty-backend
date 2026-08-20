@@ -79,6 +79,21 @@ describe('SUGERIR_COMPLEMENTO — menú completo', () => {
     expect(ranked.suppressed.map((c) => c.type)).toContain('SUGERIR_COMPLEMENTO');
   });
 
+  it('cierra si hay cola de líneas de pedido abierta (D7 de PLAN-ACCION-PEDIDO-MULTI-LINEA.md)', () => {
+    expect(
+      deriveSuggestComplementOpen({
+        cartTags: tags('MAIN'),
+        checkoutActive: false,
+        hasOpenOrderLines: true,
+      })
+    ).toBe(false);
+    const c = deriveSuggestComplementCandidate(
+      { cartTags: tags('MAIN'), checkoutActive: false, hasOpenOrderLines: true },
+      { surfaceCount: 0 }
+    );
+    expect(c).toBeNull();
+  });
+
   it('sin Goals abiertos → Opportunity puede ser activa', () => {
     const opportunity = deriveSuggestComplementCandidate(
       { cartTags: tags('MAIN'), checkoutActive: false },
@@ -126,6 +141,12 @@ describe('buildPostAddComplementOpportunity', () => {
       buildPostAddComplementOpportunity(
         { cartTags: tags('MAIN'), checkoutActive: false },
         { refused: true }
+      )
+    ).toBeNull();
+    expect(
+      buildPostAddComplementOpportunity(
+        { cartTags: tags('MAIN'), checkoutActive: false, hasOpenOrderLines: true },
+        { surfaceCount: 0 }
       )
     ).toBeNull();
   });

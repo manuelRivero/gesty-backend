@@ -559,6 +559,20 @@ export const handleAddItemFromWebhook = async (
     await clearPendingAddQuantity(conversation.id);
     const { markComplementEngagedIfOffered } = await import('./intent/opportunities.service');
     await markComplementEngagedIfOffered(conversation.id, menuItemId);
+    // D6/D9: un add por botón (SELECT_FROM_LIST / ADD_ITEM) mientras hay cola
+    // de pedido cierra la línea que se estaba trabajando — el botón nace del
+    // shortlist de esa línea, no de una búsqueda ajena a la cola.
+    const stateAfterAdd = await findOrCreateConversationState(conversation.id);
+    const { hasOpenOrderLines, advanceAfterLineClose } = await import(
+      './pendingOrderLines.service'
+    );
+    if (hasOpenOrderLines(stateAfterAdd.metadata)) {
+      await advanceAfterLineClose({
+        conversationId: conversation.id,
+        metadata: stateAfterAdd.metadata,
+        closeStatus: 'done',
+      });
+    }
   }
   return result;
 };

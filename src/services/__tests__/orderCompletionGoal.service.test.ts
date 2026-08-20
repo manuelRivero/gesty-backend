@@ -74,6 +74,22 @@ describe('deriveOrderCompletionGoal — derivador puro (ADR-0005/0006)', () => {
     );
     expect(goal.open).toBe(false);
   });
+
+  it('cerrado si hay cola de líneas de pedido abierta (D7 de PLAN-ACCION-PEDIDO-MULTI-LINEA.md)', () => {
+    const goal = deriveOrderCompletionGoal(
+      { hasItems: true, checkoutActive: false, hasOpenOrderLines: true },
+      EMPTY_LEDGER
+    );
+    expect(goal.open).toBe(false);
+  });
+
+  it('abierto de nuevo cuando la cola de líneas queda vacía', () => {
+    const goal = deriveOrderCompletionGoal(
+      { hasItems: true, checkoutActive: false, hasOpenOrderLines: false },
+      EMPTY_LEDGER
+    );
+    expect(goal.open).toBe(true);
+  });
 });
 
 describe('computeOrderCompletionPermission — permiso que calcula el sistema (ADR-0009)', () => {

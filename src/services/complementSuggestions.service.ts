@@ -34,9 +34,15 @@ import {
   buildPendingTipablesPatch,
 } from './pendingTipables.service';
 import { resolveCartShippingBullet } from './cartShippingCopy';
+import { hasOpenOrderLines } from './pendingOrderLines.service';
 
-/** false si refused, esperando engaged tras 1ª ola, cooldown o TTL. */
+/**
+ * false si refused, esperando engaged tras 1ª ola, cooldown, TTL, o si queda
+ * cola de pedido abierta (D7 de PLAN-ACCION-PEDIDO-MULTI-LINEA.md: no robar
+ * el resto del pedido hasta vaciar/cancelar la cola).
+ */
 export function canSurfaceComplementOpportunity(metadata: unknown): boolean {
+  if (hasOpenOrderLines(metadata)) return false;
   const meta = normalizeMetadata(metadata) as ConversationMetadata;
   const entry = meta.intentLedger?.SUGERIR_COMPLEMENTO ?? {};
   return computeSuggestComplementPermission(entry).granted;

@@ -67,6 +67,10 @@ import {
   MANAGEMENT_TOOL_HINT,
   type TipableManagementAction,
 } from '../services/pendingTipables.service';
+import {
+  buildPendingOrderLinesContextLines,
+  hasOpenOrderLines,
+} from '../services/pendingOrderLines.service';
 
 /** Hint interno cuando hay shortlist pendiente (SELECT_FROM_LIST / product query). */
 export async function buildPendingProductSelectionLines(
@@ -245,10 +249,11 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
 
   const orderLedger = getOrderCompletionLedger(meta);
   const reservationLedger = getReservationCompletionLedger(meta);
+  const openOrderLines = hasOpenOrderLines(meta);
 
   void resetOrderCompletionLedgerIfCartEmpty(
     ctx.conversationId,
-    { hasItems, checkoutActive },
+    { hasItems, checkoutActive, hasOpenOrderLines: openOrderLines },
     orderLedger
   ).catch((err) => console.error('[goal] failed to reset order completion ledger:', err));
 
@@ -306,7 +311,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
       meta.intentLedger?.RETOMAR_TAREA_INTERRUMPIDA
     ),
     deriveSuggestComplementCandidate(
-      { cartTags, checkoutActive },
+      { cartTags, checkoutActive, hasOpenOrderLines: openOrderLines },
       meta.intentLedger?.SUGERIR_COMPLEMENTO
     ),
     // SUGERIR_DIRECCION: no se inyecta en el híbrido — dirección solo onboarding/checkout.
@@ -323,7 +328,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
 
   const candidates = deriveIntentCandidates({
     order: {
-      facts: { hasItems, checkoutActive },
+      facts: { hasItems, checkoutActive, hasOpenOrderLines: openOrderLines },
       ledger: orderLedger,
     },
     reservation: {
@@ -444,6 +449,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
 
   const pendingVariationLines = buildPendingVariationContextLines(meta);
   const pendingAddQuantityLines = buildPendingAddQuantityContextLines(meta);
+  const pendingOrderLinesLines = buildPendingOrderLinesContextLines(meta);
   const partySizeJustConfirmedLines = buildPartySizeJustConfirmedContextLines(
     ctx.partySizeJustConfirmed
   );
@@ -461,6 +467,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     ...pendingSelectionLines,
     ...pendingVariationLines,
     ...pendingAddQuantityLines,
+    ...pendingOrderLinesLines,
     ...pendingCancelLines,
     ...intentLines,
     ...optionalComplementLines,
