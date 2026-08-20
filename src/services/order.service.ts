@@ -224,7 +224,10 @@ export const buildCancelOrderMessage = async (
   const draftOrder = await findActiveDraft(businessId, customerPhone);
 
   if (!pendingOrder && !draftOrder) {
-    await omitConversationMetadataKeys(conversation.id, ['pending_cancel_disambiguation']);
+    // Nada vivo que cancelar, pero la intención es empezar de cero: la sesión
+    // puede arrastrar mode PRODUCT_FOCUS, shortlist, party size, cola de líneas
+    // o Ledger de un pedido anterior. Wipe igual (no hay carrito que proteger).
+    await clearOrderSessionAfterCancel(conversation.id);
     const errorText = formatBotUserMessage(
       'Nada para cancelar',
       'ℹ️',

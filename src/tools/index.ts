@@ -2639,18 +2639,38 @@ export const clearPendingOrderLinesTool = new DynamicStructuredTool<
   name: 'clear_pending_order_lines',
   description:
     'Cancela TODO el resto de la cola de pedido (el cliente dijo "nada más", "cancelá el resto", "listo así"). ' +
-    'No toca lo que ya está en el carrito. Llamá ANTES de responder.',
+    'No toca lo que ya está en el carrito. Llamá ANTES de responder. ' +
+    'NO la uses si el cliente quiere cancelar el pedido / el carrito / todo ("cancelar pedido", ' +
+    '"cancelá todo", "borrá el carrito"): eso es cancel_order(), que además vacía el carrito.',
   schema: clearPendingOrderLinesSchema,
   func: async (
     _input: ClearPendingOrderLinesInput,
     _runManager,
     config?: RunnableConfig
   ) => {
-    const { conversationId } = getReactContext(config);
+    const { conversationId, businessId, customerPhone } = getReactContext(config);
     if (conversationId) {
       await clearPendingOrderLines(conversationId);
     }
-    return toJson({ cleared: true });
+
+    // El carrito sobrevive a esta tool: el copy debe decirlo (el cliente que
+    // pidió "cancelar pedido" cree que se vació todo).
+    const draft = await prisma.draft_order.findFirst({
+      where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
+      select: { draft_order_item: { select: { quantity: true } } },
+    });
+    const cartItemCount = draft?.draft_order_item.length ?? 0;
+
+    return toJson({
+      cleared: true,
+      cartItemCount,
+      instruction:
+        cartItemCount > 0
+          ? 'Solo se cancelaron las líneas que faltaban: el carrito sigue con lo ya sumado. ' +
+            'Decilo explícitamente (podés usar present_cart). Si el cliente quería cancelar TODO ' +
+            'el pedido, llamá cancel_order() en este mismo turno.'
+          : 'La cola quedó vacía y el carrito no tiene ítems.',
+    });
   },
 });
 

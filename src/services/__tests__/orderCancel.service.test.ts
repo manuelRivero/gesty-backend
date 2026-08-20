@@ -198,11 +198,12 @@ describe('buildCancelOrderMessage', () => {
     expect(emitAdminOrderStatusChanged).not.toHaveBeenCalled();
   });
 
-  it('nada para cancelar', async () => {
+  it('nada para cancelar → igual limpia la sesión (mode/shortlist/cola de un pedido anterior)', async () => {
     vi.mocked(prisma.orders.findFirst).mockResolvedValue(null as never);
     vi.mocked(prisma.draft_order.findFirst).mockResolvedValue(null as never);
 
     const result = await buildCancelOrderMessage(CONVERSATION, 'biz-1', '+54911');
     expect(result as string).toMatch(/Nada para cancelar/i);
+    expect(clearOrderSessionAfterCancel).toHaveBeenCalledWith('conv-1');
   });
 });

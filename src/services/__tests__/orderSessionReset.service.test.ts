@@ -73,6 +73,9 @@ describe('clearOrderSessionAfterCancel', () => {
         'pending_address_text',
         'pendingOrderSelection',
         'pendingOrderCandidateIds',
+        'pendingOrderLines',
+        'pendingTipables',
+        'lastCtaPayload',
       ])
     );
 
