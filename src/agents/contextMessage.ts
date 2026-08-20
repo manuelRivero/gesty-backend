@@ -243,7 +243,8 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
 
   const partySizeLine = partySize
     ? `${partySize} (guía de cantidad a pedir, NO filtro de serves_people)`
-    : 'no informado — preguntar solo si el cliente consulta platos o pide comida en este turno';
+    : 'no informado — NO preguntarlo por iniciativa propia. Solo se pide si aparece el Goal ' +
+      'OBTENER_PERSONAS_DEL_PEDIDO acá abajo o si una tool devuelve party_size_required';
 
   const detection = ctx.detection;
 
