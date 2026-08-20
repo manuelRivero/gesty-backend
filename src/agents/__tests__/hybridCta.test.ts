@@ -11,6 +11,7 @@ import {
   extractPrimaryProductId,
   formatSelectListCandidateMeta,
   sanitizeSelectFromListIntro,
+  SELECT_FROM_LIST_CLOSING_LINE,
 } from '../../whatsappBuilders/hybridCta';
 import type { CtaPlan } from '../types';
 
@@ -119,7 +120,7 @@ describe('buildHybridCtaInteractive', () => {
   });
 
   describe('SELECT_FROM_LIST plan', () => {
-    it('devuelve lista interactiva con filas SELECT_PRODUCT y meta en atajos', () => {
+    it('devuelve texto con atajos tipables: sin lista WA ni payloads SELECT_PRODUCT', () => {
       const plan: CtaPlan = {
         primary: {
           kind: 'SELECT_FROM_LIST',
@@ -140,31 +141,16 @@ describe('buildHybridCtaInteractive', () => {
       };
 
       const result = buildHybridCtaInteractive(TEXT, plan);
-      expect(result!.isInteractive).toBe(true);
+      expect(result!.isInteractive).toBe(false);
 
-      const listMsg = result!.content as any;
-      expect(listMsg.type).toBe('list');
-
-      const allRowIds: string[] = listMsg.action.sections
-        .flatMap((s: any) => s.rows.map((r: any) => r.id as string));
-
-      expect(allRowIds).toContain('SELECT_PRODUCT:p1');
-      expect(allRowIds).toContain('SELECT_PRODUCT:p2');
-      expect(allRowIds).toContain('VIEW_MENU');
-      expect(listMsg.body.text).toContain(
-        '• *Ceviche Clásico*\nración para: 2\nPrecio: $25.000'
-      );
-      expect(listMsg.body.text).toContain(
-        '• *Ceviche Mixto*\nración para: 1\nPrecio: $11.000'
-      );
-      // Fila WA: meta aplanada en una línea.
-      const classicRow = listMsg.action.sections
-        .flatMap((s: any) => s.rows)
-        .find((r: any) => r.id === 'SELECT_PRODUCT:p1');
-      expect(classicRow?.description).toBe('ración para: 2 · Precio: $25.000');
-      // Footer WA ya invita a elegir/escribir; no repetir en el body.
-      expect(listMsg.body.text).not.toMatch(/O elegí de la lista/i);
-      expect(listMsg.footer?.text).toMatch(/Elegí o escribí/i);
+      const body = result!.content as string;
+      expect(typeof body).toBe('string');
+      expect(body).not.toMatch(/SELECT_PRODUCT/);
+      expect(body).toContain('• *Ceviche Clásico*\nración para: 2\nPrecio: $25.000');
+      expect(body).toContain('• *Ceviche Mixto*\nración para: 1\nPrecio: $11.000');
+      // Sin footer WA, el cierre invita a escribir el nombre.
+      expect(body).toContain(SELECT_FROM_LIST_CLOSING_LINE);
+      expect(body).not.toMatch(/O elegí de la lista/i);
     });
 
     it('sanitiza intro que trae lista numerada y deja solo la prosa previa', () => {
@@ -195,7 +181,7 @@ describe('buildHybridCtaInteractive', () => {
       };
 
       const result = buildHybridCtaInteractive(dirtyIntro, plan);
-      const body = (result!.content as any).body.text as string;
+      const body = result!.content as string;
       expect(body).toMatch(/Perfecto/i);
       expect(body).not.toMatch(/1\.\s*\*Ceviche/);
       expect(body).toContain('• *Ceviche Clásico*\nración para: 2\nPrecio: $25.000');
@@ -212,12 +198,10 @@ describe('buildHybridCtaInteractive', () => {
       };
 
       const result = buildHybridCtaInteractive(TEXT, plan);
-      const listMsg = result!.content as any;
-      const productRows = listMsg.action.sections
-        .flatMap((s: any) => s.rows)
-        .filter((r: any) => (r.id as string).startsWith('SELECT_PRODUCT:'));
+      const body = result!.content as string;
+      const bullets = body.split('\n').filter((l) => l.startsWith('• *'));
 
-      expect(productRows.length).toBeLessThanOrEqual(5);
+      expect(bullets.length).toBeLessThanOrEqual(5);
     });
   });
 

@@ -2,7 +2,9 @@
  * Builder de mensajes interactivos WhatsApp para el CTA híbrido.
  *
  * - ADD_ITEM / VIEW_MENU / VIEW_FEATURED → `WhatsAppInteractiveMessage` (botones reply, max 3)
- * - SELECT_FROM_LIST → `WhatsAppListMessage` via buildListMessageFromButtons
+ * - SELECT_FROM_LIST → texto plano con atajos tipables (sin lista WA: el click
+ *   de la lista salía por un handler legacy fuera del ReAct y trababa la cola de
+ *   pedido; ver PLAN-ACCION-PEDIDO-MULTI-LINEA.md)
  *
  * Restricciones WhatsApp:
  *  - Máximo 3 botones reply por mensaje interactivo.
@@ -11,13 +13,11 @@
  */
 
 import type { HandlerResult } from '../controllers/webhook/types';
-import { buildListMessageFromButtons, truncateTitle } from './index';
 import { buildShortcutsThenListBody, shortcutBullet } from './listShortcutsBody';
 import type { CtaPlan } from '../agents/types';
 
 const MAX_BUTTON_TITLE = 20;
 const MAX_PAYLOAD_LENGTH = 255;
-const MAX_ROW_DESCRIPTION = 72;
 
 const safeTitle = (label: string): string =>
   label.slice(0, MAX_BUTTON_TITLE);
@@ -49,7 +49,6 @@ export type SelectListCandidateMeta = {
  *   ración para: 2
  *   Precio: $11.000
  * El nombre en negrita queda en la viñeta; porción y precio van debajo.
- * Para description de fila de lista WA usá `flattenSelectListCandidateMeta`.
  */
 export const formatSelectListCandidateMeta = (
   params: SelectListCandidateMeta
@@ -66,18 +65,6 @@ export const formatSelectListCandidateMeta = (
     }
   }
   return parts.length > 0 ? parts.join('\n') : undefined;
-};
-
-/** Una línea para description de fila lista WA (Meta no renderiza saltos ahí). */
-export const flattenSelectListCandidateMeta = (
-  meta: string | undefined | null
-): string | undefined => {
-  if (!meta?.trim()) return undefined;
-  return meta
-    .split(/\n+/)
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .join(' · ');
 };
 
 /**
@@ -114,7 +101,8 @@ export type SelectListBodyCandidate = {
  *   • *Nombre*
  *   ración para: 2
  *   Precio: $11.000
- * La lista WA se ofrece vía footer; no se agrega «O elegí de la lista.» al body.
+ * El shortlist se responde escribiendo el nombre: lo interpreta el ReAct con
+ * `pendingProductSelection` en `[ESTADO DEL CLIENTE]`, no un handler de payload.
  */
 export const buildSelectFromListBodyText = (
   intro: string,
@@ -141,6 +129,9 @@ export const buildSelectFromListBodyText = (
   return buildShortcutsThenListBody(sanitizeSelectFromListIntro(intro), bullets);
 };
 
+/** Cierre del shortlist: sin lista WA, el nombre escrito es la única vía de elección. */
+export const SELECT_FROM_LIST_CLOSING_LINE = 'Escribime el nombre de la que quieras.';
+
 /**
  * Construye un HandlerResult interactivo (botones o lista) a partir de un CtaPlan resuelto.
  * Nunca lanza: si algo falla devuelve `null` y el caller usa el texto plano.
@@ -152,41 +143,21 @@ export const buildHybridCtaInteractive = (
   try {
     const { primary, secondary } = plan;
 
-    // SELECT_FROM_LIST → lista interactiva
+    // SELECT_FROM_LIST → texto con atajos tipables, sin lista interactiva.
+    // La lista emitía rows `SELECT_PRODUCT:<id>` y esos payloads salen por
+    // `dispatchInteractive` (handler legacy), nunca por el ReAct: el turno del
+    // click no veía la cola de pedido ni los gates, no sumaba nada al carrito y
+    // remataba con "¿algo más?". El nombre escrito, en cambio, lo resuelve el
+    // agente con `pendingProductSelection` en el ledger.
     if (primary.kind === 'SELECT_FROM_LIST') {
       const listCandidates = primary.candidates.slice(0, 5);
-      const rows = listCandidates.map((c) => ({
-        title: truncateTitle(c.title, MAX_BUTTON_TITLE),
-        payload: safePayload(`SELECT_PRODUCT:${c.productId}`),
-        description: (() => {
-          const flat = flattenSelectListCandidateMeta(c.description);
-          return flat
-            ? flat.slice(0, MAX_ROW_DESCRIPTION)
-            : 'Seleccioná este producto';
-        })(),
-        sectionTitle: 'Opciones disponibles',
-      }));
-
-      // Escape row
-      rows.push({
-        title: 'Ver menú completo',
-        payload: 'VIEW_MENU',
-        description: 'Explorar todas las categorías',
-        sectionTitle: 'Navegación',
-      });
-
       const intro = (primary.bodyText || botResponseText).trim();
       const bodyText = buildSelectFromListBodyText(intro, listCandidates);
 
-      const listMsg = buildListMessageFromButtons(
-        bodyText,
-        rows,
-        'Ver opciones',
-        '',
-        'Elegí o escribí'
-      );
-
-      return { content: listMsg, isInteractive: true };
+      return {
+        content: `${bodyText}\n\n${SELECT_FROM_LIST_CLOSING_LINE}`,
+        isInteractive: false,
+      };
     }
 
     // Botones reply (1-3 botones)
