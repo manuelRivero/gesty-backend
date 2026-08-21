@@ -70,6 +70,7 @@ import {
 import {
   buildPendingOrderLinesContextLines,
   hasOpenOrderLines,
+  hasOpenOrderLineWithoutQuantity,
 } from '../services/pendingOrderLines.service';
 
 /** Hint interno cuando hay shortlist pendiente (SELECT_FROM_LIST / product query). */
@@ -321,6 +322,8 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
         foodRelatedSignal,
         partySize: partySize ?? null,
         checkoutActive,
+        hasOpenOrderLines: openOrderLines,
+        hasOrderLineWithoutQuantity: hasOpenOrderLineWithoutQuantity(meta),
       },
       resolvePartySizeLedgerEntry(meta)
     ),

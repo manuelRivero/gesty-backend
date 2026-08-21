@@ -115,6 +115,14 @@ describe('botPersonality', () => {
     expect(hybrid).toMatch(/porciones y precio/i);
   });
 
+  it('hybrid cola: plato → search_products(hint); sección → categoría, no recortar containsIngredient', () => {
+    const hybrid = buildHybridAgentSystemPrompt();
+    expect(hybrid).toMatch(/search_products\(keyword=<hint exacto>/i);
+    expect(hybrid).toMatch(/containsIngredient.*papas a la huancaína/i);
+    expect(hybrid).toMatch(/algo de beber/i);
+    expect(hybrid).toMatch(/present_category/i);
+  });
+
   it('hybrid incluye cancel_order para cancelación real', () => {
     const hybrid = buildHybridAgentSystemPrompt();
     expect(hybrid).toMatch(/cancel_order/i);

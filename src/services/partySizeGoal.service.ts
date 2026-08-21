@@ -36,6 +36,10 @@ export type PartySizeGoalFacts = {
   /** Señal de comida (turno NLP Fase A y/o metadata Fase B). */
   foodRelatedSignal: boolean;
   checkoutActive: boolean;
+  /** D7: cola de pedido abierta (`hasOpenOrderLines`). */
+  hasOpenOrderLines?: boolean;
+  /** D3: alguna línea abierta sin cantidad — lo único que justifica el Goal con cola. */
+  hasOrderLineWithoutQuantity?: boolean;
 };
 
 export type PartySizeGoalLedger = {
@@ -68,7 +72,10 @@ export type PartySizeGoal = {
   open: boolean;
 };
 
-/** Derivador puro: abierto ⟺ falta Fact + señal comida + no checkout + no abandono. */
+/**
+ * Derivador puro: abierto ⟺ falta Fact + señal comida + no checkout + no
+ * abandono, y — si hay cola de pedido — alguna línea abierta sin cantidad.
+ */
 export const derivePartySizeGoal = (
   facts: PartySizeGoalFacts,
   ledger: PartySizeGoalLedger
@@ -77,7 +84,8 @@ export const derivePartySizeGoal = (
     facts.partySize == null &&
     facts.foodRelatedSignal &&
     !facts.checkoutActive &&
-    !ledger.abandonment,
+    !ledger.abandonment &&
+    !(facts.hasOpenOrderLines === true && facts.hasOrderLineWithoutQuantity !== true),
 });
 
 /**

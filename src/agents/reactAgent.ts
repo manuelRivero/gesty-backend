@@ -226,6 +226,73 @@ const defaultPrimaryLabel = (kind: PresentProductCtaSignal['primaryKind']): stri
   }
 };
 
+/** Args resumidos: solo lo que sirve para reconstruir por qué eligió un producto. */
+const TRACED_ARG_KEYS = [
+  'query',
+  'keyword',
+  'hint',
+  'lines',
+  'productId',
+  'productIds',
+  'quantity',
+  'variation',
+  'categoryTag',
+  'categoryId',
+  'containsIngredient',
+  'excludesIngredient',
+  'primaryKind',
+  'productHint',
+] as const;
+
+const summarizeToolArgs = (args: unknown): Record<string, unknown> => {
+  if (typeof args !== 'object' || args === null) return {};
+  const src = args as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const key of TRACED_ARG_KEYS) {
+    const value = src[key];
+    if (value == null) continue;
+    if (key === 'lines' && Array.isArray(value)) {
+      out.lines = value.map((l) => {
+        const line = (typeof l === 'object' && l !== null ? l : {}) as Record<string, unknown>;
+        return `${String(line.hint ?? '?')}×${line.requestedQuantity ?? '—'}`;
+      });
+      continue;
+    }
+    out[key] = typeof value === 'string' ? value.slice(0, 80) : value;
+  }
+  return out;
+};
+
+/**
+ * Traza de tools del turno. Sin esto no se puede auditar con qué tool resolvió
+ * el modelo un producto: los logs solo mostraban las búsquedas semánticas (que
+ * loguean por su cuenta), así que un add resuelto por `find_products_by_filter`
+ * era invisible.
+ */
+const logToolCallTrace = (messages: unknown[], conversationId: string | undefined): void => {
+  const calls: Array<{ tool: string; args: Record<string, unknown> }> = [];
+  for (const msg of messages) {
+    if (typeof msg !== 'object' || msg === null) continue;
+    const raw = (msg as Record<string, unknown>).tool_calls;
+    if (!Array.isArray(raw)) continue;
+    for (const call of raw) {
+      if (typeof call !== 'object' || call === null) continue;
+      const c = call as Record<string, unknown>;
+      if (typeof c.name !== 'string') continue;
+      calls.push({ tool: c.name, args: summarizeToolArgs(c.args) });
+    }
+  }
+  if (calls.length === 0) return;
+  console.log(
+    JSON.stringify({
+      event: '[hybrid-agent] tool_trace',
+      conversationId,
+      toolCount: calls.length,
+      calls,
+    })
+  );
+};
+
 const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
   const signals: HybridAgentSignals = {
     startCheckoutSession: false,
@@ -569,6 +636,7 @@ export const runHybridReactAgent = async (
   });
 
   const agentMessages = (out as { messages?: unknown[] }).messages ?? [];
+  logToolCallTrace(agentMessages, conversationId);
   const signals = extractHybridSignals(agentMessages);
 
   // Escalado a humano: la tool ya marcó `is_human_handled`. Cortamos acá para no

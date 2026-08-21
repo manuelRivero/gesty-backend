@@ -113,6 +113,25 @@ const STOPWORDS = new Set([
   'por',
 ]);
 
+/**
+ * Relleno de hints de sección ("algo de beber"): no cuentan como token de
+ * plato al decidir si containsIngredient recortó un nombre. No van en
+ * STOPWORDS global: eso afectaría el match línea ↔ catálogo.
+ */
+const HINT_SECTION_FILLERS = new Set([
+  'algo',
+  'algun',
+  'alguna',
+  'alguno',
+  'algunos',
+  'algunas',
+  'poco',
+  'poca',
+  'tipo',
+  'cosa',
+  'cosas',
+]);
+
 /** Tokens comparables: sin acentos, sin stopwords, singular simple (papas → papa). */
 const matchTokens = (value: string): Set<string> => {
   const tokens = value
@@ -125,6 +144,48 @@ const matchTokens = (value: string): Set<string> => {
     .map((t) => (t.endsWith('s') ? t.slice(0, -1) : t));
   return new Set(tokens);
 };
+
+const dishTokens = (value: string): Set<string> => {
+  const out = new Set<string>();
+  for (const t of matchTokens(value)) {
+    if (!HINT_SECTION_FILLERS.has(t)) out.add(t);
+  }
+  return out;
+};
+
+/**
+ * `containsIngredient` está recortando un hint de plato ("papa" ⊂ "papas a
+ * la huancaína"). Parsing de argumento de tool vs Fact de sesión — no del
+ * mensaje del cliente.
+ *
+ * Si el hint no tiene tokens de más que el filtro (p. ej. "una bebida" /
+ * "algo de beber"), no dispara: ahí el camino correcto es categoría, no
+ * vectorial.
+ */
+export const ingredientFilterCarvesDishHint = (
+  hint: string,
+  containsIngredient: string | null | undefined
+): boolean => {
+  const ingredient = containsIngredient?.trim();
+  if (!ingredient) return false;
+  const hintTokens = dishTokens(hint);
+  const ingredientTokens = dishTokens(ingredient);
+  if (hintTokens.size === 0 || ingredientTokens.size === 0) return false;
+  for (const t of ingredientTokens) {
+    if (!hintTokens.has(t)) return false;
+  }
+  return hintTokens.size > ingredientTokens.size;
+};
+
+/** Cómo resolver la línea activa: plato → vectorial; sección → categoría. */
+export const buildOrderLineSearchInstruction = (hint: string): string =>
+  `Trabajá ahora "${hint}" según el tipo de hint: ` +
+  `si nombra un plato (ej. "papas a la huancaína", "ceviche"), llamá search_products(keyword="${hint}") ` +
+  `con el hint ENTERO — PROHIBIDO find_products_by_filter(containsIngredient) recortando el hint ` +
+  `(ej. "papa" a partir de "papas a la huancaína": eso suma otro plato). ` +
+  `Si el hint es sección o rol ("algo de beber", "una bebida", "postre", "entrada"), ` +
+  `NO uses search_products de esa frase: get_categories + present_category, ` +
+  `o find_products_by_filter(categoryTag=DRINK/DESSERT/STARTER/...).`;
 
 /**
  * Qué línea abierta de la cola corresponde al producto que se está agregando.
@@ -166,6 +227,21 @@ export const hasOpenOrderLines = (metadata: unknown): boolean => {
   const pending = getPendingOrderLines(metadata);
   if (!pending) return false;
   return pending.lines.some((l) => l.status === 'queued' || l.status === 'active');
+};
+
+/**
+ * Línea abierta sin cantidad ("una bebida"). El Goal de personas existe para
+ * sugerir unidades, así que con la cola entera cuantificada no tiene nada que
+ * aportar: sin esto el Goal se abría igual, gastaba una de sus 3 apariciones
+ * por turno y le metía al prompt un "preguntá personas primero" que el gate de
+ * `add_cart_item` ya iba a ignorar (D3).
+ */
+export const hasOpenOrderLineWithoutQuantity = (metadata: unknown): boolean => {
+  const pending = getPendingOrderLines(metadata);
+  if (!pending) return false;
+  return pending.lines.some(
+    (l) => (l.status === 'queued' || l.status === 'active') && l.requestedQuantity == null
+  );
 };
 
 export const countOpenOrderLines = (pending: PendingOrderLines | null): number => {
@@ -377,7 +453,8 @@ export const buildPendingOrderLinesContextLines = (metadata: unknown): string[] 
     `- Cola de pedido (varios platos en un mismo mensaje; NO es confirmación de cantidad): ` +
       `línea activa ahora → ${activeLabel ?? 'ninguna (activá la próxima con la tool que corresponda)'}` +
       (queuedLabels.length > 0 ? `. Después faltan: ${queuedLabels.join(', ')}.` : '.') +
-      ` Trabajá SOLO la línea activa (search_products/find_products_by_filter con su hint, variación, cantidad) ` +
+      ` Trabajá SOLO la línea activa. ${buildOrderLineSearchInstruction(active?.hint ?? '')} ` +
+      `Variación y cantidad de esa línea, como el flujo normal ` +
       `— NO relistes ni ofrezcas las demás como si fueran shortlist ahora. ` +
       `Si el requestedQuantity de la línea existe, PRIORIZALO sobre ceil(personas/porción) al sugerir/ask de cantidad. ` +
       `Al cerrar la línea (add exitoso o el cliente cancela esa línea), el sistema avanza la cola solo; ` +

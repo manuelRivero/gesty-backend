@@ -83,6 +83,8 @@ import {
   getActiveOrderLine,
   getPendingOrderLines,
   hasOpenOrderLines,
+  ingredientFilterCarvesDishHint,
+  buildOrderLineSearchInstruction,
   ORDER_LINES_MAX,
   resolveOrderLineForProduct,
   setPendingOrderLines,
@@ -688,7 +690,10 @@ export const findProductsByFilterTool = new DynamicStructuredTool<
 >({
   name: 'find_products_by_filter',
   description:
-    'Busca productos del menú aplicando filtros estructurados (categoría, rol de categoría, ingredientes, porciones, rango de precio, destacados). Devuelve shortlist liviano para decidir rápido. Si necesitás descripción/ingredientes detallados, usá get_products_details_by_ids con los IDs elegidos.',
+    'Busca productos del menú aplicando filtros estructurados (categoría, rol de categoría, ingredientes, porciones, rango de precio, destacados). ' +
+    'Para resolver un hint de PLATO de la cola de pedido usá search_products(keyword=hint entero), no containsIngredient recortado. ' +
+    'Sí corresponde con categoryTag cuando el hint es sección/rol ("algo de beber" → DRINK). ' +
+    'Devuelve shortlist liviano para decidir rápido. Si necesitás descripción/ingredientes detallados, usá get_products_details_by_ids con los IDs elegidos.',
   schema: findProductsByFilterSchema,
   func: async (
     {
@@ -706,7 +711,24 @@ export const findProductsByFilterTool = new DynamicStructuredTool<
     _runManager,
     config?: RunnableConfig
   ) => {
-    const { businessId } = getReactContext(config);
+    const { businessId, conversationId } = getReactContext(config);
+
+    const ingredientContainsEarly = containsIngredient?.trim();
+    if (ingredientContainsEarly) {
+      const state = await findOrCreateConversationState(conversationId);
+      const active = getActiveOrderLine(getPendingOrderLines(state.metadata));
+      if (
+        active &&
+        ingredientFilterCarvesDishHint(active.hint, ingredientContainsEarly)
+      ) {
+        return toJson({
+          error: 'use_search_products',
+          keyword: active.hint,
+          instruction: buildOrderLineSearchInstruction(active.hint),
+        });
+      }
+    }
+
     const business = await prisma.business.findUnique({
       where: { id: businessId },
       select: { currency_code: true },
@@ -2516,9 +2538,10 @@ export const planOrderLinesTool = new DynamicStructuredTool<
     '(ej. "quiero 3 lomos, 2 ceviches y una bebida" → 3 líneas). NO uses esta tool si es un solo plato ' +
     '(aunque pida varias unidades del mismo, ej. "2 pizzas" es 1 línea, no la necesitás). ' +
     'Llamala UNA sola vez por mensaje, ANTES de resolver ningún producto. Después de llamarla, trabajá ' +
-    'SOLO la línea activa que te indique la respuesta (o [ESTADO DEL CLIENTE] en el siguiente turno): ' +
-    'search_products/find_products_by_filter con su hint, variación y cantidad como el flujo normal — ' +
-    'las demás líneas esperan en cola, no las menciones como shortlist.',
+    'SOLO la línea activa: si el hint nombra un plato, search_products(keyword=hint entero); ' +
+    'si es sección/rol ("algo de beber", "postre"), get_categories + present_category o ' +
+    'find_products_by_filter(categoryTag). PROHIBIDO containsIngredient recortando un nombre de plato. ' +
+    'Las demás líneas esperan en cola, no las menciones como shortlist.',
   schema: planOrderLinesSchema,
   func: async (
     { lines }: PlanOrderLinesInput,
@@ -2544,7 +2567,7 @@ export const planOrderLinesTool = new DynamicStructuredTool<
       instruction: active
         ? `Trabajá ahora SOLO "${active.hint}"${
             active.requestedQuantity ? ` (${active.requestedQuantity}×)` : ''
-          } con search_products/find_products_by_filter. No listes ni menciones las demás líneas todavía.`
+          }. ${buildOrderLineSearchInstruction(active.hint)} No listes ni menciones las demás líneas todavía.`
         : 'Sin línea activa (inesperado): revisá con get_cart.',
     });
   },
@@ -2560,8 +2583,10 @@ export const continueOrderLineTool = new DynamicStructuredTool<
   name: 'continue_order_line',
   description:
     'El cliente confirmó que seguimos con la próxima línea de la cola de pedido ("seguí", "dale con el ceviche", "sí"). ' +
-    'Actívala (el sistema decide cuál es) y devuelve su hint/cantidad para que llames search_products/find_products_by_filter ' +
-    'en este mismo turno. Si no hay cola o ya hay una línea activa, no hace nada.',
+    'Actívala (el sistema decide cuál es) y devuelve su hint/cantidad. ' +
+    'Si el hint nombra un plato, llamá search_products(keyword=hint entero) en este mismo turno; ' +
+    'si es sección/rol ("algo de beber"), get_categories + present_category o find_products_by_filter(categoryTag). ' +
+    'Si no hay cola o ya hay una línea activa, no hace nada.',
   schema: continueOrderLineSchema,
   func: async (
     _input: ContinueOrderLineInput,
@@ -2581,9 +2606,7 @@ export const continueOrderLineTool = new DynamicStructuredTool<
     return toJson({
       success: true,
       activeLine: { hint: active.hint, requestedQuantity: active.requestedQuantity },
-      instruction: `Trabajá ahora "${active.hint}"${
-        active.requestedQuantity ? ` (${active.requestedQuantity}×)` : ''
-      } con search_products/find_products_by_filter.`,
+      instruction: buildOrderLineSearchInstruction(active.hint),
     });
   },
 });

@@ -13,6 +13,8 @@ import {
   ORDER_LINES_MAX,
   parsePendingOrderLines,
   resolveOrderLineForProduct,
+  ingredientFilterCarvesDishHint,
+  buildOrderLineSearchInstruction,
   setPendingOrderLines,
   type PendingOrderLines,
 } from '../pendingOrderLines.service';
@@ -147,6 +149,33 @@ describe('pendingOrderLines.service', () => {
     });
   });
 
+  describe('ingredientFilterCarvesDishHint', () => {
+    it('bloquea containsIngredient recortado de un hint de plato (log papas → ensalada)', () => {
+      expect(ingredientFilterCarvesDishHint('papas a la huancaína', 'papa')).toBe(true);
+      expect(ingredientFilterCarvesDishHint('ceviche mixto', 'ceviche')).toBe(true);
+    });
+
+    it('no dispara en hints de sección/rol: el filtro no recorta un plato', () => {
+      expect(ingredientFilterCarvesDishHint('algo de beber', 'beber')).toBe(false);
+      expect(ingredientFilterCarvesDishHint('una bebida', 'bebida')).toBe(false);
+      expect(ingredientFilterCarvesDishHint('papas', 'papa')).toBe(false);
+    });
+
+    it('no dispara si el filtro no es token del hint (alergia, otro ingrediente)', () => {
+      expect(ingredientFilterCarvesDishHint('papas a la huancaína', 'maní')).toBe(false);
+      expect(ingredientFilterCarvesDishHint('papas a la huancaína', null)).toBe(false);
+      expect(ingredientFilterCarvesDishHint('papas a la huancaína', '  ')).toBe(false);
+    });
+
+    it('buildOrderLineSearchInstruction nombra vectorial para plato y categoría para sección', () => {
+      const text = buildOrderLineSearchInstruction('papas a la huancaína');
+      expect(text).toContain('search_products(keyword="papas a la huancaína")');
+      expect(text).toMatch(/containsIngredient/);
+      expect(text).toMatch(/algo de beber/);
+      expect(text).toMatch(/present_category/);
+    });
+  });
+
   it('setPendingOrderLines topea en ORDER_LINES_MAX líneas', async () => {
     const many = Array.from({ length: ORDER_LINES_MAX + 5 }, (_, i) => ({ hint: `plato ${i}` }));
     const pending = await setPendingOrderLines({
@@ -236,6 +265,8 @@ describe('pendingOrderLines.service', () => {
     expect(text).toMatch(/ceviche/);
     expect(text).toMatch(/bebida/);
     expect(text).toMatch(/SOLO la línea activa/);
+    expect(text).toMatch(/search_products\(keyword=/);
+    expect(text).toMatch(/algo de beber/);
     expect(text).toMatch(/PROHIBIDO ofrecer complementos/);
   });
 
