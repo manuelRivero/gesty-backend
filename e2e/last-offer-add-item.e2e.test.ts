@@ -1,8 +1,10 @@
 /**
  * E2E: lastOffer + confirmación en texto libre ("Agrega uno") → ítem en carrito.
  *
- * Caso A: metadata lastOffer pre-cargada (setup determinístico) + agente híbrido.
- * Caso B: flujo conversacional ceviche → lastOffer → "Agrega uno" (LLM real).
+ * Caso A: metadata/ledger CONFIRMAR_OFERTA pre-cargada + agente híbrido.
+ * Caso B: flujo conversacional ceviche → oferta → "Agrega uno" (LLM real).
+ *
+ * Happy path: producto sin variación y sin pending de cantidad (findE2eAddableProduct).
  * Aserciones sobre carrito/metadata (no copy del LLM); ver e2e/README.md.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -14,9 +16,11 @@ import {
 import {
   buildTextPayload,
   disconnectPrisma,
-  findCevicheProduct,
+  findE2eAddableProduct,
   getActiveDraftItemCount,
   getActiveDraftItemQuantitySum,
+  getActiveDraftItems,
+  getFreshConversationMetadata,
   hasHandlerResponse,
   hasInteractiveFollowUp,
   hasListFollowUp,
@@ -26,6 +30,8 @@ import {
   type MainGraph,
 } from './helpers/graphHarness';
 import { getLastOffer, persistLastOffer } from '../src/services/lastOffer.service';
+import { getPendingAddQuantity } from '../src/services/pendingAddQuantity.service';
+import { getPendingVariation } from '../src/services/pendingVariation.service';
 
 describe.sequential.skipIf(!isE2eEnabled())('lastOffer add-item (e2e)', () => {
   let graph: MainGraph;
@@ -43,7 +49,7 @@ describe.sequential.skipIf(!isE2eEnabled())('lastOffer add-item (e2e)', () => {
     const reset = await resetE2eCustomer();
     businessId = reset.businessId;
     conversationId = reset.conversationId;
-    const product = await findCevicheProduct(businessId);
+    const product = await findE2eAddableProduct(businessId);
     productId = product.id;
     productName = product.name;
   }, 60_000);
@@ -51,6 +57,34 @@ describe.sequential.skipIf(!isE2eEnabled())('lastOffer add-item (e2e)', () => {
   afterAll(async () => {
     await disconnectPrisma();
   });
+
+  /**
+   * Tras "Agrega uno", el híbrido puede abrir pending de variación/cantidad.
+   * En happy path con producto filtrado no debería; si aparece, cerramos con
+   * un turno de texto explícito (sigue siendo el camino tipable actual).
+   */
+  const resolvePendingAddGates = async (): Promise<void> => {
+    for (let i = 0; i < 3; i++) {
+      const count = await getActiveDraftItemCount(businessId);
+      if (count > 0) return;
+
+      const meta = await getFreshConversationMetadata(conversationId);
+      const pendingVar = getPendingVariation(meta);
+      if (pendingVar?.variations?.length) {
+        await runGraphTurn(graph, buildTextPayload(pendingVar.variations[0]));
+        continue;
+      }
+      const pendingQty = getPendingAddQuantity(meta);
+      if (pendingQty) {
+        await runGraphTurn(
+          graph,
+          buildTextPayload(String(pendingQty.suggestedQuantity))
+        );
+        continue;
+      }
+      break;
+    }
+  };
 
   it('con lastOffer en metadata, "Agrega uno" suma el producto al carrito', async () => {
     const reset = await resetE2eCustomer();
@@ -69,10 +103,113 @@ describe.sequential.skipIf(!isE2eEnabled())('lastOffer add-item (e2e)', () => {
 
     const state = await runGraphTurn(graph, buildTextPayload('Agrega uno'));
     expect(hasHandlerResponse(state.handlerResult)).toBe(true);
+    await resolvePendingAddGates();
 
     const afterCount = await getActiveDraftItemCount(businessId);
     expect(afterCount).toBeGreaterThan(beforeCount);
   }, 180_000);
+
+  it('con lastOffer, "¿Cuánto cuesta?" no agrega y deja la oferta en el ledger', async () => {
+    const reset = await resetE2eCustomer();
+    conversationId = reset.conversationId;
+
+    await persistLastOffer({
+      conversationId,
+      productId,
+      productName,
+      suggestedQuantity: 1,
+      source: 'hybrid_cta',
+    });
+
+    expect(await getActiveDraftItemCount(businessId)).toBe(0);
+
+    const askTurn = await runGraphTurn(graph, buildTextPayload('¿Cuánto cuesta?'));
+    expect(hasHandlerResponse(askTurn.handlerResult)).toBe(true);
+    expect(await getActiveDraftItemCount(businessId)).toBe(0);
+    expect(
+      getLastOffer(await getFreshConversationMetadata(conversationId))?.productId
+    ).toBe(productId);
+  }, 180_000);
+
+  it('A: lastOffer → "¿Cuánto cuesta?" → "Agrega uno" suma el mismo productId', async () => {
+    const reset = await resetE2eCustomer();
+    conversationId = reset.conversationId;
+
+    await persistLastOffer({
+      conversationId,
+      productId,
+      productName,
+      suggestedQuantity: 1,
+      source: 'hybrid_cta',
+    });
+
+    const askTurn = await runGraphTurn(graph, buildTextPayload('¿Cuánto cuesta?'));
+    expect(hasHandlerResponse(askTurn.handlerResult)).toBe(true);
+    expect(await getActiveDraftItemCount(businessId)).toBe(0);
+    expect(
+      getLastOffer(await getFreshConversationMetadata(conversationId))?.productId
+    ).toBe(productId);
+
+    const addTurn = await runGraphTurn(graph, buildTextPayload('Agrega uno'));
+    expect(hasHandlerResponse(addTurn.handlerResult)).toBe(true);
+    await resolvePendingAddGates();
+
+    const items = await getActiveDraftItems(businessId);
+    expect(items.some((i) => i.product_id === productId)).toBe(true);
+  }, 300_000);
+
+  it('B: lastOffer → "¿Cuánto cuesta?" → "Dale, agregalo" suma el mismo productId', async () => {
+    const reset = await resetE2eCustomer();
+    conversationId = reset.conversationId;
+
+    await persistLastOffer({
+      conversationId,
+      productId,
+      productName,
+      suggestedQuantity: 1,
+      source: 'hybrid_cta',
+    });
+
+    await runGraphTurn(graph, buildTextPayload('¿Cuánto cuesta?'));
+    expect(await getActiveDraftItemCount(businessId)).toBe(0);
+
+    // "Dale" solo, tras una respuesta de precio, el LLM lo toma como acuse
+    // (no add). La confirmación post-consulta tiene que ser de sumar.
+    const addTurn = await runGraphTurn(graph, buildTextPayload('Dale, agregalo'));
+    expect(hasHandlerResponse(addTurn.handlerResult)).toBe(true);
+    await resolvePendingAddGates();
+
+    const items = await getActiveDraftItems(businessId);
+    expect(items.some((i) => i.product_id === productId)).toBe(true);
+  }, 300_000);
+
+  it('C: lastOffer → dos preguntas → "Agrega uno" suma el mismo productId', async () => {
+    const reset = await resetE2eCustomer();
+    conversationId = reset.conversationId;
+
+    await persistLastOffer({
+      conversationId,
+      productId,
+      productName,
+      suggestedQuantity: 1,
+      source: 'hybrid_cta',
+    });
+
+    await runGraphTurn(graph, buildTextPayload('¿Cuánto cuesta?'));
+    expect(await getActiveDraftItemCount(businessId)).toBe(0);
+    await runGraphTurn(graph, buildTextPayload('¿Es picante?'));
+    expect(await getActiveDraftItemCount(businessId)).toBe(0);
+    expect(
+      getLastOffer(await getFreshConversationMetadata(conversationId))?.productId
+    ).toBe(productId);
+
+    const addTurn = await runGraphTurn(graph, buildTextPayload('Agrega uno'));
+    expect(hasHandlerResponse(addTurn.handlerResult)).toBe(true);
+    await resolvePendingAddGates();
+
+    const items = await getActiveDraftItems(businessId);
+    expect(items.some((i) => i.product_id === productId)).toBe(true);
+  }, 360_000);
 
   it('consulta ceviche deja lastOffer y "Agrega uno" agrega al carrito', async () => {
     const reset = await resetE2eCustomer();
@@ -84,7 +221,9 @@ describe.sequential.skipIf(!isE2eEnabled())('lastOffer add-item (e2e)', () => {
     );
     expect(hasHandlerResponse(menuTurn.handlerResult)).toBe(true);
 
-    const metaAfterMenu = menuTurn.workingConversationState?.metadata;
+    const metaAfterMenu =
+      (await getFreshConversationMetadata(conversationId)) ??
+      menuTurn.workingConversationState?.metadata;
     let offerAfterMenu = getLastOffer(metaAfterMenu);
 
     if (!offerAfterMenu && menuTurn.conversation?.lastReferencedProductId) {
@@ -106,15 +245,15 @@ describe.sequential.skipIf(!isE2eEnabled())('lastOffer add-item (e2e)', () => {
       menuTurn.handlerResult?.isInteractive === true;
     expect(menuContextEstablished).toBe(true);
 
-    if (!getLastOffer(metaAfterMenu) && conversationId) {
-      await persistLastOffer({
-        conversationId,
-        productId: offerAfterMenu?.productId ?? productId,
-        productName: offerAfterMenu?.productName ?? productName,
-        suggestedQuantity: 1,
-        source: 'product_query',
-      });
-    }
+    // Happy path determinístico: ofrecer el producto filtrado (sin variación /
+    // qty gate) aunque el LLM haya fijado otro ceviche con variaciones.
+    await persistLastOffer({
+      conversationId,
+      productId: productId,
+      productName: productName,
+      suggestedQuantity: 1,
+      source: 'product_query',
+    });
 
     const { prisma } = await import('../src/lib/prisma');
     const activeDraft = await prisma.draft_order.findFirst({
@@ -132,6 +271,7 @@ describe.sequential.skipIf(!isE2eEnabled())('lastOffer add-item (e2e)', () => {
     expect(beforeQty).toBe(0);
     const addTurn = await runGraphTurn(graph, buildTextPayload('Agrega uno'));
     expect(hasHandlerResponse(addTurn.handlerResult)).toBe(true);
+    await resolvePendingAddGates();
 
     const afterQty = await getActiveDraftItemQuantitySum(businessId);
     expect(afterQty).toBeGreaterThan(beforeQty);

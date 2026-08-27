@@ -197,6 +197,7 @@ export const INTENT_CATALOG: Record<IntentType, IntentCatalogEntry> = {
     kind: 'opportunity',
     pressure: 'ambient',
     closeMode: 'decay',
+    // Presupuesto de planteos (anti-nag). El Fact de oferta viva no usa este tope.
     maxSurfaces: 1,
     cooldownMs: 0,
     ttlMs: 15 * 60 * 1000,

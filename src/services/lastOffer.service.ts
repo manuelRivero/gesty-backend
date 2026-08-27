@@ -1,10 +1,15 @@
 /**
- * CONFIRMAR_OFERTA — Opportunity (TAXONOMIA §3 / Fase B.2).
+ * CONFIRMAR_OFERTA — Opportunity (TAXONOMIA §3 / Fase B.2) + Fact de sesión.
  *
- * Cuando el bot ofrece sumar un producto, se persiste en el Ledger
- * (`intentLedger.CONFIRMAR_OFERTA`), no en un bag paralelo. El TTL del
- * catálogo decide permiso en `rankActiveIntent` (V-12 corregida).
- * Presupuesto 1 (ADR-0008 / D7).
+ * El Ledger guarda el dato de la oferta (`productId`, …) y el presupuesto
+ * de planteo (`surfaceCount`). Son dos canales:
+ * - Fact (`buildLastOfferFactLines`): visible mientras la oferta viva y el
+ *   TTL del catálogo no venció — independiente de maxSurfaces.
+ * - Opportunity (`deriveConfirmOfferCandidate`): permiso de plantear; el
+ *   ranker gasta `surfaceCount` al inyectar el hint (no al confirmar).
+ *
+ * `getLastOffer` lee el row crudo (sin TTL). El TTL del Fact es
+ * `isLastOfferAlive`. Presupuesto 1 = anti-nag del planteo (ADR-0008 / D7).
  */
 
 import {
@@ -64,6 +69,62 @@ export const parseLastOffer = (raw: unknown): LastOffer | null => {
     offeredAt: raw.offeredAt,
     source: raw.source,
   };
+};
+
+/** TTL del catálogo CONFIRMAR_OFERTA (misma fórmula que `computeCatalogPermission`). */
+const isConfirmOfferTtlValid = (
+  entry: { openedAt?: string | null; expiresAt?: string | null },
+  now: number
+): boolean => {
+  const cat = getIntentCatalogEntry('CONFIRMAR_OFERTA');
+  if (cat.ttlMs == null) return true;
+  const expiresAt =
+    entry.expiresAt ??
+    (entry.openedAt
+      ? new Date(new Date(entry.openedAt).getTime() + cat.ttlMs).toISOString()
+      : null);
+  if (expiresAt && now > new Date(expiresAt).getTime()) return false;
+  return true;
+};
+
+/**
+ * Oferta con dato usable: hay lastOffer y el TTL no venció.
+ * No mira `surfaceCount` (el presupuesto es del planteo, no del Fact).
+ */
+export const isLastOfferAlive = (
+  metadata: unknown,
+  now: number = Date.now()
+): boolean => {
+  const offer = getLastOffer(metadata);
+  if (!offer) return false;
+  const entry = getConfirmOfferLedgerEntry(metadata);
+  return isConfirmOfferTtlValid(
+    {
+      openedAt: entry?.openedAt ?? offer.offeredAt,
+      expiresAt: entry?.expiresAt ?? null,
+    },
+    now
+  );
+};
+
+/**
+ * Dato de sesión para el ReAct (no es un Intent planteado, ADR-0009).
+ * Vacío si no hay oferta o el TTL venció.
+ */
+export const buildLastOfferFactLines = (
+  metadata: unknown,
+  now: number = Date.now()
+): string[] => {
+  if (!isLastOfferAlive(metadata, now)) return [];
+  const offer = getLastOffer(metadata);
+  if (!offer) return [];
+  return [
+    `- Oferta viva (dato de sesión, no planteo): *${offer.productName}* ` +
+      `(productId: ${offer.productId}). ` +
+      `Si el cliente confirma sumar, llamá add_cart_item con ese productId. ` +
+      `Si pregunta precio o atributo, get_products_details_by_ids; no es un add. ` +
+      `No insistas ni vuelvas a ofrecer el plato.`,
+  ];
 };
 
 export const getLastOffer = (metadata: unknown): LastOffer | null => {
@@ -174,30 +235,27 @@ export const deriveConfirmOfferCandidate = (
 
 export const buildConfirmOfferHint = (offer: LastOffer): string =>
   [
-    `- Oferta activa (CONFIRMAR_OFERTA): *${offer.productName}* ` +
-      `(productId: ${offer.productId}). Origen: ${offer.source}.`,
-    '- REGLA OBLIGATORIA: el turno anterior terminó con una oferta activa al cliente. ' +
-      'Si el mensaje actual NO es explícitamente negativo ("no", "mejor no", "cancelá", etc.), ' +
-      'SIEMPRE interpretarlo como confirmación y llamar add_cart_item inmediatamente con el productId de arriba. ' +
-      'NO saludar, NO preguntar "¿en qué te puedo ayudar?", NO pedir más confirmación. ' +
-      'Cantidad: pasá quantity solo si el cliente dijo unidades en ESTE mensaje. ' +
-      'Si no, omití quantity (no uses party size ni una cantidad sugerida). La tool pedirá confirmación si hace falta.',
+    `- Oferta activa (CONFIRMAR_OFERTA): planteo permitido este turno para *${offer.productName}*. ` +
+      `Confirmación de sumar → add_cart_item con el productId de Oferta viva. ` +
+      `Pregunta de precio o atributo → get_products_details_by_ids; no es confirmación. ` +
+      `Rechazo → no llames add_cart_item. ` +
+      `Cantidad: pasá quantity solo si el cliente dijo unidades en ESTE mensaje. ` +
+      `Si no, omití quantity (no uses party size ni una cantidad sugerida).`,
   ].join('\n');
 
 /**
- * Líneas legacy para tests / callers que aún no pasan por el ranker.
- * Respeta TTL: oferta vencida → no se inyecta (V-12).
+ * Opportunity (si hay permiso de planteo) + Fact (si TTL vivo).
+ * Oferta vencida → []. Presupuesto exhausted → solo Fact.
  */
 export const buildLastOfferContextLines = (
   metadata: unknown,
   now: number = Date.now()
 ): string[] => {
-  const lines: string[] = [];
+  const lines = [...buildLastOfferFactLines(metadata, now)];
   const candidate = deriveConfirmOfferCandidate(metadata, now);
   if (candidate) {
     lines.push(...candidate.hint.split('\n'));
   }
-
   return lines;
 };
 

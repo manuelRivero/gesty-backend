@@ -11,11 +11,12 @@ import {
   isE2eEnabled,
 } from './helpers/env';
 import {
-  buildInteractivePayload,
+  addItemViaButtonHappyPath,
   buildTextPayload,
   disconnectPrisma,
-  findCevicheProduct,
+  findE2eAddableProduct,
   getConversationMetadata,
+  getFreshConversationMetadata,
   hasHandlerResponse,
   isPartySizeGatePending,
   isPartySizeStored,
@@ -24,7 +25,6 @@ import {
   looksLikeMenuResume,
   resetE2eCustomer,
   runGraphTurn,
-  getFreshConversationMetadata,
   type MainGraph,
 } from './helpers/graphHarness';
 
@@ -81,8 +81,12 @@ describe.sequential.skipIf(!isE2eEnabled())('party-size + checkout flow (e2e)', 
   }, 120_000);
 
   it('ADD_ITEM y checkout por texto no repreguntan party size', async () => {
-    const product = await findCevicheProduct(businessId);
-    await runGraphTurn(graph, buildInteractivePayload(`ADD_ITEM:${product.id}:1`));
+    const product = await findE2eAddableProduct(businessId);
+    await addItemViaButtonHappyPath({
+      graph,
+      businessId,
+      productId: product.id,
+    });
 
     const { prisma } = await import('../src/lib/prisma');
     const draftAfterAdd = await prisma.draft_order.findFirst({
@@ -93,17 +97,22 @@ describe.sequential.skipIf(!isE2eEnabled())('party-size + checkout flow (e2e)', 
     expect(draftAfterAdd?.fulfillment_type).toBeNull();
 
     const s3 = await runGraphTurn(graph, buildTextPayload('quiero finalizar el pedido'));
-    const meta = getConversationMetadata(s3);
+    const meta =
+      (await getFreshConversationMetadata(conversationId)) ?? getConversationMetadata(s3);
 
     expect(meta?.checkout_active).toBe(true);
     expect(isPartySizeGatePending(meta)).toBe(false);
   }, 180_000);
 
-  it('híbrido no setea fulfillment fuera de checkout', async () => {
+  it('pregunta de producto no setea fulfillment sin checkout', async () => {
     const reset = await resetE2eCustomer();
     conversationId = reset.conversationId;
-    const product = await findCevicheProduct(businessId);
-    await runGraphTurn(graph, buildInteractivePayload(`ADD_ITEM:${product.id}:1`));
+    const product = await findE2eAddableProduct(businessId);
+    await addItemViaButtonHappyPath({
+      graph,
+      businessId,
+      productId: product.id,
+    });
 
     const { prisma } = await import('../src/lib/prisma');
     await prisma.draft_order.updateMany({
@@ -114,13 +123,18 @@ describe.sequential.skipIf(!isE2eEnabled())('party-size + checkout flow (e2e)', 
     const metaBefore = await getFreshConversationMetadata(conversationId);
     expect(metaBefore?.checkout_active).not.toBe(true);
 
-    await runGraphTurn(graph, buildTextPayload('en casa'));
+    // "en casa" con carrito hoy puede abrir checkout (ver checkout-flow).
+    // Acá validamos que una consulta de producto no escribe fulfillment.
+    await runGraphTurn(graph, buildTextPayload('el ceviche es picante?'));
 
     const draftAfter = await prisma.draft_order.findFirst({
       where: { business_id: businessId, status: 'active' },
       select: { fulfillment_type: true },
     });
     expect(draftAfter?.fulfillment_type ?? null).toBeNull();
+
+    const metaAfter = await getFreshConversationMetadata(conversationId);
+    expect(metaAfter?.checkout_active).not.toBe(true);
   }, 120_000);
 });
 

@@ -1,6 +1,10 @@
 /**
  * E2E: checkout + fulfillment (botón CHECKOUT y delegación híbrido → checkout por texto).
  *
+ * Happy path alineado al comportamiento actual:
+ * - ADD_ITEM puede pedir variación / cantidad / confirm de cerrado (helpers).
+ * - Checkout exige carrito con ítems → `checkout_active`.
+ *
  * Requiere: DATABASE_URL, PHONE_NUMBER_ID, OPENAI_API_KEY, menú con "ceviche".
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -10,11 +14,12 @@ import {
   isE2eEnabled,
 } from './helpers/env';
 import {
+  addItemViaButtonHappyPath,
   buildInteractivePayload,
   buildTextPayload,
   disconnectPrisma,
   extractHandlerText,
-  findCevicheProduct,
+  findE2eAddableProduct,
   getFreshConversationMetadata,
   hasHandlerResponse,
   loadMainGraph,
@@ -35,7 +40,7 @@ describe.sequential.skipIf(!isE2eEnabled())('checkout flow (e2e)', () => {
     const reset = await resetE2eCustomer();
     businessId = reset.businessId;
     conversationId = reset.conversationId;
-    const product = await findCevicheProduct(businessId);
+    const product = await findE2eAddableProduct(businessId);
     productId = product.id;
   }, 60_000);
 
@@ -44,11 +49,7 @@ describe.sequential.skipIf(!isE2eEnabled())('checkout flow (e2e)', () => {
   });
 
   it('ADD_ITEM por botón agrega al carrito sin fulfillment', async () => {
-    const state = await runGraphTurn(
-      graph,
-      buildInteractivePayload(`ADD_ITEM:${productId}:1`)
-    );
-    expect(state.handlerResult).toBeTruthy();
+    await addItemViaButtonHappyPath({ graph, businessId, productId });
 
     const { prisma } = await import('../src/lib/prisma');
     const draft = await prisma.draft_order.findFirst({
@@ -60,7 +61,7 @@ describe.sequential.skipIf(!isE2eEnabled())('checkout flow (e2e)', () => {
   }, 90_000);
 
   it('botón CHECKOUT activa sesión y acepta fulfillment en texto', async () => {
-    await runGraphTurn(graph, buildInteractivePayload(`ADD_ITEM:${productId}:1`));
+    await addItemViaButtonHappyPath({ graph, businessId, productId });
 
     const checkoutTurn = await runGraphTurn(graph, buildInteractivePayload('CHECKOUT'));
     expect(hasHandlerResponse(checkoutTurn.handlerResult)).toBe(true);
@@ -85,7 +86,7 @@ describe.sequential.skipIf(!isE2eEnabled())('checkout flow (e2e)', () => {
   it('"finalizar pedido" delega al checkout agent por texto', async () => {
     const reset = await resetE2eCustomer();
     conversationId = reset.conversationId;
-    await runGraphTurn(graph, buildInteractivePayload(`ADD_ITEM:${productId}:1`));
+    await addItemViaButtonHappyPath({ graph, businessId, productId });
 
     const { patchConversationMetadata } = await import(
       '../src/repositories/conversationState.repository'
@@ -95,7 +96,9 @@ describe.sequential.skipIf(!isE2eEnabled())('checkout flow (e2e)', () => {
     }
 
     const state = await runGraphTurn(graph, buildTextPayload('quiero finalizar el pedido'));
-    const meta = state.workingConversationState?.metadata as Record<string, unknown> | undefined;
+    const meta =
+      (await getFreshConversationMetadata(conversationId)) ??
+      (state.workingConversationState?.metadata as Record<string, unknown> | undefined);
     expect(meta?.checkout_active).toBe(true);
     expect(state.detection?.intent).not.toBe('VIEW_CART');
     expect(state.detection?.intent).not.toBe('VIEW_CART_FOR_EDITION');

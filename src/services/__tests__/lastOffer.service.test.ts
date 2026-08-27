@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest';
 import {
   parseLastOffer,
   buildLastOfferContextLines,
+  buildLastOfferFactLines,
   deriveConfirmOfferCandidate,
   getLastOffer,
+  isLastOfferAlive,
 } from '../lastOffer.service';
 import { rankActiveIntent, buildIntentLedgerView } from '../intent/activeIntent.service';
 import { getIntentCatalogEntry } from '../../domain/intent/family';
@@ -40,10 +42,14 @@ describe('lastOffer.service / CONFIRMAR_OFERTA (B.2)', () => {
       now
     );
     expect(lines.some((l) => l.includes('Oferta activa'))).toBe(true);
+    expect(lines.some((l) => l.includes('Oferta viva'))).toBe(true);
+    expect(lines.some((l) => l.includes('productId: abc'))).toBe(true);
     expect(lines.some((l) => l.includes('Hint NLP'))).toBe(false);
     expect(lines.some((l) => l.includes('add_cart_item'))).toBe(true);
     expect(lines.join('\n')).toMatch(/omití quantity/i);
     expect(lines.join('\n')).not.toMatch(/usá la sugerida/i);
+    expect(lines.join('\n')).not.toMatch(/SIEMPRE interpretarlo/i);
+    expect(lines.join('\n')).toMatch(/get_products_details_by_ids/);
   });
 
   it('oferta vencida → no se inyecta (V-12)', () => {
@@ -84,6 +90,15 @@ describe('lastOffer.service / CONFIRMAR_OFERTA (B.2)', () => {
       },
     };
     expect(deriveConfirmOfferCandidate(meta, now)).toBeNull();
+    expect(isLastOfferAlive(meta, now)).toBe(true);
+    const fact = buildLastOfferFactLines(meta, now).join('\n');
+    expect(fact).toContain('Oferta viva');
+    expect(fact).toContain('productId: abc');
+    expect(fact).toContain('add_cart_item');
+    expect(fact).not.toMatch(/SIEMPRE/);
+    expect(buildLastOfferContextLines(meta, now).some((l) => l.includes('Oferta activa'))).toBe(
+      false
+    );
 
     const firstLife = {
       intentLedger: {
@@ -124,5 +139,26 @@ describe('lastOffer.service / CONFIRMAR_OFERTA (B.2)', () => {
     });
     expect(offer?.productName).toBe('Lomo');
     expect(offer?.suggestedQuantity).toBe(2);
+  });
+
+  it('isLastOfferAlive: TTL vencido → false aunque surfaceCount sea 0', () => {
+    const now = Date.parse('2026-08-09T12:00:00.000Z');
+    const ttlMs = getIntentCatalogEntry('CONFIRMAR_OFERTA').ttlMs!;
+    const openedAt = new Date(now - ttlMs - 1000).toISOString();
+    const meta = {
+      intentLedger: {
+        CONFIRMAR_OFERTA: {
+          openedAt,
+          surfaceCount: 0,
+          productId: 'abc',
+          productName: 'Ceviche',
+          suggestedQuantity: 1,
+          source: 'hybrid_cta',
+        },
+      },
+    };
+    expect(isLastOfferAlive(meta, now)).toBe(false);
+    expect(buildLastOfferFactLines(meta, now)).toEqual([]);
+    expect(getLastOffer(meta)?.productId).toBe('abc');
   });
 });

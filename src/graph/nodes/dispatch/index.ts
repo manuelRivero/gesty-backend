@@ -22,11 +22,13 @@ import {
   CANCEL_CLOSED_ORDER,
   buildClosedOrderConfirmationMessage,
 } from '../../../services/businessHours.service';
-import type { IntentDetectionResult } from '../../../services/ai/detection.service';
 import {
-  CLOSED_ORDER_CANCELLED_BOT_MESSAGE,
-  NO_PENDING_CLOSED_ORDER_BOT_MESSAGE,
-} from '../../../services/productQuery/botMessages';
+  applyClosedOrderCancel,
+  applyClosedOrderConfirm,
+  extractConfirmClosedOrderPending,
+} from '../../../services/closedOrderConfirm.service';
+import type { IntentDetectionResult } from '../../../services/ai/detection.service';
+import { NO_PENDING_CLOSED_ORDER_BOT_MESSAGE } from '../../../services/productQuery/botMessages';
 import {
   formatBotUserMessage,
   getRequestedPartySize,
@@ -334,12 +336,11 @@ export const interactiveSubgraphNode = async (
       if (!pending) {
         return { handlerResult: { content: NO_PENDING_CLOSED_ORDER_BOT_MESSAGE, isInteractive: false } };
       }
-      await patchConversationMetadata(conversation.id, {
-        closed_order_confirmed_at: new Date().toISOString(),
-      });
-      await omitConversationMetadataKeys(conversation.id, ['pending_closed_add_item']);
-      const pendingCtx = { ...enrichedBase, payloadId: pending } as unknown as EnrichedContext;
-      const pendingResult = await dispatchInteractive(pendingCtx);
+      const pendingResult = await applyClosedOrderConfirm(
+        conversation.id,
+        enrichedBase,
+        pending
+      );
       if (!pendingResult) {
         return { earlyExit: 'interactive_no_payload' };
       }
@@ -347,8 +348,9 @@ export const interactiveSubgraphNode = async (
     }
 
     if (ordersWhenClosed && payloadId === CANCEL_CLOSED_ORDER) {
-      await omitConversationMetadataKeys(conversation.id, ['pending_closed_add_item']);
-      return { handlerResult: { content: CLOSED_ORDER_CANCELLED_BOT_MESSAGE, isInteractive: false } };
+      return {
+        handlerResult: await applyClosedOrderCancel(conversation.id),
+      };
     }
   }
 
@@ -429,27 +431,47 @@ export const nlpSubgraphNode = async (
 
   const metaPre = normalizeMetadata(workingConversationState?.metadata);
 
-  // Gate de confirmación de pedido cuando el negocio está cerrado pero opera (NLP)
-  if (state.businessClosedButOperating && state.businessConfig?.orders_when_closed && metaPre.pending_closed_add_item) {
+  // Gate tipable: confirmación de pedido con negocio cerrado (§3.11 — mismo efecto que botones)
+  if (
+    state.businessClosedButOperating &&
+    state.businessConfig?.orders_when_closed &&
+    metaPre.pending_closed_add_item &&
+    userMessage.trim()
+  ) {
     const pending = metaPre.pending_closed_add_item;
-    const isAffirmative = /^(sí|si|s[ií]|confirmar?|dale|ok|yes|bueno|sip|vamos|correcto|claro|perfecto|obvio|quiero|confirmo|afirmo)$/i.test(userMessage.trim());
-    const isNegative = /^(no|nop|nope|cancelar?|mejor no|no gracias|not|negativo|cancelo)$/i.test(userMessage.trim());
+    const extraction = await extractConfirmClosedOrderPending(userMessage);
+    console.log(
+      JSON.stringify({
+        event: '[closed-order] confirm_tipable_extraction',
+        status: extraction.status,
+        confidence: extraction.confidence,
+        source: extraction.source,
+        conversationId: conversation.id,
+      })
+    );
 
-    if (isAffirmative) {
-      await patchConversationMetadata(conversation.id, {
-        closed_order_confirmed_at: new Date().toISOString(),
-      });
-      await omitConversationMetadataKeys(conversation.id, ['pending_closed_add_item']);
-      const pendingCtx = { ...enrichedBase, payloadId: pending } as unknown as EnrichedContext;
-      const pendingResult = await dispatchInteractive(pendingCtx);
-      if (pendingResult) return { handlerResult: pendingResult };
-    } else if (isNegative) {
-      await omitConversationMetadataKeys(conversation.id, ['pending_closed_add_item']);
-      return { handlerResult: { content: CLOSED_ORDER_CANCELLED_BOT_MESSAGE, isInteractive: false } };
-    } else {
-      const confirmation = buildClosedOrderConfirmationMessage(state.businessStatus?.nextOpenText ?? null);
-      return { handlerResult: { content: confirmation, isInteractive: true } };
+    if (extraction.status === 'fulfilled' && extraction.value) {
+      if (extraction.value.confirmed) {
+        const pendingResult = await applyClosedOrderConfirm(
+          conversation.id,
+          enrichedBase,
+          pending
+        );
+        if (!pendingResult) {
+          return { earlyExit: 'interactive_no_payload' };
+        }
+        return { handlerResult: pendingResult };
+      }
+      return {
+        handlerResult: await applyClosedOrderCancel(conversation.id),
+      };
     }
+
+    // reprompt / delegate / off_pending: re-mostrar botones (no consumir pending)
+    const confirmation = buildClosedOrderConfirmationMessage(
+      state.businessStatus?.nextOpenText ?? null
+    );
+    return { handlerResult: { content: confirmation, isInteractive: true } };
   }
 
   if (metaPre.awaitingPartySize || metaPre.awaitingPeopleCount) {

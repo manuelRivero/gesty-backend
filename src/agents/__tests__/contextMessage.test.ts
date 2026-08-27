@@ -135,6 +135,8 @@ describe('buildContextMessage', () => {
     expect(msg).toContain('- Carrito:');
     expect(msg).toContain('OBTENER_PERSONAS_DEL_PEDIDO');
     expect(msg).not.toContain('Oferta activa');
+    expect(msg).toContain('Oferta viva');
+    expect(msg).toContain('prod-1');
   });
 
   it('oferta activa con party size: menciona Oferta activa', async () => {
@@ -157,6 +159,33 @@ describe('buildContextMessage', () => {
     );
     expect(msg).toContain('- Carrito:');
     expect(msg).toContain('Oferta activa');
+  });
+
+  it('presupuesto exhausted: Fact con productId, sin planteo Oferta activa', async () => {
+    findFirstMock.mockResolvedValue(null);
+    const msg = await buildContextMessage(
+      makeCtx({
+        metadata: {
+          peopleCount: 2,
+          requestedPartySize: 2,
+          intentLedger: {
+            CONFIRMAR_OFERTA: {
+              openedAt: new Date().toISOString(),
+              surfaceCount: 1,
+              lastSurfacedAt: new Date().toISOString(),
+              productId: 'prod-exhausted',
+              productName: 'Ceviche',
+              suggestedQuantity: 1,
+              source: 'hybrid_cta',
+            },
+          },
+        },
+      })
+    );
+    expect(msg).toContain('Oferta viva');
+    expect(msg).toContain('prod-exhausted');
+    expect(msg).not.toContain('Oferta activa');
+    expect(msg).toContain('- Carrito:');
   });
 
   it('sin checkout activo, no incluye la línea de "Sesión de checkout"', async () => {

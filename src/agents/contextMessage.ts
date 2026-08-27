@@ -14,8 +14,9 @@ import { buildPartySizeJustConfirmedContextLines } from '../services/peopleCount
 import {
   deriveConfirmOfferCandidate,
   getConfirmOfferLedgerEntry,
-  getLastOffer,
   recordConfirmOfferSurfaced,
+  buildLastOfferFactLines,
+  isLastOfferAlive,
 } from '../services/lastOffer.service';
 import {
   getOrderCompletionLedger,
@@ -412,7 +413,8 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     );
   }
 
-  const offerStillAlive = Boolean(getLastOffer(meta) && confirmOfferCandidate);
+  const offerStillAlive = isLastOfferAlive(meta);
+  const lastOfferFactLines = buildLastOfferFactLines(meta);
   const intentLines =
     ranked.active && ranked.permission.granted
       ? ranked.active.hint.split('\n')
@@ -473,6 +475,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     ...pendingAddQuantityLines,
     ...pendingOrderLinesLines,
     ...pendingCancelLines,
+    ...lastOfferFactLines,
     ...intentLines,
     ...optionalComplementLines,
   ].filter((line): line is string => line !== null);
