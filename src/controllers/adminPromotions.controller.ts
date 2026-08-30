@@ -42,7 +42,9 @@ import {
   updatePromotion,
 } from '../services/promotions/adminPromotions.service';
 import {
+  PromotionAmbiguousBenefitError,
   PromotionIncompleteError,
+  PromotionNotEvaluableError,
   PromotionInvalidTransitionError,
 } from '../services/promotions/promotionStatus';
 
@@ -309,6 +311,20 @@ function handlePromotionError(res: Response, error: unknown): Response {
   if (error instanceof PromotionIncompleteError) {
     return res.status(409).json({
       error: 'La promoción está incompleta',
+      code: error.code,
+      missing: error.missing,
+    });
+  }
+  if (error instanceof PromotionNotEvaluableError) {
+    return res.status(409).json({
+      error: 'La promoción no se puede aplicar automáticamente todavía',
+      code: error.code,
+      missing: error.missing,
+    });
+  }
+  if (error instanceof PromotionAmbiguousBenefitError) {
+    return res.status(409).json({
+      error: 'El beneficio de la promoción es ambiguo',
       code: error.code,
       missing: error.missing,
     });

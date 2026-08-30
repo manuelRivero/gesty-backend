@@ -12,6 +12,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { StructuredOfferSchema } from './promotionInterpreter.schemas';
 import {
+  assertPromotionActivatable,
   assertPromotionComplete,
   assertTransition,
   STATUS_LABELS,
@@ -191,13 +192,19 @@ export async function createPromotion(params: {
   const offer = parseOffer(params.offer);
   const productLinks = params.productLinks ?? [];
 
-  assertPromotionComplete({ offer, productLinks });
+  const status = params.status ?? 'draft';
+
+  // Guardar borrador: solo completitud. Activar: además evaluable (D1/D2/B7).
+  if (status === 'active') {
+    assertPromotionActivatable({ offer, productLinks });
+  } else {
+    assertPromotionComplete({ offer, productLinks });
+  }
   await assertProductsBelongToBusiness({
     businessId: params.businessId,
     productLinks,
   });
 
-  const status = params.status ?? 'draft';
   if (status !== 'draft') {
     assertTransition('draft', status);
   }
@@ -351,7 +358,14 @@ export async function updatePromotion(params: {
       quantity: link.quantity ?? null,
     }));
 
-  assertPromotionComplete({ offer, productLinks });
+  // Idem create: el gate duro solo corre cuando el estado destino es `active`.
+  // Una promo ya activa que se edita vuelve a pasar por el gate (el offer pudo
+  // cambiar a una forma no evaluable).
+  if (nextStatus === 'active') {
+    assertPromotionActivatable({ offer, productLinks });
+  } else {
+    assertPromotionComplete({ offer, productLinks });
+  }
   await assertProductsBelongToBusiness({ businessId: params.businessId, productLinks });
 
   const updated = await prisma.$transaction(async (tx) => {

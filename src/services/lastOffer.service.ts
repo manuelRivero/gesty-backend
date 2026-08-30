@@ -121,8 +121,9 @@ export const buildLastOfferFactLines = (
   return [
     `- Oferta viva (dato de sesión, no planteo): *${offer.productName}* ` +
       `(productId: ${offer.productId}). ` +
-      `Si el cliente confirma sumar, llamá add_cart_item con ese productId. ` +
-      `Si pregunta precio o atributo, get_products_details_by_ids; no es un add. ` +
+      `Confirmación de sumar (ej. "agrega uno", "dale, agregalo") → add_cart_item con ese productId; NUNCA clear_last_offer en ese caso. ` +
+      `Pregunta de precio o atributo → get_products_details_by_ids; no es un add ni un rechazo. ` +
+      `Solo si rechaza explícitamente sumar la oferta → clear_last_offer() ANTES de responder y NO llames add_cart_item. ` +
       `No insistas ni vuelvas a ofrecer el plato.`,
   ];
 };
@@ -236,9 +237,9 @@ export const deriveConfirmOfferCandidate = (
 export const buildConfirmOfferHint = (offer: LastOffer): string =>
   [
     `- Oferta activa (CONFIRMAR_OFERTA): planteo permitido este turno para *${offer.productName}*. ` +
-      `Confirmación de sumar → add_cart_item con el productId de Oferta viva. ` +
-      `Pregunta de precio o atributo → get_products_details_by_ids; no es confirmación. ` +
-      `Rechazo → no llames add_cart_item. ` +
+      `Confirmación de sumar → add_cart_item con el productId de Oferta viva (nunca clear_last_offer). ` +
+      `Pregunta de precio o atributo → get_products_details_by_ids; no es confirmación ni rechazo. ` +
+      `Rechazo explícito de sumar → clear_last_offer() y NO llames add_cart_item. ` +
       `Cantidad: pasá quantity solo si el cliente dijo unidades en ESTE mensaje. ` +
       `Si no, omití quantity (no uses party size ni una cantidad sugerida).`,
   ].join('\n');

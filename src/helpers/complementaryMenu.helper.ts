@@ -187,3 +187,34 @@ export type BuildComplementarySuggestionsParams = {
   lastAddedMenuItemId: string;
   maxItems?: number;
 };
+
+/**
+ * Tag de categoría de varios productos a la vez, indexado por id.
+ * Lo usa la supresión del cross-sell (D6): para saber si una promoción
+ * desbloqueable ya está empujando la misma categoría que el complemento
+ * ofrecería, hay que resolver los tags de los productos de la promo.
+ */
+export async function collectCategoryTagsByProductId(
+  productIds: string[],
+  businessId: string
+): Promise<Map<string, MenuCategoryTag>> {
+  const ids = [...new Set(productIds)].filter(Boolean);
+  const byId = new Map<string, MenuCategoryTag>();
+  if (ids.length === 0) return byId;
+
+  const rows = await prisma.menu_item.findMany({
+    where: { id: { in: ids }, business_id: businessId, is_available: true },
+    select: {
+      id: true,
+      menu_category: { select: { category_tag: true, is_active: true } },
+    },
+  });
+
+  for (const row of rows) {
+    if (!row.menu_category?.is_active) continue;
+    const tag = row.menu_category.category_tag;
+    if (tag === 'OTHER') continue;
+    byId.set(row.id, tag);
+  }
+  return byId;
+}

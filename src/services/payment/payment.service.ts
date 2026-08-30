@@ -8,6 +8,8 @@ import { emitAdminOrderCreated } from '../../socket/adminSocket';
 import { sendTextMessageNoCtx, sendImageMessageNoCtx } from './messageHelpers';
 import { formatBotUserMessage } from '../productQuery/utils';
 import { computeOrderPricing } from '../pricing.service';
+import { resolveCartPromotions } from '../promotions/resolveCartPromotions';
+import type { PromotionEvaluation } from '../promotions/promotionEvaluation.types';
 import { resolveDeliveryContext } from '../deliveryFee.service';
 import { resolvePaymentAdjustment } from '../paymentAdjustment.service';
 import { getBusinessConfig } from '../businessConfig.service';
@@ -28,14 +30,33 @@ export const getOrCreateActiveIntent = async (
   draftOrderId: string,
   businessId: string,
   amount: number,
-  currency: string
+  currency: string,
+  promotionSnapshot?: unknown
 ): Promise<{ id: string; initPoint: string | null; isNew: boolean }> => {
   const existing = await prisma.payment_intent.findFirst({
     where: { draft_order_id: draftOrderId, status: 'pending' },
     orderBy: { created_at: 'desc' },
   });
   if (existing) {
-    return { id: existing.id, initPoint: existing.init_point, isNew: false };
+    // R1 — Un intent pendiente devolvía su `init_point` sin reconstruir la
+    // preferencia: si el carrito (o la promo) cambió después de pedir el link,
+    // el cliente pagaba el monto viejo. Con promociones esto deja de ser un
+    // caso raro, porque el descuento cambia con cada mutación del carrito.
+    if (existing.amount.toNumber() === amount) {
+      return { id: existing.id, initPoint: existing.init_point, isNew: false };
+    }
+    await prisma.payment_intent.update({
+      where: { id: existing.id },
+      data: { status: 'stale', updated_at: new Date() },
+    });
+    console.log(
+      JSON.stringify({
+        event: '[payment] intent_invalidated_amount_changed',
+        draftOrderId,
+        previousAmount: existing.amount.toNumber(),
+        newAmount: amount,
+      })
+    );
   }
   const created = await prisma.payment_intent.create({
     data: {
@@ -45,6 +66,7 @@ export const getOrCreateActiveIntent = async (
       status: 'pending',
       amount,
       currency,
+      promotion_snapshot: (promotionSnapshot ?? undefined) as never,
     },
   });
   return { id: created.id, initPoint: null, isNew: true };
@@ -75,9 +97,20 @@ export const createOnlinePaymentLink = async (
       })
     : { deliveryFee: 0, minOrderAmount: 0, zoneName: null, zoneId: null, estimatedMinutes: null };
 
+  // R2 — La evaluación se congela ACÁ (al emitir el link). El webhook no tiene
+  // turno conversacional donde re-confirmar y el cliente ya pagó este monto.
+  const promotions = await resolveCartPromotions({
+    businessId,
+    draftOrderId: draft.id,
+    customerId: customer?.id ?? null,
+    deliveryFee: deliveryCtx.deliveryFee,
+  });
+  const effectiveDeliveryFee = promotions.freeShipping ? 0 : deliveryCtx.deliveryFee;
+
   // Para pago online se aplica el ajuste de 'online'
   const pricingBase = computeOrderPricing(draft.draft_order_item, {
-    deliveryFee: deliveryCtx.deliveryFee,
+    deliveryFee: effectiveDeliveryFee,
+    promotionDiscount: promotions.monetaryDiscount,
   });
 
   const payAdjCtx = await resolvePaymentAdjustment({
@@ -87,12 +120,19 @@ export const createOnlinePaymentLink = async (
   });
 
   const pricing = computeOrderPricing(draft.draft_order_item, {
-    deliveryFee: deliveryCtx.deliveryFee,
+    deliveryFee: effectiveDeliveryFee,
+    promotionDiscount: promotions.monetaryDiscount,
     paymentAdjustment: payAdjCtx.adjustmentAmount,
   });
   const currency = draft.currency ?? 'ARS';
 
-  const intent = await getOrCreateActiveIntent(draft.id, businessId, pricing.total, currency);
+  const intent = await getOrCreateActiveIntent(
+    draft.id,
+    businessId,
+    pricing.total,
+    currency,
+    promotions
+  );
 
   if (!intent.isNew && intent.initPoint) {
     return { initPoint: intent.initPoint, preferenceId: '', paymentIntentId: intent.id, isNew: false };
@@ -101,38 +141,55 @@ export const createOnlinePaymentLink = async (
   const provider = await getActiveProvider(businessId, 'mercado_pago');
   if (!provider) return null;
 
-  const items = draft.draft_order_item.map((i) => ({
-    id: i.product_id ?? i.id,
-    title: i.menu_item?.name ?? 'Producto',
-    quantity: i.quantity,
-    unit_price: i.unit_price.toNumber(),
-    currency_id: currency,
-  }));
+  // D10 — Ítem consolidado. Mercado Pago cobra la SUMA de `items`, y un
+  // descuento solo se podía representar con un `unit_price` negativo (el
+  // camino que ya usaba el ajuste por pago). En vez de multiplicar los casos
+  // negativos o prorratear el descuento sobre cada plato, cuando el pedido
+  // tiene cualquier descuento se manda una sola línea por el total exacto.
+  const hasDiscount =
+    pricing.promotionDiscount > 0 ||
+    (payAdjCtx.hasAdjustment && payAdjCtx.adjustmentAmount < 0);
 
-  // Agregar envío como línea separada en MP si aplica
-  if (deliveryCtx.deliveryFee > 0) {
-    items.push({
-      id: 'delivery_fee',
-      title: 'Envío',
-      quantity: 1,
-      unit_price: deliveryCtx.deliveryFee,
-      currency_id: currency,
-    });
-  }
+  const items = hasDiscount
+    ? [
+        {
+          id: 'order_total',
+          title: 'Pedido total',
+          quantity: 1,
+          unit_price: pricing.total,
+          currency_id: currency,
+        },
+      ]
+    : draft.draft_order_item.map((i) => ({
+        id: i.product_id ?? i.id,
+        title: i.menu_item?.name ?? 'Producto',
+        quantity: i.quantity,
+        unit_price: i.unit_price.toNumber(),
+        currency_id: currency,
+      }));
 
-  // Agregar recargo/descuento por método de pago si aplica
-  if (payAdjCtx.hasAdjustment && payAdjCtx.adjustmentAmount !== 0) {
-    const adjAmount = Math.abs(payAdjCtx.adjustmentAmount);
-    const title = payAdjCtx.adjustmentAmount > 0
-      ? (payAdjCtx.label ?? 'Recargo por pago online')
-      : (payAdjCtx.label ?? 'Descuento por pago online');
-    items.push({
-      id: 'payment_adjustment',
-      title,
-      quantity: 1,
-      unit_price: payAdjCtx.adjustmentAmount > 0 ? adjAmount : -adjAmount,
-      currency_id: currency,
-    });
+  if (!hasDiscount) {
+    // Agregar envío como línea separada en MP si aplica
+    if (effectiveDeliveryFee > 0) {
+      items.push({
+        id: 'delivery_fee',
+        title: 'Envío',
+        quantity: 1,
+        unit_price: effectiveDeliveryFee,
+        currency_id: currency,
+      });
+    }
+
+    // Recargo por método de pago (el descuento cae en el camino consolidado)
+    if (payAdjCtx.hasAdjustment && payAdjCtx.adjustmentAmount > 0) {
+      items.push({
+        id: 'payment_adjustment',
+        title: payAdjCtx.label ?? 'Recargo por pago online',
+        quantity: 1,
+        unit_price: payAdjCtx.adjustmentAmount,
+        currency_id: currency,
+      });
+    }
   }
 
   const pref = await createMpPreference({
@@ -154,6 +211,23 @@ export const createOnlinePaymentLink = async (
   });
 
   return { initPoint: pref.initPoint, preferenceId: pref.preferenceId, paymentIntentId: intent.id, isNew: true };
+};
+
+/**
+ * Lee la evaluación congelada del `payment_intent`. Si falta (intent viejo,
+ * anterior a esta feature) devuelve undefined y el caller re-evalúa.
+ */
+const parsePromotionSnapshot = (raw: unknown): PromotionEvaluation | undefined => {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const candidate = raw as Partial<PromotionEvaluation>;
+  if (
+    typeof candidate.monetaryDiscount !== 'number' ||
+    !Array.isArray(candidate.applied) ||
+    !Array.isArray(candidate.giftItems)
+  ) {
+    return undefined;
+  }
+  return candidate as PromotionEvaluation;
 };
 
 /**
@@ -194,7 +268,14 @@ export const handleApprovedPayment = async (
       business,
       conversation,
       customer,
-      { paymentStatus: OrderPaymentStatus.paid, paymentMethod: 'online' }
+      {
+        paymentStatus: OrderPaymentStatus.paid,
+        paymentMethod: 'online',
+        // R2 — Se reusa la evaluación congelada al emitir el link: el cliente
+        // ya pagó ese monto y acá no hay turno donde re-confirmar. Re-evaluar
+        // podría crear una orden por un total distinto del cobrado.
+        promotionEvaluation: parsePromotionSnapshot(intent.promotion_snapshot),
+      }
     );
 
     await prisma.payment_intent.update({

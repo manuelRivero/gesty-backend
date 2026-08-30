@@ -12,6 +12,12 @@ import type {
   PromotionStatus,
   StructuredOffer,
 } from './promotionOffer.types';
+import {
+  collectConditionProblems,
+  collectUnsupportedLimits,
+  describeBenefitProblems,
+  findAmbiguousGift,
+} from './promotionConditions';
 
 export const PROMOTION_STATUSES: PromotionStatus[] = [
   'draft',
@@ -39,6 +45,27 @@ export class PromotionIncompleteError extends Error {
   constructor(readonly missing: string[]) {
     super('La promoción está incompleta');
     this.name = 'PromotionIncompleteError';
+  }
+}
+
+/**
+ * La promoción está completa pero el motor no puede evaluarla de forma
+ * determinista (D1/D2/B7). Se puede guardar como borrador; no se puede activar.
+ */
+export class PromotionNotEvaluableError extends Error {
+  readonly code = 'PROMOTION_NOT_EVALUABLE';
+  constructor(readonly missing: string[]) {
+    super('La promoción no se puede evaluar automáticamente');
+    this.name = 'PromotionNotEvaluableError';
+  }
+}
+
+/** `free_product` del mismo platillo que la condición: 2x1 encubierto (D2). */
+export class PromotionAmbiguousBenefitError extends Error {
+  readonly code = 'PROMOTION_AMBIGUOUS_BENEFIT';
+  constructor(readonly missing: string[]) {
+    super('El beneficio de la promoción es ambiguo');
+    this.name = 'PromotionAmbiguousBenefitError';
   }
 }
 
@@ -92,12 +119,29 @@ export function collectProductPaths(
     }
   });
 
-  if (offer.benefit?.type === 'free_product' && offer.benefit.productName.trim()) {
+  // `nth_free` (2x1 / 3x2) nombra el producto igual que `free_product`: mismo
+  // path, mismo rol. El vínculo al menú es lo que después evalúa el motor.
+  if (
+    (offer.benefit?.type === 'free_product' || offer.benefit?.type === 'nth_free') &&
+    offer.benefit.productName.trim()
+  ) {
     paths.push({
       path: 'offer.benefit.productName',
       text: offer.benefit.productName.trim(),
       role: 'benefit',
     });
+  }
+
+  // Beneficio monetario apuntado a un platillo (`target.scope === 'product'`).
+  if (offer.benefit && 'target' in offer.benefit && offer.benefit.target) {
+    const target = offer.benefit.target;
+    if (target.scope === 'product' && target.productName.trim()) {
+      paths.push({
+        path: 'offer.benefit.target.productName',
+        text: target.productName.trim(),
+        role: 'benefit',
+      });
+    }
   }
 
   return paths;
@@ -127,5 +171,42 @@ export function assertPromotionComplete(params: {
 
   if (missing.length > 0) {
     throw new PromotionIncompleteError(missing);
+  }
+}
+
+/**
+ * Gate de ACTIVACIÓN (D1/D2/B7): completitud + evaluabilidad determinista.
+ *
+ * Guardar un borrador sigue exigiendo solo `assertPromotionComplete`. Pasar a
+ * `active` exige además que el motor pueda evaluar la oferta sin adivinar:
+ * campos y operadores de la whitelist, beneficio con destino explícito, sin
+ * regalos ambiguos y sin límites de uso que no podemos hacer cumplir.
+ *
+ * ADR-0002: el Constraint vive en el borde del servicio, no en el prompt del
+ * intérprete ni en la buena voluntad del panel.
+ */
+export function assertPromotionActivatable(params: {
+  offer: StructuredOffer;
+  productLinks: PromotionProductLink[];
+}): void {
+  const { offer, productLinks } = params;
+
+  assertPromotionComplete(params);
+
+  const notEvaluable = [
+    ...collectConditionProblems(offer),
+    ...(offer.benefit ? describeBenefitProblems(offer.benefit) : []),
+    ...collectUnsupportedLimits(offer),
+  ];
+  if (notEvaluable.length > 0) {
+    throw new PromotionNotEvaluableError(notEvaluable);
+  }
+
+  const menuItemIdByPath = new Map(
+    productLinks.map((link) => [link.path, link.menuItemId])
+  );
+  const ambiguous = findAmbiguousGift({ offer, menuItemIdByPath });
+  if (ambiguous) {
+    throw new PromotionAmbiguousBenefitError([ambiguous]);
   }
 }

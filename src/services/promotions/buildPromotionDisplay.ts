@@ -5,6 +5,7 @@
 
 import type {
   Benefit,
+  BenefitTarget,
   Condition,
   ConditionOperator,
   OfferValidity,
@@ -125,20 +126,37 @@ function humanField(field: string): string {
     'cart.subtotal': 'Total del pedido',
     'cart.itemCount': 'Cantidad de ítems',
     'order.isFirstPurchase': 'Primera compra',
-    'order.shipping': 'Envío',
   };
   return map[field] ?? field.replace(/\./g, ' › ');
+}
+
+/** Sufijo del beneficio monetario: sobre qué se aplica (D2). */
+function targetSuffix(target: BenefitTarget | undefined): string {
+  if (!target) return '';
+  if (target.scope === 'order') return ' en el pedido';
+  const units = target.units;
+  return units && units > 0
+    ? ` en ${units} × ${target.productName}`
+    : ` en ${target.productName}`;
 }
 
 export function formatBenefitLabel(benefit: Benefit | null | undefined): string | null {
   if (!benefit) return null;
   switch (benefit.type) {
     case 'percentage_discount':
-      return `${benefit.value}% de descuento`;
+      return `${benefit.value}% de descuento${targetSuffix(benefit.target)}`;
     case 'fixed_discount':
-      return `$${formatMoneyHint(benefit.value)} de descuento`;
+      return `$${formatMoneyHint(benefit.value)} de descuento${targetSuffix(benefit.target)}`;
     case 'fixed_price':
-      return `Precio fijo $${formatMoneyHint(benefit.value)}`;
+      return `Precio fijo $${formatMoneyHint(benefit.value)}${targetSuffix(benefit.target)}`;
+    case 'nth_free': {
+      // 2x1 se lee mejor como "2x1" que como "comprá 2, llevás 1 gratis".
+      const paid = benefit.buyQuantity - benefit.freeQuantity;
+      const label = `${benefit.buyQuantity}x${paid}`;
+      return benefit.repeats
+        ? `${label} en ${benefit.productName}`
+        : `${label} en ${benefit.productName} (una vez por pedido)`;
+    }
     case 'free_product':
       return benefit.quantity === 1
         ? `Regalo: ${benefit.productName}`
@@ -269,7 +287,9 @@ export function buildPromotionDisplay(params: {
       offer.stacking == null
         ? null
         : offer.stacking.allowed
-          ? 'Se puede combinar con otras promos'
+          ? // V1 no combina dos descuentos monetarios (D4): decir "con otras
+            // promos" a secas prometía algo que el motor no hace.
+            'Se puede combinar con envío gratis o un regalo'
           : 'No se combina con otras promos',
     entityCards: buildEntityCards(unresolvedEntities, resolutions),
   };

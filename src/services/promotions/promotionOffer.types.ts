@@ -19,12 +19,109 @@ export type Condition = {
   value: unknown;
 };
 
+/**
+ * Vocabulario CERRADO de condiciones evaluables (D1).
+ *
+ * Hasta esta fase la whitelist vivía solo en el prompt del intérprete
+ * (`src/prompts/promotionInterpreter.ts`) mientras `Condition.field` aceptaba
+ * cualquier string — una regla transaccional viviendo en un prompt (V-05).
+ * Acá pasa a ser tipo, y `promotionConditions.ts` la valida en el borde.
+ *
+ * `Condition` sigue siendo la forma de ALMACENAMIENTO (permisiva): las filas
+ * ya persistidas no se migran (el `offer` es JSONB, D1 del plan de
+ * persistencia). Lo que se cierra es qué se puede ACTIVAR y qué se evalúa.
+ */
+export const CONDITION_FIELDS = [
+  'cart.product',
+  'cart.subtotal',
+  'cart.itemCount',
+  'order.isFirstPurchase',
+] as const;
+
+export type ConditionField = (typeof CONDITION_FIELDS)[number];
+
+/** Valor de `cart.product`: el vínculo real al menú es `promotion_product`. */
+export type ProductConditionValue = {
+  productName: string;
+  quantity?: number;
+};
+
+/**
+ * Condición ya validada contra la whitelist: campo conocido, operador
+ * permitido para ese campo y `value` con la forma correcta.
+ */
+export type EvaluableCondition =
+  | {
+      field: 'cart.product';
+      operator: 'gte' | 'gt' | 'eq';
+      value: ProductConditionValue;
+    }
+  | {
+      field: 'cart.subtotal';
+      operator: 'gte' | 'gt' | 'lte' | 'lt';
+      value: number;
+    }
+  | {
+      field: 'cart.itemCount';
+      operator: 'gte' | 'gt' | 'eq';
+      value: number;
+    }
+  | {
+      field: 'order.isFirstPurchase';
+      operator: 'eq';
+      value: boolean;
+    };
+
+/**
+ * Sobre qué se aplica un beneficio monetario (D2).
+ *
+ * Sin esto, `{ type: 'percentage_discount', value: 50 }` no distingue
+ * "50% del pedido" de "50% de la segunda unidad" — el mismo JSON con dos
+ * montos distintos.
+ */
+export type BenefitTarget =
+  | { scope: 'order' }
+  | { scope: 'product'; productName: string; units?: number };
+
 export type Benefit =
-  | { type: 'percentage_discount'; value: number }
-  | { type: 'fixed_discount'; value: number }
-  | { type: 'fixed_price'; value: number }
+  | { type: 'percentage_discount'; value: number; target?: BenefitTarget }
+  | { type: 'fixed_discount'; value: number; target?: BenefitTarget }
+  | { type: 'fixed_price'; value: number; target?: BenefitTarget }
+  /**
+   * Compra N, llevás M gratis: 2x1, 3x2, buy 2 get 1 (D2).
+   * `free_product` NO sirve para esto: significa "regalo de OTRO producto",
+   * y con el mismo producto de la condición el JSON queda ambiguo entre
+   * "una de las 2 sale gratis" y "te regalo una 3ª".
+   */
+  | {
+      type: 'nth_free';
+      productName: string;
+      buyQuantity: number;
+      freeQuantity: number;
+      /** true = escala con el carrito (6 unidades en 2x1 → 3 gratis). */
+      repeats: boolean;
+    }
   | { type: 'free_product'; productName: string; quantity: number }
   | { type: 'free_shipping' };
+
+/** Beneficios que reducen el precio de lo que ya está en el carrito (D3). */
+export const MONETARY_BENEFIT_TYPES = [
+  'percentage_discount',
+  'fixed_discount',
+  'fixed_price',
+  'nth_free',
+] as const;
+
+export type MonetaryBenefitType = (typeof MONETARY_BENEFIT_TYPES)[number];
+
+/** Clase de recurso para el stacking por clases disjuntas (D4). */
+export type BenefitClass = 'monetary' | 'shipping' | 'gift';
+
+export const benefitClassOf = (benefit: Benefit): BenefitClass => {
+  if (benefit.type === 'free_shipping') return 'shipping';
+  if (benefit.type === 'free_product') return 'gift';
+  return 'monetary';
+};
 
 export type OfferValidity = {
   startsAt?: string;

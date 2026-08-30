@@ -58,6 +58,13 @@ describe('botPersonality', () => {
     expect(hybrid).toMatch(/clear_pending_variation/i);
   });
 
+  it('hybrid oferta: rechazo → clear_last_offer (no solo “no add”)', () => {
+    const hybrid = buildHybridAgentSystemPrompt();
+    expect(hybrid).toMatch(/clear_last_offer/i);
+    expect(hybrid).toMatch(/Oferta viva|Oferta activa/i);
+    expect(hybrid).toMatch(/Rechazo explícito/i);
+  });
+
   it('hybrid incluye reglas operativas de tools', () => {
     const hybrid = buildHybridAgentSystemPrompt();
     expect(hybrid).toMatch(/search_products/i);

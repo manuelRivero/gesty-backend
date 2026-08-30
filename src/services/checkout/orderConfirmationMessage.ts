@@ -13,6 +13,7 @@
 
 import { prisma } from '../../lib/prisma';
 import { computeOrderPricing } from '../pricing.service';
+import { resolveCartPromotions } from '../promotions/resolveCartPromotions';
 import { resolveDeliveryContext } from '../deliveryFee.service';
 import { resolvePaymentAdjustment } from '../paymentAdjustment.service';
 import { formatBotUserMessage } from '../productQuery/utils';
@@ -56,8 +57,19 @@ export const buildOrderConfirmationMessage = async (params: {
     fulfillmentType: draft.fulfillment_type,
   });
 
-  const pricingBeforeAdjustment = computeOrderPricing(draft.draft_order_item, {
+  // Mismo motor que el chat y que la creación de la orden: el total que el
+  // cliente confirma acá tiene que ser exactamente el que se cobra (D11).
+  const promotions = await resolveCartPromotions({
+    businessId,
+    draftOrderId: draft.id,
+    customerId,
     deliveryFee: deliveryCtx.deliveryFee,
+  });
+  const effectiveDeliveryFee = promotions.freeShipping ? 0 : deliveryCtx.deliveryFee;
+
+  const pricingBeforeAdjustment = computeOrderPricing(draft.draft_order_item, {
+    deliveryFee: effectiveDeliveryFee,
+    promotionDiscount: promotions.monetaryDiscount,
   });
 
   const adjustment = await resolvePaymentAdjustment({
@@ -67,7 +79,8 @@ export const buildOrderConfirmationMessage = async (params: {
   });
 
   const pricing = computeOrderPricing(draft.draft_order_item, {
-    deliveryFee: deliveryCtx.deliveryFee,
+    deliveryFee: effectiveDeliveryFee,
+    promotionDiscount: promotions.monetaryDiscount,
     paymentAdjustment: adjustment.adjustmentAmount,
   });
 
@@ -75,10 +88,23 @@ export const buildOrderConfirmationMessage = async (params: {
     (it) => `${it.quantity}× ${it.menu_item?.name ?? 'Producto'}`
   );
 
-  const lines: string[] = [...itemLines, ''];
-  lines.push(`Subtotal: $${(pricing.subtotal - pricing.productDiscounts).toFixed(2)}`);
+  const lines: string[] = [...itemLines];
+  for (const gift of promotions.giftItems) {
+    lines.push(`${gift.quantity}× ${gift.productName} (regalo)`);
+  }
+  lines.push('');
+  lines.push(`Subtotal: $${pricing.itemsTotal.toFixed(2)}`);
+  if (pricing.promotionDiscount > 0) {
+    const label = promotions.applied
+      .filter((item) => item.monetaryDiscount > 0)
+      .map((item) => item.name)
+      .join(' + ');
+    lines.push(`${label || 'Promoción'}: −$${pricing.promotionDiscount.toFixed(2)}`);
+  }
   if (pricing.deliveryFee > 0) {
     lines.push(`Envío: $${pricing.deliveryFee.toFixed(2)}`);
+  } else if (promotions.freeShipping) {
+    lines.push('Envío: gratis 🎉');
   }
   if (adjustment.hasAdjustment) {
     const sign = adjustment.adjustmentAmount > 0 ? '+' : '−';

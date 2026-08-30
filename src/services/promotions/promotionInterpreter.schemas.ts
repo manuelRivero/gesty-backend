@@ -22,18 +22,42 @@ export const ConditionSchema = z.object({
   value: z.unknown(),
 });
 
+/**
+ * Sobre qué se aplica un beneficio monetario (D2). Opcional en el schema de
+ * ALMACENAMIENTO para que las filas ya persistidas y las salidas del LLM
+ * sigan parseando; **obligatorio para activar** (`promotionStatus.ts`).
+ */
+export const BenefitTargetSchema = z.discriminatedUnion('scope', [
+  z.object({ scope: z.literal('order') }),
+  z.object({
+    scope: z.literal('product'),
+    productName: z.string().min(1),
+    units: z.number().int().positive().optional(),
+  }),
+]);
+
 export const BenefitSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('percentage_discount'),
     value: z.number().positive().max(100),
+    target: BenefitTargetSchema.optional(),
   }),
   z.object({
     type: z.literal('fixed_discount'),
     value: z.number().positive(),
+    target: BenefitTargetSchema.optional(),
   }),
   z.object({
     type: z.literal('fixed_price'),
     value: z.number().nonnegative(),
+    target: BenefitTargetSchema.optional(),
+  }),
+  z.object({
+    type: z.literal('nth_free'),
+    productName: z.string().min(1),
+    buyQuantity: z.number().int().positive(),
+    freeQuantity: z.number().int().positive(),
+    repeats: z.boolean(),
   }),
   z.object({
     type: z.literal('free_product'),

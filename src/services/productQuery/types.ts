@@ -328,7 +328,15 @@ export type ConversationMetadata = {
       lastOfferedProductIds?: string[];
     };
     SUGERIR_DIRECCION?: IntentLedgerEntryBase;
-    OFRECER_PROMOCION?: IntentLedgerEntryBase;
+    /**
+     * D8: solo comportamiento del bot. `lastSurfacedPromotionId` es IDENTIDAD
+     * (qué promo se planteó), nunca el monto — el Ledger tiene que poder
+     * borrarse entero sin consecuencias financieras (ADR-0007).
+     */
+    OFRECER_PROMOCION?: IntentLedgerEntryBase & {
+      refused?: boolean;
+      lastSurfacedPromotionId?: string;
+    };
     /** @deprecated Alias ledger; preferir OBTENER_PERSONAS_DEL_PEDIDO. */
     RECOLECTAR_PARTY_SIZE?: IntentLedgerEntryBase;
     OBTENER_PERSONAS_DEL_PEDIDO?: IntentLedgerEntryBase;

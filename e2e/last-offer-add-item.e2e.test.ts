@@ -17,6 +17,7 @@ import {
   buildTextPayload,
   disconnectPrisma,
   findE2eAddableProduct,
+  findE2eSecondAddableProduct,
   getActiveDraftItemCount,
   getActiveDraftItemQuantitySum,
   getActiveDraftItems,
@@ -29,7 +30,7 @@ import {
   runGraphTurn,
   type MainGraph,
 } from './helpers/graphHarness';
-import { getLastOffer, persistLastOffer } from '../src/services/lastOffer.service';
+import { getLastOffer, isLastOfferAlive, persistLastOffer } from '../src/services/lastOffer.service';
 import { getPendingAddQuantity } from '../src/services/pendingAddQuantity.service';
 import { getPendingVariation } from '../src/services/pendingVariation.service';
 
@@ -276,6 +277,149 @@ describe.sequential.skipIf(!isE2eEnabled())('lastOffer add-item (e2e)', () => {
     const afterQty = await getActiveDraftItemQuantitySum(businessId);
     expect(afterQty).toBeGreaterThan(beforeQty);
   }, 240_000);
+
+  it('R1: lastOffer → "No, mejor no" invalida el Fact sin agregar', async () => {
+    const reset = await resetE2eCustomer();
+    conversationId = reset.conversationId;
+
+    await persistLastOffer({
+      conversationId,
+      productId,
+      productName,
+      suggestedQuantity: 1,
+      source: 'hybrid_cta',
+    });
+    expect(isLastOfferAlive(await getFreshConversationMetadata(conversationId))).toBe(true);
+
+    const rejectTurn = await runGraphTurn(graph, buildTextPayload('No, mejor no'));
+    expect(hasHandlerResponse(rejectTurn.handlerResult)).toBe(true);
+    expect(await getActiveDraftItemCount(businessId)).toBe(0);
+
+    const meta = await getFreshConversationMetadata(conversationId);
+    expect(isLastOfferAlive(meta)).toBe(false);
+    expect(getLastOffer(meta)).toBeNull();
+  }, 180_000);
+
+  it('R2: rechazo → "Dale" NO agrega el productId rechazado', async () => {
+    const reset = await resetE2eCustomer();
+    conversationId = reset.conversationId;
+
+    await persistLastOffer({
+      conversationId,
+      productId,
+      productName,
+      suggestedQuantity: 1,
+      source: 'hybrid_cta',
+    });
+
+    await runGraphTurn(graph, buildTextPayload('No, mejor no'));
+    expect(await getActiveDraftItemCount(businessId)).toBe(0);
+    expect(isLastOfferAlive(await getFreshConversationMetadata(conversationId))).toBe(false);
+
+    const daleTurn = await runGraphTurn(graph, buildTextPayload('Dale'));
+    expect(hasHandlerResponse(daleTurn.handlerResult)).toBe(true);
+    await resolvePendingAddGates();
+
+    const items = await getActiveDraftItems(businessId);
+    expect(items.some((i) => i.product_id === productId)).toBe(false);
+    expect(isLastOfferAlive(await getFreshConversationMetadata(conversationId))).toBe(false);
+  }, 300_000);
+
+  it('R3: rechazo → nueva oferta Y → "Agrega uno" suma Y', async () => {
+    const reset = await resetE2eCustomer();
+    conversationId = reset.conversationId;
+    const productY = await findE2eSecondAddableProduct(businessId, {
+      excludeId: productId,
+    });
+
+    await persistLastOffer({
+      conversationId,
+      productId,
+      productName,
+      suggestedQuantity: 1,
+      source: 'hybrid_cta',
+    });
+
+    await runGraphTurn(graph, buildTextPayload('No, mejor no'));
+    expect(isLastOfferAlive(await getFreshConversationMetadata(conversationId))).toBe(false);
+
+    await persistLastOffer({
+      conversationId,
+      productId: productY.id,
+      productName: productY.name,
+      suggestedQuantity: 1,
+      source: 'hybrid_cta',
+    });
+    expect(
+      getLastOffer(await getFreshConversationMetadata(conversationId))?.productId
+    ).toBe(productY.id);
+
+    const addTurn = await runGraphTurn(graph, buildTextPayload('Agrega uno'));
+    expect(hasHandlerResponse(addTurn.handlerResult)).toBe(true);
+    await resolvePendingAddGates();
+
+    const items = await getActiveDraftItems(businessId);
+    expect(items.some((i) => i.product_id === productY.id)).toBe(true);
+    expect(items.some((i) => i.product_id === productId)).toBe(false);
+  }, 300_000);
+
+  it('R4: persistLastOffer(Y) reemplaza X → "Agrega uno" suma Y', async () => {
+    const reset = await resetE2eCustomer();
+    conversationId = reset.conversationId;
+    const productY = await findE2eSecondAddableProduct(businessId, {
+      excludeId: productId,
+    });
+
+    await persistLastOffer({
+      conversationId,
+      productId,
+      productName,
+      suggestedQuantity: 1,
+      source: 'hybrid_cta',
+    });
+    await persistLastOffer({
+      conversationId,
+      productId: productY.id,
+      productName: productY.name,
+      suggestedQuantity: 1,
+      source: 'product_query',
+    });
+    expect(
+      getLastOffer(await getFreshConversationMetadata(conversationId))?.productId
+    ).toBe(productY.id);
+
+    const addTurn = await runGraphTurn(graph, buildTextPayload('Agrega uno'));
+    expect(hasHandlerResponse(addTurn.handlerResult)).toBe(true);
+    await resolvePendingAddGates();
+
+    const items = await getActiveDraftItems(businessId);
+    expect(items.some((i) => i.product_id === productY.id)).toBe(true);
+    expect(items.some((i) => i.product_id === productId)).toBe(false);
+  }, 300_000);
+
+  it('R5: pregunta genérica de catálogo NO limpia lastOffer', async () => {
+    const reset = await resetE2eCustomer();
+    conversationId = reset.conversationId;
+
+    await persistLastOffer({
+      conversationId,
+      productId,
+      productName,
+      suggestedQuantity: 1,
+      source: 'hybrid_cta',
+    });
+
+    const searchTurn = await runGraphTurn(
+      graph,
+      buildTextPayload('¿Qué hamburguesas tenés?')
+    );
+    expect(hasHandlerResponse(searchTurn.handlerResult)).toBe(true);
+    expect(await getActiveDraftItemCount(businessId)).toBe(0);
+
+    const meta = await getFreshConversationMetadata(conversationId);
+    expect(isLastOfferAlive(meta)).toBe(true);
+    expect(getLastOffer(meta)?.productId).toBe(productId);
+  }, 180_000);
 });
 
 describe('lastOffer add-item (e2e) — skip info', () => {

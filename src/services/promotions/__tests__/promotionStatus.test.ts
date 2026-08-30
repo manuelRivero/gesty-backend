@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  assertPromotionActivatable,
   assertPromotionComplete,
   assertTransition,
   canTransition,
   collectProductPaths,
+  PromotionAmbiguousBenefitError,
   PromotionIncompleteError,
   PromotionInvalidTransitionError,
+  PromotionNotEvaluableError,
 } from '../promotionStatus';
 import type { StructuredOffer } from '../promotionOffer.types';
 
@@ -123,5 +126,138 @@ describe('assertPromotionComplete', () => {
         productLinks: [],
       })
     ).not.toThrow();
+  });
+});
+
+describe('assertPromotionActivatable — gate de activación (D1/D2/B7)', () => {
+  const linkHamburguesa = {
+    path: 'offer.conditions[0].value.productName',
+    role: 'condition' as const,
+    menuItemId: 'item-hamburguesa',
+    sourceText: 'hamburguesa',
+  };
+
+  const baseOffer: StructuredOffer = {
+    name: 'Promo',
+    conditions: [
+      {
+        field: 'cart.product',
+        operator: 'gte',
+        value: { productName: 'hamburguesa', quantity: 2 },
+      },
+    ],
+    benefit: {
+      type: 'nth_free',
+      productName: 'hamburguesa',
+      buyQuantity: 2,
+      freeQuantity: 1,
+      repeats: true,
+    },
+  };
+
+  const links = [
+    linkHamburguesa,
+    {
+      path: 'offer.benefit.productName',
+      role: 'benefit' as const,
+      menuItemId: 'item-hamburguesa',
+      sourceText: 'hamburguesa',
+    },
+  ];
+
+  it('acepta un 2x1 bien expresado', () => {
+    expect(() =>
+      assertPromotionActivatable({ offer: baseOffer, productLinks: links })
+    ).not.toThrow();
+  });
+
+  it('rechaza una condición con campo fuera de la whitelist', () => {
+    expect(() =>
+      assertPromotionActivatable({
+        offer: {
+          ...baseOffer,
+          conditions: [
+            { field: 'cart.total_after_discount', operator: 'gte', value: 5000 },
+          ],
+        },
+        productLinks: links,
+      })
+    ).toThrow(PromotionNotEvaluableError);
+  });
+
+  it('rechaza un descuento monetario sin target', () => {
+    expect(() =>
+      assertPromotionActivatable({
+        offer: {
+          ...baseOffer,
+          benefit: { type: 'percentage_discount', value: 20 },
+        },
+        productLinks: [linkHamburguesa],
+      })
+    ).toThrow(PromotionNotEvaluableError);
+  });
+
+  it('rechaza límites de uso que no podemos hacer cumplir (B7)', () => {
+    expect(() =>
+      assertPromotionActivatable({
+        offer: { ...baseOffer, limits: { maxUsesTotal: 50 } },
+        productLinks: links,
+      })
+    ).toThrow(PromotionNotEvaluableError);
+  });
+
+  it('rechaza el 2x1 encubierto como free_product del mismo platillo', () => {
+    expect(() =>
+      assertPromotionActivatable({
+        offer: {
+          ...baseOffer,
+          benefit: { type: 'free_product', productName: 'hamburguesa', quantity: 1 },
+        },
+        productLinks: links,
+      })
+    ).toThrow(PromotionAmbiguousBenefitError);
+  });
+
+  it('sigue exigiendo completitud (beneficio presente y productos vinculados)', () => {
+    expect(() =>
+      assertPromotionActivatable({
+        offer: { ...baseOffer, benefit: null },
+        productLinks: links,
+      })
+    ).toThrow(PromotionIncompleteError);
+  });
+});
+
+describe('collectProductPaths — beneficios nuevos (D2)', () => {
+  it('incluye el producto de nth_free', () => {
+    const paths = collectProductPaths({
+      name: 'Promo',
+      conditions: [],
+      benefit: {
+        type: 'nth_free',
+        productName: 'hamburguesa',
+        buyQuantity: 2,
+        freeQuantity: 1,
+        repeats: true,
+      },
+    });
+    expect(paths).toEqual([
+      { path: 'offer.benefit.productName', text: 'hamburguesa', role: 'benefit' },
+    ]);
+  });
+
+  it('incluye el producto del target de un descuento monetario', () => {
+    const paths = collectProductPaths({
+      name: 'Promo',
+      conditions: [],
+      benefit: {
+        type: 'percentage_discount',
+        value: 50,
+        target: { scope: 'product', productName: 'pizza', units: 1 },
+      },
+    });
+    expect(paths).toEqual([
+      { path: 'offer.benefit.target.productName', text: 'pizza', role: 'benefit' },
+    ]);
   });
 });

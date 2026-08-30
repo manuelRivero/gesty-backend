@@ -27,6 +27,17 @@ export interface PricingResult {
   subtotal: number;
   /** Descuentos aplicados a líneas de producto (siempre positivo) */
   productDiscounts: number;
+  /**
+   * Total de los platos ya con el descuento de catálogo aplicado
+   * (`subtotal − productDiscounts`) y **antes** de promociones.
+   *
+   * Existe para que nadie vuelva a calcularlo a mano en cada caller (había dos
+   * copias de esa resta) y porque es la base que evalúa `cart.subtotal` del DSL
+   * de promociones (D1).
+   */
+  itemsTotal: number;
+  /** Descuento promocional del pedido (D3/D5). Siempre positivo. */
+  promotionDiscount: number;
   /** Costo de envío */
   deliveryFee: number;
   /** Recargo (+) o descuento (−) por método de pago */
@@ -105,10 +116,22 @@ export function resolveItemDiscount(
  *   recuperados de la BD), los usa directamente para el desglose.
  * - Si no, asume que `unit_price` es el precio final sin descuento registrado.
  * - `deliveryFee` se suma al total (solo si fulfillment = DELIVERY).
+ * - `promotionDiscount` (D5) entra **antes** del ajuste por método de pago:
+ *   el porcentaje del recargo/descuento se calcula sobre lo que el cliente
+ *   realmente paga, igual que ya ocurría con los descuentos de catálogo.
+ *
+ * Fórmula (única, no configurable):
+ *   itemsTotal = subtotal − productDiscounts
+ *   base       = itemsTotal − promotionDiscount + deliveryFee
+ *   total      = base + paymentAdjustment
  */
 export function computeOrderPricing(
   items: PricingItem[],
-  options: { deliveryFee?: number; paymentAdjustment?: number } = {}
+  options: {
+    deliveryFee?: number;
+    paymentAdjustment?: number;
+    promotionDiscount?: number;
+  } = {}
 ): PricingResult {
   let subtotal = 0;
   let productDiscounts = 0;
@@ -121,15 +144,24 @@ export function computeOrderPricing(
     productDiscounts += item.quantity * da.toNumber();
   }
 
+  const itemsTotal = subtotal - productDiscounts;
   const deliveryFee = options.deliveryFee ?? 0;
   const paymentAdjustment = options.paymentAdjustment ?? 0;
+  // Tope defensivo: el evaluador ya lo acota, pero el total de ítems no puede
+  // quedar negativo por un llamador que pase cualquier cosa.
+  const promotionDiscount = Math.min(
+    Math.max(options.promotionDiscount ?? 0, 0),
+    itemsTotal
+  );
 
   return {
     subtotal,
     productDiscounts,
+    itemsTotal,
+    promotionDiscount,
     deliveryFee,
     paymentAdjustment,
-    total: subtotal - productDiscounts + deliveryFee + paymentAdjustment,
+    total: itemsTotal - promotionDiscount + deliveryFee + paymentAdjustment,
   };
 }
 

@@ -25,6 +25,10 @@ import type {
   UnresolvedEntity,
 } from './promotionOffer.types';
 import { buildPromotionDisplay, type EntityResolution } from './buildPromotionDisplay';
+import {
+  collectConditionProblems,
+  describeBenefitProblems,
+} from './promotionConditions';
 import { resolveProductEntities } from './resolveProductEntities';
 
 function collectUnresolvedFromOffer(offer: StructuredOffer): UnresolvedEntity[] {
@@ -49,12 +53,28 @@ function collectUnresolvedFromOffer(offer: StructuredOffer): UnresolvedEntity[] 
     }
   });
 
-  if (offer.benefit?.type === 'free_product' && offer.benefit.productName.trim()) {
+  // `nth_free` (2x1) nombra su producto en el mismo path que `free_product`.
+  if (
+    (offer.benefit?.type === 'free_product' || offer.benefit?.type === 'nth_free') &&
+    offer.benefit.productName.trim()
+  ) {
     entities.push({
       type: 'product',
       text: offer.benefit.productName.trim(),
       path: 'offer.benefit.productName',
     });
+  }
+
+  // Descuento monetario apuntado a un platillo: también hay que vincularlo.
+  if (offer.benefit && 'target' in offer.benefit && offer.benefit.target) {
+    const target = offer.benefit.target;
+    if (target.scope === 'product' && target.productName.trim()) {
+      entities.push({
+        type: 'product',
+        text: target.productName.trim(),
+        path: 'offer.benefit.target.productName',
+      });
+    }
   }
 
   return entities;
@@ -84,6 +104,26 @@ function normalizeStatus(
   return parsed.status === 'complete' ? 'complete' : 'needs_clarification';
 }
 
+/**
+ * Una interpretación que el motor no podría evaluar no puede salir como
+ * `complete` (D1/D2): el panel habilitaría "Guardar y activar" y el gate de
+ * `promotionStatus` la rechazaría después, o peor, quedaría activa y no se
+ * aplicaría nunca. Se degrada acá, con la pregunta que el admin tiene que
+ * responder.
+ */
+function collectEvaluabilityMissing(
+  offer: PromotionInterpreterLlmOutput['offer']
+): PromotionInterpreterLlmOutput['missingInformation'] {
+  const problems = [
+    ...collectConditionProblems(offer),
+    ...(offer.benefit ? describeBenefitProblems(offer.benefit) : []),
+  ];
+  return problems.map((problem, index) => ({
+    field: `offer.evaluability[${index}]`,
+    question: problem,
+  }));
+}
+
 function ensureBenefitMissing(
   parsed: PromotionInterpreterLlmOutput
 ): PromotionInterpreterLlmOutput['missingInformation'] {
@@ -93,6 +133,11 @@ function ensureBenefitMissing(
       field: 'benefit',
       question: '¿Qué beneficio quieres ofrecer?',
     });
+  }
+  for (const entry of collectEvaluabilityMissing(parsed.offer)) {
+    if (!missing.some((m) => m.question === entry.question)) {
+      missing.push(entry);
+    }
   }
   return missing;
 }

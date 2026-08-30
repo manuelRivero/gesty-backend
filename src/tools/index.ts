@@ -43,6 +43,11 @@ import { refreshDraftOrderTimeout } from '../services/draftOrderTimeout.service'
 import { resolveEffectivePrice } from '../helpers/menuItemPrice.helper';
 import { listPaymentAdjustmentsForAmount } from '../services/paymentAdjustment.service';
 import { computeOrderPricing } from '../services/pricing.service';
+import { resolveCartPromotions } from '../services/promotions/resolveCartPromotions';
+import {
+  resolvePostAddPromotion,
+  type PostAddPromotion,
+} from '../services/intent/promotionOpportunity.service';
 import {
   partySizeMetadataFields,
   normalizeMetadata,
@@ -299,8 +304,18 @@ export const getCartTool = new DynamicStructuredTool<
       return toJson({ exists: false, items: [] });
     }
 
-    const pricing = computeOrderPricing(draft.draft_order_item);
-    const itemsTotal = pricing.subtotal - pricing.productDiscounts;
+    // El descuento promocional se deriva del carrito real en cada lectura
+    // (ADR-0005): el total del chat tiene que ser el mismo que el del checkout.
+    const promotions = await resolveCartPromotions({
+      businessId,
+      draftOrderId: draft.id,
+      customerId,
+    });
+    const pricing = computeOrderPricing(draft.draft_order_item, {
+      promotionDiscount: promotions.monetaryDiscount,
+    });
+    const itemsTotal = pricing.itemsTotal;
+    const itemsTotalAfterPromotions = itemsTotal - pricing.promotionDiscount;
 
     // Ajustes reales por método de pago ofrecido ahora (filtra cash si hay
     // delivery externo, y online sin Mercado Pago activo).
@@ -314,7 +329,8 @@ export const getCartTool = new DynamicStructuredTool<
     const paymentAdjustments = (
       await listPaymentAdjustmentsForAmount({
         businessId,
-        baseAmount: itemsTotal,
+        // D5: el porcentaje se calcula sobre lo que el cliente realmente paga.
+        baseAmount: itemsTotalAfterPromotions,
       })
     ).filter((a) => offeredIds.has(a.paymentMethod as typeof offeredMethods[number]['id']));
 
@@ -362,8 +378,14 @@ export const getCartTool = new DynamicStructuredTool<
           ? pricing.productDiscounts.toFixed(2)
           : null,
         itemsTotal: itemsTotal.toFixed(2),
+        promotionDiscount:
+          pricing.promotionDiscount > 0 ? pricing.promotionDiscount.toFixed(2) : null,
+        itemsTotalAfterPromotions:
+          pricing.promotionDiscount > 0 ? itemsTotalAfterPromotions.toFixed(2) : null,
         deliveryFee: deliveryFeeKnown ? deliveryCtx.deliveryFee.toFixed(2) : null,
-        total: deliveryFeeKnown ? (itemsTotal + deliveryCtx.deliveryFee).toFixed(2) : null,
+        total: deliveryFeeKnown
+          ? (itemsTotalAfterPromotions + deliveryCtx.deliveryFee).toFixed(2)
+          : null,
         note:
           deliveryLookupType === 'DELIVERY' && !deliveryFeeKnown
             ? 'El costo de envío depende de la zona — todavía no hay una dirección guardada en cobertura. ' +
@@ -420,8 +442,14 @@ export const getPaymentMethodsTool = new DynamicStructuredTool<
     });
 
     if (draft && draft.draft_order_item.length > 0) {
-      const pricing = computeOrderPricing(draft.draft_order_item);
-      const itemsTotal = pricing.subtotal - pricing.productDiscounts;
+      const promotions = await resolveCartPromotions({
+        businessId,
+        draftOrderId: draft.id,
+      });
+      const pricing = computeOrderPricing(draft.draft_order_item, {
+        promotionDiscount: promotions.monetaryDiscount,
+      });
+      const itemsTotal = pricing.itemsTotal - pricing.promotionDiscount;
       const adjustments = (
         await listPaymentAdjustmentsForAmount({ businessId, baseAmount: itemsTotal })
       ).filter((a) => offeredIds.has(a.paymentMethod as typeof offeredMethods[number]['id']));
@@ -1272,7 +1300,9 @@ export const addCartItemTool = new DynamicStructuredTool<
     'si no, llamá search_products primero. Si el producto tiene variaciones y no sabés cuál quiere ' +
     'el cliente, preguntale antes de llamar (esta tool rechaza el llamado si falta y el producto la requiere). ' +
     'Devuelve el carrito actualizado. Si incluye "opportunity" con nextAction ' +
-    'present_complement_suggestions, llamá esa tool en este turno (no preguntes upsell en prosa).',
+    'present_complement_suggestions, llamá esa tool en este turno (no preguntes upsell en prosa). ' +
+    'Si incluye "promotion", el sistema ya calculó el beneficio: comunicá EXACTAMENTE ese dato ' +
+    '(aplicada = ya está en el total; desbloqueable = ofrecela en una línea). Nunca calcules descuentos.',
   schema: addCartItemSchema,
   func: async (
     { productId, quantity, variation }: AddCartItemInput,
@@ -1551,6 +1581,7 @@ export const addCartItemTool = new DynamicStructuredTool<
     // inicio del turno; si acaba de crearse, ya se inicializó más arriba.
 
     let postAddOpportunity: PostAddComplementOpportunity | null = null;
+    let postAddPromotion: PostAddPromotion | null = null;
     let queueFollowUp: { nextHint: string; remaining: number; instruction: string } | null = null;
     if (conversationId) {
       await clearPendingVariation(conversationId);
@@ -1598,6 +1629,15 @@ export const addCartItemTool = new DynamicStructuredTool<
         metadata: metadataAfterAdvance,
         hasOpenOrderLines: openOrderLinesAfterAdvance,
       });
+
+      // Mismo motivo, para promociones: sin esto, el 2x1 que disparó ESTE add
+      // se comunicaría recién en el turno siguiente.
+      if (!openOrderLinesAfterAdvance) {
+        postAddPromotion = await resolvePostAddPromotion({
+          businessId,
+          draftOrderId: draft.id,
+        });
+      }
     }
 
     // Devolver snapshot del carrito actualizado
@@ -1630,18 +1670,25 @@ export const addCartItemTool = new DynamicStructuredTool<
           notes: it.notes ?? null,
         })),
       },
+      // Precedencia explícita del retorno (mutuamente excluyente):
+      //   cola de líneas > promoción > complemento > present_cart.
+      // La promoción gana al cross-sell por el mismo criterio que su tieBreak
+      // (18 > 15): tiene beneficio verificable para el cliente. La cola sigue
+      // primero porque el cliente ya pidió varias cosas en un mensaje.
       ...(queueFollowUp
         ? { queueFollowUp }
-        : postAddOpportunity
-          ? { opportunity: postAddOpportunity }
-          : {
-              followUp: {
-                nextAction: 'present_cart',
-                instruction:
-                  'No hay ola de complemento ahora. Llamá present_cart para confirmar el add ' +
-                  'con el pedido completo. PROHIBIDO listar categorías (Bebidas/Postres/Entradas) en prosa.',
-              },
-            }),
+        : postAddPromotion
+          ? { promotion: postAddPromotion }
+          : postAddOpportunity
+            ? { opportunity: postAddOpportunity }
+            : {
+                followUp: {
+                  nextAction: 'present_cart',
+                  instruction:
+                    'No hay ola de complemento ahora. Llamá present_cart para confirmar el add ' +
+                    'con el pedido completo. PROHIBIDO listar categorías (Bebidas/Postres/Entradas) en prosa.',
+                },
+              }),
     });
   },
 });
@@ -2297,6 +2344,59 @@ export const checkDeliveryCoverageTool = new DynamicStructuredTool<
 });
 
 // ---------------------------------------------------------------------------
+// get_promotions (lectura — NO evalúa ni aplica)
+// ---------------------------------------------------------------------------
+
+// Es una tool de LECTURA de catálogo, hermana de `get_payment_methods`: existe
+// porque "¿tienen promos?" es una pregunta legítima SIN carrito armado, y el
+// motor solo puede evaluar lo que ya está en el carrito.
+//
+// Deliberadamente NO existe una tool `evaluate_promotions`: si aplicar un
+// descuento dependiera de que el modelo decida llamarla, una promo importante
+// desaparecería porque el LLM no la invocó. La evaluación es automática y
+// determinista (ADR-0010: el modelo no autoriza efectos).
+
+const getPromotionsSchema = z.object({});
+type GetPromotionsInput = z.infer<typeof getPromotionsSchema>;
+
+export const getPromotionsTool = new DynamicStructuredTool<
+  typeof getPromotionsSchema,
+  GetPromotionsInput
+>({
+  name: 'get_promotions',
+  description:
+    'Devuelve las promociones vigentes del negocio (nombre, beneficio y condición en texto), ' +
+    'SIN depender de que haya un carrito. Usala para "¿tienen promos?", "¿hay alguna oferta?", ' +
+    '"¿qué descuentos tienen hoy?". NO aplica ni calcula descuentos: el sistema los aplica solo ' +
+    'cuando el carrito cumple la condición y te avisa en [ESTADO DEL CLIENTE] o en add_cart_item.',
+  schema: getPromotionsSchema,
+  func: async (_input: GetPromotionsInput, _runManager, config?: RunnableConfig) => {
+    const { businessId } = getReactContext(config);
+    const { findActivePromotions } = await import(
+      '../services/promotions/activePromotions.repository'
+    );
+    const { formatBenefitLabel, formatConditionLabel, formatValidityLines } =
+      await import('../services/promotions/buildPromotionDisplay');
+
+    const promotions = await findActivePromotions({ businessId });
+    if (promotions.length === 0) {
+      return toJson({ promotions: [], note: 'El negocio no tiene promociones vigentes ahora.' });
+    }
+
+    return toJson({
+      promotions: promotions.map((promotion) => ({
+        name: promotion.name,
+        benefit: formatBenefitLabel(promotion.offer.benefit),
+        conditions: promotion.offer.conditions.map((condition) =>
+          formatConditionLabel(condition)
+        ),
+        validity: formatValidityLines(promotion.offer.validity),
+      })),
+    });
+  },
+});
+
+// ---------------------------------------------------------------------------
 // present_cart (señal-UI)
 // ---------------------------------------------------------------------------
 
@@ -2458,6 +2558,32 @@ export const clearPendingVariationTool = new DynamicStructuredTool<
     const { conversationId } = getReactContext(config);
     if (conversationId) {
       await clearPendingVariation(conversationId);
+    }
+    return toJson({ cleared: true });
+  },
+});
+
+const clearLastOfferSchema = z.object({});
+type ClearLastOfferInput = z.infer<typeof clearLastOfferSchema>;
+
+export const clearLastOfferTool = new DynamicStructuredTool<
+  typeof clearLastOfferSchema,
+  ClearLastOfferInput
+>({
+  name: 'clear_last_offer',
+  description:
+    'Invalida la oferta viva (CONFIRMAR_OFERTA / Oferta viva en el estado) SOLO cuando el cliente rechaza explícitamente sumarla ' +
+    '(ej. no, mejor no, cancelá, ahora no). NO la uses si pide sumar ("agrega uno", "dale, agregalo") ni ante preguntas de precio/atributo. ' +
+    'Llamá ANTES de responder. No suma nada al carrito; no toca pending de variación/cantidad/nota, shortlist, checkout ni Goals. Idempotente si no hay oferta.',
+  schema: clearLastOfferSchema,
+  func: async (
+    _input: ClearLastOfferInput,
+    _runManager,
+    config?: RunnableConfig
+  ) => {
+    const { conversationId } = getReactContext(config);
+    if (conversationId) {
+      await clearLastOffer(conversationId);
     }
     return toJson({ cleared: true });
   },
@@ -3041,6 +3167,7 @@ export const allReactTools = [
   getMenuByCategoryTool,
   getCartTool,
   getPaymentMethodsTool,
+  getPromotionsTool,
   getPopularProductsTool,
   getBusinessHoursTool,
   getRecentMessagesTool,
@@ -3059,6 +3186,7 @@ export const allReactTools = [
   markComplementRefusedTool,
   clearPendingAddQuantityTool,
   clearPendingVariationTool,
+  clearLastOfferTool,
   clearPendingItemNoteTool,
   planOrderLinesTool,
   continueOrderLineTool,

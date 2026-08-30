@@ -51,6 +51,7 @@ import {
 import { ConversationIntent } from "../types/conversationIntent";
 import { handleDraftOrder, handleDraftOrderItem } from "./order.service";
 import { computeOrderPricing, formatItemPriceForChat } from "./pricing.service";
+import { resolveCartPromotions } from "./promotions/resolveCartPromotions";
 import { resolveEffectivePrice } from "../helpers/menuItemPrice.helper";
 import { resolveDeliveryContext } from "./deliveryFee.service";
 import { resolveCartShippingBullet } from "./cartShippingCopy";
@@ -1011,7 +1012,18 @@ export const buildCartSummaryMessage = async (params: {
   const fulfillmentType = cartItems.fulfillment_type;
 
   const deliveryCtx = await resolveDeliveryContext({ customerId, businessId, fulfillmentType });
-  const pricing = computeOrderPricing(cartItems.draft_order_item, { deliveryFee: deliveryCtx.deliveryFee });
+  // Mismo motor que get_cart y checkout: el resumen interactivo no puede
+  // mostrar un total distinto del que se cobra (D11).
+  const promotions = await resolveCartPromotions({
+    businessId,
+    draftOrderId: cartItems.id,
+    customerId,
+    deliveryFee: deliveryCtx.deliveryFee,
+  });
+  const pricing = computeOrderPricing(cartItems.draft_order_item, {
+    deliveryFee: promotions.freeShipping ? 0 : deliveryCtx.deliveryFee,
+    promotionDiscount: promotions.monetaryDiscount,
+  });
 
   let deliveryLine = '';
   let hasDeliveryAddress = false;
@@ -1030,8 +1042,12 @@ export const buildCartSummaryMessage = async (params: {
     }
   }
 
-  const subtotalLine = pricing.deliveryFee > 0
-    ? `Subtotal: $${(pricing.subtotal - pricing.productDiscounts).toFixed(2)}\nEnvío: $${pricing.deliveryFee.toFixed(2)}\n`
+  const promotionLine =
+    pricing.promotionDiscount > 0
+      ? `Promoción: −$${pricing.promotionDiscount.toFixed(2)}\n`
+      : '';
+  const subtotalLine = pricing.deliveryFee > 0 || promotionLine
+    ? `Subtotal: $${pricing.itemsTotal.toFixed(2)}\n${promotionLine}${pricing.deliveryFee > 0 ? `Envío: $${pricing.deliveryFee.toFixed(2)}\n` : ''}`
     : '';
   const totalLine = `${subtotalLine}*Total: $${pricing.total.toFixed(2)} ${currencyCode ?? 'ARS'}*`;
   const shippingBullet = await resolveCartShippingBullet({

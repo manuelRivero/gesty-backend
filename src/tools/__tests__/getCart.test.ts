@@ -17,6 +17,20 @@ vi.mock('../../lib/prisma', () => ({
     draft_order: {
       findFirst: vi.fn(),
     },
+    // `get_cart` resuelve la config del negocio con SQL crudo y consulta
+    // promociones activas: sin estos mocks el tool falla antes de responder.
+    $queryRaw: vi.fn(async () => []),
+    promotion: { findMany: vi.fn(async () => []) },
+    draft_order_item: { findMany: vi.fn(async () => []) },
+    business: { findUnique: vi.fn(async () => ({ timezone: 'America/Argentina/Buenos_Aires' })) },
+    menu_item: { findMany: vi.fn(async () => []) },
+    orders: { count: vi.fn(async () => 1) },
+    payment_method_config: {
+      findMany: vi.fn(async () => [
+        { payment_method: 'cash', is_active: true, sort_order: 0, label: 'Efectivo' },
+      ]),
+      createMany: vi.fn(),
+    },
   },
 }));
 

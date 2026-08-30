@@ -231,3 +231,45 @@ describe('SUGERIR_DIRECCION (C.2)', () => {
     ).toBeNull();
   });
 });
+
+describe('SUGERIR_COMPLEMENTO — supresión por promoción (D6)', () => {
+  const cartTags = new Set<MenuCategoryTag>(['MAIN']);
+
+  it('no se deriva si la promo desbloqueable empuja la única categoría faltante', () => {
+    // Faltan STARTER, DRINK y DESSERT; la promo empuja las tres.
+    expect(
+      deriveSuggestComplementOpen({
+        cartTags,
+        checkoutActive: false,
+        promotionSuppressedTags: ['STARTER', 'DRINK', 'DESSERT'],
+      })
+    ).toBe(false);
+  });
+
+  it('sigue abierta para las categorías que la promo NO empuja', () => {
+    expect(
+      deriveSuggestComplementOpen({
+        cartTags,
+        checkoutActive: false,
+        promotionSuppressedTags: ['DESSERT'],
+      })
+    ).toBe(true);
+  });
+
+  it('el candidato no ofrece la categoría suprimida', () => {
+    const candidate = deriveSuggestComplementCandidate(
+      {
+        cartTags,
+        checkoutActive: false,
+        promotionSuppressedTags: ['DESSERT'],
+      },
+      {}
+    );
+    expect(candidate).not.toBeNull();
+    expect(candidate?.hint).not.toContain('postre');
+  });
+
+  it('sin promoción se comporta igual que antes', () => {
+    expect(deriveSuggestComplementOpen({ cartTags, checkoutActive: false })).toBe(true);
+  });
+});

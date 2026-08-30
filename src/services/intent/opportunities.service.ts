@@ -28,6 +28,16 @@ export type SuggestComplementFacts = {
   checkoutActive: boolean;
   /** D7 de PLAN-ACCION-PEDIDO-MULTI-LINEA.md: cola de líneas abierta → no ofrecer complemento. */
   hasOpenOrderLines?: boolean;
+  /**
+   * D6 — Categorías que una promoción desbloqueable ya está empujando. Sin
+   * esto, la promo dice "sumá un postre y te sale gratis" y el complemento
+   * ofrece el mismo postre a precio de lista en el mismo turno.
+   *
+   * Es el patrón de supresión por Fact que TAXONOMIA §6/§7 documenta para
+   * `hasOpenOrderLines`: el derivador lee un Fact y no se deriva. No hace
+   * falta un IntentType nuevo ni tocar el ranker.
+   */
+  promotionSuppressedTags?: ReadonlyArray<MenuCategoryTag>;
 };
 
 export type SuggestComplementPermissionDenial =
@@ -96,7 +106,20 @@ export const deriveSuggestComplementOpen = (facts: SuggestComplementFacts): bool
   if (facts.checkoutActive) return false;
   if (facts.hasOpenOrderLines) return false;
   if (facts.cartTags.size === 0) return false;
-  return getMissingMenuCompleteTags(facts.cartTags).length > 0;
+  return getOfferableMissingTags(facts).length > 0;
+};
+
+/**
+ * Huecos del menú que el complemento puede ofrecer: los faltantes menos los
+ * que una promoción desbloqueable ya está empujando (D6).
+ */
+export const getOfferableMissingTags = (
+  facts: SuggestComplementFacts
+): MenuCategoryTag[] => {
+  const suppressed = new Set(facts.promotionSuppressedTags ?? []);
+  return getMissingMenuCompleteTags(facts.cartTags).filter(
+    (tag) => !suppressed.has(tag)
+  );
 };
 
 export const deriveSuggestComplementCandidate = (
@@ -108,7 +131,7 @@ export const deriveSuggestComplementCandidate = (
   const perm = computeSuggestComplementPermission(ledgerEntry ?? {}, now);
   if (!perm.granted) return null;
 
-  const missing = getMissingMenuCompleteTags(facts.cartTags);
+  const missing = getOfferableMissingTags(facts);
   const missingLabels = missing.map((t) => MENU_COMPLETE_LABEL[t] ?? t);
   const offerHint =
     missingLabels.length <= 2
@@ -149,7 +172,7 @@ export const buildPostAddComplementOpportunity = (
   ledgerEntry: IntentLedgerEntry | undefined
 ): PostAddComplementOpportunity | null => {
   if (!deriveSuggestComplementCandidate(facts, ledgerEntry)) return null;
-  const missing = getMissingMenuCompleteTags(facts.cartTags).map(
+  const missing = getOfferableMissingTags(facts).map(
     (t) => MENU_COMPLETE_LABEL[t] ?? t
   );
   return {

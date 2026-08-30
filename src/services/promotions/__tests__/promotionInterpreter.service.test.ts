@@ -38,11 +38,11 @@ describe('promotionInterpreter.service', () => {
         conditions: [
           {
             field: 'cart.product',
-            operator: 'contains',
-            value: { productName: 'hamburguesa' },
+            operator: 'gte',
+            value: { productName: 'hamburguesa', quantity: 1 },
           },
         ],
-        benefit: { type: 'percentage_discount', value: 20 },
+        benefit: { type: 'percentage_discount', value: 20, target: { scope: 'order' } },
         validity: { daysOfWeek: [2] },
       },
       missingInformation: [],
@@ -61,7 +61,11 @@ describe('promotionInterpreter.service', () => {
 
     expect(result.status).toBe('complete');
     if (result.status === 'error') return;
-    expect(result.offer.benefit).toEqual({ type: 'percentage_discount', value: 20 });
+    expect(result.offer.benefit).toEqual({
+      type: 'percentage_discount',
+      value: 20,
+      target: { scope: 'order' },
+    });
     expect(result.offer.validity?.daysOfWeek).toEqual([2]);
     expect(result.unresolvedEntities.some((e) => e.text === 'hamburguesa')).toBe(true);
   });
@@ -72,7 +76,7 @@ describe('promotionInterpreter.service', () => {
       offer: {
         name: 'Descuento por monto',
         conditions: [{ field: 'cart.subtotal', operator: 'gt', value: 30000 }],
-        benefit: { type: 'fixed_discount', value: 5000 },
+        benefit: { type: 'fixed_discount', value: 5000, target: { scope: 'order' } },
       },
       missingInformation: [],
       unresolvedEntities: [],
@@ -84,7 +88,11 @@ describe('promotionInterpreter.service', () => {
 
     expect(result.status).toBe('complete');
     if (result.status === 'error') return;
-    expect(result.offer.benefit).toEqual({ type: 'fixed_discount', value: 5000 });
+    expect(result.offer.benefit).toEqual({
+      type: 'fixed_discount',
+      value: 5000,
+      target: { scope: 'order' },
+    });
     expect(result.offer.conditions[0]).toMatchObject({
       field: 'cart.subtotal',
       operator: 'gt',
@@ -100,11 +108,15 @@ describe('promotionInterpreter.service', () => {
         conditions: [
           {
             field: 'cart.product',
-            operator: 'contains',
-            value: { productName: 'pizza muzzarella' },
+            operator: 'gte',
+            value: { productName: 'pizza muzzarella', quantity: 1 },
           },
         ],
-        benefit: { type: 'fixed_price', value: 8000 },
+        benefit: {
+          type: 'fixed_price',
+          value: 8000,
+          target: { scope: 'product', productName: 'pizza muzzarella' },
+        },
       },
       missingInformation: [],
       unresolvedEntities: [
@@ -122,7 +134,11 @@ describe('promotionInterpreter.service', () => {
 
     expect(result.status).toBe('complete');
     if (result.status === 'error') return;
-    expect(result.offer.benefit).toEqual({ type: 'fixed_price', value: 8000 });
+    expect(result.offer.benefit).toEqual({
+      type: 'fixed_price',
+      value: 8000,
+      target: { scope: 'product', productName: 'pizza muzzarella' },
+    });
   });
 
   it('4. producto gratis', async () => {
@@ -225,7 +241,7 @@ describe('promotionInterpreter.service', () => {
       offer: {
         name: 'Promo martes',
         conditions: [],
-        benefit: { type: 'percentage_discount', value: 10 },
+        benefit: { type: 'percentage_discount', value: 10, target: { scope: 'order' } },
         validity: { daysOfWeek: [2] },
       },
       missingInformation: [],
@@ -250,7 +266,11 @@ describe('promotionInterpreter.service', () => {
             value: { productName: 'pizza', quantity: 2 },
           },
         ],
-        benefit: { type: 'percentage_discount', value: 50 },
+        benefit: {
+          type: 'percentage_discount',
+          value: 50,
+          target: { scope: 'product', productName: 'pizza', units: 1 },
+        },
         validity: {
           daysOfWeek: [1, 2, 3, 4],
           timeRange: { from: '18:00', to: '20:00' },
@@ -282,7 +302,7 @@ describe('promotionInterpreter.service', () => {
       offer: {
         name: 'Agosto nocturno',
         conditions: [],
-        benefit: { type: 'fixed_discount', value: 3000 },
+        benefit: { type: 'fixed_discount', value: 3000, target: { scope: 'order' } },
         validity: {
           startsAt: '2026-08-01',
           endsAt: '2026-08-31',
@@ -400,7 +420,11 @@ describe('promotionInterpreter.service', () => {
             value: { productName: 'combo especial', quantity: 1 },
           },
         ],
-        benefit: { type: 'percentage_discount', value: 50 },
+        benefit: {
+          type: 'percentage_discount',
+          value: 50,
+          target: { scope: 'product', productName: 'pizza', units: 1 },
+        },
       },
       missingInformation: [],
       unresolvedEntities: [

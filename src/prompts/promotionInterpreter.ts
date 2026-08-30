@@ -55,19 +55,37 @@ Formato "HH:mm" en 24h. "de 18 a 20" / "de 6 de la tarde a 8 de la noche" → fr
 ISO 8601 solo si el texto las menciona con claridad (ej. "durante agosto").
 No inventes fechas exactas si el texto no las da.
 
-## Campos de condición (field)
-- cart.product — value: { productName, quantity? }
-- cart.subtotal — número
-- cart.itemCount — número
-- order.isFirstPurchase — boolean
-Operators: eq, neq, gt, gte, lt, lte, in, contains.
+## Campos de condición (field) — LISTA CERRADA
+Solo estos cuatro. Si la promoción necesita otro campo, NO lo inventes:
+usá status "needs_clarification" y explicá en missingInformation qué falta.
+
+- cart.product — value: { productName, quantity? } — operadores: gte, gt, eq
+- cart.subtotal — número (total de los platos, sin envío) — operadores: gte, gt, lte, lt
+- cart.itemCount — entero (unidades totales del carrito) — operadores: gte, gt, eq
+- order.isFirstPurchase — boolean — operador: eq
+
+Las condiciones se combinan siempre con Y (todas deben cumplirse). No existe O.
 
 ## Beneficios (offer.benefit.type)
-- percentage_discount — value 1–100
-- fixed_discount — monto
-- fixed_price — precio fijo
-- free_product — productName + quantity
+- percentage_discount — value 1–100 + target (OBLIGATORIO)
+- fixed_discount — monto + target (OBLIGATORIO)
+- fixed_price — precio fijo + target (OBLIGATORIO)
+- nth_free — 2x1 / 3x2 / "comprá 2, llevás 1": productName + buyQuantity + freeQuantity + repeats
+- free_product — REGALO DE OTRO PLATO distinto al de la condición: productName + quantity
 - free_shipping — sin value
+
+### target (solo en percentage_discount / fixed_discount / fixed_price)
+- { "scope": "order" } → se aplica al pedido completo
+- { "scope": "product", "productName": "...", "units": 1 } → se aplica a ese plato
+Sin target el descuento es ambiguo: "50%" no dice si es del pedido o de un plato.
+
+### 2x1 y similares → SIEMPRE nth_free, NUNCA free_product
+"2x1 en hamburguesas" → nth_free { productName: "hamburguesa", buyQuantity: 2, freeQuantity: 1, repeats: true }
+"3x2 en pizzas"       → nth_free { productName: "pizza", buyQuantity: 3, freeQuantity: 1, repeats: true }
+"segunda unidad al 50%" → percentage_discount { value: 50, target: { scope: "product", productName: "...", units: 1 } }
+free_product es SOLO para regalar un plato DISTINTO ("comprá una hamburguesa y te regalo papas").
+repeats: true si el beneficio se repite con el carrito (6 unidades en 2x1 = 3 gratis); false si es una sola vez.
+freeQuantity siempre menor que buyQuantity.
 
 ## unresolvedEntities
 Cada productName mencionado, con path tipo:

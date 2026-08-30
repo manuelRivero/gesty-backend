@@ -57,7 +57,20 @@ import {
   deriveRetomarTareaCandidate,
   recordCatalogGoalSurfaced,
 } from '../services/intent/catalogGoals.service';
-import { collectCategoryTagsInDraftCart } from '../helpers/complementaryMenu.helper';
+import {
+  collectCategoryTagsByProductId,
+  collectCategoryTagsInDraftCart,
+} from '../helpers/complementaryMenu.helper';
+import { resolveCartPromotions } from '../services/promotions/resolveCartPromotions';
+import {
+  buildPromotionFactLines,
+  collectPromotionSuppressedTags,
+  derivePromotionCandidate,
+  pickRelevantUnlockable,
+  PROMOTION_INTENT_TYPE,
+  recordPromotionSurfaced,
+} from '../services/intent/promotionOpportunity.service';
+import { emptyPromotionEvaluation } from '../services/promotions/promotionEvaluation.types';
 import { buildPendingVariationContextLines } from '../services/pendingVariation.service';
 import { buildPendingAddQuantityContextLines } from '../services/pendingAddQuantity.service';
 import {
@@ -230,6 +243,37 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     }
   }
 
+  // Promociones: se derivan del carrito real en cada turno (ADR-0005). El Fact
+  // se comunica siempre; la Opportunity compite en el ranker como cualquier
+  // otra. `resolveCartPromotions` nunca lanza: degrada a "sin promociones".
+  let promotionEvaluation = emptyPromotionEvaluation();
+  let promotionSuppressedTags: MenuCategoryTag[] = [];
+  if (draftOrderId && businessId && hasItems) {
+    promotionEvaluation = await resolveCartPromotions({
+      businessId,
+      draftOrderId,
+      customerId:
+        typeof ctx.customer === 'object' && ctx.customer
+          ? (ctx.customer as { id?: string }).id ?? null
+          : null,
+    });
+    const unlockable = pickRelevantUnlockable(promotionEvaluation);
+    if (unlockable) {
+      try {
+        const tagByProductId = await collectCategoryTagsByProductId(
+          unlockable.relatedProductIds,
+          businessId
+        );
+        promotionSuppressedTags = collectPromotionSuppressedTags(
+          promotionEvaluation,
+          tagByProductId
+        );
+      } catch {
+        /* sin tags no se suprime nada: el ranker decide igual */
+      }
+    }
+  }
+
   const reservationDraft = meta.reservation_draft;
   const reservationAgentActive = meta.reservation_agent_active === true;
   const hasReservationDraft = hasReservationDraftInProgress(reservationDraft);
@@ -314,8 +358,21 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
       meta.intentLedger?.RETOMAR_TAREA_INTERRUMPIDA
     ),
     deriveSuggestComplementCandidate(
-      { cartTags, checkoutActive, hasOpenOrderLines: openOrderLines },
+      {
+        cartTags,
+        checkoutActive,
+        hasOpenOrderLines: openOrderLines,
+        promotionSuppressedTags,
+      },
       meta.intentLedger?.SUGERIR_COMPLEMENTO
+    ),
+    derivePromotionCandidate(
+      {
+        evaluation: promotionEvaluation,
+        checkoutActive,
+        hasOpenOrderLines: openOrderLines,
+      },
+      meta.intentLedger?.[PROMOTION_INTENT_TYPE]
     ),
     // SUGERIR_DIRECCION: no se inyecta en el híbrido — dirección solo onboarding/checkout.
     derivePartySizeGoalCandidate(
@@ -354,6 +411,9 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
   if (partySizeLedgerEntry) {
     extrasLedger[PARTY_SIZE_GOAL_TYPE] = partySizeLedgerEntry;
   }
+  if (meta.intentLedger?.[PROMOTION_INTENT_TYPE]) {
+    extrasLedger[PROMOTION_INTENT_TYPE] = meta.intentLedger[PROMOTION_INTENT_TYPE];
+  }
   if (meta.intentLedger?.PEDIDO_POR_EXPIRAR) {
     extrasLedger.PEDIDO_POR_EXPIRAR = meta.intentLedger.PEDIDO_POR_EXPIRAR;
   }
@@ -391,6 +451,13 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     void recordConfirmOfferSurfaced(ctx.conversationId, meta).catch((err) =>
       console.error('[intent] failed to record CONFIRMAR_OFERTA surfaced:', err)
     );
+  } else if (ranked.active?.type === PROMOTION_INTENT_TYPE) {
+    const surfaced = pickRelevantUnlockable(promotionEvaluation);
+    if (surfaced) {
+      void recordPromotionSurfaced(ctx.conversationId, meta, surfaced.promotionId).catch(
+        (err) => console.error('[intent] failed to record OFRECER_PROMOCION surfaced:', err)
+      );
+    }
   } else if (ranked.active?.type === PARTY_SIZE_GOAL_TYPE) {
     void recordPartySizeGoalSurfaced(ctx.conversationId, meta).catch((err) =>
       console.error('[goal] failed to record OBTENER_PERSONAS_DEL_PEDIDO surfaced:', err)
@@ -429,10 +496,15 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     ranked.active?.kind === 'alert' ||
     (ranked.active?.kind === 'goal' && ranked.active.pressure === 'blocking');
   // pendingItemNote gana sobre la Opportunity de complemento (misma ola).
+  // Con una promoción activa NO se dual-inyecta el complemento: serían dos
+  // intervenciones comerciales en el mismo turno y la métrica de guardia de
+  // ADR-0009 (intents planteados por turno ≤ 1) dejaría de cumplirse.
+  const promotionIsActive = ranked.active?.type === PROMOTION_INTENT_TYPE;
   const optionalComplementLines =
     complementCandidate &&
     ranked.active?.type !== 'SUGERIR_COMPLEMENTO' &&
     !activeBlocksOptional &&
+    !promotionIsActive &&
     !pendingItemNoteActive
       ? complementCandidate.hint.split('\n')
       : [];
@@ -476,6 +548,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     ...pendingOrderLinesLines,
     ...pendingCancelLines,
     ...lastOfferFactLines,
+    ...buildPromotionFactLines(promotionEvaluation),
     ...intentLines,
     ...optionalComplementLines,
   ].filter((line): line is string => line !== null);

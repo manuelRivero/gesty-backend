@@ -1,5 +1,5 @@
 import { customer as CustomerType, business as BusinessType, conversation as ConversationType } from '@prisma/client';
-import { OrderPaymentStatus, OrderStatus } from '@prisma/client';
+import { OrderPaymentStatus, OrderStatus, Prisma } from '@prisma/client';
 import QRCode from 'qrcode';
 import { prisma } from '../lib/prisma';
 import {
@@ -36,10 +36,36 @@ import {
 import { omitConversationMetadataKeys } from '../repositories/conversationState.repository';
 import { normalizeMetadata } from './productQuery/utils';
 import { isAmbassadorRefExpired } from './ambassador/referralCode';
+import {
+  promotionSignature,
+  resolveCartPromotions,
+} from './promotions/resolveCartPromotions';
+import type { PromotionEvaluation } from './promotions/promotionEvaluation.types';
 
 export interface CreateOrderFromDraftParams {
   paymentStatus?: OrderPaymentStatus;
   paymentMethod?: string;
+  /**
+   * Evaluación ya congelada (camino de pago online: se fija al emitir el link,
+   * porque el webhook no tiene turno conversacional donde re-confirmar).
+   * Si se omite, se evalúa con el `now` de la creación (D13).
+   */
+  promotionEvaluation?: PromotionEvaluation;
+  /**
+   * Firma de la evaluación que el cliente confirmó en el resumen. Si al crear
+   * la orden ya no coincide, se aborta con `PromotionChangedError` en vez de
+   * cobrar un total que nadie aprobó (Constraint de TAXONOMIA §7).
+   */
+  expectedPromotionSignature?: string;
+}
+
+/** La promoción cambió entre el resumen confirmado y la creación (D13). */
+export class PromotionChangedError extends Error {
+  readonly code = 'PROMOTION_CHANGED';
+  constructor() {
+    super('Las promociones del pedido cambiaron: hay que reconfirmar el total');
+    this.name = 'PromotionChangedError';
+  }
 }
 
 export interface CheckoutResult {
@@ -100,9 +126,31 @@ export const createOrderFromDraft = async (
     fulfillmentType: draft.fulfillment_type,
   });
 
+  // D13: la promoción se evalúa con el `now` de la CREACIÓN de la orden — es el
+  // único instante con consecuencia financiera. Si `expectedPromotionSignature`
+  // viene del resumen que el cliente confirmó y ya no coincide, no creamos:
+  // cobrar un total que nadie aprobó viola el Constraint de TAXONOMIA §7.
+  const promotions = params.promotionEvaluation
+    ?? (await resolveCartPromotions({
+      businessId: business.id,
+      draftOrderId: draft.id,
+      customerId: customer.id,
+      deliveryFee: deliveryCtx.deliveryFee,
+    }));
+
+  if (
+    params.expectedPromotionSignature &&
+    params.expectedPromotionSignature !== promotionSignature(promotions)
+  ) {
+    throw new PromotionChangedError();
+  }
+
+  const effectiveDeliveryFee = promotions.freeShipping ? 0 : deliveryCtx.deliveryFee;
+
   // Calculamos base (sin ajuste de pago) para usarla como referencia del porcentaje
   const pricingBase = computeOrderPricing(draft.draft_order_item, {
-    deliveryFee: deliveryCtx.deliveryFee,
+    deliveryFee: effectiveDeliveryFee,
+    promotionDiscount: promotions.monetaryDiscount,
   });
 
   const payAdjCtx = paymentMethod
@@ -114,7 +162,8 @@ export const createOrderFromDraft = async (
     : { adjustmentAmount: 0, label: null, hasAdjustment: false };
 
   const pricing = computeOrderPricing(draft.draft_order_item, {
-    deliveryFee: deliveryCtx.deliveryFee,
+    deliveryFee: effectiveDeliveryFee,
+    promotionDiscount: promotions.monetaryDiscount,
     paymentAdjustment: payAdjCtx.adjustmentAmount,
   });
 
@@ -140,20 +189,51 @@ export const createOrderFromDraft = async (
       payment_status: paymentStatus,
       payment_method: paymentMethod ?? null,
       total_amount: pricing.total,
-      delivery_fee: deliveryCtx.deliveryFee > 0 ? deliveryCtx.deliveryFee : null,
+      delivery_fee: effectiveDeliveryFee > 0 ? effectiveDeliveryFee : null,
       payment_adjustment: payAdjCtx.hasAdjustment ? payAdjCtx.adjustmentAmount : null,
+      // D3: cuánto se descontó. El porqué va en `order_promotion`.
+      promotion_discount:
+        pricing.promotionDiscount > 0 ? pricing.promotionDiscount : null,
       ambassador_public_code: ambassadorPublicCode,
       order_item: {
-        create: draft.draft_order_item.map((item) => ({
-          menu_item_id: item.product_id!,
-          quantity: item.quantity,
-          unit_price: item.unit_price,
-          list_price: item.list_price ?? undefined,
-          discount_amount: item.discount_amount ?? undefined,
-          notes: item.notes ?? undefined,
-          // Sin esto la variación se pierde justo en el paso que importa: la
-          // cocina recibe "1 Pizza" en vez de "1 Pizza (Roquefort)" (D3).
-          variation: item.variation ?? undefined,
+        create: [
+          ...draft.draft_order_item.map((item) => ({
+            menu_item_id: item.product_id!,
+            quantity: item.quantity,
+            unit_price: item.unit_price,
+            list_price: item.list_price ?? undefined,
+            discount_amount: item.discount_amount ?? undefined,
+            notes: item.notes ?? undefined,
+            // Sin esto la variación se pierde justo en el paso que importa: la
+            // cocina recibe "1 Pizza" en vez de "1 Pizza (Roquefort)" (D3).
+            variation: item.variation ?? undefined,
+          })),
+          // D3: el regalo se materializa como línea a $0. La cocina TIENE que
+          // verlo en el ticket; como nunca se cobró, no aporta a
+          // `promotion_discount` (si aportara, se contaría dos veces).
+          ...promotions.giftItems.map((gift) => ({
+            menu_item_id: gift.productId,
+            quantity: gift.quantity,
+            unit_price: new Prisma.Decimal(0),
+            notes: `Regalo por promoción: ${gift.productName}`,
+          })),
+        ],
+      },
+      order_promotion: {
+        create: promotions.applied.map((item) => ({
+          promotion_id: item.promotionId,
+          name_snapshot: item.name,
+          // Snapshot obligatorio: `updatePromotion` reemplaza el offer vivo.
+          offer_snapshot: item.offerSnapshot as unknown as Prisma.InputJsonValue,
+          benefit_type: item.benefitType,
+          applied_as:
+            item.benefitClass === 'monetary'
+              ? 'order_discount'
+              : item.benefitClass === 'shipping'
+                ? 'free_shipping'
+                : 'free_item',
+          discount_amount: new Prisma.Decimal(item.monetaryDiscount),
+          saving_value: new Prisma.Decimal(item.savingValue),
         })),
       },
       currency_code: business.currency_code ?? 'ARS',
@@ -228,8 +308,9 @@ export const buildCheckoutMessage = async (
         where: { draft_order_id: draft.id },
         select: { quantity: true, unit_price: true, list_price: true, discount_amount: true },
       });
-      const { subtotal, productDiscounts } = computeOrderPricing(draftItems);
-      const itemsTotal = subtotal - productDiscounts;
+      // El mínimo de la zona mide el volumen de compra, no lo que se cobra:
+      // se evalúa PRE-promoción (misma base que `cart.subtotal` del DSL).
+      const { itemsTotal } = computeOrderPricing(draftItems);
 
       if (itemsTotal < deliveryCtx.minOrderAmount) {
         const missing = deliveryCtx.minOrderAmount - itemsTotal;
@@ -260,8 +341,15 @@ export const buildCheckoutMessage = async (
     businessId: business.id,
     fulfillmentType: draft.fulfillment_type,
   });
-  const { total: baseTotal } = computeOrderPricing(draftItemsForTotal, {
+  const promotionsForChoice = await resolveCartPromotions({
+    businessId: business.id,
+    draftOrderId: draft.id,
+    customerId: customer.id,
     deliveryFee: deliveryCtxForChoice.deliveryFee,
+  });
+  const { total: baseTotal } = computeOrderPricing(draftItemsForTotal, {
+    deliveryFee: promotionsForChoice.freeShipping ? 0 : deliveryCtxForChoice.deliveryFee,
+    promotionDiscount: promotionsForChoice.monetaryDiscount,
   });
 
   const businessConfig = await getBusinessConfig(business.id);

@@ -50,6 +50,7 @@ describe('lastOffer.service / CONFIRMAR_OFERTA (B.2)', () => {
     expect(lines.join('\n')).not.toMatch(/usá la sugerida/i);
     expect(lines.join('\n')).not.toMatch(/SIEMPRE interpretarlo/i);
     expect(lines.join('\n')).toMatch(/get_products_details_by_ids/);
+    expect(lines.join('\n')).toMatch(/clear_last_offer/);
   });
 
   it('oferta vencida → no se inyecta (V-12)', () => {
@@ -95,6 +96,7 @@ describe('lastOffer.service / CONFIRMAR_OFERTA (B.2)', () => {
     expect(fact).toContain('Oferta viva');
     expect(fact).toContain('productId: abc');
     expect(fact).toContain('add_cart_item');
+    expect(fact).toMatch(/clear_last_offer/);
     expect(fact).not.toMatch(/SIEMPRE/);
     expect(buildLastOfferContextLines(meta, now).some((l) => l.includes('Oferta activa'))).toBe(
       false
@@ -160,5 +162,38 @@ describe('lastOffer.service / CONFIRMAR_OFERTA (B.2)', () => {
     expect(isLastOfferAlive(meta, now)).toBe(false);
     expect(buildLastOfferFactLines(meta, now)).toEqual([]);
     expect(getLastOffer(meta)?.productId).toBe('abc');
+  });
+
+  it('post-clear (ledger vacío): oferta no viva, Fact vacío, candidato null', () => {
+    const now = Date.parse('2026-08-09T12:00:00.000Z');
+    const cleared = {
+      intentLedger: {
+        CONFIRMAR_OFERTA: {},
+      },
+    };
+    expect(getLastOffer(cleared)).toBeNull();
+    expect(isLastOfferAlive(cleared, now)).toBe(false);
+    expect(buildLastOfferFactLines(cleared, now)).toEqual([]);
+    expect(deriveConfirmOfferCandidate(cleared, now)).toBeNull();
+  });
+
+  it('persistLastOffer(Y) conceptual: el ledger con Y es la única oferta viva', () => {
+    const now = Date.parse('2026-08-09T12:00:00.000Z');
+    const afterReplace = {
+      intentLedger: {
+        CONFIRMAR_OFERTA: {
+          openedAt: '2026-08-09T11:55:00.000Z',
+          surfaceCount: 0,
+          productId: 'product-y',
+          productName: 'Hamburguesa',
+          suggestedQuantity: 1,
+          source: 'product_query',
+        },
+      },
+    };
+    expect(getLastOffer(afterReplace)?.productId).toBe('product-y');
+    expect(isLastOfferAlive(afterReplace, now)).toBe(true);
+    expect(buildLastOfferFactLines(afterReplace, now).join('\n')).toContain('product-y');
+    expect(buildLastOfferFactLines(afterReplace, now).join('\n')).not.toContain('product-x');
   });
 });
