@@ -367,10 +367,35 @@ export const handleDraftOrder = async (
   return draftOrder;
 }
 
+/**
+ * Resuelve una línea del carrito a partir del identificador que viaja en un
+ * payload de botón (`CONFIRM_REMOVE:<id>`, `DECREASE_ITEM:<id>:<n>`, …).
+ *
+ * Desde que existen variaciones, un mismo producto puede ocupar DOS líneas
+ * ("Pizza (Especial)" y "Pizza (Roquefort)"), así que los payloads llevan el id
+ * de la **línea**. Pero los botones que el cliente ya tiene en el teléfono
+ * desde antes del deploy llevan el id del **producto**: por eso se intenta
+ * línea primero y se cae a producto. Sin ese fallback, cualquier lista abierta
+ * al momento de desplegar deja de responder.
+ *
+ * Ambas columnas son `uuid`, así que buscar un product_id contra `id` no
+ * rompe: simplemente no matchea.
+ */
 export const handleDraftOrderItem = async (
   draftOrder: draft_order,
   itemID: string
 ) => {
+  const byLine = await prisma.draft_order_item.findFirst({
+    where: {
+      draft_order_id: draftOrder.id,
+      id: itemID
+    },
+    include: {
+      menu_item: true
+    }
+  });
+  if (byLine) return byLine;
+
   return await prisma.draft_order_item.findFirst({
     where: {
       draft_order_id: draftOrder.id,

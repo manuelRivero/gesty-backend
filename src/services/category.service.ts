@@ -7,11 +7,28 @@ import { WhatsAppListMessage } from '../domain/intent/whatsappTemplates';
 import { prisma } from '../lib/prisma';
 import { createConversationMessage, findOrCreateConversationState, createOrGetOpenConversation, findOrCreateCustomer, updateConversationLastMessageAt, findBusinessByPhoneNumberId } from '../repositories';
 import { truncateDescription, truncateTitle } from '../whatsappBuilders';
+import { hasVariations } from './menu/menuItemVariations';
 import {
   buildShortcutsThenListBody,
   shortcutBullet,
 } from '../whatsappBuilders/listShortcutsBody';
 import { WhatsAppWebhookPayload } from '../controllers/webhook/types';
+
+/**
+ * Anota "elegís variedad" en la descripción de la fila cuando el platillo tiene
+ * variaciones (Tarea 4.6 del plan de variaciones). Sin el aviso, el cliente
+ * toca Agregar esperando que el plato caiga al carrito y se encuentra con un
+ * picker que no anticipó.
+ */
+function withVariationsHint(
+  priceText: string,
+  item: { variations?: string[] | null }
+): string {
+  return hasVariations({ variations: item.variations ?? [] })
+    ? `${priceText} · elegís variedad`
+    : priceText;
+}
+
 
 interface CategoryMessageResult {
     message: WhatsAppListMessage | null;
@@ -166,7 +183,7 @@ export const buildMenuListByCategoryTagMessage = async (
     return {
       title: truncateTitle(item.name),
       payload: `ADD_ITEM:${item.id}:1`,
-      description: truncateDescription(priceText),
+      description: truncateDescription(withVariationsHint(priceText, item)),
       sectionTitle: 'Platillos',
     };
   });
@@ -278,7 +295,7 @@ export const buildCategoryProductListMessage = async (
         return {
             title: truncateTitle(item.name),
             payload: `ADD_ITEM:${item.id}:1`,
-            description: truncateDescription(priceText),
+            description: truncateDescription(withVariationsHint(priceText, item)),
             sectionTitle: 'Platillos'
         };
     });

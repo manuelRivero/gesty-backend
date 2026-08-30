@@ -191,7 +191,7 @@ TOOLS DISPONIBLES:
 - get_business_info(): nombre, descripción, ubicación, moneda y teléfono.
 - get_recent_messages(take?): últimos mensajes de la conversación.
 - add_cart_item(productId, quantity?, variation?): agrega o aumenta un ítem en el carrito activo del cliente. Si el producto tiene descuento, devuelve listPrice y discountAmount. Si el producto tiene "variations" y falta variation, devuelve error "variation_required" con la lista.
-- remove_cart_item(productId): elimina completamente un ítem del carrito activo.
+- remove_cart_item(productId? | draftOrderItemId?): elimina completamente una línea del carrito activo. Con ≥2 líneas del mismo productId (variaciones distintas) sin line id → ambiguous_lines.
 - update_item_note(note, draftOrderItemId? | draftOrderItemIds? | productId?): guarda o actualiza la nota de una o más líneas del carrito (get_cart: id = línea, productId, variation). Con ≥2 líneas del mismo productId sin line id → ambiguous_lines.
 - save_party_size(count): guarda el número de personas del pedido. Llamar cuando el cliente informe cuántos son.
 - request_human_support(reason): deriva la conversación a una persona del equipo. Ver ESCALADO A HUMANO abajo.
@@ -245,9 +245,9 @@ REMOVER ÍTEMS DEL CARRITO (remove_cart_item):
 - Usá remove_cart_item cuando el cliente quiera quitar un plato del carrito en texto libre.
 - Frases que activan este flujo: "quitá el pollo", "sacá la ensalada", "no quiero la pizza", "borralo", "sacame eso", "mejor sin la hamburguesa", "eliminá [plato]", etc.
 - Flujo obligatorio:
-  1. Llamá get_cart() para obtener los ítems actuales y sus productId.
+  1. Llamá get_cart() para obtener los ítems actuales (cada uno trae id de línea, productId y variation).
   2. Identificá a cuál ítem corresponde lo que dijo el cliente.
-  3. Llamá remove_cart_item(productId).
+  3. Llamá remove_cart_item(productId). Si el plato está en varias líneas con variaciones distintas, la tool devuelve ambiguous_lines: preguntale cuál ("¿la de roquefort o la especial?") y volvé a llamar con draftOrderItemId.
   4. Confirmale al cliente con un mensaje breve. Ejemplo: "¡Listo! Quité *Ensalada mixta* del pedido. Total actualizado: $1.600."
 - Si el ítem no está en el carrito, indicáselo con naturalidad.
 - Si el carrito queda vacío tras la remoción, mencionalo y ofrecé ayuda para seguir eligiendo.

@@ -92,6 +92,25 @@ type DraftLineForSection = {
 };
 
 /**
+ * Nombre de una línea del carrito tal como el cliente la ve: con la variación
+ * pegada al nombre.
+ *
+ * Los botones de gestión (elegir / aumentar / disminuir / remover) se arman
+ * por línea, así que dos variaciones del mismo plato producen dos filas. Sin
+ * la variación en el título, esas dos filas son idénticas en pantalla y el
+ * cliente no tiene forma de decir cuál quiere — el resumen del carrito sí la
+ * muestra, y esa asimetría es lo que confunde.
+ */
+export const cartLineLabel = (line: {
+  variation?: string | null;
+  menu_item?: { name?: string | null } | null;
+}): string => {
+  const name = line.menu_item?.name ?? 'Producto';
+  const variation = line.variation?.trim();
+  return variation ? `${name} (${variation})` : name;
+};
+
+/**
  * Agrupa líneas del borrador por categoría y arma texto con secciones (*título*) y cantidad × producto.
  */
 function formatDraftOrderSectionsForWhatsApp(
@@ -150,6 +169,19 @@ function formatDraftOrderSectionsForWhatsApp(
 
   return parts.join("\n").trim();
 }
+
+/**
+ * Ubica una línea del carrito ya cargado en memoria a partir del identificador
+ * de un payload. Espejo de `handleDraftOrderItem` (que consulta la DB): línea
+ * primero, producto después, para que los botones emitidos antes del deploy
+ * —que llevan el id del producto— sigan funcionando.
+ */
+export const findCartLineByPayloadId = <T extends { id: string; product_id?: string | null }>(
+  lines: T[],
+  payloadId: string
+): T | undefined =>
+  lines.find((line) => line.id === payloadId) ??
+  lines.find((line) => line.product_id === payloadId);
 
 interface ConfirmRemoveItemResult {
   message: WhatsAppInteractiveMessage | null;
@@ -606,10 +638,11 @@ export const buildConfirmRemoveItemMessage = async (
     return { message: null, errorMessage: errorText };
   }
 
-  // Buscar ítem que coincida por ID de producto
-  const matchingItem = cartItems.draft_order_item.find(ci =>
-    ci.menu_item?.id === itemIdentifier
-  );
+  // Línea primero, producto después: el agente pide por producto, los botones
+  // por línea. Con dos variaciones del mismo plato, el pedido por producto cae
+  // en la primera — pero el nombre del cuerpo y el payload de confirmación ya
+  // son de la línea concreta, así que el cliente ve cuál se va a remover.
+  const matchingItem = findCartLineByPayloadId(cartItems.draft_order_item, itemIdentifier);
 
   if (!matchingItem) {
     const errorText = buildCartItemNotFoundMessage(itemIdentifier);
@@ -631,7 +664,7 @@ export const buildConfirmRemoveItemMessage = async (
         text: formatBotUserMessage(
           'Confirmar remoción',
           '🗑️',
-          `¿Querés remover *${matchingItem.menu_item?.name}* (cantidad: ${matchingItem.quantity}) de tu pedido?`
+          `¿Querés remover *${cartLineLabel(matchingItem)}* (cantidad: ${matchingItem.quantity}) de tu pedido?`
         ),
       },
       footer: {
@@ -642,7 +675,7 @@ export const buildConfirmRemoveItemMessage = async (
           {
             type: 'reply',
             reply: {
-              id: `CONFIRM_REMOVE:${matchingItem.menu_item?.id}`,
+              id: `CONFIRM_REMOVE:${matchingItem.id}`,
               title: '✅ Sí, remover'
             }
           },
@@ -663,15 +696,15 @@ export const buildConfirmRemoveItemMessage = async (
   // metadata de la conversación (checkout_active, intentLedger, etc.), no solo estas claves.
   await patchConversationMetadata(conversation.id, {
     pendingAction: 'CONFIRM_REMOVE',
-    pendingItemId: matchingItem.menu_item?.id ?? '',
-    pendingItemName: matchingItem.menu_item?.name ?? '',
+    pendingItemId: matchingItem.id,
+    pendingItemName: cartLineLabel(matchingItem),
     pendingActionAt: new Date().toISOString(),
   });
 
   await createConversationMessage(
     conversation.id,
     'ai',
-    `Solicitud de confirmación para remover ${matchingItem.menu_item?.name ?? ''}`,
+    `Solicitud de confirmación para remover ${cartLineLabel(matchingItem)}`,
     false
   );
   await updateConversationLastMessageAt(conversation.id);
@@ -721,9 +754,7 @@ export const executeRemoveDraftOrderItemFromWebhook = async (
     return errorText;
   }
 
-  const line = draftOrder.draft_order_item.find(
-    (ci) => ci.product_id === menuItemId
-  );
+  const line = findCartLineByPayloadId(draftOrder.draft_order_item, menuItemId);
   if (!line) {
     const errorText = buildCartProductNotFoundMessage();
     await createConversationMessage(conversation.id, "ai", errorText, false);
@@ -731,7 +762,7 @@ export const executeRemoveDraftOrderItemFromWebhook = async (
     return errorText;
   }
 
-  const removedName = line.menu_item?.name ?? "Producto";
+  const removedName = cartLineLabel(line);
   const removedQty = line.quantity;
 
   await prisma.$transaction(async (tx) => {
@@ -950,8 +981,8 @@ export const handleShowCartForEditionFromWebhook = async (
         {
           title: 'Platillos en tu pedido',
           rows: cartItems.draft_order_item.map(item => ({
-            id: `SELECT_CART_ITEM:${item.menu_item?.id ?? ''}`,
-            title: `${item.quantity}x ${item.menu_item?.name ?? ''}`,
+            id: `SELECT_CART_ITEM:${item.id}`,
+            title: truncateTitle(`${item.quantity}x ${cartLineLabel(item)}`),
             description: item.notes?.trim() ? item.notes.trim() : 'Modificar o remover',
           }))
         }
@@ -1188,7 +1219,7 @@ export const handleCartItemSelectionFromWebhook = async (
   }
 
   // Buscar item del carrito
-  const orderItem = draftOrder.draft_order_item.find(item => item.product_id === orderItemId);
+  const orderItem = findCartLineByPayloadId(draftOrder.draft_order_item, orderItemId);
 
   console.log('orderItem', orderItem);
   console.log('draftOrder', draftOrder);
@@ -1208,12 +1239,12 @@ export const handleCartItemSelectionFromWebhook = async (
     metadata: {
       pendingAction: 'EDIT_CART',
       pendingItemId: orderItem.id,
-      pendingItemName: orderItem.menu_item?.name
+      pendingItemName: cartLineLabel(orderItem)
     }
   });
 
   const bodyText =
-    `Seleccionaste *${orderItem.menu_item?.name}*\n` +
+    `Seleccionaste *${cartLineLabel(orderItem)}*\n` +
     `Cantidad actual: ${orderItem.quantity}\n\n` +
     `¿Qué deseas hacer?`;
 
@@ -1236,17 +1267,17 @@ export const handleCartItemSelectionFromWebhook = async (
           title: 'Gestión del pedido',
           rows: [
             {
-              id: `INCREASE_ITEM_QUANTITY:${orderItem.menu_item?.id}`,
+              id: `INCREASE_ITEM_QUANTITY:${orderItem.id}`,
               title: '➕ Aumentar cantidad',
               description: 'Aumentar la cantidad del producto'
             },
             {
-              id: `DECREASE_ITEM_QUANTITY:${orderItem.menu_item?.id}`,
+              id: `DECREASE_ITEM_QUANTITY:${orderItem.id}`,
               title: '➖ Disminuir cantidad',
               description: 'Disminuir la cantidad del producto'
             },
             {
-              id: `CONFIRM_REMOVE:${orderItem.menu_item?.id}`,
+              id: `CONFIRM_REMOVE:${orderItem.id}`,
               title: '🗑 Remover',
               description: 'Remover el producto del pedido'
             },
@@ -1345,7 +1376,7 @@ const buildSelectQuatityDecreaseItemMessage = async (
   if (currentQty === 1) {
 
     rowsList.push({
-      id: `CONFIRM_REMOVE:${draftOrderItem.menu_item?.id}`,
+      id: `CONFIRM_REMOVE:${draftOrderItem.id}`,
       title: '❌ Remover',
       description: 'Remover el platillo del pedido'
     });
@@ -1360,14 +1391,14 @@ const buildSelectQuatityDecreaseItemMessage = async (
 
     for (let amount = 1; amount <= allowedOptions; amount++) {
       rowsList.push({
-        id: `DECREASE_ITEM:${draftOrderItem.menu_item?.id}:${amount}`,
+        id: `DECREASE_ITEM:${draftOrderItem.id}:${amount}`,
         title: `Disminuir ${amount}`,
         description: `Reducir ${amount} del pedido`
       });
     }
 
     rowsList.push({
-      id: `CONFIRM_REMOVE:${draftOrderItem.menu_item?.id}`,
+      id: `CONFIRM_REMOVE:${draftOrderItem.id}`,
       title: '❌ Remover',
       description: 'Remover el platillo del pedido'
     });
@@ -1384,7 +1415,7 @@ const buildSelectQuatityDecreaseItemMessage = async (
     type: 'list',
     header: {
       type: 'text',
-      text: draftOrderItem.menu_item?.name ?? 'Platillo'
+      text: cartLineLabel(draftOrderItem)
     },
     body: {
       text: `Cantidad actual: ${currentQty}`
@@ -1420,7 +1451,7 @@ const buildSelectQuantityIncreaseItemMessage = async (
   const maxIncrease = 9;
   for (let amount = 1; amount <= maxIncrease; amount++) {
     rowsList.push({
-      id: `INCREASE_ITEM:${draftOrderItem.menu_item?.id}:${amount}`,
+      id: `INCREASE_ITEM:${draftOrderItem.id}:${amount}`,
       title: `Aumentar ${amount}`,
       description: `Aumentar ${amount} del pedido`
     });
@@ -1437,7 +1468,7 @@ const buildSelectQuantityIncreaseItemMessage = async (
     type: 'list',
     header: {
       type: 'text',
-      text: draftOrderItem.menu_item?.name ?? 'Platillo'
+      text: cartLineLabel(draftOrderItem)
     },
     body: {
       text: `Cantidad actual: ${currentQty}`
@@ -1471,7 +1502,7 @@ const buildDecreaseItemQuantitySuccessMessage = async (
       type: 'button',
       header: { type: 'text', text: 'Pedido actualizado' },
       body: { text: `
-      Se disminuyò la cantidad de ${quantity} para el platillo ${draftOrderItem.menu_item?.name} en el pedido. 
+      Se disminuyò la cantidad de ${quantity} para el platillo ${cartLineLabel(draftOrderItem)} en el pedido. 
       \nCantidad actual: ${newQuantity}
       \nTotal: ${draftOrderItem.total_price.toNumber()} ${currencyCode}${guide}
       \n¿Querés seguir comprando? Escribe "Ver menu" para agregar más platillos.` },
@@ -1500,7 +1531,7 @@ const buildIncreaseItemQuantitySuccessMessage = async (
     interactive: {
       type: 'button',
       header: { type: 'text', text: 'Pedido actualizado' },
-      body: { text: `Se aumentò la cantidad de ${quantity} para el platillo ${draftOrderItem.menu_item?.name} en el pedido. 
+      body: { text: `Se aumentò la cantidad de ${quantity} para el platillo ${cartLineLabel(draftOrderItem)} en el pedido. 
       \n\nCantidad actual: ${newQuantity} \n\n
       \n\nTotal: ${draftOrderItem.total_price.toNumber()} ${currencyCode} \n\n${guide}
       \n\n¿Querés seguir comprando? \n\nEscribe "Ver menu" para agregar más platillos.` },

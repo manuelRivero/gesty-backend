@@ -1713,12 +1713,25 @@ export const addCartItemTool = new DynamicStructuredTool<
 // para que el otro proceda — ya no hay dos preguntas por el mismo ítem.
 const REMOVAL_CONFIRMATION_TTL_MS = 5 * 60 * 1000;
 
-const removeCartItemSchema = z.object({
-  productId: z
-    .string()
-    .uuid()
-    .describe('UUID del menu_item a remover del carrito (usar productId de get_cart)'),
-});
+const removeCartItemSchema = z
+  .object({
+    productId: z
+      .string()
+      .uuid()
+      .optional()
+      .describe('UUID del menu_item a remover del carrito (usar productId de get_cart)'),
+    draftOrderItemId: z
+      .string()
+      .uuid()
+      .optional()
+      .describe(
+        'UUID de UNA línea del carrito (get_cart.items[].id). Obligatorio cuando el mismo ' +
+          'plato aparece en varias líneas con variaciones distintas.'
+      ),
+  })
+  .refine((v) => Boolean(v.productId) || Boolean(v.draftOrderItemId), {
+    message: 'Pasá productId o draftOrderItemId.',
+  });
 type RemoveCartItemInput = z.infer<typeof removeCartItemSchema>;
 
 export const removeCartItemTool = new DynamicStructuredTool<
@@ -1731,6 +1744,9 @@ export const removeCartItemTool = new DynamicStructuredTool<
     'Usá este tool cuando el cliente pida quitar un ítem en texto libre: ' +
     '"quitá el pollo", "sacá la ensalada", "no quiero la pizza", "borralo", etc. ' +
     'Antes de llamar necesitás el productId: si no lo tenés, llamá get_cart primero. ' +
+    'Si el mismo plato aparece en ≥2 líneas (variaciones distintas) y pasás solo productId, ' +
+    'devuelve ambiguous_lines con los candidatos: preguntale al cliente cuál y volvé a llamar ' +
+    'con draftOrderItemId. ' +
     'Requiere confirmación explícita del cliente: el primer llamado NO elimina — devuelve ' +
     '`requiresConfirmation: true` con el ítem encontrado. Preguntale al cliente si confirma ' +
     '("¿confirmás que elimino la milanesa?") y llamá la tool de nuevo con el mismo productId ' +
@@ -1740,7 +1756,11 @@ export const removeCartItemTool = new DynamicStructuredTool<
     'en ese caso confirmale al cliente que el ítem fue eliminado y que puede volver a agregarlo con la cantidad deseada. ' +
     'Devuelve el estado actualizado del carrito.',
   schema: removeCartItemSchema,
-  func: async ({ productId }: RemoveCartItemInput, _runManager, config?: RunnableConfig) => {
+  func: async (
+    { productId, draftOrderItemId }: RemoveCartItemInput,
+    _runManager,
+    config?: RunnableConfig
+  ) => {
     const { businessId, customerPhone, conversationId } = getReactContext(config);
 
     const draft = await prisma.draft_order.findFirst({
@@ -1751,16 +1771,44 @@ export const removeCartItemTool = new DynamicStructuredTool<
       return toJson({ success: false, error: 'no_active_cart' });
     }
 
-    const line = await prisma.draft_order_item.findFirst({
-      where: { draft_order_id: draft.id, product_id: productId },
+    // Con variaciones, un producto puede ocupar dos líneas. Pedir por producto
+    // y borrar la primera que devuelva la query elimina una arbitraria: si hay
+    // ambigüedad se devuelven los candidatos, igual que `update_item_note`.
+    const candidates = await prisma.draft_order_item.findMany({
+      where: draftOrderItemId
+        ? { draft_order_id: draft.id, id: draftOrderItemId }
+        : { draft_order_id: draft.id, product_id: productId },
       include: { menu_item: { select: { id: true, name: true } } },
+      orderBy: { id: 'asc' },
     });
 
-    if (!line) {
+    if (candidates.length === 0) {
       return toJson({ success: false, error: 'item_not_in_cart' });
     }
 
-    const removedName = line.menu_item?.name ?? 'Producto';
+    if (candidates.length >= 2) {
+      return toJson({
+        success: false,
+        error: 'ambiguous_lines',
+        productId,
+        productName: candidates[0]?.menu_item?.name ?? null,
+        candidates: candidates.map((it) => ({
+          draftOrderItemId: it.id,
+          productId: it.product_id,
+          name: it.menu_item?.name ?? 'Producto',
+          variation: it.variation ?? null,
+          quantity: it.quantity,
+        })),
+        hint:
+          'Ese plato está en varias líneas con variaciones distintas. Preguntale al cliente ' +
+          'cuál quiere sacar y volvé a llamar con draftOrderItemId.',
+      });
+    }
+
+    const line = candidates[0];
+    const removedName = line.variation?.trim()
+      ? `${line.menu_item?.name ?? 'Producto'} (${line.variation.trim()})`
+      : line.menu_item?.name ?? 'Producto';
     const removedQty = line.quantity;
 
     const stateRow = await prisma.conversation_state.findUnique({
@@ -1768,26 +1816,34 @@ export const removeCartItemTool = new DynamicStructuredTool<
       select: { metadata: true },
     });
     const metadata = normalizeMetadata(stateRow?.metadata);
+    // `pendingItemId` es el id de línea desde que existen variaciones; se
+    // acepta también el product_id para no invalidar una confirmación que el
+    // flujo de botones dejó pendiente antes del deploy.
     const isConfirmed =
       metadata.pendingAction === 'CONFIRM_REMOVE' &&
-      metadata.pendingItemId === productId &&
+      (metadata.pendingItemId === line.id || metadata.pendingItemId === line.product_id) &&
       typeof metadata.pendingActionAt === 'string' &&
       Date.now() - new Date(metadata.pendingActionAt).getTime() <= REMOVAL_CONFIRMATION_TTL_MS;
 
     if (!isConfirmed) {
       await patchConversationMetadata(conversationId, {
         pendingAction: 'CONFIRM_REMOVE',
-        pendingItemId: productId,
+        pendingItemId: line.id,
         pendingItemName: removedName,
         pendingActionAt: new Date().toISOString(),
       });
       return toJson({
         success: false,
         requiresConfirmation: true,
-        item: { productId, itemName: removedName, quantity: removedQty },
+        item: {
+          draftOrderItemId: line.id,
+          productId: line.product_id,
+          itemName: removedName,
+          quantity: removedQty,
+        },
         message:
           'Pedile confirmación explícita al cliente antes de eliminar. Volvé a llamar esta tool ' +
-          'con el mismo productId solo si el cliente confirma.',
+          'con el mismo draftOrderItemId solo si el cliente confirma.',
       });
     }
 
