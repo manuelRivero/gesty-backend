@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   deriveConfirmarPagoOnlineCandidate,
   deriveDesbloquearPedidoCerradoCandidate,
-  deriveRetomarTareaCandidate,
 } from '../catalogGoals.service';
 
 describe('CONFIRMAR_PAGO_ONLINE (E.1)', () => {
@@ -48,11 +47,3 @@ describe('DESBLOQUEAR_PEDIDO_CERRADO (E.2)', () => {
   });
 });
 
-describe('RETOMAR_TAREA_INTERRUMPIDA (E.3)', () => {
-  it('se deriva de peopleCountResume (tarea congelada)', () => {
-    expect(deriveRetomarTareaCandidate({ hasInterruptedTask: false }, {})).toBeNull();
-    expect(
-      deriveRetomarTareaCandidate({ hasInterruptedTask: true }, { surfaceCount: 0 })?.type
-    ).toBe('RETOMAR_TAREA_INTERRUMPIDA');
-  });
-});

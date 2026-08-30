@@ -191,9 +191,8 @@ export const AgentStateAnnotation = Annotation.Root({
 
   /**
    * Si `true`, la conversación acaba de ser derivada a un agente humano
-   * (intent SUPPORT). Los nodos `addressCollection` y `nameCollection` deben
-   * omitirse porque no tiene sentido pedirle datos al usuario cuando el bot ya
-   * se despidió y cedió el control.
+   * (intent SUPPORT): el routing va directo a `SEND`, porque no tiene sentido
+   * seguir procesando el turno cuando el bot ya se despidió y cedió el control.
    */
   isHumanHandover: Annotation<boolean>({
     reducer: (_prev, next) => next,
@@ -201,20 +200,10 @@ export const AgentStateAnnotation = Annotation.Root({
   }),
 
   /**
-   * Si `true`, el gate `fulfillmentSelection` reemplazó el `handlerResult`
-   * con el mensaje de selección "Delivery / Retiro en local". El routing
-   * saltea `addressCollection` y `nameCollection` y va directo a `SEND`.
-   */
-  fulfillmentSelectionPending: Annotation<boolean>({
-    reducer: (_prev, next) => next,
-    default: () => false,
-  }),
-
-  /**
    * `true` cuando el turno fue procesado por el ReAct agent (modo híbrido).
-   * Los post-gates conversacionales (`fulfillmentSelection`, `addressCollection`,
-   * `nameCollection`) se saltan porque el agente gestiona la recolección de datos
-   * de forma natural a través de contexto inyectado + tools de escritura.
+   * El post-gate conversacional (`fulfillmentSelection`) se saltea porque el
+   * agente gestiona la recolección de datos de forma natural a través de
+   * contexto inyectado + tools de escritura.
    */
   dataCollectionDelegated: Annotation<boolean>({
     reducer: (_prev, next) => next,

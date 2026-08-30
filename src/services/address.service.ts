@@ -412,7 +412,6 @@ export class AddressService {
       temp_lat,
       temp_lng,
       temp_zone_id,
-      awaiting_address,
       pending_address_action,
       ...rest
     } = ctx.conversationState.metadata ?? {};

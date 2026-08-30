@@ -62,6 +62,8 @@ const clearOnboardingSession = async (conversationId: string): Promise<void> => 
     'temp_lat',
     'temp_lng',
     'temp_zone_id',
+    // `awaiting_address` ya no existe como campo (V-09): la clave sigue en la
+    // lista solo para purgar la metadata de conversaciones viejas.
     'awaiting_address',
     'pending_address_action',
   ]);

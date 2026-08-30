@@ -20,9 +20,9 @@
 | ~~V-06~~ | ~~Reconciliador de pending del checkout~~ | 0012, 0006 | ✅ **Corregida** | — | — |
 | ~~V-07~~ | ~~`COMPLETAR_PEDIDO` no existe (la continuidad no está representada)~~ | — | ✅ **Corregida** | — | — |
 | ~~V-08~~ | ~~Pending del checkout persistido (FSM en una fila)~~ | 0006 | ✅ **Corregida** | — | — |
-| **V-09** | `awaiting_address` fusiona Ownership, Goal y Opportunity | 0001 | 🟠 Alta | Medio | **P2** |
+| ~~V-09~~ | ~~`awaiting_address` fusiona Ownership, Goal y Opportunity~~ | 0001 | ✅ **Corregida** | — | — |
 | **V-10** | Presupuesto de insistencia disperso en 6 encarnaciones | 0007 | 🟡 Media | Medio | **P2** |
-| **V-11** | Limpieza de un Intent declarado dispersa en ~7 lugares | 0005 | 🟡 Media | Bajo | **P2** |
+| ~~V-11~~ | ~~Limpieza de un Intent declarado dispersa en ~7 lugares~~ | 0005 | ✅ **Corregida** | — | — |
 | **V-12** | TTL de oferta que se guarda y nunca se lee | 0005 | 🟡 Media | Bajo | **P3** |
 | **V-13** | ~36 flags en el estado de conversación | 0005 | 🟡 Media | Alto | **P3** |
 | **V-14** | Wizard legacy de reservas todavía presente | 0001, 0006 | 🟡 Media | Bajo | **P3** |
@@ -40,6 +40,14 @@
 | ~~V-26~~ | ~~`MODIFY_QUANTITY` siempre aditivo (sin cantidad absoluta ni decremento parcial)~~ | — | ✅ **Corregida** | — | — |
 | ~~V-27~~ | ~~`TRACK_ORDER` era un intent muerto (ni clasificado ni con handler)~~ | — | ✅ **Corregida** | — | — |
 | **V-28** | Sin empuje proactivo hacia armar pedido/reserva (más allá del primer saludo) | — | 🟡 Media | Medio | **P2** |
+| ~~V-29~~ | ~~Checkout: policy de copy castigaba tipables (nombre/dirección)~~ | 0002 | ✅ **Corregida** | — | — |
+| ~~V-30~~ | ~~Onboarding: el prompt afirmaba una policy de copy que el código no tiene~~ | 0002 | ✅ **Corregida** | — | — |
+| ~~V-31~~ | ~~Onboarding: el resume tras `delegate_to_main` ignoraba el paso real~~ | 0001 | ✅ **Corregida** | — | — |
+| ~~V-32~~ | ~~Onboarding: el pin de ubicación entraba al wizard legacy (`isLikelyAddress` alcanzable)~~ | 0004 | ✅ **Corregida** | — | — |
+| ~~V-35~~ | ~~Reservas: `save_reservation_date` pisaba el resto del borrador (pérdida de datos)~~ | 0002 | ✅ **Corregida** | — | — |
+| ~~V-36~~ | ~~Reservas: sin confirmación en texto libre — único flujo sin `extractPendingTurnResponse`~~ | 0002 | ✅ **Corregida** | — | — |
+| ~~V-37~~ | ~~Reservas: tarjeta de confirmación como `content` + `followUp`, sin respaldo por estado~~ | 0002 | ✅ **Corregida** | — | — |
+| ~~V-38~~ | ~~Onboarding: wizard legacy con keyword matching alcanzable detrás de `ONBOARDING_AGENT_ENABLED`~~ | 0001, 0004 | ✅ **Corregida** | — | — |
 
 ---
 
@@ -61,7 +69,9 @@ La Tool de eliminación borraba directo. El prompt le pedía al modelo que confi
 
 Dentro de una sesión de checkout o reserva, el turno **nunca llegaba al dispatcher**. Un cliente furioso que pedía hablar con una persona dependía de que el LLM **decidiera** delegar.
 
-**Corrección (2026-07-11):** nuevo nodo `escalationGateNode` (`src/graph/nodes/gates/escalation.ts`), insertado en el grafo principal **entre `messageTypeGuard` y `buildDetectionContext`** — es decir, antes de que Ownership decida qué agente procesa el turno, en todo turno, sin excepción de sesión (`mainGraph.ts`, `routers.ts`: `routeAfterEscalationGate`). Detecta determinísticamente (regex, sin LLM) frases inequívocas de pedido de humano y el botón "Pedir ayuda" (`payloadId === SUPPORT`); si matchea, corta directo a `SEND` con el mismo efecto que `SupportHandler` (`is_human_handled` + evento de socket al admin) y **nunca llega** a checkout/reserva/onboarding/NLP. El dispatcher determinístico original (`SupportHandler`, vía intent `SUPPORT` del LLM) se mantiene intacto como complemento para frases más ambiguas que el regex no cubre. Test: `src/graph/nodes/gates/__tests__/escalation.test.ts`.
+**Corrección (2026-07-11):** nuevo nodo `escalationGateNode` (`src/graph/nodes/gates/escalation.ts`), insertado en el grafo principal **entre `messageTypeGuard` y `buildDetectionContext`** — es decir, antes de que Ownership decida qué agente procesa el turno, en todo turno, sin excepción de sesión (`mainGraph.ts`, `routers.ts`: `routeAfterEscalationGate`). Detecta determinísticamente (regex, sin LLM) frases inequívocas de pedido de humano y el botón "Pedir ayuda" (`payloadId === SUPPORT`); si matchea, corta directo a `SEND` con el mismo efecto que `SupportHandler` (`is_human_handled` + evento de socket al admin) y **nunca llega** a checkout/reserva/onboarding/NLP. Test: `src/graph/nodes/gates/__tests__/escalation.test.ts`.
+
+**Actualización (2026-08-16, Fase B.2):** la prosa ambigua que el gate deja pasar ya no la resuelve el clasificador de intent (`SupportHandler` vía intent `SUPPORT`), sino la tool `request_human_support` del híbrido: aplica `handOverToHuman` en el borde y corta el turno con `SUPPORT_MESSAGE`.
 
 ---
 
@@ -224,7 +234,9 @@ Preguntas como "¿hacen delivery a mi dirección?", "¿cuál dirección tienen g
 
 Al guardar la dirección (fuera del caso de continuar un checkout activo), `AddressService.saveAddress()` llamaba directo a `buildSmallTalkMenu()` — un menú de bienvenida genérico ("¿En qué puedo ayudarte hoy?") — en vez de cederle el turno al híbrido. Encontrado probando: un cliente con productos ya en el carrito, al confirmar su dirección, recibía un saludo de bienvenida completo en vez de que se le ofreciera continuar el pedido — el sistema no distinguía a alguien que recién resolvió un dato pendiente de un visitante nuevo. El motor de Goal `COMPLETAR_PEDIDO` (V-07) ya existe y ya sabe ofrecer continuar el pedido con presupuesto anti-insistencia — nunca se ejecutaba porque el turno no llegaba al híbrido.
 
-**Corrección (2026-07-13):** `saveAddress()` acepta `skipSmallTalkMenu` — el flujo ReAct (`resolveStagedAddressConfirmation`) lo pasa y devuelve solo un ack corto. `onboardingAgentNode` y el nuevo `delegatedAddressConfirmationNode` (V-24) invocan al híbrido inline tras guardar (mismo patrón ya usado para `finish_onboarding`), dejando que `COMPLETAR_PEDIDO` decida si corresponde ofrecer continuar. El wizard legacy (`.confirm()`/`.process()`, ya `@deprecated`) sigue usando `buildSmallTalkMenu` sin cambios — no se tocó, está fuera de alcance de eliminación en esta sesión.
+**Corrección (2026-07-13):** `saveAddress()` acepta `skipSmallTalkMenu` — el flujo ReAct (`resolveStagedAddressConfirmation`) lo pasa y devuelve solo un ack corto. `onboardingAgentNode` y el nuevo `delegatedAddressConfirmationNode` (V-24) invocan al híbrido inline tras guardar (mismo patrón ya usado para `finish_onboarding`), dejando que `COMPLETAR_PEDIDO` decida si corresponde ofrecer continuar.
+
+**Cierre (2026-08-16, V-38):** con el wizard legacy borrado, `saveAddress()` ya no llama nunca a `buildSmallTalkMenu` y el parámetro `skipSmallTalkMenu` desapareció — ceder el turno al híbrido es el único comportamiento.
 
 ---
 
@@ -245,6 +257,8 @@ Dos hallazgos relacionados, probando contra el bot real:
 Encontrado probando con usuarios reales: el mensaje "¿Cómo querés pagar?" salía en texto plano, sin los botones de método de pago. Causa raíz: `checkoutResponsePolicy.ts` reemplaza el texto del LLM por un mensaje de continuación determinístico cuando no hubo ninguna tool reconocida en el turno (protección correcta contra afirmaciones de cierre sin evidencia) — pero ese reemplazo era solo de texto, nunca forzaba los botones correspondientes. El mismo hueco existía en el paso `confirm` (resumen final antes de cobrar): sin señal, el fallback mostraba un texto genérico ("seguimos con tu pedido") en vez de la tarjeta con el total real y los botones Confirmar/Cancelar.
 
 **Corrección (2026-07-13):** en `checkout/index.ts`, los botones de fulfillment/pago se adjuntan según el estado real (`currentStep`), no solo según si el LLM llamó `present_fulfillment_options`/`present_payment_options`. Para el paso `confirm`, se reconstruye la tarjeta real (`buildOrderConfirmationMessage`) con el texto del LLM como `leadingText` cuando no hubo señal de confirmación ese turno.
+
+**Sub-hallazgo / seguimiento → V-29:** la misma policy de copy (`sin present_* → reemplazar texto`) seguía castigando tipables válidos (pedir nombre tras fulfillment en prosa). Corregido en V-29.
 
 ---
 
@@ -268,6 +282,86 @@ El intent `TRACK_ORDER` existía en el catálogo de `ConversationIntent` y en `C
 
 ---
 
+### ~~V-29~~ · Checkout: policy de copy castigaba tipables (nombre/dirección) — ✅ **CORREGIDA**
+**Violaba:** ADR-0002 (el borde duro debe estar en writes, no en validar prosa) · norma tipables (`.cursor/rules/hybrid-pending-autonomy.mdc`)
+
+**Origen:** prueba en bot real tras fulfillment tipable (“Voy a buscarlo”): el agente pedía el nombre en prosa (diseño correcto) pero `applyCheckoutResponsePolicy` sustituía el texto por `PAYMENT_METHOD_PROMPT` (`closure_claim_without_evidence`) porque no hubo `present_*`. Con `currentStep === 'name'` salía copy de pago **sin** botones (`isInteractive: false`).
+
+**Causa:** la policy usaba “¿hubo señal de tool de UI?” como proxy de “¿puede afirmar cierre?”, incompatible con tipables (name/address = prosa + `save_*`, sin `present_name`). Además `buildContinuationMessage` omitía address/name y saltaba a payment — tercer derivador distinto de `nextCheckoutStep`.
+
+**Corrección (2026-08-12, PLAN-ACCION-CHECKOUT-AUTONOMIA-POLICY D5-A):**
+- Policy: texto no vacío del agente se envía; fallback residual solo si vacío, vía `nextCheckoutStep`.
+- Gate de write en `setDraftPaymentMethod` / `save_payment_method`: no persiste si faltan fulfillment / address / name (`*_required`).
+- Ledger de paso en `[ESTADO DEL CHECKOUT]` (`Paso actual` / `Goal` / `Acción esperada`).
+- Logs de `toolSignals` en corrections. Sin matchers hybrid pre-ReAct.
+
+Ver también: `docs/arquitectura/PENDING-TIPABLES-AUTONOMIA.md`, `PLAN-ACCION-CHECKOUT-AUTONOMIA-POLICY.md`.
+
+---
+
+### ~~V-30~~ · Onboarding: el prompt afirmaba una policy de copy que el código no tiene — ✅ **CORREGIDA**
+**Violaba:** ADR-0002 (el borde duro debe estar en writes, no en validar prosa) · norma tipables (`.cursor/rules/hybrid-pending-autonomy.mdc`)
+
+**Origen:** auditoría preventiva del onboarding contra V-29 (mismo síntoma, capa distinta) — `PLAN-ACCION-ONBOARDING-AUTONOMIA.md`. `buildOnboardingAgentSystemPrompt` afirmaba *"el sistema descarta cualquier texto tuyo que no venga acompañado de un llamado a una tool reconocida"*, pero `onboardingAgentNode` **no tiene** ninguna capa equivalente a `applyCheckoutResponsePolicy`. Era peor que V-29: la presión no estaba en código (donde ya se había retirado) sino en el prompt, donde el modelo se autocensuraba y el código no podía corregirlo. Los turnos legítimos sin tool (pedir la dirección, informar fuera de cobertura, pedir reformulación) son el core del flujo.
+
+**Corrección (2026-08-13, PLAN-ACCION-ONBOARDING-AUTONOMIA P0.1/P1.3):** eliminada la cláusula falsa del prompt; declarados explícitamente los turnos válidos sin tool; agregada instrucción de leer `Paso actual`/`Acción esperada` en vez de compensar con prosa.
+
+---
+
+### ~~V-31~~ · Onboarding: el resume tras `delegate_to_main` ignoraba el paso real — ✅ **CORREGIDA**
+**Violaba:** ADR-0001 (Ownership/paso derivado, no una FSM paralela en prosa)
+
+`buildResumeFollowUp({ kind: 'onboarding' })` devolvía siempre la misma frase fija ("Seguimos con tu dirección: decime tu dirección…") sin mirar el estado. Si había una dirección staged (`onboarding_step === 'CONFIRM'` + `temp_address`) y el cliente preguntaba algo lateral, el turno delegado respondía la lateral y volvía a pedir la dirección desde cero, pisando conversacionalmente la confirmación pendiente — sin re-adjuntar los botones Confirmar/Editar. Era la misma mini-FSM paralela que `buildContinuationMessage` (V-29) con otro nombre.
+
+**Corrección (2026-08-13, P0.2/P0.3):** nuevo `nextOnboardingStep(facts)` (`src/services/onboarding/nextOnboardingStep.ts`), función pura análoga a `nextCheckoutStep`. `ResumeFollowUpInput` para `kind: 'onboarding'` ahora lleva el paso derivado + la dirección staged; en paso `confirm` retoma la confirmación de **esa** dirección en un solo mensaje interactivo con botones (paridad con `resume.checkoutPendingAction`), en `done` no anexa nada.
+
+---
+
+### ~~V-32~~ · Onboarding: el pin de ubicación entraba al wizard legacy — ✅ **CORREGIDA**
+**Violaba:** ADR-0004 (tools/caminos determinísticos como única superficie de efectos, no un wizard con matcher de texto alcanzable)
+
+`onboardingAgentNode`, para `message.type === 'location'`, llamaba `addressService.process()` — método `@deprecated` (wizard `onboarding_step`, copy enlatado, con `isLikelyAddress` = "≥6 caracteres y contiene un dígito" alcanzable en su rama de texto). El checkout ya resolvía el mismo problema con `resolveAndSaveFromLocation`, sin pasar por `onboarding_step`.
+
+**Corrección (2026-08-13, P0.4):** nuevo `AddressService.resolveAndStageAddressFromLocation` — reverse-geocode + validar zona + staging (mismas claves `temp_*`/`onboarding_step` que el camino de texto), sin pasar por `.process()`/`.handleLocation()`. El nodo construye el mismo mensaje de confirmación con botones (`buildConfirmAddressMessage`) que el camino de texto — un solo copy para ambos canales.
+
+---
+
+### ~~V-38~~ · Onboarding: wizard legacy con keyword matching alcanzable — ✅ **CORREGIDA**
+**Violaba:** ADR-0001 (intents no rutean), ADR-0004 (tools como única superficie de efectos), `hybrid-pending-autonomy.mdc` (tipables los interpreta el agente, no un matcher)
+
+Con `ONBOARDING_AGENT_ENABLED=false` — o en sesiones viejas con `onboarding_step` — el turno caía en `onboardingByStateNode` / `addressCaptureNode`, que corrían `detectIntentWithConfidence` para rutear y después el wizard por pasos de `AddressService`: `confirm()` decidía con `text.includes('confirmar')` / `text.includes('editar')` y `capture()` filtraba con `isLikelyAddress` (≥6 caracteres y algún dígito). Dos productos conversacionales para el mismo dato, y el peor de los dos era el que quedaba prendido por env.
+
+**Corrección (2026-08-16, Fase B.3 de PLAN-ACCION-NLP-AGENT-FIRST.md):** el agente de onboarding pasa a ser el único camino. Se borraron el flag `ONBOARDING_AGENT_ENABLED`, los nodos `onboardingByStateNode`/`addressCaptureNode` con sus rutas y `earlyExit`, el helper `runOnboardingAddressCapture`, el wizard de `AddressService` (`process`/`start`/`capture`/`confirm`/`handleTextAddress`/`handleLocation`/`isLikelyAddress`/…) y `OnboardingStartHandler`. Las sesiones en curso no se rompen: `shouldOwnOnboardingTurn` las adopta por `hasStagedOnboarding` y el agente lee el mismo `temp_address`.
+
+---
+
+### ~~V-35~~ · Reservas: `save_reservation_date` pisaba el resto del borrador — ✅ **CORREGIDA**
+**Violaba:** ADR-0002 (Constraints en el borde de las Tools)
+
+`save_reservation_date` llamaba `patchConversationMetadata(conversationId, { reservation_draft: { date } })` directo, sin leer el draft previo. `patchConversationMetadata` mergea shallow solo el primer nivel — reemplaza `reservation_draft` entero. Las otras dos tools de escritura (`save_reservation_party_size`, `save_reservation_environment`) mergeaban a mano; la de fecha no. Cliente con horario y personas ya cargados que decía *"mejor pasalo al sábado"* perdía `slotId`/`time`/`endTime`/`partySize` en silencio, y el bot volvía a preguntar horario y personas sin explicación.
+
+**Corrección (2026-08-13, P0.1):** nuevo `patchReservationDraft(conversationId, partial)` (`src/services/reservations/draft.repository.ts`) — lee el draft actual y mergea antes de persistir. Las tres tools de escritura y los handlers de payload `RESERVATION_SLOT:*`/`RESERVATION_ENV:*` del nodo pasan a usarlo; ninguno llama `patchConversationMetadata` con `reservation_draft` directo. Test: `src/services/reservations/__tests__/draft.repository.test.ts`, `src/tools/__tests__/reservation.test.ts`.
+
+---
+
+### ~~V-36~~ · Reservas: sin confirmación en texto libre — ✅ **CORREGIDA**
+**Violaba:** ADR-0002 (mismo patrón que V-18/V-20)
+
+El prompt de reservas instruía explícitamente: *"El cliente dice 'confirmo' o 'sí' en texto en vez de usar los botones: respondé que puede usar los botones de arriba"*. Reservas era el único de los tres agentes de sesión (checkout, onboarding, reservas) sin una tool de confirmación en texto ni uso de `extractPendingTurnResponse` — el único flujo donde responder "sí" con el teclado no avanzaba nada.
+
+**Corrección (2026-08-13, P1.2):** nueva tool `resolve_reservation_confirmation(confirmed)` (señal pura, ADR-0004) + extracción vía `extractPendingTurnResponse` inyectada en `[EXTRACCIÓN PASO PENDIENTE]` cuando `nextReservationStep === 'confirm'`. El nodo ejecuta `executeReservationConfirmation`/`executeReservationCancellation` — las mismas funciones que procesan `RESERVATION_CONFIRM`/`RESERVATION_CANCEL` — sin importar el canal (mismo criterio que V-20). Se retiró del prompt la instrucción de mandar al cliente a los botones.
+
+---
+
+### ~~V-37~~ · Reservas: tarjeta de confirmación sin respaldo por estado — ✅ **CORREGIDA**
+**Violaba:** ADR-0002 (mismo patrón que V-19/V-25/V-24)
+
+La tarjeta de confirmación salía como `content` (texto del LLM) + `followUp` (tarjeta con el resumen real) — dos mensajes, el segundo repitiendo al primero. Y solo se adjuntaba si el LLM llamaba `present_confirmation()`: si no la llamaba, el cliente no veía los botones, y por V-36 tampoco podía confirmar en texto — el flujo quedaba sin salida.
+
+**Corrección (2026-08-13, P1.3):** la tarjeta se adjunta si `presentConfirmation || nextReservationStep === 'confirm'` (derivado del draft fresco, no del snapshot pre-turno), en un solo mensaje interactivo con el texto del LLM como *body* (`isInteractive: true`, sin `followUp`). Mismo criterio que checkout (V-25) y onboarding (V-24). Test: `src/graph/nodes/reservation/__tests__/reservationAgentNode.test.ts`.
+
+---
+
 ## P2 — Deuda estructural
 
 ### ~~V-08~~ · Pending del checkout persistido — ✅ **CORREGIDA**
@@ -279,12 +373,14 @@ El sistema tenía **la solución correcta ya implementada** —una función pura
 
 ---
 
-### V-09 · `awaiting_address` fusiona tres categorías
+### ~~V-09~~ · `awaiting_address` fusiona tres categorías — ✅ **CORREGIDA**
 **Viola:** ADR-0001
 
 Un solo nombre para tres cosas distintas: el Ownership de captura por texto, el Goal `OBTENER_DIRECCION` y la Opportunity `SUGERIR_DIRECCION`. Ver [`TAXONOMIA.md §6`](TAXONOMIA.md).
 
-**Es el ejemplo canónico de "un concepto que se resiste a ser clasificado".** Y como toda fusión de Ownership con Intent, hereda lo peor de ambos: bloquea como Ownership y persiste como Intent.
+**Era el ejemplo canónico de "un concepto que se resiste a ser clasificado".** Y como toda fusión de Ownership con Intent, heredaba lo peor de ambos: bloqueaba como Ownership y persistía como Intent.
+
+**Corregida (2026-08-30):** la separación ya había ocurrido de hecho, en tres planes distintos — el Ownership pasó a `shouldOwnOnboardingTurn` (V-38, borrado del wizard legacy), el Goal es `OBTENER_DIRECCION` en el checkout, y la Opportunity es `SUGERIR_DIRECCION` (Fase C.2 del Goal Engine). Lo que quedaba era el nombre viejo: un flag que **ningún camino escribía** y que solo sobrevivía como lectura en el guard de ubicaciones (`messageTypeGuard`) y en cuatro listas de limpieza. Se borró el campo. La clave sigue en las listas de purga para vaciar la metadata de conversaciones viejas.
 
 ---
 
@@ -297,12 +393,14 @@ Contadores de rechazo (×2), banners ya mostrados, cooldowns de sugerencias (×3
 
 ---
 
-### V-11 · Limpieza dispersa de un Intent declarado
+### ~~V-11~~ · Limpieza dispersa de un Intent declarado — ✅ **CORREGIDA**
 **Viola:** ADR-0005
 
-El Intent de tarea interrumpida se limpia **a mano en ~7 lugares distintos**. Es el síntoma diagnóstico del pending action infinito: *cuando el mismo campo se limpia en cinco lugares, no tenés un flag — tenés un Intent que nadie modeló, y estás implementando su ciclo de vida a mano, disperso, sin dueño.*
+El Intent de tarea interrumpida se limpiaba **a mano en ~7 lugares distintos**. Es el síntoma diagnóstico del pending action infinito: *cuando el mismo campo se limpia en cinco lugares, no tenés un flag — tenés un Intent que nadie modeló, y estás implementando su ciclo de vida a mano, disperso, sin dueño.*
 
-**Corrección:** una política de TTL, en el Ledger.
+**Corregida (2026-08-30):** el diagnóstico terminó siendo más fuerte que la corrección propuesta. `peopleCountResume` —junto con `awaitingPeopleCount` y `awaitingPartySize`— era el gate determinístico que congelaba la consulta del cliente hasta que dijera cuántos eran; lo reemplazaron el Goal `RECOLECTAR_PARTY_SIZE` y la tool `save_party_size`, y los tres campos quedaron **sin un solo escritor**. No hacía falta una política de TTL para un ciclo de vida que ya no empieza: se borraron los campos, sus tres limpiezas y las cuatro funciones sin llamadores que quedaban en `peopleCountGate.service.ts`.
+
+**Efecto colateral que valía la pena mirar:** el Goal `RETOMAR_TAREA_INTERRUMPIDA` (Fase E.3 del Goal Engine) derivaba de ese snapshot, así que llevaba tiempo permanentemente cerrado — un *Intent muerto* (§6, V-27) dentro del propio motor de Intents. Queda declarado en el catálogo, sin derivador, hasta que exista una tarea interrumpida real que retomar.
 
 ---
 
@@ -324,6 +422,8 @@ El timestamp de la oferta se guarda; **nadie lo consume**. Una oferta de hace cu
 
 ### V-13 · ~36 flags en el estado de conversación
 La acumulación que esta arquitectura existe para revertir. **Meta: ≤ 9.** Se resuelve como consecuencia de las demás, no como tarea propia.
+
+**Progreso (2026-08-30):** −5 al cerrar V-09 y V-11 y el punto 11 del Bloque D — `awaiting_address`, `awaitingPartySize`, `awaitingPeopleCount`, `peopleCountResume` y `awaiting_name`. Ninguno se "migró": los cinco habían quedado sin escritor cuando el Goal o el Ownership equivalente tomó su lugar. Es la forma que toma esta violación cuando las demás se corrigen — los flags no se reducen, se quedan sin trabajo y hay que ir a buscarlos.
 
 ### V-14 · Wizard legacy de reservas
 Ya marcado obsoleto. **Es la causa raíz de V-03.** Eliminarlo cierra la violación de la Invariante 1 de forma definitiva.
@@ -364,5 +464,11 @@ Tres números, sin ambigüedad, medibles hoy:
 | 2026-07-13 | **V-25** | Encontrada probando el checkout con usuarios reales (botones de pago faltantes). Mismo patrón que V-24 aplicado al checkout — corregida el mismo día, extendida también al paso `confirm` antes de cerrar. |
 | 2026-07-13 | **V-26** | Encontrada probando con usuarios reales (cantidad de ítems tratada siempre como aditiva). Corregida el mismo día, con una segunda iteración para el caso de decremento relativo ("quita 1") tras una segunda ronda de pruebas del usuario. |
 | 2026-07-13 | **V-27** | Encontrada al investigar la tool de seguimiento de pedido pedida por el usuario: `TRACK_ORDER` era intent muerto. Corregida el mismo día; ampliada después para soportar múltiples pedidos activos simultáneos (no solo el último) tras aclaración del usuario. |
+| 2026-08-12 | **V-29** | Policy de copy del checkout castigaba tipables (pedir nombre tras fulfillment). D5-A: borde = writes + `nextCheckoutStep`, no reemplazo de prosa. Ver `PLAN-ACCION-CHECKOUT-AUTONOMIA-POLICY.md`. |
+| 2026-08-13 | **V-35, V-36, V-37** | Auditoría de reservas con los mismos criterios que checkout/onboarding: dos bugs de datos verificables por lectura de código (write que pisaba el borrador, snapshot pre-payload en el context message) más las mismas dos desalineaciones de patrón que onboarding (sin confirmación en texto, tarjeta sin respaldo por estado). Corregidas juntas: `patchReservationDraft`, `nextReservationStep`, `resolve_reservation_confirmation`. Ver `PLAN-ACCION-RESERVAS-AUTONOMIA.md`. |
+
+| 2026-08-30 | **V-09, V-11** | Cerradas al verificar el Goal Engine contra el código: los dos flags ya no tenían escritor. `awaiting_address` murió con el wizard de onboarding (V-38) y `peopleCountResume`/`awaitingPartySize`/`awaitingPeopleCount` con el Goal `RECOLECTAR_PARTY_SIZE`. Se borraron los campos, sus limpiezas y cuatro funciones sin llamadores; el Goal `RETOMAR_TAREA_INTERRUMPIDA`, que derivaba del snapshot muerto, quedó declarado sin derivador. Ver `PLAN-ACCION-GOAL-ENGINE.md` (F.1 / E.3). |
+
+| 2026-08-30 | **V-13 (parcial)** | Bloque D punto 11: `awaiting_name` también estaba sin escritor, y con él el nodo `nameCollection` del grafo — leía `detection.customerName`, que es `null` fijo desde NLP-agent-first. Se borraron el flag, ese nodo, el no-op `addressCollection` que lo precedía, sus routers y `fulfillmentSelectionPending`, que quedaba sin lector. Pedir el nombre es Goal derivado (`OBTENER_NOMBRE`) de checkout y onboarding. |
 
 > **Lección, y por qué esta tabla existe:** V-03 y V-04 entraron al registro copiadas de documentos de auditoría **que describían el sistema de hace tres semanas**. Ambas ya estaban arregladas. **Toda violación se verifica contra el código antes de entrar acá — un doc de bug no es evidencia, es historia.** Es, literalmente, el anti-patrón de la duplicación de fuentes de verdad (§12.5) aplicado a la documentación.

@@ -54,7 +54,6 @@ import {
 import {
   deriveConfirmarPagoOnlineCandidate,
   deriveDesbloquearPedidoCerradoCandidate,
-  deriveRetomarTareaCandidate,
   recordCatalogGoalSurfaced,
 } from '../services/intent/catalogGoals.service';
 import {
@@ -352,10 +351,6 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     deriveDesbloquearPedidoCerradoCandidate(
       { pendingClosedAddItem: Boolean(meta.pending_closed_add_item) },
       meta.intentLedger?.DESBLOQUEAR_PEDIDO_CERRADO
-    ),
-    deriveRetomarTareaCandidate(
-      { hasInterruptedTask: Boolean(meta.peopleCountResume) },
-      meta.intentLedger?.RETOMAR_TAREA_INTERRUMPIDA
     ),
     deriveSuggestComplementCandidate(
       {

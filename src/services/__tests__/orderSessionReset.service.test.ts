@@ -53,8 +53,6 @@ describe('clearOrderSessionAfterCancel', () => {
       'conv-1',
       expect.objectContaining({
         checkout_active: false,
-        awaitingPartySize: false,
-        awaitingPeopleCount: false,
         requestedPartySize: null,
         peopleCount: null,
       })

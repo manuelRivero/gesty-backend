@@ -70,8 +70,9 @@ describe.sequential.skipIf(!isE2eEnabled())('party-size + checkout flow (e2e)', 
     const meta = getConversationMetadata(s2);
 
     expect(isPartySizeStored(meta, 2)).toBe(true);
-    expect(meta?.awaitingPartySize).toBe(false);
-    expect(meta?.peopleCountResume).toBeUndefined();
+    // El invariante es "el bot no quedó esperando personas", no el valor de un
+    // flag: `awaitingPartySize`/`peopleCountResume` se borraron con V-11.
+    expect(isPartySizeGatePending(meta)).toBe(false);
     expect(
       looksLikeMenuResume(s2.handlerResult, {
         lastReferencedProductId: s2.conversation?.lastReferencedProductId,

@@ -121,11 +121,7 @@ export async function clearOrderSessionAfterCancel(
 
   await patchConversationMetadata(conversationId, {
     checkout_active: false,
-    awaitingPartySize: false,
-    awaitingPeopleCount: false,
     awaitingIntentConfirmation: false,
-    awaiting_name: false,
-    awaiting_address: false,
     pending_address_confirmation: false,
     pending_fulfillment_action: null,
     requestedPartySize: null,

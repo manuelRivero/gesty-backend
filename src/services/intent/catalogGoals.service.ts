@@ -76,36 +76,17 @@ export const deriveDesbloquearPedidoCerradoCandidate = (
   };
 };
 
-export type RetomarTareaFacts = {
-  /** Snapshot de tarea interrumpida (hoy: peopleCountResume). */
-  hasInterruptedTask: boolean;
-};
-
-export const deriveRetomarTareaOpen = (facts: RetomarTareaFacts): boolean =>
-  facts.hasInterruptedTask;
-
-export const deriveRetomarTareaCandidate = (
-  facts: RetomarTareaFacts,
-  ledgerEntry: IntentLedgerEntry | undefined,
-  now: number = Date.now()
-): IntentCandidate | null => {
-  if (!deriveRetomarTareaOpen(facts)) return null;
-  const perm = computeCatalogPermission('RETOMAR_TAREA_INTERRUMPIDA', ledgerEntry ?? {}, now);
-  if (!perm.granted) return null;
-
-  const cat = getIntentCatalogEntry('RETOMAR_TAREA_INTERRUMPIDA');
-  return {
-    type: 'RETOMAR_TAREA_INTERRUMPIDA',
-    kind: cat.kind,
-    pressure: cat.pressure,
-    closeMode: cat.closeMode,
-    hint:
-      '- Objetivo abierto (RETOMAR_TAREA_INTERRUMPIDA): hay una consulta de comida ' +
-      'congelada esperando el número de personas. Priorizá obtener ese dato para reanudar. ' +
-      'No inventes el cierre desde el prompt.',
-    tieBreak: 85,
-  };
-};
+/*
+ * `RETOMAR_TAREA_INTERRUMPIDA` queda DECLARADO en el catálogo y en TAXONOMIA,
+ * pero sin derivador: su único Fact era `peopleCountResume`, el snapshot del
+ * gate viejo de party size, que ya no lo escribe nadie (V-11). Un Goal que
+ * deriva de un Fact sin productor está permanentemente cerrado y es el
+ * antipatrón "Intent muerto" del propio catálogo (§6, V-27), así que se borró
+ * la derivación en vez de dejarla corriendo en cada turno.
+ *
+ * Cuando exista una tarea interrumpida real que valga la pena retomar —la cola
+ * de `pendingOrderLines` es la candidata natural— se cablea contra ese Fact.
+ */
 
 export const recordCatalogGoalSurfaced = async (
   conversationId: string,

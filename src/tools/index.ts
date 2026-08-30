@@ -2213,12 +2213,7 @@ export const savePartySizeTool = new DynamicStructuredTool<
   schema: savePartySizeSchema,
   func: async ({ count }: SavePartySizeInput, _runManager, config?: RunnableConfig) => {
     const { conversationId } = getReactContext(config);
-    await patchConversationMetadata(conversationId, {
-      ...partySizeMetadataFields(count),
-      awaitingPeopleCount: false,
-      awaitingPartySize: false,
-    });
-    await omitConversationMetadataKeys(conversationId, ['peopleCountResume']);
+    await patchConversationMetadata(conversationId, partySizeMetadataFields(count));
     return toJson({ success: true, partySize: count });
   },
 });

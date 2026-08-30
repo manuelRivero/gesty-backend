@@ -30,6 +30,7 @@ Verificables, fuente única, sin opinión. Viven en tablas del negocio, **nunca*
 | `PERSONAS_DEL_PEDIDO` | estado de sesión | Cuántos van a comer |
 | `PRODUCTO_EN_FOCO` | estado de sesión | Último producto referenciado |
 | `HISTORIAL_DE_MENSAJES` | `conversation_message` | |
+| `SENTIMIENTO_DE_LA_CONVERSACION` | `conversation.ai_sentiment` | Proxy de “queja” para el owner assistant: `FRUSTRATED` / `NEEDS_HUMAN` |
 
 **Prohibido en Facts:** intenciones · historial del comportamiento del bot · control de flujo · cualquier valor regenerable.
 
@@ -55,8 +56,11 @@ Presupuesto: **3 → enmudece, no muere.** Cierre: **cambio en un Fact.**
 | `COMPLETAR_RESERVA` | borrador de reserva incompleto | reanudable | se confirma la reserva |
 | `CONFIRMAR_ELIMINACION` | eliminación solicitada sin confirmar | bloqueante | se confirma o se descarta |
 | `DESBLOQUEAR_PEDIDO_CERRADO` | ítem pendiente por negocio cerrado | reanudable | el negocio abre, o el cliente desiste |
+| `OBTENER_PERSONAS_DEL_PEDIDO` | Fact `PERSONAS_DEL_PEDIDO` ausente **y** señal de comida (turno o sesión: shortlist, last offer/CTA, o intent comida Fase A) | **bloqueante** | aparece `PERSONAS_DEL_PEDIDO` (`peopleCount` / `requestedPartySize`) |
 
-> ⚠️ **El orden entre los goals de checkout NO es una prioridad de Goals.** Lo determina la función de orden del flujo, que es un **Constraint** (ADR-0006). El ranker delega el desempate; **no sabe —ni debe saber— que la dirección va antes que el pago.**
+> ⚠️ **Party size no es Opportunity ni Ownership.** Sin personas no hay recomendaciones/porciones útiles: es Goal blocking del flujo de comida. El tipable (“3”, “somos cuatro”) lo interpreta el ReAct vía `save_party_size` — **no** un flag `awaitingPartySize` que rutee fuera del agente (mismo anti-patrón que `awaiting_address`, §6). Alias histórico de catálogo: `RECOLECTAR_PARTY_SIZE` (solo migración de ledger).
+
+> ⚠️ **El orden entre los goals de checkout NO es una prioridad de Goals.** Lo determina la función de orden del flujo, que es un **Constraint** (ADR-0006). El ranker delega el desempate; **no sabe —ni debe saber— que la dirección va antes que el pago.** Con comida y sin personas, `OBTENER_PERSONAS_DEL_PEDIDO` (blocking) gana a `COMPLETAR_PEDIDO` (resumable) por saliencia.
 
 ### Declarados (persistidos — solo lo inderivable)
 
@@ -71,17 +75,16 @@ Presupuesto: **3 → enmudece, no muere.** Cierre: **cambio en un Fact.**
 ## 3. OPPORTUNITIES
 
 Intención **opcional**. Iniciativa del **negocio**. Si nunca se cumple, **no pasa nada**.
-Presupuesto: **1 → se abandona.** Cierre: **decay** o un Fact.
+Presupuesto típico: **1 → se abandona.** Cierre: **decay** o un Fact.
 
 | Opportunity | Se deriva de / nace de | Notas |
 |---|---|---|
-| `SUGERIR_COMPLEMENTO` | hay principales sin bebida ni postre | Reemplaza los banners anti-repetición ad-hoc |
-| `CONFIRMAR_OFERTA` | el agente ofreció sumar un plato | Declarada. **TTL real** — hoy el timestamp existe y nadie lo lee |
+| `SUGERIR_COMPLEMENTO` | carrito con ítems y huecos en STARTER/MAIN/DRINK/DESSERT | Completar menú: hasta 2 categorías por ola. Un «no» (`refused`) abandona. Un «sí»/add de la oferta (`engaged`) habilita más olas con cooldown. Dual-inject opcional junto al Goal activo. |
+| `CONFIRMAR_OFERTA` | el agente ofreció sumar un plato | Declarada. **TTL leído** en permiso y en el Fact de sesión (`isLastOfferAlive`). `maxSurfaces: 1` = planteos, no lifetime del dato: el `productId` sigue en `[ESTADO DEL CLIENTE]` aunque el presupuesto de Opportunity esté exhausted. |
 | `SUGERIR_DIRECCION` | cliente sin dirección, **sin intent bloqueante** | ⚠️ **No confundir con `OBTENER_DIRECCION`.** Ver §6 |
-| `RECOLECTAR_PARTY_SIZE` | consulta de comida sin nº de personas | |
-| `OFRECER_PROMOCION` | hay promo activa aplicable al pedido | |
+| `OFRECER_PROMOCION` | promo **desbloqueable**: el carrito no cumple todavía y falta poco | Presupuesto 1. `tieBreak: 18` (entre `CONFIRMAR_OFERTA` 20 y `SUGERIR_COMPLEMENTO` 15). ⚠️ Una promo **ya aplicada** NO es Opportunity: es **Fact** — se comunica siempre, no gasta presupuesto y sobrevive a `refused` / `budget_exhausted` (mismo patrón que `CONFIRMAR_OFERTA`). Gate de relevancia mínima en el derivador, no en el ranker. |
 
-> ⚠️ **Ninguna Opportunity puede tener presupuesto > 1** (ADR-0008). El mecanismo es idéntico al de un Goal y por eso la confusión es fácil de cometer — **pero insistir con un Goal es servicio, e insistir con una Opportunity es venta agresiva.**
+> ⚠️ **Regla general:** Opportunities con presupuesto 1 (ADR-0008) — insistir es venta agresiva. **Excepción documentada:** `SUGERIR_COMPLEMENTO` interpreta el “1” como **un rechazo abandona**; tras aceptación (`engaged`) puede haber más olas acotadas por cooldown y `maxSurfaces`, no spam en cada mensaje.
 
 ---
 
@@ -111,15 +114,16 @@ Presupuesto: **1.** Cierre: **emisión** (registrada en el Ledger), salvo las qu
 |---|---|---|---|
 | `CHECKOUT` | agente de checkout | el cliente quiere cerrar y el pedido tiene ítems | pago, cancelación, handback, expiración |
 | `RESERVA` | agente de reservas | intent de reserva o payload de reserva | confirmación, abandono |
-| `ONBOARDING` | agente de onboarding | captura de dirección en curso | dirección confirmada, abandono |
+| `ONBOARDING` | agente de onboarding | Facts incompletos (sin dirección usable **o** sin nombre, con refusal del Goal faltante en 0) **o** sesión/`onboarding_agent_active`/payload Confirmar\|Editar | dirección+nombre confirmados, `finish_onboarding`, o gate de refusal (no reabre por Facts) |
 | `CAPTURA_DE_DIRECCION` | captura por texto | esperando dirección en texto libre | dirección capturada |
+| `ASISTENTE_DEL_OWNER` | `owner_assistant` | el teléfono del remitente ∈ `owner_whatsapp_phones` | el teléfono deja la allowlist, o se apaga el flag. No hay sesión que limpiar. |
 | `CONVERSACIONAL` | agente híbrido | **default** | — |
 
 **Reglas:**
-- Siempre hay **exactamente un** dueño. `CONVERSACIONAL` es la ruta total.
+- Siempre hay **exactamente un** dueño. `CONVERSACIONAL` es la ruta default de **texto libre** (no pasa por familia Intent de runtime; botones siguen el mapper).
 - **Ningún Intent participa de esta decisión** (ADR-0001).
 - Ownership determina **qué Tools están al alcance** — es el mecanismo de contención de blast radius.
-- Todo Ownership **debe** tener una condición de liberación. Si no la tiene, es un bug crítico.
+- Todo Ownership **debe** tener una condición de liberación. Si no la tiene, es un bug crítico. `ASISTENTE_DEL_OWNER` se libera por identidad (el teléfono deja de ser el dueño), no por un flag de sesión — un `owner_assistant_active` sin salida sería ADR-0001.
 
 ---
 
@@ -133,7 +137,13 @@ Presupuesto: **1.** Cierre: **emisión** (registrada en el Ledger), salvo las qu
 | *"Falta la dirección para poder entregar"* | **Goal** (`OBTENER_DIRECCION`) | Puede quedar abierto indefinidamente. |
 | *"Convendría que cargue una dirección para agilizar"* | **Opportunity** (`SUGERIR_DIRECCION`) | Nadie la pidió. Presupuesto 1. |
 
-**Tres categorías, un solo nombre en el código actual.** Es el ejemplo canónico de por qué la taxonomía existe: no para clasificar lo que ya está bien, sino para **detectar los conceptos que se resisten a ser clasificados** — que son siempre los que están rompiendo el sistema.
+**Tres categorías, un solo nombre.** Es el ejemplo canónico de por qué la taxonomía existe: no para clasificar lo que ya está bien, sino para **detectar los conceptos que se resisten a ser clasificados** — que son siempre los que están rompiendo el sistema.
+
+**Estado (2026-08-30): resuelto (V-09).** Las tres piezas existen por separado y con dueño: el Ownership es `shouldOwnOnboardingTurn`, el Goal es `OBTENER_DIRECCION` en el checkout, la Opportunity es `SUGERIR_DIRECCION`. El flag `awaiting_address` se borró. Vale conservar el ejemplo: la separación no se hizo partiendo el flag en tres, sino construyendo cada categoría en su lugar hasta que **el nombre fusionado se quedó sin escritores**. Cuando un concepto está bien clasificado, la fusión no se reparte: sobra.
+
+Mismo anti-patrón (corregido): `awaitingPartySize` **no es un Goal.** El Goal es `OBTENER_PERSONAS_DEL_PEDIDO` (blocking, cierre por Fact). El tipable lo interpreta el ReAct. El flag —y con él `awaitingPeopleCount` y el snapshot `peopleCountResume`— se borró en 2026-08-30 al cerrar V-11.
+
+Mismo anti-patrón, otra forma: `pendingOrderLines` (cola de platos de un mismo mensaje, PLAN-ACCION-PEDIDO-MULTI-LINEA.md) **tampoco es un Goal.** Es Facts de sesión (D1) que alimentan un **Constraint de supresión**: mientras haya línea `queued`/`active`, `COMPLETAR_PEDIDO` y `SUGERIR_COMPLEMENTO` no se derivan (D7) — no hace falta un `IntentType` nuevo en `INTENT_CATALOG`, el propio derivador de esos dos Intents lee el Fact `hasOpenOrderLines`.
 
 ---
 
@@ -150,9 +160,15 @@ Viven en el **borde de las Tools** (ADR-0002). **Ninguno puede existir únicamen
 | No crear la orden sin confirmación final del total | crear orden / cobrar | el cliente confirmó el resumen (envío + ajuste de pago incluidos) |
 | No operar fuera de horario | Tools de escritura | horario + `operate_when_closed` |
 | No modificar un pedido ya confirmado | Tools de carrito | orden no confirmada |
+| No sumar al carrito sin personas (Goal abierto) | `add_cart_item` → `party_size_required` | Fact `PERSONAS_DEL_PEDIDO` |
 | **Orden del checkout** (entrega → dirección → nombre → pago) | función de orden | Facts del pedido y del cliente |
 | No agregar un producto sin stock | agregar ítem | disponibilidad |
+| No plantear COMPLETAR_PEDIDO / SUGERIR_COMPLEMENTO con cola de pedido abierta | derivadores de esos dos Intents (`orderCompletionGoal`, `opportunities.service`) | `hasOpenOrderLines` (`pendingOrderLines.service`) |
+| No ofrecer complemento de una categoría que una promoción desbloqueable ya empuja | derivador de `SUGERIR_COMPLEMENTO` (`opportunities.service`) | `promotionSuppressedTags` (`promotionOpportunity.service`) |
+| No cobrar un total que el cliente no confirmó por cambio de promoción | `createOrderFromDraft` → `PROMOTION_CHANGED` | evaluación al `now` de la creación vs. la del resumen |
+| No activar una promoción que el motor no puede evaluar | `adminPromotions` → `PROMOTION_NOT_EVALUABLE` | whitelist de condiciones y beneficios (`promotionConditions`) |
 | Idempotencia del cobro | cobrar | intento previo |
+| No leer métricas del negocio si el teléfono no es el dueño | tools de `owner_assistant` (`withOwnerGate`) | `customerPhone` ∈ `owner_whatsapp_phones` |
 
 ---
 
@@ -163,6 +179,7 @@ Viven en el **borde de las Tools** (ADR-0002). **Ninguno puede existir únicamen
 | Categoría | Tools |
 |---|---|
 | **Lectura** (sin efectos) | buscar productos · detalle de producto · disponibilidad · categorías · carrito · horarios · info del negocio · historial · cobertura/costo de envío por dirección guardada (independiente del carrito) · estado de pedidos ya creados (lista, no solo el último) |
+| **Lectura — owner** | briefing del período (dashboard + quejas + en vuelo) · cola operativa viva · detalle de un pedido. Solo con `withOwnerGate`. |
 | **Escritura — carrito** | agregar ítem (aditivo o cantidad absoluta) · eliminar ítem · anotar instrucción especial · guardar nº de personas |
 | **Escritura — checkout** | definir entrega · guardar dirección · guardar nombre · definir método de pago · **crear orden** · **cobrar** |
 | **Escritura — dirección delegada** | dejar pendiente de confirmación una dirección compartida fuera de checkout/onboarding (señal-UI de confirmación aparte, nunca guarda por sí misma — ADR-0004) |

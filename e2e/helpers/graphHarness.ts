@@ -243,7 +243,6 @@ export const resetE2eCustomer = async (
     checkout_active: false,
     awaitingPeopleCount: false,
     awaitingPartySize: false,
-    awaiting_name: false,
     pending_fulfillment_action: null,
     requestedPartySize: 2,
     peopleCount: 2,

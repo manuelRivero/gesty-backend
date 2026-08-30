@@ -108,3 +108,35 @@ describe('messageTypeGuardNode — excepción de imagen (D1)', () => {
     });
   });
 });
+
+/**
+ * V-09: `awaiting_address` se borró. El permiso para compartir ubicación no
+ * dependía solo de ese flag — quedaba cubierto por los otros tres términos,
+ * que sí tienen escritor. Estos casos lo fijan.
+ */
+describe('messageTypeGuardNode — ubicación dentro del flujo de dirección', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedFindOrderAwaitingTransferProof.mockResolvedValue(null);
+  });
+
+  it.each([
+    ['onboarding_step', { onboarding_step: 'capture' }],
+    ['checkout_active', { checkout_active: true }],
+    ['onboarding_agent_active', { onboarding_agent_active: true }],
+  ])('deja pasar la ubicación con %s', async (_label, metadata) => {
+    mockedFindOrCreateConversationState.mockResolvedValue({ metadata });
+
+    const result = await messageTypeGuardNode(withMessageType('location'));
+
+    expect(result.handlerResult).toBeUndefined();
+  });
+
+  it('bloquea la ubicación fuera de cualquier flujo de dirección', async () => {
+    mockedFindOrCreateConversationState.mockResolvedValue({ metadata: {} });
+
+    const result = await messageTypeGuardNode(withMessageType('location'));
+
+    expect(result.handlerResult).toBeDefined();
+  });
+});

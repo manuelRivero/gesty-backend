@@ -72,7 +72,8 @@ const buildUnsupportedMessageReply = (): WhatsAppInteractiveMessage => ({
 
 /**
  * Determina si el cliente está actualmente dentro de un flujo donde compartir
- * la ubicación tiene sentido (onboarding activo o `awaiting_address`).
+ * la ubicación tiene sentido (onboarding activo, checkout, o el agente de
+ * onboarding con el turno tomado).
  */
 const isWithinAddressCaptureFlow = async (
   state: AgentState
@@ -95,7 +96,6 @@ const isWithinAddressCaptureFlow = async (
   const meta = normalizeMetadata(conversationState.metadata);
   return (
     Boolean(meta.onboarding_step) ||
-    Boolean(meta.awaiting_address) ||
     Boolean(meta.checkout_active) ||
     Boolean(meta.onboarding_agent_active)
   );

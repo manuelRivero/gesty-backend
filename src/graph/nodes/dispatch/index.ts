@@ -474,17 +474,6 @@ export const nlpSubgraphNode = async (
     return { handlerResult: { content: confirmation, isInteractive: true } };
   }
 
-  if (metaPre.awaitingPartySize || metaPre.awaitingPeopleCount) {
-    await omitConversationMetadataKeys(conversation.id, [
-      'awaitingPartySize',
-      'awaitingPeopleCount',
-      'peopleCountResume',
-    ]);
-    workingConversationState = await findOrCreateConversationState(
-      conversation.id
-    );
-  }
-
   const detection = NLP_AGENT_FIRST_DETECTION;
 
   const enrichedCtx: EnrichedContext = {

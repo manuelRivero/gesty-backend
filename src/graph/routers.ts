@@ -31,9 +31,7 @@ export const NODE = {
   NLP: 'nlpSubgraph',
   CHECKOUT_AGENT: 'checkoutAgent',
   PAYMENT_PROOF: 'paymentProof',
-  ADDRESS_COLLECTION: 'addressCollection',
   FULFILLMENT_SELECTION: 'fulfillmentSelection',
-  NAME_COLLECTION: 'nameCollection',
   SEND: 'sendResponse',
   PERSIST_AI: 'persistAIMessage',
   OWNER_ASSISTANT: 'ownerAssistant',
@@ -182,35 +180,17 @@ export const routeAfterHandlerOrSubflow = (
 };
 
 /**
- * Tras `fulfillmentSelection`:
- * - Si `fulfillmentSelectionPending` es `true`, el gate reemplazó el
- *   handlerResult con la pregunta de selección → ir directo a SEND.
- * - Si sigue habiendo `handlerResult` (el gate pasó de largo) → ADDRESS_COLLECTION.
- * - Si no hay handlerResult → END.
+ * Tras `fulfillmentSelection`: si hay algo que responder, se envía.
+ *
+ * Antes de acá pasaban dos post-handlers más, `addressCollection` y
+ * `nameCollection`, que capturaban dirección y nombre "espontáneos" de la
+ * detección NLP. Los dos quedaron sin efecto: el primero es un no-op explícito
+ * desde que pedir dirección es Ownership de onboarding/checkout, y el segundo
+ * leía `detection.customerName`, que es siempre `null` desde NLP-agent-first.
+ * Pedir el nombre es hoy Goal derivado (`OBTENER_NOMBRE`) de checkout y
+ * onboarding, con `save_customer_name` como única escritura.
  */
 export const routeAfterFulfillmentSelection = (
-  state: AgentState
-): NodeName | typeof END => {
-  if (state.fulfillmentSelectionPending) return NODE.SEND;
-  if (state.handlerResult) return NODE.ADDRESS_COLLECTION;
-  return END;
-};
-
-/**
- * Tras `addressCollection`: siempre pasa a `nameCollection` si hay resultado.
- */
-export const routeAfterAddressCollection = (
-  state: AgentState
-): NodeName | typeof END => {
-  if (state.handlerResult) return NODE.NAME_COLLECTION;
-  return END;
-};
-
-/**
- * Tras `nameCollection`: si hay `handlerResult` (puede haber sido creado o
- * modificado por el nodo), envía; si no, termina.
- */
-export const routeAfterNameCollection = (
   state: AgentState
 ): NodeName | typeof END => {
   if (state.handlerResult) return NODE.SEND;

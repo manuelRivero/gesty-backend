@@ -143,22 +143,18 @@ export type ConversationMetadata = {
   nextActionHintsShown?: Partial<
     Record<'DRINK' | 'STARTER' | 'DESSERT' | 'CHECKOUT', boolean>
   >;
-  /** Esperando respuesta numérica de personas antes de recomendaciones/pedido. */
-  awaitingPeopleCount?: boolean;
-  /**
-   * Modo híbrido: el agente pidió party size y hay una consulta de menú
-   * congelada en `peopleCountResume` para reanudar al responder.
+  /*
+   * Acá vivían `awaitingPeopleCount`, `awaitingPartySize` y `peopleCountResume`
+   * (V-11): el gate determinístico que congelaba la consulta del cliente hasta
+   * que dijera cuántas personas eran. Lo reemplazaron el Goal
+   * `RECOLECTAR_PARTY_SIZE` y la tool `save_party_size`, y los tres campos
+   * quedaron sin escritor — la "limpieza dispersa en ~7 lugares" que reportaba
+   * la violación se resolvió borrando el concepto, no repartiéndolo mejor.
    */
-  awaitingPartySize?: boolean;
   /** El clasificador dudó entre intenciones; el usuario debe elegir un botón CONFIRM_INTENT. */
   awaitingIntentConfirmation?: boolean;
   /** Los dos candidatos principales mostrados al usuario (misma forma que en detection). */
   intentCandidates?: Array<{ intent: ConversationIntent; confidence: number }>;
-  /** Snapshot para reanudar ORDER_FOOD / PRODUCT_QUERY tras responder cuántas personas. */
-  peopleCountResume?: {
-    userMessage: string;
-    detection: IntentDetectionResult;
-  };
 
   // --- CTA híbrido ---
 
@@ -205,22 +201,17 @@ export type ConversationMetadata = {
   onboarding_agent_active?: boolean;
   /** Dirección temporal capturada durante onboarding (antes de confirmar). */
   temp_address?: string | Record<string, unknown>;
-  /** `true` mientras esperamos que el cliente nos diga su nombre. */
-  awaiting_name?: boolean;
-  /**
-   * `true` mientras esperamos que el cliente nos diga su dirección de entrega
-   * y el próximo mensaje de texto debe CAPTURARSE como tal (rutea a
-   * onboarding/`address_capture`). Distinto de `address_soft_asked` (H-06):
-   * este flag SÍ debe setearse solo en el camino bloqueante (intent de
-   * carrito/pedido sin dirección), nunca en la sugerencia informativa.
-   */
-  awaiting_address?: boolean;
   /**
    * Timestamp ISO de la última sugerencia NO bloqueante de cargar dirección
-   * (`ADDRESS_SOFT_ASK_BOT_MESSAGE`). Puramente informativo: a diferencia de
-   * `awaiting_address`, nunca debe usarse para rutear un turno. Existe solo
-   * para no repetir la sugerencia en cada mensaje; expira sola (ver
-   * `ADDRESS_SOFT_ASK_TTL_MS` en `addressCollection.ts`).
+   * (`ADDRESS_SOFT_ASK_BOT_MESSAGE`). Puramente informativo: nunca debe usarse
+   * para rutear un turno. Existe solo para no repetir la sugerencia en cada
+   * mensaje; expira solo.
+   *
+   * Acá vivía también `awaiting_address` (V-09): un mismo nombre para el
+   * Ownership de captura, el Goal `OBTENER_DIRECCION` y la Opportunity
+   * `SUGERIR_DIRECCION`. Las tres piezas hoy existen por separado
+   * (`shouldOwnOnboardingTurn`, el Goal del checkout, `SUGERIR_DIRECCION`) y
+   * el flag quedó sin escritor: se borró en vez de "separarse".
    */
   address_soft_asked?: string | null;
   /** Intent original que fue bloqueado por falta de dirección (ej. CHECKOUT); se usa para retomar al confirmar. */

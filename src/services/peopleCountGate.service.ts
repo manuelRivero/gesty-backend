@@ -7,68 +7,6 @@ import {
 import { ConversationIntent } from '../types/conversationIntent';
 import { extractStrictNumericPeopleCount } from '../helpers/peopleCountExtraction';
 
-/** Formato estándar del bot: 🤖, título en negrita, cuerpo con guía clara. */
-export const PEOPLE_COUNT_PROMPT_MESSAGE = formatBotUserMessage(
-  '¿Para cuántas personas?',
-  '👥',
-  'Así ajustamos recomendaciones y porciones.\n\n' +
-    'Escribí *solo el número* con dígitos, sin letras ni texto extra (del *1* al *99*). Ejemplos: *3* o *12*.'
-);
-
-export const PEOPLE_COUNT_INVALID_REPLY_MESSAGE = formatBotUserMessage(
-  'Escribí solo el número',
-  '🔢',
-  'Necesito *únicamente dígitos*: un número del *1* al *99*, en un solo mensaje.\n\n' +
-    'Ej.: *5* — sin palabras, sin "personas" ni otros signos.'
-);
-
-export type PeopleCountResumePayload = {
-  userMessage: string;
-  detection: IntentDetectionResult;
-};
-
-export function parsePeopleCountResume(
-  meta: ConversationMetadata
-): PeopleCountResumePayload | null {
-  const raw = meta.peopleCountResume;
-  if (!raw || typeof raw !== 'object') return null;
-  const userMessage =
-    typeof (raw as { userMessage?: unknown }).userMessage === 'string'
-      ? (raw as { userMessage: string }).userMessage.trim()
-      : '';
-  const detection = (raw as { detection?: unknown }).detection;
-  if (!userMessage || !detection || typeof detection !== 'object') return null;
-  const intent = (detection as { intent?: unknown }).intent;
-  if (typeof intent !== 'string') return null;
-  return { userMessage, detection: detection as IntentDetectionResult };
-}
-
-/**
- * Cuando el bot está esperando el número de personas y el usuario responde con
- * algo que NO es un número válido, este helper decide si debemos abandonar el
- * gate porque el usuario cambió de intención o preguntó por otra cosa.
- *
- * Criterio: si la nueva detección resuelve a una intención accionable (cualquier
- * cosa distinta de UNKNOWN), asumimos que el usuario dejó atrás la pregunta de
- * personas y procesamos el mensaje nuevo con normalidad. Si la detección es
- * UNKNOWN (ruido, texto sin sentido), mantenemos el gate y re-preguntamos.
- *
- * Excepción: un dígito solo ("2") nunca abandona — es la respuesta esperada,
- * aunque el clasificador lo confunda con MODIFY_QUANTITY.
- */
-export function shouldAbandonPeopleCountForNewIntent(
-  detection: IntentDetectionResult,
-  userMessage?: string
-): boolean {
-  if (
-    userMessage != null &&
-    extractStrictNumericPeopleCount(userMessage) != null
-  ) {
-    return false;
-  }
-  return detection.intent !== ConversationIntent.UNKNOWN;
-}
-
 const PARTY_SIZE_REQUIRED_INTENTS = new Set<ConversationIntent>([
   ConversationIntent.PRODUCT_QUERY,
   ConversationIntent.PRODUCT_ATTRIBUTE_QUESTION,
@@ -93,9 +31,6 @@ export function shouldBlockForMissingPeopleCount(params: {
   if (!PARTY_SIZE_REQUIRED_INTENTS.has(intent)) {
     return false;
   }
-  if (metadata.awaitingPeopleCount) return false;
-  if (metadata.awaitingPartySize) return false;
-
   const effective = getRequestedPartySize(metadata);
   return effective == null || effective <= 0;
 }

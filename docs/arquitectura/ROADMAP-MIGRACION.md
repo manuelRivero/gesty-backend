@@ -145,14 +145,21 @@ BLOQUE B — Ledger  (unificación pura, sin cambio de comportamiento)
   5. contadores de rechazo (×2)      → Ledger       (V-10)
 
 BLOQUE C — Goals declarados
-  6. tarea interrumpida              → Goal declarado (V-11 — mata las ~7 limpiezas)
+  6. tarea interrumpida              → ✅ V-11 cerrada: el gate viejo de party size ya no
+                                        existía; se borraron los campos en vez de darles TTL.
+                                        Goal declarado sin derivador hasta tener un Fact real.
   7. desambiguación de producto      → Goal declarado
   8. acciones pendientes por bloqueo → Goal declarado
 
 BLOQUE D — Transaccionales  (últimos, con el engine ya maduro en producción)
   9. pending question del checkout   → ELIMINAR (regenerable desde el renderer)
- 10. awaiting_address                → SEPARAR en Ownership + Goal + Opportunity (V-09)
- 11. awaiting_name                   → Goal derivado
+ 10. awaiting_address                → ✅ V-09 cerrada: separada de hecho (Ownership en
+                                        shouldOwnOnboardingTurn, Goal OBTENER_DIRECCION,
+                                        Opportunity SUGERIR_DIRECCION); el flag se borró.
+ 11. awaiting_name                   → ✅ Goal derivado: OBTENER_NOMBRE ya se deriva de
+                                        nextCheckoutStep / nextOnboardingStep, cierra por Fact
+                                        (customer.name) y se escribe con save_customer_name.
+                                        El flag y el nodo nameCollection se borraron.
 
 BLOQUE E — Limpieza
  12. wizard legacy de reservas       → ELIMINAR  (V-14, cierra V-03 definitivamente)

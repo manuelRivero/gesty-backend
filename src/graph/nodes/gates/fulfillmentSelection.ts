@@ -120,7 +120,6 @@ export const fulfillmentSelectionNode = async (
   }
 
   return {
-    handlerResult: { content: buildFulfillmentSelectionMessage(), isInteractive: true },
-    fulfillmentSelectionPending: true
+    handlerResult: { content: buildFulfillmentSelectionMessage(), isInteractive: true }
   };
 };

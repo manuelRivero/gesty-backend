@@ -45,9 +45,7 @@ import {
   subscriptionAccessGateNode,
   reservationWizardNode,
 } from './nodes/gates';
-import { addressCollectionNode } from './nodes/gates/addressCollection';
 import { fulfillmentSelectionNode } from './nodes/gates/fulfillmentSelection';
-import { nameCollectionNode } from './nodes/gates/nameCollection';
 import { messageTypeGuardNode } from './nodes/gates/messageTypeGuard';
 import { escalationGateNode } from './nodes/gates/escalation';
 import { ambassadorReferralNode } from './nodes/ambassador';
@@ -70,10 +68,8 @@ import {
   routeAfterExtract,
   routeAfterHandlerOrSubflow,
   routeAfterFulfillmentSelection,
-  routeAfterAddressCollection,
   routeAfterEscalationGate,
   routeAfterMessageTypeGuard,
-  routeAfterNameCollection,
   routeAfterOwnerAudio,
   routeAfterPersistUser,
   routeAfterResolveBusiness,
@@ -107,8 +103,6 @@ const builder = new StateGraph(AgentStateAnnotation)
   .addNode(NODE.RESERVATION_AGENT, reservationAgentNode)
   .addNode(NODE.OWNER_ASSISTANT, ownerAssistantAgentNode)
   .addNode(NODE.FULFILLMENT_SELECTION, fulfillmentSelectionNode)
-  .addNode(NODE.ADDRESS_COLLECTION, addressCollectionNode)
-  .addNode(NODE.NAME_COLLECTION, nameCollectionNode)
   .addNode(NODE.SEND, sendResponseNode)
   .addNode(NODE.PERSIST_AI, persistAIMessageNode);
 
@@ -212,17 +206,6 @@ builder.addConditionalEdges(NODE.RESERVATION, routeAfterReservation, {
 });
 
 builder.addConditionalEdges(NODE.FULFILLMENT_SELECTION, routeAfterFulfillmentSelection, {
-  [NODE.SEND]: NODE.SEND,
-  [NODE.ADDRESS_COLLECTION]: NODE.ADDRESS_COLLECTION,
-  [END]: END,
-});
-
-builder.addConditionalEdges(NODE.ADDRESS_COLLECTION, routeAfterAddressCollection, {
-  [NODE.NAME_COLLECTION]: NODE.NAME_COLLECTION,
-  [END]: END,
-});
-
-builder.addConditionalEdges(NODE.NAME_COLLECTION, routeAfterNameCollection, {
   [NODE.SEND]: NODE.SEND,
   [END]: END,
 });

@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { ConversationIntent } from '../../types/conversationIntent';
 import {
   buildPartySizeJustConfirmedContextLines,
-  shouldAbandonPeopleCountForNewIntent,
   shouldBlockForMissingPeopleCount,
   shouldTreatBareNumberAsPartySize,
 } from '../peopleCountGate.service';
@@ -33,30 +32,6 @@ describe('peopleCountGate', () => {
         metadata: { peopleCount: 2, requestedPartySize: 2 },
         detectionQuantity: null,
       })
-    ).toBe(false);
-  });
-
-  it('no abandona el gate ante un dígito solo aunque el NLP diga MODIFY_QUANTITY', () => {
-    expect(
-      shouldAbandonPeopleCountForNewIntent(
-        {
-          intent: ConversationIntent.MODIFY_QUANTITY,
-          confidence: 0.8,
-          detectedProductName: null,
-          quantity: 2,
-          quantityMode: 'absolute',
-          addressText: null,
-          addressConfidence: 0,
-          customerName: null,
-          candidates: [],
-          alternatives: [],
-          resolutionSource: 'direct',
-          topCandidate: null,
-          rescueMargin: null,
-          raw: null,
-        },
-        '2'
-      )
     ).toBe(false);
   });
 
