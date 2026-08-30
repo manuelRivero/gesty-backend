@@ -39,12 +39,6 @@ export const incrementRefusalCount = async (
     ...prev,
     refusalCount: next,
   });
-  // Limpia el proxy legacy si todavía existiera (flip B.1).
-  const legacyKey =
-    type === 'OBTENER_NOMBRE' ? 'name_refusal_count' : 'address_refusal_count';
-  if (meta[legacyKey] != null) {
-    await omitConversationMetadataKeys(conversationId, [legacyKey]);
-  }
   return next;
 };
 
@@ -52,6 +46,8 @@ export const incrementRefusalCount = async (
 export const clearCaptureRefusalLedger = async (conversationId: string): Promise<void> => {
   await patchIntentLedgerEntry(conversationId, 'OBTENER_NOMBRE', {});
   await patchIntentLedgerEntry(conversationId, 'OBTENER_DIRECCION', {});
+  // Los proxies de la raíz ya no existen como campo; se siguen purgando por
+  // nombre para vaciar la metadata de conversaciones anteriores al flip B.1.
   await omitConversationMetadataKeys(conversationId, [
     'name_refusal_count',
     'address_refusal_count',

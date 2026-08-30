@@ -48,7 +48,6 @@ vi.mock('../../../../agents/reservationAgent', () => ({
 
 vi.mock('../../../../services/ai/detection.service', () => ({
   detectIntentWithConfidence: vi.fn(),
-  shouldAskIntentConfirmation: vi.fn(() => false),
 }));
 
 vi.mock('../../../../agents/reactAgent', () => ({
@@ -59,10 +58,6 @@ vi.mock('../../checkout', () => ({
   activateCheckoutSessionIfCartHasItems: vi.fn(),
   applyDefaultFulfillmentIfSingleOption: vi.fn(),
   resolveCheckoutAgentHandlerResult: vi.fn(),
-}));
-
-vi.mock('../../../../services/intentAmbiguityConfirmation.service', () => ({
-  buildIntentAmbiguityInteractiveMessage: vi.fn(),
 }));
 
 vi.mock('../../../../config/env', () => ({

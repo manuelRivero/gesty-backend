@@ -38,7 +38,6 @@ vi.mock('../../../../agents/reservationAgent', () => ({
 
 vi.mock('../../../../services/ai/detection.service', () => ({
   detectIntentWithConfidence: vi.fn(),
-  shouldAskIntentConfirmation: vi.fn(() => true),
 }));
 
 vi.mock('../../../../agents/reactAgent', () => ({
@@ -61,20 +60,13 @@ vi.mock('../../../../services/address.service', () => ({
   },
 }));
 
-vi.mock('../../../../services/intentAmbiguityConfirmation.service', () => ({
-  buildIntentAmbiguityInteractiveMessage: vi.fn(),
-}));
-
 vi.mock('../../../../config/env', () => ({
   isReservationAgentEnabled: vi.fn(() => false),
   isCheckoutAgentEnabled: vi.fn(() => false),
 }));
 
 import { interactiveSubgraphNode, nlpSubgraphNode } from '../index';
-import {
-  detectIntentWithConfidence,
-  shouldAskIntentConfirmation,
-} from '../../../../services/ai/detection.service';
+import { detectIntentWithConfidence } from '../../../../services/ai/detection.service';
 import { runHybridReactAgent } from '../../../../agents/reactAgent';
 import { dispatchIntent, dispatchInteractive } from '../../../../controllers/webhook/dispachers';
 import { patchConversationMetadata } from '../../../../repositories';
@@ -139,10 +131,11 @@ describe('nlpSubgraphNode — agent-first', () => {
     }
   );
 
-  it('no corre shouldAskIntentConfirmation ni setea awaitingIntentConfirmation', async () => {
+  it('no plantea confirmación de intent: el híbrido desambigua en prosa', async () => {
     await nlpSubgraphNode(nlpState('hola'));
 
-    expect(shouldAskIntentConfirmation).not.toHaveBeenCalled();
+    // El menú "¿quisiste decir X o Y?" ya no existe como mecanismo (V-10):
+    // ni la señal en metadata ni el builder del mensaje.
     expect(patchConversationMetadata).not.toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ awaitingIntentConfirmation: true })

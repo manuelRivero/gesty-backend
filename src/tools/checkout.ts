@@ -424,7 +424,7 @@ export const markNameRefusedTool = new DynamicStructuredTool<
   func: async (_input: MarkNameRefusedInput, _runManager, config?: RunnableConfig) => {
     const { conversationId } = getReactContext(config);
     const next = await incrementRefusalCount(conversationId, 'OBTENER_NOMBRE');
-    return toJson({ name_refusal_count: next, refusalCount: next });
+    return toJson({ refusalCount: next });
   },
 });
 
@@ -455,7 +455,7 @@ export const markAddressRefusedTool = new DynamicStructuredTool<
   func: async (_input: MarkAddressRefusedInput, _runManager, config?: RunnableConfig) => {
     const { conversationId } = getReactContext(config);
     const next = await incrementRefusalCount(conversationId, 'OBTENER_DIRECCION');
-    return toJson({ address_refusal_count: next, refusalCount: next });
+    return toJson({ refusalCount: next });
   },
 });
 

@@ -21,7 +21,7 @@
 | ~~V-07~~ | ~~`COMPLETAR_PEDIDO` no existe (la continuidad no está representada)~~ | — | ✅ **Corregida** | — | — |
 | ~~V-08~~ | ~~Pending del checkout persistido (FSM en una fila)~~ | 0006 | ✅ **Corregida** | — | — |
 | ~~V-09~~ | ~~`awaiting_address` fusiona Ownership, Goal y Opportunity~~ | 0001 | ✅ **Corregida** | — | — |
-| **V-10** | Presupuesto de insistencia disperso en 6 encarnaciones | 0007 | 🟡 Media | Medio | **P2** |
+| ~~V-10~~ | ~~Presupuesto de insistencia disperso en 6 encarnaciones~~ | 0007 | ✅ **Corregida** | — | — |
 | ~~V-11~~ | ~~Limpieza de un Intent declarado dispersa en ~7 lugares~~ | 0005 | ✅ **Corregida** | — | — |
 | **V-12** | TTL de oferta que se guarda y nunca se lee | 0005 | 🟡 Media | Bajo | **P3** |
 | **V-13** | ~36 flags en el estado de conversación | 0005 | 🟡 Media | Alto | **P3** |
@@ -384,12 +384,14 @@ Un solo nombre para tres cosas distintas: el Ownership de captura por texto, el 
 
 ---
 
-### V-10 · Presupuesto de insistencia en 6 encarnaciones
+### ~~V-10~~ · Presupuesto de insistencia en 6 encarnaciones — ✅ **CORREGIDA**
 **Viola:** ADR-0007
 
 Contadores de rechazo (×2), banners ya mostrados, cooldowns de sugerencias (×3). **Seis implementaciones del mismo concepto: "¿cuántas veces ya lo dije?"** — cada una con su nombre, su formato y su limpieza.
 
 **Corrección:** una sola política, en el Ledger.
+
+**Cerrada (2026-08-30).** La política única es `computeCatalogPermission` sobre `intentLedger` (`maxSurfaces` + `cooldownMs` + `refusalCount`), y los banners/cooldowns ad-hoc se fueron con las Opportunities de catálogo (Fase C). Lo último eran los dos proxies de la raíz de metadata, `name_refusal_count` y `address_refusal_count`: ya nadie los leía desde el flip de la Fase B.1, pero las tools de rechazo seguían devolviendo el mismo número con dos nombres (`{ name_refusal_count: next, refusalCount: next }`). Se borraron los campos y la duplicación; `clearCaptureRefusalLedger` los sigue purgando por nombre para las conversaciones viejas.
 
 ---
 
@@ -423,7 +425,9 @@ El timestamp de la oferta se guarda; **nadie lo consume**. Una oferta de hace cu
 ### V-13 · ~36 flags en el estado de conversación
 La acumulación que esta arquitectura existe para revertir. **Meta: ≤ 9.** Se resuelve como consecuencia de las demás, no como tarea propia.
 
-**Progreso (2026-08-30):** −5 al cerrar V-09 y V-11 y el punto 11 del Bloque D — `awaiting_address`, `awaitingPartySize`, `awaitingPeopleCount`, `peopleCountResume` y `awaiting_name`. Ninguno se "migró": los cinco habían quedado sin escritor cuando el Goal o el Ownership equivalente tomó su lugar. Es la forma que toma esta violación cuando las demás se corrigen — los flags no se reducen, se quedan sin trabajo y hay que ir a buscarlos.
+**Progreso (2026-08-30):** de **53 a 44** claves de primer nivel en `ConversationMetadata`. −5 al cerrar V-09 y V-11 y el punto 11 del Bloque D — `awaiting_address`, `awaitingPartySize`, `awaitingPeopleCount`, `peopleCountResume` y `awaiting_name`. Ninguno se "migró": los cinco habían quedado sin escritor cuando el Goal o el Ownership equivalente tomó su lugar. Es la forma que toma esta violación cuando las demás se corrigen — los flags no se reducen, se quedan sin trabajo y hay que ir a buscarlos.
+
+Otros −4 al cerrar V-10 y barrer lo que quedaba de la misma especie: `awaitingIntentConfirmation` e `intentCandidates` (los botones "¿quisiste decir X o Y?", sin emisor desde NLP-agent-first) más los dos proxies de rechazo. **Faltan 35 para la meta de ≤ 9**, y no van a salir de barridos: salen de V-14 (el wizard de reservas se lleva `reservation`, `onboarding_step` y sus temporales) y de V-05.
 
 ### V-14 · Wizard legacy de reservas
 Ya marcado obsoleto. **Es la causa raíz de V-03.** Eliminarlo cierra la violación de la Invariante 1 de forma definitiva.
@@ -470,5 +474,7 @@ Tres números, sin ambigüedad, medibles hoy:
 | 2026-08-30 | **V-09, V-11** | Cerradas al verificar el Goal Engine contra el código: los dos flags ya no tenían escritor. `awaiting_address` murió con el wizard de onboarding (V-38) y `peopleCountResume`/`awaitingPartySize`/`awaitingPeopleCount` con el Goal `RECOLECTAR_PARTY_SIZE`. Se borraron los campos, sus limpiezas y cuatro funciones sin llamadores; el Goal `RETOMAR_TAREA_INTERRUMPIDA`, que derivaba del snapshot muerto, quedó declarado sin derivador. Ver `PLAN-ACCION-GOAL-ENGINE.md` (F.1 / E.3). |
 
 | 2026-08-30 | **V-13 (parcial)** | Bloque D punto 11: `awaiting_name` también estaba sin escritor, y con él el nodo `nameCollection` del grafo — leía `detection.customerName`, que es `null` fijo desde NLP-agent-first. Se borraron el flag, ese nodo, el no-op `addressCollection` que lo precedía, sus routers y `fulfillmentSelectionPending`, que quedaba sin lector. Pedir el nombre es Goal derivado (`OBTENER_NOMBRE`) de checkout y onboarding. |
+
+| 2026-08-30 | **V-10** | Cerrada con el mismo barrido: los dos proxies de rechazo de la raíz de metadata no tenían lector desde el flip B.1, y con ellos se fueron `awaitingIntentConfirmation` / `intentCandidates` y sus productores huérfanos — `shouldAskIntentConfirmation` y `buildIntentAmbiguityInteractiveMessage`, ambos sin llamadores desde NLP-agent-first. `payloadMapper` sigue aceptando `CONFIRM_INTENT:*` entrante. |
 
 > **Lección, y por qué esta tabla existe:** V-03 y V-04 entraron al registro copiadas de documentos de auditoría **que describían el sistema de hace tres semanas**. Ambas ya estaban arregladas. **Toda violación se verifica contra el código antes de entrar acá — un doc de bug no es evidencia, es historia.** Es, literalmente, el anti-patrón de la duplicación de fuentes de verdad (§12.5) aplicado a la documentación.

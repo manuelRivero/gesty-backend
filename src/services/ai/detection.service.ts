@@ -274,34 +274,11 @@ const RESCUE_THRESHOLD = 0.45;
 /** Diferencia mínima entre el 1.er y 2.º candidato para aceptar la intención sin confirmación. */
 export const MIN_MARGIN = 0.15;
 
-/**
- * Opción D: la ambigüedad sólo se evalúa cuando la decisión del sistema fue
- * explícitamente etiquetada como `uncertain`. Eso evita el bug histórico en el
- * que un intent `direct` con confianza alta (ej. RECOMMENDATION_REQUEST 0.85)
- * gatillaba una confirmación con candidatos irrelevantes.
- *
- * Reglas:
- *  - Si `resolutionSource` es `direct` / `rescued` / `unknown` ⇒ no preguntar.
- *  - Si es `uncertain` y existe `alternatives[0]`, se pregunta sólo cuando
- *    `confidence(final) − confidence(alternatives[0])` es menor a {@link MIN_MARGIN}.
- *  - Si no hay `alternatives`, no hay nada que ofrecer en los botones ⇒ no preguntar.
+/*
+ * Acá vivía `shouldAskIntentConfirmation`, que decidía si mostrar los botones
+ * "¿quisiste decir X o Y?". Quedó sin llamadores con NLP-agent-first: el
+ * híbrido desambigua preguntando en prosa, no con un menú de intents.
  */
-export function shouldAskIntentConfirmation(
-  detection: IntentDetectionResult
-): boolean {
-  if (detection.resolutionSource !== 'uncertain') {
-    return false;
-  }
-  const alts = detection.alternatives ?? [];
-  if (alts.length === 0) {
-    return false;
-  }
-  const margin = detection.rescueMargin;
-  if (margin == null) {
-    return false;
-  }
-  return margin < MIN_MARGIN;
-}
 
 /**
  * Decide el intent final + cómo se llegó a él, sin combinar con la noción de

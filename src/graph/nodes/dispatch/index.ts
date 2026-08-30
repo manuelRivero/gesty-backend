@@ -234,13 +234,6 @@ export const interactiveSubgraphNode = async (
   const enrichedBase = state.enrichedCtx as unknown as EnrichedContext;
   const conversation = state.conversation!;
 
-  if (ctx.payloadId?.startsWith('CONFIRM_INTENT:')) {
-    await omitConversationMetadataKeys(conversation.id, [
-      'awaitingIntentConfirmation',
-      'intentCandidates',
-    ]);
-  }
-
   // Fase 2: correlacionar click con el último CTA mostrado
   if (ctx.payloadId && enrichedBase.conversationState) {
     const meta = normalizeMetadata(enrichedBase.conversationState.metadata);
@@ -413,20 +406,6 @@ export const nlpSubgraphNode = async (
         })
       );
     }
-  }
-
-  if (
-    normalizeMetadata(workingConversationState?.metadata)
-      .awaitingIntentConfirmation &&
-    userMessage.trim()
-  ) {
-    await omitConversationMetadataKeys(conversation.id, [
-      'awaitingIntentConfirmation',
-      'intentCandidates',
-    ]);
-    workingConversationState = await findOrCreateConversationState(
-      conversation.id
-    );
   }
 
   const metaPre = normalizeMetadata(workingConversationState?.metadata);

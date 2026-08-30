@@ -151,10 +151,15 @@ export type ConversationMetadata = {
    * quedaron sin escritor — la "limpieza dispersa en ~7 lugares" que reportaba
    * la violación se resolvió borrando el concepto, no repartiéndolo mejor.
    */
-  /** El clasificador dudó entre intenciones; el usuario debe elegir un botón CONFIRM_INTENT. */
-  awaitingIntentConfirmation?: boolean;
-  /** Los dos candidatos principales mostrados al usuario (misma forma que en detection). */
-  intentCandidates?: Array<{ intent: ConversationIntent; confidence: number }>;
+  /*
+   * Acá vivían `awaitingIntentConfirmation` e `intentCandidates`: los botones
+   * "¿quisiste decir X o Y?" del clasificador previo al agente. NLP-agent-first
+   * los dejó sin emisor —el híbrido desambigua preguntando en prosa— y con
+   * ellos quedaron sin llamadores `shouldAskIntentConfirmation` y el builder
+   * del mensaje de ambigüedad. `payloadMapper` sigue aceptando
+   * `CONFIRM_INTENT:*` entrante por los botones que ya están en el teléfono
+   * del cliente.
+   */
 
   // --- CTA híbrido ---
 
@@ -257,17 +262,13 @@ export type ConversationMetadata = {
    */
   checkout_active?: boolean;
 
-  /**
-   * @deprecated Fase B.1 — vive en `intentLedger.OBTENER_NOMBRE.refusalCount`.
-   * Se limpia al leer/escribir vía `intentRefusal.service`.
+  /*
+   * `name_refusal_count` / `address_refusal_count` se borraron (V-10): los
+   * contadores viven en `intentLedger.OBTENER_NOMBRE|OBTENER_DIRECCION
+   * .refusalCount` desde el flip de la Fase B.1 y nadie leía ya los proxies de
+   * la raíz. `clearCaptureRefusalLedger` sigue purgándolos por nombre para
+   * vaciar la metadata vieja.
    */
-  name_refusal_count?: number;
-
-  /**
-   * @deprecated Fase B.1 — vive en `intentLedger.OBTENER_DIRECCION.refusalCount`.
-   * Se limpia al leer/escribir vía `intentRefusal.service`.
-   */
-  address_refusal_count?: number;
 
   /**
    * `true` mientras el cliente tiene una sesión activa del agente de reservas.
