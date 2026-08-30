@@ -41,6 +41,7 @@ import { emitAdminReservationEditStarted } from '../../socket/adminSocket';
 import { generateReservationQR } from '../../utils/reservationQr';
 import type { FindTableInput, FindTableResult, ReservationState } from './types';
 import { wantsReservationManagement } from './reservationIntentText';
+import { reservationNow } from './clock';
 import {
   buildDateTime,
   filterSlotsByTurnLead,
@@ -466,7 +467,7 @@ export const handleReservationIntent = async (
 
   if (ctx.payloadId === 'RESERVATION_CANCEL') {
     if (!reservation && ctx.customer?.id) {
-      const now = new Date();
+      const now = reservationNow();
       now.setHours(0, 0, 0, 0);
       const activeReservation =
         await findFutureOccupyingReservationForCustomerOrdered(
@@ -504,7 +505,7 @@ export const handleReservationIntent = async (
 
   if (!reservation) {
     if (ctx.customer?.id) {
-      const today = new Date();
+      const today = reservationNow();
       today.setHours(0, 0, 0, 0);
       const activeReservation = await findAnyFutureOccupyingReservationForCustomer(
         ctx.customer.id,
@@ -533,7 +534,7 @@ export const handleReservationIntent = async (
       }
       try {
         const parsedDate = normalizeDate(messageText);
-        const today = new Date();
+        const today = reservationNow();
         today.setHours(0, 0, 0, 0);
         const selected = new Date(parsedDate);
         selected.setHours(0, 0, 0, 0);
@@ -564,7 +565,7 @@ export const handleReservationIntent = async (
         );
       }
       const date = normalizeDate(messageText);
-      const now = new Date();
+      const now = reservationNow();
       const slots = await getReservationSlotsForBusinessDate(
         ctx.business.id,
         date
@@ -602,7 +603,7 @@ export const handleReservationIntent = async (
       }
       if (!ctx.payloadId?.startsWith('RESERVATION_SLOT:')) {
         const date = normalizeDate(reservation.date);
-        const now = new Date();
+        const now = reservationNow();
         const slots = await getReservationSlotsForBusinessDate(
           ctx.business.id,
           date

@@ -22,6 +22,16 @@ import {
   findReservationBlockAtStart,
 } from '../repositories/reservation.repository';
 import { buildDateTime, normalizeDate } from '../services/reservations/utils';
+import {
+  DAY_NAMES_ES,
+  formatDMY,
+  nextDateForWeekday,
+  reservationToday,
+  startOfDay,
+  weekdayNameEs,
+  type WeekdayEs,
+} from '../services/reservations/clock';
+import { RESERVATION_MAX_DAYS_AHEAD } from '../constants/reservation';
 import { patchReservationDraft } from '../services/reservations/draft.repository';
 import { getBusinessConfig } from '../services/businessConfig.service';
 import { prisma } from '../lib/prisma';
@@ -34,23 +44,71 @@ import type { RunnableConfig } from '@langchain/core/runnables';
 const toJson = (data: unknown): string => JSON.stringify(data);
 
 /**
- * Gate en el borde (D7/R-G): formato DD/MM/AAAA válido y no en el pasado.
- * El prompt ya le pedía esto al modelo; acá se garantiza aunque lo ignore.
+ * Gate en el borde (D7/R-G) — la única garantía sobre la fecha.
+ *
+ * Quien interpreta el texto del cliente es el agente, en cualquier idioma y
+ * con cualquier expresión ("el finde", "para Navidad"). Acá no se parsea
+ * lenguaje: se verifica el resultado. Cuatro chequeos, todos deterministas y
+ * contra el reloj único (`clock.ts`):
+ *
+ *  - formato `DD/MM/AAAA` real (31/02 no existe),
+ *  - no está en el pasado,
+ *  - no está más allá del horizonte de reservas,
+ *  - si el cliente nombró un día de la semana y el agente lo declaró, la
+ *    fecha calculada cae efectivamente en ese día.
+ *
+ * El cuarto es el que ataja el error clásico de las fechas relativas —
+ * "el viernes" resuelto con una semana de corrimiento —: el día lo dijo el
+ * cliente, la fecha la derivó el modelo, y el calendario decide quién tiene
+ * razón. Por eso `weekday` es opcional: cuando el cliente da una fecha
+ * explícita ("24/12"), el día de la semana es derivado y no hay nada que
+ * cruzar.
  */
+type DateGateFailure =
+  | { ok: false; error: 'invalid_date' | 'past_date' }
+  | { ok: false; error: 'too_far'; maxDate: string }
+  | {
+      ok: false;
+      error: 'weekday_mismatch';
+      declaredWeekday: WeekdayEs;
+      actualWeekday: WeekdayEs;
+      suggestedDate: string;
+    };
+
 function validateReservationDateGate(
-  date: string
-): { ok: true } | { ok: false; error: 'invalid_date' | 'past_date' } {
+  date: string,
+  weekday?: WeekdayEs
+): { ok: true } | DateGateFailure {
   let parsed: Date;
   try {
-    parsed = normalizeDate(date);
+    parsed = startOfDay(normalizeDate(date));
   } catch {
     return { ok: false, error: 'invalid_date' };
   }
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  if (parsed < today) {
+
+  if (parsed < reservationToday()) {
     return { ok: false, error: 'past_date' };
   }
+
+  const horizon = reservationToday();
+  horizon.setDate(horizon.getDate() + RESERVATION_MAX_DAYS_AHEAD);
+  if (parsed > horizon) {
+    return { ok: false, error: 'too_far', maxDate: formatDMY(horizon) };
+  }
+
+  if (weekday) {
+    const actualWeekday = weekdayNameEs(parsed);
+    if (actualWeekday !== weekday) {
+      return {
+        ok: false,
+        error: 'weekday_mismatch',
+        declaredWeekday: weekday,
+        actualWeekday,
+        suggestedDate: formatDMY(nextDateForWeekday(weekday)),
+      };
+    }
+  }
+
   return { ok: true };
 }
 
@@ -67,7 +125,18 @@ async function getMaxCombinablePartySize(businessId: string): Promise<number> {
 const saveReservationDateSchema = z.object({
   date: z
     .string()
-    .describe('Fecha ya resuelta en formato DD/MM/AAAA. Debe venir de resolve_date.'),
+    .describe(
+      'Fecha en formato DD/MM/AAAA, ya resuelta por vos a partir de lo que dijo el cliente ' +
+        'y de la fecha actual del [ESTADO DE LA RESERVA].'
+    ),
+  weekday: z
+    .enum(DAY_NAMES_ES)
+    .optional()
+    .describe(
+      'Día de la semana que NOMBRÓ el cliente ("el viernes", "el jueves que viene"). ' +
+        'Sirve para que el sistema verifique tu cálculo. Omitilo si el cliente no nombró ' +
+        'un día (dio una fecha explícita como "24/12", dijo "mañana", "el 15", etc.).'
+    ),
 });
 type SaveReservationDateInput = z.infer<typeof saveReservationDateSchema>;
 
@@ -78,14 +147,22 @@ export const saveReservationDateTool = new DynamicStructuredTool<
   name: 'save_reservation_date',
   description:
     'Persiste la fecha de la reserva (formato DD/MM/AAAA) en el borrador, sin perder horario/personas/ambiente ya cargados. ' +
-    'Preferí resolve_date para obtenerla, pero si devuelve null y ya la resolviste vos mismo con el contexto (fecha actual del ledger), llamá esta tool directo con DD/MM/AAAA. ' +
-    'Devuelve { saved: false, error: "invalid_date" | "past_date" } si el formato es inválido o la fecha ya pasó.',
+    'Interpretá vos lo que dijo el cliente ("el finde", "el jueves que viene a la noche", "para Navidad") ' +
+    'usando la fecha actual del [ESTADO DE LA RESERVA], y pasá el resultado ya en DD/MM/AAAA. ' +
+    'Si el cliente nombró un día de la semana, pasalo en weekday y el sistema verifica tu cálculo. ' +
+    'Devuelve { saved: false, error: "invalid_date" | "past_date" | "too_far" | "weekday_mismatch" }; ' +
+    'en weekday_mismatch te devuelve el día real de esa fecha y la fecha correcta sugerida.',
   schema: saveReservationDateSchema,
-  func: async ({ date }: SaveReservationDateInput, _runManager, config?: RunnableConfig) => {
+  func: async (
+    { date, weekday }: SaveReservationDateInput,
+    _runManager,
+    config?: RunnableConfig
+  ) => {
     const { conversationId } = getReactContext(config);
-    const gate = validateReservationDateGate(date);
+    const gate = validateReservationDateGate(date, weekday);
     if (!gate.ok) {
-      return toJson({ saved: false, error: gate.error });
+      const { ok: _ok, ...failure } = gate;
+      return toJson({ saved: false, ...failure });
     }
     // Merge con el draft existente (P0.1/D1): nunca pisar slotId/partySize/environmentId.
     await patchReservationDraft(conversationId, { date });
@@ -159,136 +236,6 @@ export const saveReservationEnvironmentTool = new DynamicStructuredTool<
 });
 
 // ---------------------------------------------------------------------------
-// CONSULTA: resolve_date
-// ---------------------------------------------------------------------------
-
-const resolveDateSchema = z.object({
-  text: z
-    .string()
-    .describe(
-      'Texto libre del cliente con la fecha. Ej: "el próximo viernes", "pasado mañana", "el 15", "23/07".'
-    ),
-  currentDate: z
-    .string()
-    .describe('Fecha actual en formato DD/MM/AAAA (inyectada por el contexto).'),
-});
-
-/**
- * Convierte texto libre de fecha a DD/MM/AAAA usando lógica de calendario.
- * Soporta expresiones relativas (próximo viernes, pasado mañana, etc.) y
- * formatos parciales (DD/MM → completa el año actual).
- */
-const resolveDateSchemaTyped = resolveDateSchema;
-type ResolveDateInput = z.infer<typeof resolveDateSchemaTyped>;
-
-export const resolveDateTool = new DynamicStructuredTool<
-  typeof resolveDateSchemaTyped,
-  ResolveDateInput
->({
-  name: 'resolve_date',
-  description:
-    'Convierte un texto libre con una fecha ("el próximo viernes", "el 15", "23/07") ' +
-    'al formato DD/MM/AAAA usando la fecha actual como referencia. ' +
-    'Siempre llamar antes de get_available_slots. ' +
-    'Devuelve { date: "DD/MM/AAAA" } o { date: null, error: "..." } si no puede resolver.',
-  schema: resolveDateSchemaTyped,
-  func: async ({ text, currentDate }: ResolveDateInput, _runManager, config?: RunnableConfig) => {
-    getReactContext(config); // validar contexto
-    try {
-      const resolved = resolveDateText(text, currentDate);
-      if (!resolved) {
-        return toJson({ date: null, error: 'No pude interpretar la fecha.' });
-      }
-      return toJson({ date: resolved });
-    } catch {
-      return toJson({ date: null, error: 'Error al resolver la fecha.' });
-    }
-  },
-});
-
-/**
- * Lógica de resolución de fechas en texto libre.
- * Soporta: DD/MM, DD/MM/AAAA, "hoy", "mañana", "pasado mañana",
- * "próximo {día}", "el {día}" con referencia a currentDate.
- */
-function resolveDateText(text: string, currentDate: string): string | null {
-  const t = text.trim().toLowerCase();
-
-  // Parsear fecha actual
-  const [cd, cm, cy] = currentDate.split('/').map(Number);
-  if (!cd || !cm || !cy) return null;
-  const now = new Date(cy, cm - 1, cd);
-
-  // Formato DD/MM/AAAA o DD/MM
-  const fullMatch = t.match(/^(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{4}))?$/);
-  if (fullMatch) {
-    const d = parseInt(fullMatch[1], 10);
-    const m = parseInt(fullMatch[2], 10);
-    const y = fullMatch[3] ? parseInt(fullMatch[3], 10) : now.getFullYear();
-    const candidate = new Date(y, m - 1, d);
-    // Si la fecha ya pasó este año, usar el próximo
-    if (candidate < now && !fullMatch[3]) {
-      candidate.setFullYear(y + 1);
-    }
-    return formatDMY(candidate);
-  }
-
-  if (t === 'hoy') return formatDMY(now);
-
-  if (t === 'mañana') {
-    const d = new Date(now);
-    d.setDate(d.getDate() + 1);
-    return formatDMY(d);
-  }
-
-  if (t === 'pasado mañana' || t === 'pasado manana') {
-    const d = new Date(now);
-    d.setDate(d.getDate() + 2);
-    return formatDMY(d);
-  }
-
-  // "próximo lunes", "el viernes", "este sábado", etc.
-  const DAY_NAMES: Record<string, number> = {
-    domingo: 0, lunes: 1, martes: 2, miércoles: 3, miercoles: 3,
-    jueves: 4, viernes: 5, sábado: 6, sabado: 6,
-  };
-  const dayMatch = t.match(
-    /(?:próximo|proximo|el|este|el próximo|el proximo)?\s*(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)/
-  );
-  if (dayMatch) {
-    const targetDay = DAY_NAMES[dayMatch[1]];
-    if (targetDay !== undefined) {
-      const d = new Date(now);
-      const currentDay = d.getDay();
-      let diff = targetDay - currentDay;
-      if (diff <= 0) diff += 7;
-      d.setDate(d.getDate() + diff);
-      return formatDMY(d);
-    }
-  }
-
-  // "el 15", "el día 15"
-  const dayOnlyMatch = t.match(/(?:el\s+)?(?:d[ií]a\s+)?(\d{1,2})$/);
-  if (dayOnlyMatch) {
-    const day = parseInt(dayOnlyMatch[1], 10);
-    const candidate = new Date(now.getFullYear(), now.getMonth(), day);
-    if (candidate < now) {
-      candidate.setMonth(candidate.getMonth() + 1);
-    }
-    return formatDMY(candidate);
-  }
-
-  return null;
-}
-
-function formatDMY(d: Date): string {
-  const day = String(d.getDate()).padStart(2, '0');
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const year = d.getFullYear();
-  return `${day}/${month}/${year}`;
-}
-
-// ---------------------------------------------------------------------------
 // CONSULTA: get_active_reservation
 // ---------------------------------------------------------------------------
 
@@ -306,8 +253,7 @@ export const getActiveReservationTool = new DynamicStructuredTool<
   schema: getActiveReservationSchema,
   func: async (_input: GetActiveReservationInput, _runManager, config?: RunnableConfig) => {
     const { customerId, businessId } = getReactContext(config);
-    const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfToday = reservationToday();
     const reservation = await findAnyFutureOccupyingReservationForCustomer(
       customerId,
       startOfToday
@@ -456,7 +402,7 @@ export const getAvailableSlotsTool = new DynamicStructuredTool<
   description:
     'Muestra al cliente la lista de horarios disponibles para la fecha indicada. ' +
     'NUNCA listes los horarios en texto: siempre llamá esta tool. ' +
-    'Solo llamar después de haber resuelto la fecha con resolve_date.',
+    'Solo llamar cuando la fecha ya está guardada en el borrador.',
   schema: getAvailableSlotsSchema,
   func: async ({ date }: GetAvailableSlotsInput, _runManager, config?: RunnableConfig) => {
     getReactContext(config); // validar contexto
@@ -736,7 +682,6 @@ export const allReservationTools = [
   saveReservationDateTool,
   saveReservationPartySizeTool,
   saveReservationEnvironmentTool,
-  resolveDateTool,
   getActiveReservationTool,
   checkAvailabilityTool,
   getAvailableSlotsTool,

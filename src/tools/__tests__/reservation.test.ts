@@ -1,12 +1,13 @@
 /**
  * Gates de las tools de escritura de reservas (P0.3/D7):
- *  - save_reservation_date rechaza formato inválido y fechas pasadas.
+ *  - save_reservation_date rechaza formato inválido, fechas pasadas, fechas
+ *    fuera del horizonte y fechas que no caen en el día que el cliente nombró.
  *  - save_reservation_party_size rechaza cantidades por encima de la
  *    capacidad combinable del negocio.
  *  - resolve_reservation_confirmation es una señal pura (D3).
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../../lib/prisma', () => ({
   prisma: {
@@ -92,6 +93,63 @@ describe('save_reservation_date — gate (D7/R-G)', () => {
     expect(mockedPatch).toHaveBeenCalledWith('conv-1', {
       reservation_draft: { partySize: 4, date: dateStr },
     });
+  });
+});
+
+/**
+ * El gate no interpreta lenguaje: verifica el resultado que trajo el agente.
+ * Reloj fijo en domingo 30/08/2026 — jueves = 03/09, viernes = 04/09.
+ */
+describe('save_reservation_date — cruce con el día declarado', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 30, 12, 0, 0));
+    mockedFindFirst.mockResolvedValue({ metadata: { reservation_draft: { partySize: 4 } } });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('rechaza la fecha si no cae en el día que el cliente nombró, y sugiere la correcta', async () => {
+    const raw = await saveReservationDateTool.func(
+      { date: '03/09/2026', weekday: 'viernes' },
+      undefined,
+      CONFIG
+    );
+    expect(JSON.parse(raw)).toEqual({
+      saved: false,
+      error: 'weekday_mismatch',
+      declaredWeekday: 'viernes',
+      actualWeekday: 'jueves',
+      suggestedDate: '04/09/2026',
+    });
+    expect(mockedPatch).not.toHaveBeenCalled();
+  });
+
+  it('persiste cuando la fecha sí cae en el día declarado', async () => {
+    const raw = await saveReservationDateTool.func(
+      { date: '04/09/2026', weekday: 'viernes' },
+      undefined,
+      CONFIG
+    );
+    expect(JSON.parse(raw)).toEqual({ saved: true, date: '04/09/2026' });
+    expect(mockedPatch).toHaveBeenCalled();
+  });
+
+  it('sin weekday no cruza nada: una fecha explícita del cliente se guarda igual', async () => {
+    const raw = await saveReservationDateTool.func({ date: '03/09/2026' }, undefined, CONFIG);
+    expect(JSON.parse(raw)).toEqual({ saved: true, date: '03/09/2026' });
+  });
+
+  it('rechaza una fecha más allá del horizonte de reservas', async () => {
+    const raw = await saveReservationDateTool.func({ date: '30/08/2028' }, undefined, CONFIG);
+    const parsed = JSON.parse(raw) as { saved: boolean; error?: string; maxDate?: string };
+    expect(parsed.saved).toBe(false);
+    expect(parsed.error).toBe('too_far');
+    expect(parsed.maxDate).toBe('30/08/2027');
+    expect(mockedPatch).not.toHaveBeenCalled();
   });
 });
 

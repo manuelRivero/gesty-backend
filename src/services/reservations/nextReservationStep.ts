@@ -51,7 +51,7 @@ export function nextReservationStep(
 export const expectedActionForReservationStep = (step: ReservationStep): string => {
   switch (step) {
     case 'date':
-      return 'pedir fecha en prosa; resolve_date + save_reservation_date cuando la indique';
+      return 'pedir fecha en prosa; resolverla vos y llamar save_reservation_date(date, weekday?) cuando la indique';
     case 'slot':
       return 'get_available_slots(date) para mostrar horarios';
     case 'party_size':

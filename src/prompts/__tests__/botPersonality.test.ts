@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BOT_PERSONALITY_PROMPT,
+  buildReservationAgentSystemPrompt,
   buildComplementarySuggestionSystemPrompt,
   buildHumanizeSystemPrompt,
   buildHybridAgentSystemPrompt,
@@ -105,6 +106,18 @@ describe('botPersonality', () => {
     expect(hybrid).toMatch(/Pregunta de atributo/i);
     expect(hybrid).toMatch(/NOMBRA un candidato/i);
     expect(hybrid).toMatch(/get_products_details_by_ids/i);
+  });
+
+  it('reservas: la fecha la interpreta el agente, sin parser intermedio', () => {
+    const reservation = buildReservationAgentSystemPrompt();
+
+    expect(reservation).toMatch(/LA FECHA LA INTERPRETÁS VOS/);
+    expect(reservation).toMatch(/save_reservation_date\(date, weekday\?\)/);
+    // La tool que parseaba español ya no existe: ninguna mención puede quedar,
+    // ni como atajo ni como paso obligatorio.
+    expect(reservation).not.toMatch(/resolve_date/);
+    // Y la instrucción que contradecía la regla dura tampoco vuelve.
+    expect(reservation).not.toMatch(/pedí que reformule\.$/m);
   });
 
   it('complementary prompt pide intro corta sin listar platos', () => {

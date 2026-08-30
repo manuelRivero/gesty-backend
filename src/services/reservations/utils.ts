@@ -1,4 +1,5 @@
 import { fetchReservationSlotsForBusinessDate } from '../../repositories/reservation.repository';
+import { reservationNow } from './clock';
 import type {
   EnvironmentPreferenceRow,
   ReservationSlot,
@@ -86,7 +87,7 @@ export function normalizeDate(dateStr: string): Date {
   const month = Number(parts[1]) - 1;
 
   const year =
-    parts[2] !== undefined ? Number(parts[2]) : new Date().getFullYear();
+    parts[2] !== undefined ? Number(parts[2]) : reservationNow().getFullYear();
 
   const date = new Date(year, month, day);
 
@@ -166,7 +167,7 @@ export async function getFirstAvailableTimeForDate(
 export async function getNextDateExample(
   businessId: string
 ): Promise<string> {
-  const now = new Date();
+  const now = reservationNow();
   for (let offset = 0; offset < 30; offset += 1) {
     const date = new Date(now);
     date.setHours(0, 0, 0, 0);

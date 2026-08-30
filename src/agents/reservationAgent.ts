@@ -13,7 +13,9 @@
  *  - `delegate_to_main` NO limpia `reservation_agent_active`; el nodo llama
  *    `runHybridReactAgent` inline y la sesión continúa en el turno siguiente.
  *  - Múltiples señales de UI: slots, ambientes, confirmación.
- *  - Tool `resolve_date` para parsear fechas en lenguaje natural.
+ *  - La fecha la interpreta el propio agente (cualquier idioma, cualquier
+ *    expresión) y la verifica el gate de `save_reservation_date` contra el
+ *    reloj único de `services/reservations/clock.ts`.
  */
 
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
@@ -26,6 +28,7 @@ import { allReservationTools } from '../tools/reservation';
 import type { EnrichedContext } from '../controllers/webhook/types';
 import { formatBotUserMessage } from '../services/productQuery/utils';
 import { readReservationDraft } from '../services/reservations/draft.repository';
+import { currentDateLabel } from '../services/reservations/clock';
 import {
   nextReservationStep,
   expectedActionForReservationStep,
@@ -154,8 +157,6 @@ export interface ReservationAgentContext {
   skipPendingExtraction?: boolean;
 }
 
-const DAY_NAMES_ES = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
-
 /**
  * P0.2 (R-B): lectura fresca desde la DB, no `ctx.conversationState?.metadata`
  * (snapshot previo al turno). Sin esto, un payload `RESERVATION_SLOT:x`
@@ -169,13 +170,9 @@ const buildReservationContextMessage = async (
   const customerName = (ctx.customer as { name?: string | null })?.name?.trim() || null;
   const conversationId = ctx.conversationId ?? '';
 
-  // Fecha actual con día de semana
-  const now = new Date();
-  const dayName = DAY_NAMES_ES[now.getDay()];
-  const dd = String(now.getDate()).padStart(2, '0');
-  const mm = String(now.getMonth() + 1).padStart(2, '0');
-  const yyyy = now.getFullYear();
-  const currentDateLabel = `${dd}/${mm}/${yyyy} (${dayName})`;
+  // Fecha actual con día de semana — mismo reloj que el gate de la tool, para
+  // que lo que el modelo lee acá y lo que el borde valida no puedan diferir.
+  const dateLine = currentDateLabel();
 
   const draft = conversationId ? await readReservationDraft(conversationId) : {};
 
@@ -212,7 +209,7 @@ const buildReservationContextMessage = async (
 
   const lines = [
     `[ESTADO DE LA RESERVA]`,
-    `- Fecha actual: ${currentDateLabel}`,
+    `- Fecha actual: ${dateLine}`,
     `- Fecha elegida: ${dateLabel}`,
     `- Horario: ${slotLabel}`,
     `- Personas: ${partySizeLabel}`,
