@@ -124,6 +124,13 @@ import {
   resolvePromotionEntitiesHandler
 } from "../controllers/adminPromotions.controller";
 import { promotionAudioUploadMiddleware } from "../middleware/audioUpload.middleware";
+import {
+  getBusinessUserById,
+  getBusinessUsers,
+  patchBusinessUser,
+  postBusinessUser,
+  removeBusinessUser
+} from "../controllers/adminBusinessUsers.controller";
 
 const router = Router();
 
@@ -373,6 +380,24 @@ router.delete(
   "/payment-method-configs/:id",
   requireRoles("OWNER", "ADMIN"),
   removePaymentMethodConfig
+);
+
+router.get("/business-users", requireRoles("OWNER", "ADMIN"), getBusinessUsers);
+router.get(
+  "/business-users/:id",
+  requireRoles("OWNER", "ADMIN"),
+  getBusinessUserById
+);
+router.post("/business-users", requireRoles("OWNER", "ADMIN"), postBusinessUser);
+router.patch(
+  "/business-users/:id",
+  requireRoles("OWNER", "ADMIN"),
+  patchBusinessUser
+);
+router.delete(
+  "/business-users/:id",
+  requireRoles("OWNER", "ADMIN"),
+  removeBusinessUser
 );
 
 // Announcements inbox (business)
