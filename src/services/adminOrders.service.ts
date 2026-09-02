@@ -1,8 +1,9 @@
-import { OrderPaymentStatus, OrderStatus, type Prisma } from "@prisma/client";
+import { FulfillmentType, OrderPaymentStatus, OrderStatus, type Prisma } from "@prisma/client";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc";
 import type { AdminPatchableOrderStatus } from "../constants/orderWorkflow";
 import { prisma } from "../lib/prisma";
+import type { BusinessUserRole } from "../types/auth";
 import { notifyCustomerOrderStatusFromAdmin } from "./orderStatusNotification.service";
 import {
   emitAdminOrderPaymentStatusChanged,
@@ -32,6 +33,17 @@ const ORDER_INCLUDE = {
   customer: true,
   currency: true,
   customer_address: true,
+  assigned_delivery_user: {
+    select: {
+      id: true,
+      app_user: {
+        select: {
+          email: true,
+          name: true
+        }
+      }
+    }
+  },
   conversation: {
     select: {
       id: true,
@@ -81,7 +93,49 @@ export type ListAdminOrdersParams = {
   dateFrom?: string;
   dateTo?: string;
   customerPhone?: string;
+  fulfillmentType?: FulfillmentType;
+  assignment?: "all" | "assigned" | "unassigned";
+  assignedDeliveryUserId?: string;
+  actorRole?: BusinessUserRole;
+  actorBusinessUserId?: string;
 };
+
+function applyDeliveryAssignmentFilters(
+  where: Prisma.ordersWhereInput,
+  params: Pick<
+    ListAdminOrdersParams,
+    | "actorRole"
+    | "actorBusinessUserId"
+    | "fulfillmentType"
+    | "assignment"
+    | "assignedDeliveryUserId"
+  >
+): void {
+  if (params.actorRole === "DELIVERY") {
+    where.fulfillment_type = FulfillmentType.DELIVERY;
+    if (params.actorBusinessUserId) {
+      where.assigned_delivery_user_id = params.actorBusinessUserId;
+    } else {
+      where.id = { in: [] };
+    }
+    return;
+  }
+
+  if (params.fulfillmentType) {
+    where.fulfillment_type = params.fulfillmentType;
+  }
+
+  if (params.assignedDeliveryUserId) {
+    where.assigned_delivery_user_id = params.assignedDeliveryUserId;
+    return;
+  }
+
+  if (params.assignment === "assigned") {
+    where.assigned_delivery_user_id = { not: null };
+  } else if (params.assignment === "unassigned") {
+    where.assigned_delivery_user_id = null;
+  }
+}
 
 export async function listAdminOrders(params: ListAdminOrdersParams) {
   const {
@@ -91,12 +145,25 @@ export async function listAdminOrders(params: ListAdminOrdersParams) {
     orderId,
     dateFrom,
     dateTo,
-    customerPhone
+    customerPhone,
+    fulfillmentType,
+    assignment,
+    assignedDeliveryUserId,
+    actorRole,
+    actorBusinessUserId
   } = params;
 
   const where: Prisma.ordersWhereInput = {
     business_id: businessId
   };
+
+  applyDeliveryAssignmentFilters(where, {
+    actorRole,
+    actorBusinessUserId,
+    fulfillmentType,
+    assignment,
+    assignedDeliveryUserId
+  });
 
   if (orderId) {
     where.id = orderId;

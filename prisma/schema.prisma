@@ -59,14 +59,15 @@ model business {
 }
 
 model business_user {
-  id           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id      String         @db.Uuid
-  business_id  String?        @db.Uuid
-  role         String
-  created_at   DateTime?      @default(now()) @db.Timestamptz(6)
-  business     business?      @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_business")
-  app_user     AppUser        @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_user")
-  user_session user_session[]
+  id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id         String         @db.Uuid
+  business_id     String?        @db.Uuid
+  role            String
+  created_at      DateTime?      @default(now()) @db.Timestamptz(6)
+  business        business?      @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_business")
+  app_user        AppUser        @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_user")
+  user_session    user_session[]
+  assigned_orders orders[]       @relation("OrderAssignedDelivery")
 
   @@unique([user_id, business_id], map: "unique_user_business")
 }
@@ -259,24 +260,24 @@ model menu_item {
 /// `offer` de la promoción viva: sin snapshot, la historia financiera mutaría
 /// cuando el dueño edita la promo meses después.
 model order_promotion {
-  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  order_id        String    @db.Uuid
+  id              String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  order_id        String     @db.Uuid
   /// FK informativa: la promo puede editarse o archivarse después.
-  promotion_id    String?   @db.Uuid
+  promotion_id    String?    @db.Uuid
   name_snapshot   String
   offer_snapshot  Json
   benefit_type    String
   /// order_discount | free_item | free_shipping
   applied_as      String
-  discount_amount Decimal   @default(0) @db.Decimal(12, 2)
-  saving_value    Decimal   @default(0) @db.Decimal(12, 2)
-  evaluated_at    DateTime  @default(now()) @db.Timestamptz(6)
-  created_at      DateTime  @default(now()) @db.Timestamptz(6)
-  orders          orders    @relation(fields: [order_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  promotion       promotion? @relation(fields: [promotion_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  discount_amount Decimal    @default(0) @db.Decimal(12, 2)
+  saving_value    Decimal    @default(0) @db.Decimal(12, 2)
+  evaluated_at    DateTime   @default(now()) @db.Timestamptz(6)
+  created_at      DateTime   @default(now()) @db.Timestamptz(6)
+  orders          orders     @relation(fields: [order_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  promotion       promotion? @relation(fields: [promotion_id], references: [id], onUpdate: NoAction)
 
-  @@index([order_id])
-  @@index([promotion_id])
+  @@index([order_id], map: "idx_order_promotion_order")
+  @@index([promotion_id], map: "idx_order_promotion_promotion")
 }
 
 model promotion {
@@ -299,12 +300,12 @@ model promotion {
   created_by   String?             @db.Uuid
   created_at   DateTime            @default(now()) @db.Timestamptz(6)
   updated_at   DateTime            @default(now()) @updatedAt @db.Timestamptz(6)
+  orders       order_promotion[]
   business     business            @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   products     promotion_product[]
-  orders       order_promotion[]
 
-  @@index([business_id, status])
-  @@index([business_id, created_at])
+  @@index([business_id, created_at(sort: Desc)], map: "idx_promotion_business_created")
+  @@index([business_id, status], map: "idx_promotion_business_status")
 }
 
 /// Vínculo confirmado por el dueño entre un nombre que dijo ("papas fritas") y
@@ -325,8 +326,8 @@ model promotion_product {
   promotion    promotion @relation(fields: [promotion_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([promotion_id, offer_path, menu_item_id], map: "uq_promotion_product_path_item")
-  @@index([promotion_id])
-  @@index([menu_item_id])
+  @@index([menu_item_id], map: "idx_promotion_product_menu_item")
+  @@index([promotion_id], map: "idx_promotion_product_promotion")
 }
 
 model business_hours {
@@ -403,10 +404,13 @@ model orders {
   ambassador_notified_at    DateTime?          @db.Timestamptz(6)
   ambassador_notify_result  Json?
   /// Descuento promocional congelado al crear la orden (D3). Lo consume el pricing.
-  promotion_discount        Decimal?           @db.Decimal(12, 2)
-  order_item                order_item[]
-  order_promotion           order_promotion[]
-  business                  business           @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  promotion_discount          Decimal?           @db.Decimal(12, 2)
+  /// Repartidor asignado (membresía business_user con rol DELIVERY).
+  assigned_delivery_user_id   String?            @db.Uuid
+  order_item                  order_item[]
+  order_promotion             order_promotion[]
+  assigned_delivery_user      business_user?     @relation("OrderAssignedDelivery", fields: [assigned_delivery_user_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  business                    business           @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   conversation              conversation?      @relation(fields: [conversation_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   currency                  currency           @relation(fields: [currency_code], references: [code], onDelete: NoAction, onUpdate: NoAction)
   customer_address          customer_address?  @relation(fields: [customer_address_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -415,6 +419,8 @@ model orders {
   payment_proof             payment_proof[]
 
   @@index([customer_address_id], map: "idx_orders_customer_address")
+  @@index([assigned_delivery_user_id], map: "idx_orders_assigned_delivery_user")
+  @@index([business_id], map: "idx_orders_ambassador_pending", where: raw("((ambassador_public_code IS NOT NULL) AND (ambassador_notified_at IS NULL))"))
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -617,9 +623,9 @@ model reservation_config {
 model AppUser {
   id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email         String          @unique
-  name          String?         @db.VarChar(120)
   password_hash String
   created_at    DateTime?       @default(now()) @db.Timestamptz(6)
+  name          String?         @db.VarChar(120)
   business_user business_user[]
   user_session  user_session[]
 
@@ -744,12 +750,12 @@ model payment_intent {
   status              String      @default("pending")
   amount              Decimal     @db.Decimal(12, 2)
   currency            String      @db.Char(3)
-  /// Evaluación de promociones congelada al emitir el link (R2). El webhook la
-  /// reusa: el cliente ya pagó ese monto y no hay turno donde re-confirmar.
-  promotion_snapshot  Json?
   raw_webhook_payload Json?
   created_at          DateTime    @default(now()) @db.Timestamptz(6)
   updated_at          DateTime    @default(now()) @db.Timestamptz(6)
+  /// Evaluación de promociones congelada al emitir el link (R2). El webhook la
+  /// reusa: el cliente ya pagó ese monto y no hay turno donde re-confirmar.
+  promotion_snapshot  Json?
   business            business    @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   draft_order         draft_order @relation(fields: [draft_order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   orders              orders?     @relation(fields: [order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -799,17 +805,17 @@ model payment_method_config {
   adjustment_value Decimal  @db.Decimal(10, 2)
   is_surcharge     Boolean  @default(false)
   is_active        Boolean  @default(true)
+  created_at       DateTime @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime @default(now()) @db.Timestamptz(6)
   /// Texto opcional mostrado al cliente (p. ej. CBU/alias para transferencia).
   instructions     String?
+  sort_order       Int      @default(0)
   /// Alias bancario normalizado (minúsculas) para validar comprobantes (Fase 6).
   bank_alias       String?
   /// CBU/CVU normalizado (sin espacios ni guiones) para validar comprobantes.
   bank_cbu         String?
   /// Titular de la cuenta, informativo; no se valida contra el comprobante.
   bank_holder      String?
-  sort_order       Int      @default(0)
-  created_at       DateTime @default(now()) @db.Timestamptz(6)
-  updated_at       DateTime @default(now()) @db.Timestamptz(6)
   business         business @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([business_id, payment_method])
@@ -860,9 +866,9 @@ model payment_proof {
   created_at      DateTime      @default(now()) @db.Timestamptz(6)
   updated_at      DateTime      @default(now()) @updatedAt @db.Timestamptz(6)
   business        business      @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  orders          orders        @relation(fields: [order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  customer        customer      @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   conversation    conversation? @relation(fields: [conversation_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  customer        customer      @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  orders          orders        @relation(fields: [order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([business_id, order_id], map: "idx_payment_proof_business_order")
   @@index([business_id, status], map: "idx_payment_proof_business_status")

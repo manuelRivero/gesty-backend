@@ -143,9 +143,13 @@ async function findMembershipInBusiness(params: {
 
 export async function listAdminBusinessUsers(params: {
   businessId: string;
+  role?: BusinessUserRole;
 }): Promise<AdminBusinessUserDto[]> {
   const rows = await prisma.business_user.findMany({
-    where: { business_id: params.businessId },
+    where: {
+      business_id: params.businessId,
+      ...(params.role ? { role: params.role } : {})
+    },
     include: membershipInclude,
     orderBy: [{ created_at: "asc" }]
   });

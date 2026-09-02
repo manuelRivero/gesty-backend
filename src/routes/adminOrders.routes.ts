@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   getOrderById,
   getOrders,
+  patchOrderDeliveryAssignment,
   patchOrderDeliveryStatus,
   patchOrderPaymentStatus
 } from "../controllers/adminOrders.controller";
@@ -165,6 +166,11 @@ router.delete("/promotions/:id", requireRoles("OWNER", "ADMIN"), deletePromotion
 
 router.get("/orders", getOrders);
 router.get("/orders/:id", getOrderById);
+router.patch(
+  "/orders/:id/delivery-assignment",
+  requireRoles("OWNER", "ADMIN"),
+  patchOrderDeliveryAssignment
+);
 router.patch("/orders/:id/status", patchOrderDeliveryStatus);
 router.patch("/orders/:id/payment-status", patchOrderPaymentStatus);
 router.get(

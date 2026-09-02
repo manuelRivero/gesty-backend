@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import {
   ASSIGNABLE_BUSINESS_USER_ROLES,
+  BUSINESS_USER_ROLES,
   type BusinessUserRole
 } from "../types/auth";
 import {
@@ -82,13 +83,28 @@ function handleManagementError(res: Response, err: unknown): boolean {
   return false;
 }
 
+const listQuerySchema = z.object({
+  role: z.enum(BUSINESS_USER_ROLES).optional()
+});
+
 export async function getBusinessUsers(req: Request, res: Response) {
   const businessId = req.user?.businessId;
   if (!businessId) {
     return res.status(401).json({ error: "No autenticado" });
   }
 
-  const items = await listAdminBusinessUsers({ businessId });
+  const parsed = listQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: "Parámetros inválidos",
+      details: parsed.error.flatten()
+    });
+  }
+
+  const items = await listAdminBusinessUsers({
+    businessId,
+    role: parsed.data.role
+  });
   return res.json({ items });
 }
 

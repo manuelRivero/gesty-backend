@@ -31,7 +31,6 @@ son **runtime**: cambiás `.env` en el VPS y `docker compose up -d` sin rebuild.
 | `CORS_ORIGIN` | Runtime | `.env` del VPS |
 | `DATABASE_URL` | Runtime | `.env` del VPS |
 | `OPENAI_API_KEY` | Runtime | `.env` del VPS |
-| `AGENT_MODE` | Runtime | `.env` del VPS |
 | `DRY_RUN_WHATSAPP_SEND` | Runtime | `.env` del VPS |
 | `HYBRID_CTA_ENABLED` | Runtime | `.env` del VPS |
 | `HYBRID_CTA_TARGET_INTENTS` | Runtime | `.env` del VPS |
