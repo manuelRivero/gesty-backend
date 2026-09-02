@@ -93,6 +93,7 @@ import {
   getAdminBusiness,
   patchAdminBusiness
 } from "../controllers/adminBusiness.controller";
+import { getAdminAiQuota } from "../controllers/adminAiQuota.controller";
 import {
   getPaymentProviderById,
   getPaymentProviders,
@@ -189,6 +190,7 @@ router.get("/analytics/client-ranking", getClientRankingHandler);
 router.get("/analytics/top-dishes", getTopDishesHandler);
 router.get("/business", requireRoles("OWNER", "ADMIN"), getAdminBusiness);
 router.patch("/business", requireRoles("OWNER", "ADMIN"), patchAdminBusiness);
+router.get("/ai-quota", requireRoles("OWNER", "ADMIN"), getAdminAiQuota);
 router.get("/config", requireRoles("OWNER", "ADMIN"), getAdminBusinessConfig);
 router.get(
   "/config/bot-personalities",
