@@ -3,6 +3,7 @@ import { prisma } from "../../lib/prisma";
 import { getEffectiveAiTokenLimit } from "../ai/aiLimits";
 import { resetIfNeeded } from "../ai/aiUsage.service";
 import { aiPlanToDisplayName } from "../superAdminBusinesses.service";
+import { displayAiPlanCode } from "../billing/trialDisplay";
 import { isInactiveSubscriptionStatus } from "../../constants/billing";
 import { evaluateSubscriptionRowAccess } from "../billing/evaluateBusinessBillingAccess.service";
 import type { BusinessAiQuotaDto } from "../../types/businessAiQuota.dto";
@@ -53,7 +54,7 @@ export function buildBusinessAiQuotaDto(
           is_trial: sub.is_trial ?? false,
           current_period_start: sub.current_period_start.toISOString(),
           current_period_end: sub.current_period_end.toISOString(),
-          plan_name: aiPlanToDisplayName(business.ai_plan),
+          plan_name: aiPlanToDisplayName(displayAiPlanCode(business.ai_plan, sub)),
         }
       : null,
   };

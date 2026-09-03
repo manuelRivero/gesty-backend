@@ -170,6 +170,25 @@ describe("businessAiQuota.service", () => {
       });
     });
 
+    it("en trial manual expone plan Trial aunque ai_plan en BD sea basic", async () => {
+      mockedFindBusiness.mockResolvedValue(buildBusiness({ ai_plan: "basic" }));
+      mockedFindSubscription.mockResolvedValue(
+        buildSubscription({
+          is_trial: true,
+          status: "trialing",
+          stripe_subscription_id: null,
+          stripe_customer_id: null,
+          trial_end: new Date("2099-01-01"),
+        })
+      );
+
+      const quota = await getBusinessAiQuota("biz-1");
+      expect(quota?.subscription).toMatchObject({
+        is_trial: true,
+        plan_name: "Trial",
+      });
+    });
+
     it("devuelve el snapshot cuando la suscripción está activa", async () => {
       mockedFindBusiness.mockResolvedValue(
         buildBusiness({ ai_monthly_tokens_used: 10_000 })

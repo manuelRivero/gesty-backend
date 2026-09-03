@@ -1,6 +1,11 @@
 import type { business, subscription } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { evaluateSubscriptionRowAccess } from "./billing/evaluateBusinessBillingAccess.service";
+import {
+  displayAiPlanCode,
+  isManualTrial,
+  persistTrialAiPlanIfStale,
+} from "./billing/trialDisplay";
 import type {
   BusinessWithSubscriptionDto,
   SuperAdminBusinessListResponse,
@@ -62,7 +67,7 @@ function buildSubscriptionDto(b: BusinessWithSub): SuperAdminSubscriptionDto {
   if (b.subscription) {
     const sub = b.subscription;
     return {
-      plan_name: aiPlanToDisplayName(b.ai_plan),
+      plan_name: isManualTrial(sub) ? "Trial" : aiPlanToDisplayName(b.ai_plan),
       current_period_start: sub.current_period_start.toISOString(),
       current_period_end: sub.current_period_end.toISOString(),
       status: mapStripeStatusToUi(sub.status)
@@ -83,6 +88,7 @@ export function toBusinessWithSubscriptionDto(b: BusinessWithSub): BusinessWithS
   return {
     id: b.id,
     name: b.name,
+    ai_plan: displayAiPlanCode(b.ai_plan, b.subscription),
     ai_blocked: b.ai_blocked,
     ai_monthly_tokens_used: b.ai_monthly_tokens_used,
     ai_monthly_token_limit: safeTokenLimit(b.ai_monthly_token_limit),
@@ -133,5 +139,6 @@ export async function getBusinessWithSubscriptionForSuperAdmin(
   if (!row) {
     return null;
   }
-  return toBusinessWithSubscriptionDto(row);
+  const healed = await persistTrialAiPlanIfStale(row, row.subscription);
+  return toBusinessWithSubscriptionDto({ ...row, ...healed });
 }

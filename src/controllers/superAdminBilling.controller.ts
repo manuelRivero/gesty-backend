@@ -6,6 +6,10 @@ import { toSubscriptionSnapshot } from "../services/billing/adminBilling.service
 import { evaluateSubscriptionRowAccess } from "../services/billing/evaluateBusinessBillingAccess.service";
 import { grantTrialToBusiness } from "../services/billing/grantTrial.service";
 import {
+  displayAiPlanCode,
+  persistTrialAiPlanIfStale,
+} from "../services/billing/trialDisplay";
+import {
   cancelSubscriptionAtPeriodEnd,
   syncSubscriptionFromStripeApi,
 } from "../services/billing/stripeCheckout.service";
@@ -41,21 +45,25 @@ async function loadBillingDetail(
   });
   if (!business) return null;
 
+  const healed = await persistTrialAiPlanIfStale(
+    business,
+    business.subscription
+  );
   const sub = business.subscription;
-  const access = evaluateSubscriptionRowAccess(business, sub);
+  const access = evaluateSubscriptionRowAccess(healed, sub);
   const quota = await getBusinessAiQuota(businessId);
   if (!quota) return null;
 
   return {
-    business_id: business.id,
-    business_name: business.name,
+    business_id: healed.id,
+    business_name: healed.name,
     access_ok: access.access_ok,
     has_subscription_row: Boolean(sub),
-    ai_plan: business.ai_plan,
-    ai_monthly_token_limit: business.ai_monthly_token_limit,
-    ai_monthly_tokens_used: business.ai_monthly_tokens_used,
-    ai_blocked: business.ai_blocked,
-    subscription: sub ? toSubscriptionSnapshot(business, sub) : null,
+    ai_plan: displayAiPlanCode(healed.ai_plan, sub),
+    ai_monthly_token_limit: healed.ai_monthly_token_limit,
+    ai_monthly_tokens_used: healed.ai_monthly_tokens_used,
+    ai_blocked: healed.ai_blocked,
+    subscription: sub ? toSubscriptionSnapshot(healed, sub) : null,
     quota: {
       tokens_used: quota.tokens_used,
       tokens_limit: quota.tokens_limit,

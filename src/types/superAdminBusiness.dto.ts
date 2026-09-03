@@ -13,6 +13,7 @@ export type SuperAdminSubscriptionDto = {
 export type BusinessWithSubscriptionDto = {
   id: string;
   name: string;
+  ai_plan: string;
   ai_blocked: boolean;
   ai_monthly_tokens_used: number;
   ai_monthly_token_limit: number;
