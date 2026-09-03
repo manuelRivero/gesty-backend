@@ -10,7 +10,11 @@ import {
   syncSubscriptionFromStripeApi,
 } from "../services/billing/stripeCheckout.service";
 import type { SuperAdminBillingDetailDto } from "../types/billing.dto";
-import { DEFAULT_TRIAL_DAYS } from "../constants/billing";
+import {
+  DEFAULT_TRIAL_DAYS,
+  DEFAULT_TRIAL_PLAN_CODE,
+  DEFAULT_TRIAL_TOKEN_LIMIT,
+} from "../constants/billing";
 
 const idParamSchema = z.object({
   id: z.string().uuid(),
@@ -61,6 +65,18 @@ async function loadBillingDetail(
       reset_at: quota.reset_at,
     },
   };
+}
+
+export async function getSuperAdminTrialDefaults(
+  _req: Request,
+  res: Response
+): Promise<void> {
+  res.json({
+    days: DEFAULT_TRIAL_DAYS,
+    token_limit: DEFAULT_TRIAL_TOKEN_LIMIT,
+    plan_code: DEFAULT_TRIAL_PLAN_CODE,
+    max_days: 90,
+  });
 }
 
 export async function getSuperAdminBusinessBilling(
@@ -170,7 +186,6 @@ export async function postSuperAdminGrantTrial(
     await grantTrialToBusiness({
       businessId: parsed.data.id,
       days: body.data.days ?? DEFAULT_TRIAL_DAYS,
-      planCode: body.data.plan_code,
       tokenLimit: body.data.token_limit,
     });
     const detail = await loadBillingDetail(parsed.data.id);

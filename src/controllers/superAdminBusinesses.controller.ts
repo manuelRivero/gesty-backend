@@ -4,6 +4,11 @@ import {
   getBusinessWithSubscriptionForSuperAdmin,
   listBusinessesForSuperAdmin
 } from "../services/superAdminBusinesses.service";
+import {
+  SuperAdminCreateBusinessError,
+  createBusinessForSuperAdmin
+} from "../services/superAdminCreateBusiness.service";
+import { DEFAULT_TRIAL_DAYS } from "../constants/billing";
 
 const listQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).default(0),
@@ -34,6 +39,49 @@ export async function getSuperAdminBusinessesList(
     q
   });
   res.json(result);
+}
+
+const createBodySchema = z.object({
+  name: z.string().trim().min(1).max(160),
+  timezone: z.string().trim().min(1).optional(),
+  slug: z.string().trim().min(1).max(60).nullable().optional(),
+  currency_code: z.string().trim().length(3).optional(),
+  street_address: z.string().trim().max(240).nullable().optional(),
+  description: z.string().trim().max(500).nullable().optional(),
+  trial_days: z.number().int().positive().max(90).optional(),
+  owner: z.object({
+    email: z.string().trim().email(),
+    name: z.string().trim().min(1).max(120),
+    password: z.string().min(8).max(200).optional()
+  })
+});
+
+export async function postSuperAdminBusiness(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const parsed = createBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: "Body inválido",
+      details: parsed.error.flatten()
+    });
+    return;
+  }
+
+  try {
+    const created = await createBusinessForSuperAdmin({
+      ...parsed.data,
+      trial_days: parsed.data.trial_days ?? DEFAULT_TRIAL_DAYS
+    });
+    res.status(201).json(created);
+  } catch (err) {
+    if (err instanceof SuperAdminCreateBusinessError) {
+      res.status(err.status).json({ error: err.message, code: err.code });
+      return;
+    }
+    throw err;
+  }
 }
 
 export async function getSuperAdminBusinessById(

@@ -10,7 +10,7 @@
  *
  * --all: todos los businesses con fila subscription
  * --fake-only: solo customer que empieza con "cus_manual_"
- * --regrant-trial: además deja status trialing 14 días (plan basic)
+ * --regrant-trial: además deja status trialing DEFAULT_TRIAL_DAYS (cupo trial)
  */
 
 import { prisma } from "../../src/lib/prisma";

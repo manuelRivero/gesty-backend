@@ -1,9 +1,23 @@
 /** Constantes y defaults de billing SaaS (suscripción obligatoria). */
 
-export const DEFAULT_TRIAL_DAYS = 14;
+import {
+  TOKENS_PER_CONVERSATION,
+  TRIAL_CONVERSATIONS,
+  tokenLimitFromConversations,
+} from "./planCatalog";
 
-/** Plan de tokens por defecto durante trial onboarding. */
-export const DEFAULT_TRIAL_PLAN_CODE = "basic" as const;
+export const DEFAULT_TRIAL_DAYS = 7;
+
+/**
+ * Cupo de tokens del trial ≈ 500 conv. de la landing (no es un plan pago).
+ */
+export const DEFAULT_TRIAL_TOKEN_LIMIT =
+  tokenLimitFromConversations(TRIAL_CONVERSATIONS);
+
+/** Código interno en `business.ai_plan` mientras dura el trial (no es plan Stripe). */
+export const DEFAULT_TRIAL_PLAN_CODE = "trial" as const;
+
+export { TOKENS_PER_CONVERSATION, TRIAL_CONVERSATIONS };
 
 export const ACTIVE_SUBSCRIPTION_STATUSES = [
   "active",

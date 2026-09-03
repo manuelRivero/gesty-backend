@@ -5,6 +5,7 @@ export type BillingPlanDto = {
   name: string;
   monthly_price_usd: string | null;
   token_limit: number;
+  conversations_per_month: number;
   description: string | null;
   features: unknown;
   has_stripe_price: boolean;

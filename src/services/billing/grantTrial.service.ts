@@ -3,9 +3,8 @@ import { prisma } from "../../lib/prisma";
 import {
   DEFAULT_TRIAL_DAYS,
   DEFAULT_TRIAL_PLAN_CODE,
+  DEFAULT_TRIAL_TOKEN_LIMIT,
 } from "../../constants/billing";
-import { getDefaultTokenLimitByPlan } from "../ai/aiLimits";
-import { findActivePlanByCode } from "./planCatalog.service";
 
 export type GrantTrialInput = {
   businessId: string;
@@ -21,13 +20,13 @@ export type GrantTrialResult = {
 
 /**
  * Crea o actualiza una subscription en trial sin Stripe.
- * Usado en onboarding y soporte super-admin.
+ * Cupo por defecto: DEFAULT_TRIAL_TOKEN_LIMIT (no el de Basic).
  */
 export async function grantTrialToBusiness(
   input: GrantTrialInput
 ): Promise<GrantTrialResult> {
   const days = input.days ?? DEFAULT_TRIAL_DAYS;
-  const planCode = (input.planCode ?? DEFAULT_TRIAL_PLAN_CODE).trim().toLowerCase();
+  const tokenLimit = input.tokenLimit ?? DEFAULT_TRIAL_TOKEN_LIMIT;
 
   const business = await prisma.business.findUnique({
     where: { id: input.businessId },
@@ -36,29 +35,13 @@ export async function grantTrialToBusiness(
     throw new Error("Negocio no encontrado");
   }
 
-  const plan =
-    (await findActivePlanByCode(planCode)) ??
-    (await findActivePlanByCode(DEFAULT_TRIAL_PLAN_CODE));
-
-  const tokenLimit =
-    input.tokenLimit ??
-    plan?.token_limit ??
-    getDefaultTokenLimitByPlan(planCode === "business" ? "enterprise" : planCode);
-
   const now = new Date();
   const trialEnd = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
-
-  const aiPlanCode =
-    planCode === "business" || planCode === "enterprise"
-      ? "enterprise"
-      : planCode === "pro"
-        ? "pro"
-        : "basic";
 
   const updatedBusiness = await prisma.business.update({
     where: { id: business.id },
     data: {
-      ai_plan: aiPlanCode,
+      ai_plan: DEFAULT_TRIAL_PLAN_CODE,
       ai_monthly_token_limit: tokenLimit,
       ai_blocked: false,
       billing_mode: "subscription",
@@ -78,9 +61,8 @@ export async function grantTrialToBusiness(
           trial_end: trialEnd,
           current_period_start: now,
           current_period_end: trialEnd,
-          plan_id: plan?.id ?? null,
+          plan_id: null,
           cancel_at_period_end: false,
-          // Limpia IDs inventados / de otro entorno (ej. cus_manual_*)
           stripe_customer_id: null,
           stripe_subscription_id: null,
           stripe_price_id: null,
@@ -95,7 +77,7 @@ export async function grantTrialToBusiness(
           trial_end: trialEnd,
           current_period_start: now,
           current_period_end: trialEnd,
-          plan_id: plan?.id ?? null,
+          plan_id: null,
           cancel_at_period_end: false,
           stripe_customer_id: null,
           stripe_subscription_id: null,

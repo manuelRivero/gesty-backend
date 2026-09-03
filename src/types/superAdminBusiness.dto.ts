@@ -28,3 +28,14 @@ export type SuperAdminBusinessListResponse = {
   items: BusinessWithSubscriptionDto[];
   total: number;
 };
+
+export type SuperAdminCreatedOwnerDto = {
+  user_id: string;
+  email: string;
+  name: string | null;
+  created: boolean;
+};
+
+export type SuperAdminCreateBusinessResponse = BusinessWithSubscriptionDto & {
+  owner: SuperAdminCreatedOwnerDto;
+};

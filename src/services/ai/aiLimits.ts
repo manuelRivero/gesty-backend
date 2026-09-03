@@ -1,15 +1,16 @@
 import type { business } from "@prisma/client";
+import { DEFAULT_TRIAL_TOKEN_LIMIT } from "../../constants/billing";
+import { getPaidPlanByCode } from "../../constants/planCatalog";
 
 export function getDefaultTokenLimitByPlan(plan: string): number {
-  switch (plan) {
-    case "pro":
-      return 500000;
-    case "enterprise":
-      return 2000000;
-    case "basic":
-    default:
-      return 100000;
+  if (plan === "trial") {
+    return DEFAULT_TRIAL_TOKEN_LIMIT;
   }
+  const paid = getPaidPlanByCode(plan);
+  if (paid) {
+    return paid.token_limit;
+  }
+  return getPaidPlanByCode("basic")!.token_limit;
 }
 
 export function getEffectiveAiTokenLimit(b: business): number {

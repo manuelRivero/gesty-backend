@@ -1,10 +1,12 @@
 import { Router } from "express";
 import {
   getSuperAdminBusinessById,
-  getSuperAdminBusinessesList
+  getSuperAdminBusinessesList,
+  postSuperAdminBusiness
 } from "../controllers/superAdminBusinesses.controller";
 import {
   getSuperAdminBusinessBilling,
+  getSuperAdminTrialDefaults,
   patchSuperAdminBusinessBilling,
   postSuperAdminCancelBilling,
   postSuperAdminGrantTrial,
@@ -28,6 +30,8 @@ router.use(authenticateJwt);
 router.use(requireRoles("SUPER_ADMIN"));
 
 router.get("/businesses", getSuperAdminBusinessesList);
+router.post("/businesses", postSuperAdminBusiness);
+router.get("/billing/trial-defaults", getSuperAdminTrialDefaults);
 router.get("/businesses/:id/billing", getSuperAdminBusinessBilling);
 router.patch("/businesses/:id/billing", patchSuperAdminBusinessBilling);
 router.post("/businesses/:id/billing/grant-trial", postSuperAdminGrantTrial);

@@ -1,44 +1,19 @@
 /**
  * Seed catálogo de planes SaaS (`basic`, `pro`, `business`).
+ * Fuente comercial: https://www.gesty.online/ (precios y ~conv/mes).
  *
  * USO:
- *   npx ts-node -r dotenv/config scripts/billing/seed-plans.ts
+ *   npx ts-node scripts/billing/seed-plans.ts
  *
- * `stripe_price_id` queda null hasta sync con Stripe (scripts/billing/sync-stripe-plans.ts).
+ * `stripe_price_id` no se toca. Si cambió el precio USD, re-sync Stripe:
+ *   npm run billing:sync-stripe-plans -- --force
  */
 
 import { prisma } from "../../src/lib/prisma";
-import { getDefaultTokenLimitByPlan } from "../../src/services/ai/aiLimits";
-
-const PLANS = [
-  {
-    code: "basic",
-    name: "Basic",
-    monthly_price_usd: "29.00",
-    token_limit: getDefaultTokenLimitByPlan("basic"),
-    description: "Ideal para locales que empiezan con el asistente.",
-    features: { seats: 2, support: "email" },
-  },
-  {
-    code: "pro",
-    name: "Pro",
-    monthly_price_usd: "79.00",
-    token_limit: getDefaultTokenLimitByPlan("pro"),
-    description: "Más volumen de conversaciones y límites amplios.",
-    features: { seats: 5, support: "priority" },
-  },
-  {
-    code: "business",
-    name: "Business",
-    monthly_price_usd: "199.00",
-    token_limit: getDefaultTokenLimitByPlan("enterprise"),
-    description: "Alto volumen y operación multi-turno intensiva.",
-    features: { seats: 15, support: "dedicated" },
-  },
-] as const;
+import { PAID_PLAN_CATALOG } from "../../src/constants/planCatalog";
 
 async function main() {
-  for (const p of PLANS) {
+  for (const p of PAID_PLAN_CATALOG) {
     await prisma.plan.upsert({
       where: { code: p.code },
       create: {
@@ -59,7 +34,9 @@ async function main() {
         is_active: true,
       },
     });
-    console.log(`[seed-plans] upserted ${p.code}`);
+    console.log(
+      `[seed-plans] upserted ${p.code} $${p.monthly_price_usd} tokens=${p.token_limit} ~${p.conversations_per_month} conv`
+    );
   }
 }
 
