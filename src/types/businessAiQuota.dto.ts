@@ -5,11 +5,13 @@ export type BusinessAiQuotaDto = {
   ai_blocked: boolean;
   has_quota: boolean;
   reset_at: string;
+  requires_subscription: true;
+  access_ok: boolean;
   subscription: {
     status: string;
     is_trial: boolean;
     current_period_start: string;
     current_period_end: string;
     plan_name: string;
-  };
+  } | null;
 };

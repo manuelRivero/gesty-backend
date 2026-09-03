@@ -9,7 +9,7 @@ export async function getAdminAiQuota(req: Request, res: Response) {
 
   const quota = await getBusinessAiQuota(businessId);
   if (!quota) {
-    return res.status(404).json({ error: "Sin suscripción activa" });
+    return res.status(404).json({ error: "Negocio no encontrado" });
   }
 
   return res.json(quota);

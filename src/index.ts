@@ -9,7 +9,6 @@
  * Worker `processDraftOrderTimeouts` solo si ENABLE_DRAFT_ORDER_WORKER=true.
  */
 
-import 'dotenv/config';
 import './types/express';
 import { createServer } from 'http';
 import path from 'node:path';
@@ -28,6 +27,7 @@ import { verifyWebhook as verifyWebhookService } from './services/whatsapp.servi
 import { processDraftOrderTimeouts } from './workers/draftOrders';
 import type { WhatsAppWebhookPayload } from './controllers/webhook/types';
 import { mercadoPagoWebhookHandler } from './controllers/payments/mercadoPagoWebhook.controller';
+import { billingStripeWebhookHandler } from './controllers/billingStripeWebhook.controller';
 
 if (env.ENABLE_DRAFT_ORDER_WORKER) {
   const DRAFT_ORDER_TICK_MS = 60_000;
@@ -62,6 +62,13 @@ app.use(
     },
     credentials: true,
   })
+);
+
+/** Stripe webhook: body raw ANTES de express.json (firma HMAC). */
+app.post(
+  '/api/billing/stripe/webhook',
+  express.raw({ type: 'application/json' }),
+  billingStripeWebhookHandler
 );
 
 app.use(express.json({ limit: '1mb' }));

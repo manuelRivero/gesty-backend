@@ -24,8 +24,8 @@ vi.mock('../../../lib/prisma', () => ({
   },
 }));
 
-vi.mock('../../subscriptionBotAccess.service', () => ({
-  evaluateSubscriptionForBotAi: vi.fn(),
+vi.mock('../../billing/evaluateBusinessBillingAccess.service', () => ({
+  evaluateBusinessBillingAccess: vi.fn(),
 }));
 
 vi.mock('../aiUsage.service', () => ({
@@ -37,14 +37,14 @@ vi.mock('../../promotions/promotionInterpreter.service', () => ({
 }));
 
 import { prisma } from '../../../lib/prisma';
-import { evaluateSubscriptionForBotAi } from '../../subscriptionBotAccess.service';
+import { evaluateBusinessBillingAccess } from '../../billing/evaluateBusinessBillingAccess.service';
 import { interpretPromotionText } from '../../promotions/promotionInterpreter.service';
 import { transcribeAudio } from '../audioTranscription.service';
 import { detectAudioMimeFromBuffer } from '../../../middleware/audioUpload.middleware';
 import { interpretPromotionHandler } from '../../../controllers/adminPromotions.controller';
 
 const mockedFindUnique = prisma.business.findUnique as unknown as ReturnType<typeof vi.fn>;
-const mockedEvaluate = evaluateSubscriptionForBotAi as unknown as ReturnType<typeof vi.fn>;
+const mockedEvaluate = evaluateBusinessBillingAccess as unknown as ReturnType<typeof vi.fn>;
 const mockedInterpret = interpretPromotionText as unknown as ReturnType<typeof vi.fn>;
 
 function buildBusiness(overrides: Record<string, unknown> = {}) {

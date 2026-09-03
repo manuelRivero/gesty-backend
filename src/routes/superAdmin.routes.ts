@@ -4,6 +4,13 @@ import {
   getSuperAdminBusinessesList
 } from "../controllers/superAdminBusinesses.controller";
 import {
+  getSuperAdminBusinessBilling,
+  patchSuperAdminBusinessBilling,
+  postSuperAdminCancelBilling,
+  postSuperAdminGrantTrial,
+  postSuperAdminSyncStripe,
+} from "../controllers/superAdminBilling.controller";
+import {
   createAnnouncementHandler,
   deleteAnnouncementHandler,
   deleteAnnouncementMediaHandler,
@@ -21,6 +28,11 @@ router.use(authenticateJwt);
 router.use(requireRoles("SUPER_ADMIN"));
 
 router.get("/businesses", getSuperAdminBusinessesList);
+router.get("/businesses/:id/billing", getSuperAdminBusinessBilling);
+router.patch("/businesses/:id/billing", patchSuperAdminBusinessBilling);
+router.post("/businesses/:id/billing/grant-trial", postSuperAdminGrantTrial);
+router.post("/businesses/:id/billing/sync-stripe", postSuperAdminSyncStripe);
+router.post("/businesses/:id/billing/cancel", postSuperAdminCancelBilling);
 router.get("/businesses/:id", getSuperAdminBusinessById);
 
 // Announcements CRUD

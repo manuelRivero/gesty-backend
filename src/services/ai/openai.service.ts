@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 import type { business as Business } from '@prisma/client';
 import type { OpenAI as OpenAITypes } from 'openai';
 import { prisma } from '../../lib/prisma';
-import { evaluateSubscriptionForBotAi } from '../subscriptionBotAccess.service';
+import { evaluateBusinessBillingAccess } from '../billing/evaluateBusinessBillingAccess.service';
 import { getEffectiveAiTokenLimit } from './aiLimits';
 import { incrementUsage } from './aiUsage.service';
 import {
@@ -44,7 +44,7 @@ export const generateAIResponse = async (
     };
   }
 
-  const trialAccess = await evaluateSubscriptionForBotAi(business);
+  const trialAccess = await evaluateBusinessBillingAccess(business);
   if (!trialAccess.ok) {
     return {
       content: trialAccess.message,

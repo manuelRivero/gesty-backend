@@ -1,5 +1,6 @@
 import type { business, subscription } from "@prisma/client";
 import { prisma } from "../lib/prisma";
+import { evaluateSubscriptionRowAccess } from "./billing/evaluateBusinessBillingAccess.service";
 import type {
   BusinessWithSubscriptionDto,
   SuperAdminBusinessListResponse,
@@ -48,7 +49,9 @@ export function mapStripeStatusToUi(
     s === "canceled" ||
     s === "cancelled" ||
     s === "incomplete_expired" ||
-    s === "ended"
+    s === "ended" ||
+    s === "incomplete" ||
+    !s
   ) {
     return "canceled";
   }
@@ -71,11 +74,12 @@ function buildSubscriptionDto(b: BusinessWithSub): SuperAdminSubscriptionDto {
     plan_name: aiPlanToDisplayName(b.ai_plan),
     current_period_start: start.toISOString(),
     current_period_end: end.toISOString(),
-    status: "active"
+    status: "canceled"
   };
 }
 
 export function toBusinessWithSubscriptionDto(b: BusinessWithSub): BusinessWithSubscriptionDto {
+  const access = evaluateSubscriptionRowAccess(b, b.subscription);
   return {
     id: b.id,
     name: b.name,
@@ -83,6 +87,10 @@ export function toBusinessWithSubscriptionDto(b: BusinessWithSub): BusinessWithS
     ai_monthly_tokens_used: b.ai_monthly_tokens_used,
     ai_monthly_token_limit: safeTokenLimit(b.ai_monthly_token_limit),
     created_at: b.created_at.toISOString(),
+    has_subscription_row: Boolean(b.subscription),
+    access_ok: access.access_ok,
+    is_trial: Boolean(b.subscription?.is_trial),
+    trial_end: b.subscription?.trial_end?.toISOString() ?? null,
     subscription: buildSubscriptionDto(b)
   };
 }

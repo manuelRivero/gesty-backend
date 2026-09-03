@@ -1,6 +1,8 @@
 import path from 'node:path';
 import { defineConfig } from 'prisma/config';
-import 'dotenv/config';
+import { loadEnv } from './src/config/loadEnv';
+
+loadEnv();
 
 export default defineConfig({
   earlyAccess: true,

@@ -20,7 +20,7 @@
 import OpenAI from 'openai';
 import { z } from 'zod';
 import type { business as Business } from '@prisma/client';
-import { evaluateSubscriptionForBotAi } from '../subscriptionBotAccess.service';
+import { evaluateBusinessBillingAccess } from '../billing/evaluateBusinessBillingAccess.service';
 import { getEffectiveAiTokenLimit } from './aiLimits';
 import { incrementUsage } from './aiUsage.service';
 
@@ -79,7 +79,7 @@ function buildDataUrl(imageBuffer: Buffer, mimeType: string): string {
 async function canUseVisionForBusiness(business: Business): Promise<boolean> {
   if (business.ai_blocked) return false;
 
-  const trialAccess = await evaluateSubscriptionForBotAi(business);
+  const trialAccess = await evaluateBusinessBillingAccess(business);
   if (!trialAccess.ok) return false;
 
   const effectiveLimit = getEffectiveAiTokenLimit(trialAccess.business);

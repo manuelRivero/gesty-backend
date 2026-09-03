@@ -23,7 +23,7 @@ import {
   findLatestClosedConversationByCustomer,
   updateConversationLastMessageAt,
 } from '../../../repositories';
-import { evaluateSubscriptionForBotAi } from '../../../services/subscriptionBotAccess.service';
+import { evaluateBusinessBillingAccess } from '../../../services/billing/evaluateBusinessBillingAccess.service';
 import {
   formatClosedBusinessCustomerNotice,
 } from '../../../services/businessHours.service';
@@ -100,7 +100,7 @@ export const subscriptionAccessGateNode = async (
   state: AgentState
 ): Promise<AgentStateUpdate> => {
   const business = state.business!;
-  const subscriptionAccess = await evaluateSubscriptionForBotAi(business);
+  const subscriptionAccess = await evaluateBusinessBillingAccess(business);
   if (subscriptionAccess.ok) {
     return { business: subscriptionAccess.business };
   }

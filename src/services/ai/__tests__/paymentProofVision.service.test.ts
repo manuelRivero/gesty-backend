@@ -13,19 +13,19 @@ vi.mock('openai', () => ({
   },
 }));
 
-vi.mock('../../subscriptionBotAccess.service', () => ({
-  evaluateSubscriptionForBotAi: vi.fn(),
+vi.mock('../../billing/evaluateBusinessBillingAccess.service', () => ({
+  evaluateBusinessBillingAccess: vi.fn(),
 }));
 
 vi.mock('../aiUsage.service', () => ({
   incrementUsage: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { evaluateSubscriptionForBotAi } from '../../subscriptionBotAccess.service';
+import { evaluateBusinessBillingAccess } from '../../billing/evaluateBusinessBillingAccess.service';
 import { incrementUsage } from '../aiUsage.service';
 import { extractPaymentProofWithVision } from '../paymentProofVision.service';
 
-const mockedEvaluateSubscription = evaluateSubscriptionForBotAi as unknown as ReturnType<typeof vi.fn>;
+const mockedEvaluateSubscription = evaluateBusinessBillingAccess as unknown as ReturnType<typeof vi.fn>;
 const mockedIncrementUsage = incrementUsage as unknown as ReturnType<typeof vi.fn>;
 
 function buildBusiness(overrides: Partial<Record<string, unknown>> = {}): any {

@@ -144,13 +144,30 @@ describe("businessAiQuota.service", () => {
   });
 
   describe("getBusinessAiQuota", () => {
-    it("devuelve null si no hay suscripción activa", async () => {
+    it("devuelve access_ok false si no hay suscripción activa", async () => {
       mockedFindBusiness.mockResolvedValue(buildBusiness());
       mockedFindSubscription.mockResolvedValue(
         buildSubscription({ status: "canceled" })
       );
 
-      await expect(getBusinessAiQuota("biz-1")).resolves.toBeNull();
+      const quota = await getBusinessAiQuota("biz-1");
+      expect(quota).toMatchObject({
+        access_ok: false,
+        requires_subscription: true,
+        subscription: { status: "canceled" },
+      });
+    });
+
+    it("devuelve access_ok false y subscription null sin fila", async () => {
+      mockedFindBusiness.mockResolvedValue(buildBusiness());
+      mockedFindSubscription.mockResolvedValue(null);
+
+      const quota = await getBusinessAiQuota("biz-1");
+      expect(quota).toMatchObject({
+        access_ok: false,
+        subscription: null,
+        tokens_used: 25_000,
+      });
     });
 
     it("devuelve el snapshot cuando la suscripción está activa", async () => {
@@ -164,6 +181,7 @@ describe("businessAiQuota.service", () => {
       expect(quota).toMatchObject({
         tokens_used: 10_000,
         tokens_remaining: 90_000,
+        access_ok: true,
         subscription: {
           status: "active",
           plan_name: "Basic"

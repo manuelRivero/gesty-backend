@@ -95,6 +95,12 @@ import {
 } from "../controllers/adminBusiness.controller";
 import { getAdminAiQuota } from "../controllers/adminAiQuota.controller";
 import {
+  getAdminBillingPlans,
+  getAdminBillingSubscriptionHandler,
+  postAdminBillingCheckout,
+  postAdminBillingPortal,
+} from "../controllers/adminBilling.controller";
+import {
   getPaymentProviderById,
   getPaymentProviders,
   patchPaymentProvider,
@@ -191,6 +197,26 @@ router.get("/analytics/top-dishes", getTopDishesHandler);
 router.get("/business", requireRoles("OWNER", "ADMIN"), getAdminBusiness);
 router.patch("/business", requireRoles("OWNER", "ADMIN"), patchAdminBusiness);
 router.get("/ai-quota", requireRoles("OWNER", "ADMIN"), getAdminAiQuota);
+router.get(
+  "/billing/plans",
+  requireRoles("OWNER", "ADMIN"),
+  getAdminBillingPlans
+);
+router.get(
+  "/billing/subscription",
+  requireRoles("OWNER", "ADMIN"),
+  getAdminBillingSubscriptionHandler
+);
+router.post(
+  "/billing/checkout",
+  requireRoles("OWNER", "ADMIN"),
+  postAdminBillingCheckout
+);
+router.post(
+  "/billing/portal",
+  requireRoles("OWNER", "ADMIN"),
+  postAdminBillingPortal
+);
 router.get("/config", requireRoles("OWNER", "ADMIN"), getAdminBusinessConfig);
 router.get(
   "/config/bot-personalities",

@@ -27,7 +27,7 @@ import {
 } from '../services/ai/audioTranscription.service';
 import { getEffectiveAiTokenLimit } from '../services/ai/aiLimits';
 import { incrementUsage } from '../services/ai/aiUsage.service';
-import { evaluateSubscriptionForBotAi } from '../services/subscriptionBotAccess.service';
+import { evaluateBusinessBillingAccess } from '../services/billing/evaluateBusinessBillingAccess.service';
 import { interpretPromotionText } from '../services/promotions/promotionInterpreter.service';
 import { resolveProductEntities } from '../services/promotions/resolveProductEntities';
 import { buildEntityCards } from '../services/promotions/buildPromotionDisplay';
@@ -108,7 +108,7 @@ async function loadBusiness(businessId: string): Promise<Business | null> {
 
 async function canUseAiForBusiness(business: Business): Promise<boolean> {
   if (business.ai_blocked) return false;
-  const trialAccess = await evaluateSubscriptionForBotAi(business);
+  const trialAccess = await evaluateBusinessBillingAccess(business);
   if (!trialAccess.ok) return false;
   const effectiveLimit = getEffectiveAiTokenLimit(trialAccess.business);
   if (trialAccess.business.ai_monthly_tokens_used >= effectiveLimit) return false;

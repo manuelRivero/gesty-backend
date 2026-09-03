@@ -1,8 +1,7 @@
 import { z } from 'zod';
-import dotenv from 'dotenv';
-import path from 'path';
+import { loadEnv } from './loadEnv';
 
-dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+loadEnv();
 
 const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(5001),
@@ -190,6 +189,16 @@ const envSchema = z.object({
    * checks es plata entrando y nunca se rechaza. Default 3.
    */
   TRANSFER_PROOF_MAX_FAILED: z.coerce.number().int().positive().default(3),
+
+  /**
+   * Stripe SaaS (suscripciones de plataforma). Opcionales al arrancar:
+   * sin ellas Checkout/Portal/webhook quedan deshabilitados; el gate de
+   * billing sigue aplicando reglas de BD (trial / subscription).
+   */
+  STRIPE_SECRET_KEY: z.string().optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  /** Solo referencia para el frontend; el backend no la usa. */
+  STRIPE_PUBLISHABLE_KEY: z.string().optional(),
 
   // --- Embajadores (Domingo Sabrosón) ---
   // Feature en sí controlada por business_config.ambassadors_enabled; estas

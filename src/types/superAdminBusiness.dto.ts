@@ -17,6 +17,10 @@ export type BusinessWithSubscriptionDto = {
   ai_monthly_tokens_used: number;
   ai_monthly_token_limit: number;
   created_at: string;
+  has_subscription_row: boolean;
+  access_ok: boolean;
+  is_trial: boolean;
+  trial_end: string | null;
   subscription: SuperAdminSubscriptionDto;
 };
 

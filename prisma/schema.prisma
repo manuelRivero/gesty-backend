@@ -696,14 +696,19 @@ model plan {
   token_limit       Int
   is_active         Boolean?       @default(true)
   created_at        DateTime?      @default(now()) @db.Timestamptz(6)
+  stripe_product_id String?
+  stripe_price_id   String?        @unique
+  description       String?
+  features          Json?          @default("{}")
   subscription      subscription[]
 }
 
 model subscription {
   id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   business_id            String    @unique(map: "unique_business_subscription") @db.Uuid
-  stripe_customer_id     String
-  stripe_subscription_id String    @unique
+  /// Nullable para trials manuales sin Stripe (grant-trial).
+  stripe_customer_id     String?
+  stripe_subscription_id String?   @unique
   stripe_price_id        String?
   status                 String
   cancel_at_period_end   Boolean?  @default(false)
@@ -719,6 +724,16 @@ model subscription {
 
   @@index([business_id], map: "idx_subscription_business_id")
   @@index([stripe_customer_id], map: "idx_subscription_customer_id")
+}
+
+model stripe_webhook_event {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  stripe_event_id String   @unique
+  type            String
+  processed_at    DateTime @default(now()) @db.Timestamptz(6)
+  payload         Json?
+
+  @@index([type], map: "idx_stripe_webhook_event_type")
 }
 
 model business_payment_provider {
