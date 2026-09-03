@@ -16,6 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl \
 COPY package.json package-lock.json ./
 COPY prisma ./prisma
 COPY prisma.config.ts ./
+# Requerido por prisma.config.ts en el postinstall (`prisma generate`).
+COPY src/config/loadEnv.ts ./src/config/loadEnv.ts
 # `postinstall` ejecuta `prisma generate`.
 RUN npm ci
 
