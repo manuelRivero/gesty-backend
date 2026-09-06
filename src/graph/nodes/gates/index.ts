@@ -24,6 +24,7 @@ import {
   updateConversationLastMessageAt,
 } from '../../../repositories';
 import { evaluateBusinessBillingAccess } from '../../../services/billing/evaluateBusinessBillingAccess.service';
+import { evaluateBusinessCapabilityAccess } from '../../../services/evaluateBusinessCapabilityAccess.service';
 import {
   formatClosedBusinessCustomerNotice,
 } from '../../../services/businessHours.service';
@@ -110,6 +111,37 @@ export const subscriptionAccessGateNode = async (
       isInteractive: false,
     },
     earlyExit: 'subscription_blocked',
+  };
+};
+
+/**
+ * Gate de capacidades del local (D7 / D17).
+ * Sin pedidos ni reservas → earlyExit. Owner assistant exento.
+ */
+export const capabilityAccessGateNode = async (
+  state: AgentState
+): Promise<AgentStateUpdate> => {
+  if (state.isOwnerAssistant) {
+    return {};
+  }
+
+  const business = state.business!;
+  const businessConfig = state.businessConfig!;
+  const access = await evaluateBusinessCapabilityAccess(
+    business.id,
+    businessConfig
+  );
+
+  if (access.mode !== 'blocked' || !access.message) {
+    return {};
+  }
+
+  return {
+    handlerResult: {
+      content: access.message,
+      isInteractive: false,
+    },
+    earlyExit: 'capabilities_blocked',
   };
 };
 

@@ -25,6 +25,7 @@ import { getBusinessConfig } from '../services/businessConfig.service';
 import { incrementRefusalCount } from '../services/intent/intentRefusal.service';
 import { resolveDeliveryContext } from '../services/deliveryFee.service';
 import { nextCheckoutStep, type CheckoutStep } from '../services/checkout/nextCheckoutStep';
+import { assertCanOrder } from '../services/ordersCapabilityGate.service';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -561,6 +562,16 @@ export const startCheckoutSessionTool = new DynamicStructuredTool<
   schema: startCheckoutSessionSchema,
   func: async ({ reason }: StartCheckoutSessionInput, _runManager, config?: RunnableConfig) => {
     const { businessId, customerPhone } = getReactContext(config);
+
+    const ordersGate = await assertCanOrder(businessId);
+    if (!ordersGate.ok) {
+      return toJson({
+        success: false,
+        error: ordersGate.error,
+        message: ordersGate.message,
+      });
+    }
+
     const draft = await prisma.draft_order.findFirst({
       where: {
         business_id: businessId,

@@ -166,8 +166,19 @@ export async function createBusinessForSuperAdmin(
       },
     });
 
+    // D1/D11: create explícito — capacidades off, bot on. No heredar defaults
+    // legacy de filas existentes; el schema también ya defaulta a limpio.
     await tx.business_config.create({
-      data: { business_id: business.id },
+      data: {
+        business_id: business.id,
+        bot_enabled: true,
+        orders_enabled: false,
+        checkout_enabled: false,
+        reservations_enabled: false,
+        delivery_enabled: false,
+        takeaway_enabled: false,
+        external_delivery_enabled: false,
+      },
     });
 
     let userId: string;

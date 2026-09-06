@@ -21,6 +21,7 @@ export type OfferedPaymentMethod = {
   sortOrder: number;
 };
 
+/** Seed catálogo con todos inactivos (D2): nunca auto-activar cobro. */
 const DEFAULT_SEED: Array<{
   id: PaymentMethodId;
   isActive: boolean;
@@ -28,14 +29,14 @@ const DEFAULT_SEED: Array<{
   adjustmentValue: number;
   isSurcharge: boolean;
 }> = [
-  { id: 'cash', isActive: true, adjustmentType: 'FIXED', adjustmentValue: 0, isSurcharge: false },
-  { id: 'online', isActive: true, adjustmentType: 'FIXED', adjustmentValue: 0, isSurcharge: false },
+  { id: 'cash', isActive: false, adjustmentType: 'FIXED', adjustmentValue: 0, isSurcharge: false },
+  { id: 'online', isActive: false, adjustmentType: 'FIXED', adjustmentValue: 0, isSurcharge: false },
   { id: 'transfer', isActive: false, adjustmentType: 'FIXED', adjustmentValue: 0, isSurcharge: false },
 ];
 
 /**
  * Garantiza filas default en payment_method_config para un negocio.
- * cash+online activos, transfer inactivo (compatibilidad con el checkout previo).
+ * Todas inactivas: el admin debe activar métodos explícitamente (D2).
  */
 export async function ensureDefaultPaymentMethodConfigs(
   businessId: string

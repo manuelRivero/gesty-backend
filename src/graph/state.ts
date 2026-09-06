@@ -38,6 +38,7 @@ export type EarlyExitReason =
   | 'business_closed'
   | 'persist_failed'
   | 'subscription_blocked'
+  | 'capabilities_blocked'
   | 'unsupported_message_type'
   | 'bot_disabled_or_human_handled'
   | 'reservation_handled'

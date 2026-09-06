@@ -102,6 +102,22 @@ describe("createBusinessForSuperAdmin", () => {
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(createdRow());
 
+    const configCreate = vi.fn();
+    mockedTx.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
+      const tx = {
+        business: {
+          create: vi.fn().mockResolvedValue({ id: "biz-new", name: "Nuevo Local" })
+        },
+        business_config: { create: configCreate },
+        appUser: {
+          create: vi.fn().mockResolvedValue({ id: "user-new" }),
+          update: vi.fn()
+        },
+        business_user: { create: vi.fn() }
+      };
+      return fn(tx);
+    });
+
     const result = await createBusinessForSuperAdmin({
       name: "Nuevo Local",
       owner: {
@@ -115,6 +131,18 @@ describe("createBusinessForSuperAdmin", () => {
     expect(mockedGrant).toHaveBeenCalledWith({
       businessId: "biz-new",
       days: 7,
+    });
+    expect(configCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        business_id: "biz-new",
+        bot_enabled: true,
+        orders_enabled: false,
+        checkout_enabled: false,
+        reservations_enabled: false,
+        delivery_enabled: false,
+        takeaway_enabled: false,
+        external_delivery_enabled: false,
+      }),
     });
     expect(result.id).toBe("biz-new");
     expect(result.owner).toEqual({

@@ -9,11 +9,31 @@ import {
   PaymentMethodCombinationError,
   assertValidPaymentMethodCombination,
 } from "../domain/payment/paymentMethodRules";
-import { listActivePaymentMethodSnapshots } from "./paymentMethods.service";
+import {
+  listActivePaymentMethodSnapshots,
+  listOfferedPaymentMethods,
+} from "./paymentMethods.service";
 import {
   normalizePhoneDigits,
   sanitizeOwnerPhones,
 } from "./ownerAssistant/matchOwnerPhone";
+
+/** Códigos estables al habilitar pedidos sin prerequisitos (contrato panel). */
+export const ORDERS_REQUIRES_MENU = "ORDERS_REQUIRES_MENU";
+export const ORDERS_REQUIRES_PAYMENT = "ORDERS_REQUIRES_PAYMENT";
+export const ORDERS_REQUIRES_FULFILLMENT = "ORDERS_REQUIRES_FULFILLMENT";
+
+function hasFulfillment(config: {
+  delivery_enabled: boolean;
+  takeaway_enabled: boolean;
+  external_delivery_enabled: boolean;
+}): boolean {
+  return (
+    config.delivery_enabled ||
+    config.takeaway_enabled ||
+    config.external_delivery_enabled
+  );
+}
 
 export type BusinessConfig = {
   bot_enabled: boolean;
@@ -45,7 +65,8 @@ export type BusinessConfig = {
   owner_whatsapp_phones: string[];
 };
 
-const DEFAULT_CONFIG: BusinessConfig = {
+/** Defaults limpios (D1): capacidades off; bot on (D11). */
+export const DEFAULT_CONFIG: BusinessConfig = {
   bot_enabled: true,
   allow_human_handoff: true,
   human_handoff_auto_timeout_minutes: null,
@@ -55,15 +76,15 @@ const DEFAULT_CONFIG: BusinessConfig = {
   send_order_reminders: true,
   draft_order_reminder_minutes: 1,
   draft_order_expire_minutes: 2,
-  reservations_enabled: true,
+  reservations_enabled: false,
   reservation_min_lead_minutes: 60,
   reservation_max_days_ahead: 30,
   reservation_default_duration_minutes: 90,
   reservation_require_confirmation: true,
   reservation_allow_same_day: true,
-  orders_enabled: true,
-  checkout_enabled: true,
-  delivery_enabled: true,
+  orders_enabled: false,
+  checkout_enabled: false,
+  delivery_enabled: false,
   takeaway_enabled: false,
   pickup_instructions: null,
   humanize_messages: false,
@@ -78,9 +99,12 @@ const DEFAULT_CONFIG: BusinessConfig = {
 export type BusinessConfigPatch = Partial<BusinessConfig>;
 
 export class BusinessConfigValidationError extends Error {
-  constructor(message: string) {
+  readonly code?: string;
+
+  constructor(message: string, code?: string) {
     super(message);
     this.name = "BusinessConfigValidationError";
+    this.code = code;
   }
 }
 
@@ -153,6 +177,9 @@ function applyBusinessConfigRules(config: BusinessConfig): BusinessConfig {
     next.orders_when_closed = false;
   }
 
+  // D16: checkout sigue a orders; sin semántica aparte en runtime.
+  next.checkout_enabled = next.orders_enabled;
+
   // Delivery propio y delivery externo (PedidosYa / similar) son excluyentes.
   if (next.delivery_enabled && next.external_delivery_enabled) {
     throw new BusinessConfigValidationError(
@@ -160,13 +187,54 @@ function applyBusinessConfigRules(config: BusinessConfig): BusinessConfig {
     );
   }
 
-  if (!next.delivery_enabled && !next.takeaway_enabled && !next.external_delivery_enabled) {
+  // Fulfillment solo obligatorio con pedidos habilitados (D12 / Fase 5).
+  // Con capacidades off (create limpio) se permite todo en false.
+  if (next.orders_enabled && !hasFulfillment(next)) {
     throw new BusinessConfigValidationError(
-      "Al menos uno de delivery_enabled, takeaway_enabled o external_delivery_enabled debe ser true"
+      "Para habilitar pedidos necesitás al menos un modo de entrega (delivery, takeaway o delivery externo)",
+      ORDERS_REQUIRES_FULFILLMENT
     );
   }
 
   return next;
+}
+
+/**
+ * Prerequisitos al tener/activar `orders_enabled` (D4, D6, D12).
+ * Menú activo + pago ofrecible + fulfillment.
+ */
+export async function assertOrdersPrerequisites(
+  businessId: string,
+  config: BusinessConfig
+): Promise<void> {
+  if (!config.orders_enabled) return;
+
+  if (!hasFulfillment(config)) {
+    throw new BusinessConfigValidationError(
+      "Para habilitar pedidos necesitás al menos un modo de entrega (delivery, takeaway o delivery externo)",
+      ORDERS_REQUIRES_FULFILLMENT
+    );
+  }
+
+  const activeMenuCount = await prisma.menu_item.count({
+    where: { business_id: businessId, is_available: true },
+  });
+  if (activeMenuCount < 1) {
+    throw new BusinessConfigValidationError(
+      "Para habilitar pedidos necesitás al menos un ítem de menú disponible",
+      ORDERS_REQUIRES_MENU
+    );
+  }
+
+  const offered = await listOfferedPaymentMethods(businessId, {
+    externalDeliveryEnabled: config.external_delivery_enabled,
+  });
+  if (offered.length < 1) {
+    throw new BusinessConfigValidationError(
+      "Para habilitar pedidos necesitás al menos un método de pago ofrecible",
+      ORDERS_REQUIRES_PAYMENT
+    );
+  }
 }
 
 async function fetchBusinessConfigRow(
@@ -243,7 +311,7 @@ export async function upsertBusinessConfig(
   const next = applyBusinessConfigRules(nextRaw);
 
   // Delivery externo: el rider no puede cobrar efectivo. Seed defaults,
-  // desactivamos cash y exigimos al menos online o transfer activo.
+  // desactivamos cash; la combinación con 0 activos es válida (D3).
   const paymentSnapshots = await listActivePaymentMethodSnapshots(businessId);
   if (next.external_delivery_enabled) {
     await prisma.payment_method_config.updateMany({
@@ -272,6 +340,11 @@ export async function upsertBusinessConfig(
       throw new BusinessConfigValidationError(err.message);
     }
     throw err;
+  }
+
+  // Fase 5: menú + pago ofrecible solo al activar pedidos (no en todo upsert).
+  if (patch.orders_enabled === true) {
+    await assertOrdersPrerequisites(businessId, next);
   }
 
   await prisma.$executeRaw`

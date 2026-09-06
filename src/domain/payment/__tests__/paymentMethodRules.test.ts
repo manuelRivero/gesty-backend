@@ -26,13 +26,25 @@ describe('filterMethodsForFulfillmentContext', () => {
 });
 
 describe('assertValidPaymentMethodCombination', () => {
-  it('exige al menos un método activo', () => {
+  it('permite 0 métodos activos (D3)', () => {
+    expect(() =>
+      assertValidPaymentMethodCombination({
+        activeMethods: [
+          { paymentMethod: 'cash', isActive: false },
+          { paymentMethod: 'online', isActive: false },
+        ],
+        externalDeliveryEnabled: false,
+      })
+    ).not.toThrow();
+  });
+
+  it('con external y 0 activos permite (cobro se exige al enable orders)', () => {
     expect(() =>
       assertValidPaymentMethodCombination({
         activeMethods: [{ paymentMethod: 'cash', isActive: false }],
-        externalDeliveryEnabled: false,
+        externalDeliveryEnabled: true,
       })
-    ).toThrow(PaymentMethodCombinationError);
+    ).not.toThrow();
   });
 
   it('con external exige método no-cash y rechaza cash activo', () => {

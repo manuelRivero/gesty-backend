@@ -79,7 +79,10 @@ export async function createAdminBusinessConfig(req: Request, res: Response) {
     return res.status(201).json(cfg);
   } catch (err) {
     if (err instanceof BusinessConfigValidationError) {
-      return res.status(400).json({ error: err.message });
+      return res.status(400).json({
+        error: err.message,
+        ...(err.code ? { code: err.code } : {}),
+      });
     }
     throw err;
   }
@@ -102,7 +105,10 @@ export async function patchAdminBusinessConfig(req: Request, res: Response) {
     return res.json(cfg);
   } catch (err) {
     if (err instanceof BusinessConfigValidationError) {
-      return res.status(400).json({ error: err.message });
+      return res.status(400).json({
+        error: err.message,
+        ...(err.code ? { code: err.code } : {}),
+      });
     }
     throw err;
   }

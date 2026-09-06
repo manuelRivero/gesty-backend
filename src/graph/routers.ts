@@ -19,6 +19,7 @@ export const NODE = {
   OWNER_AUDIO: 'normalizeOwnerAudio',
   PERSIST_USER: 'persistUserMessage',
   SUBSCRIPTION_GATE: 'subscriptionAccessGate',
+  CAPABILITY_GATE: 'capabilityAccessGate',
   MESSAGE_TYPE_GUARD: 'messageTypeGuard',
   ESCALATION_GATE: 'escalationGate',
   AMBASSADOR_REFERRAL: 'ambassadorReferral',
@@ -93,6 +94,15 @@ export const routeAfterSubscriptionGate = (
   state: AgentState
 ): NodeName | typeof END => {
   if (state.earlyExit === 'subscription_blocked') return NODE.SEND;
+  if (state.earlyExit) return END;
+  return NODE.CAPABILITY_GATE;
+};
+
+/** Tras `capabilityAccessGate` (capacidades D7). */
+export const routeAfterCapabilityGate = (
+  state: AgentState
+): NodeName | typeof END => {
+  if (state.earlyExit === 'capabilities_blocked') return NODE.SEND;
   if (state.earlyExit) return END;
   return NODE.MESSAGE_TYPE_GUARD;
 };

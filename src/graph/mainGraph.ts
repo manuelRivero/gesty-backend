@@ -7,7 +7,8 @@
  * extract → resolveBusiness → businessConfig → resolveCustomer →
  * businessOpenInfo (→ closedBusiness → send) → normalizeOwnerAudio (→ end si
  * wamid duplicado) → persistUserMessage →
- * subscriptionAccessGate (→ send) → messageTypeGuard (→ send) →
+ * subscriptionAccessGate (→ send) → capabilityAccessGate (→ send) →
+ * messageTypeGuard (→ send) →
  * escalationGate (→ send) →
  * ambassadorReferral →
  * buildDetectionContext →
@@ -43,6 +44,7 @@ import {
 import {
   closedBusinessNode,
   subscriptionAccessGateNode,
+  capabilityAccessGateNode,
   reservationWizardNode,
 } from './nodes/gates';
 import { fulfillmentSelectionNode } from './nodes/gates/fulfillmentSelection';
@@ -64,6 +66,7 @@ import { sendResponseNode, persistAIMessageNode } from './nodes/send';
 import {
   NODE,
   routeAfterBusinessOpen,
+  routeAfterCapabilityGate,
   routeAfterDetectionContext,
   routeAfterExtract,
   routeAfterHandlerOrSubflow,
@@ -88,6 +91,7 @@ const builder = new StateGraph(AgentStateAnnotation)
   .addNode(NODE.OWNER_AUDIO, normalizeOwnerAudioNode)
   .addNode(NODE.PERSIST_USER, persistUserMessageNode)
   .addNode(NODE.SUBSCRIPTION_GATE, subscriptionAccessGateNode)
+  .addNode(NODE.CAPABILITY_GATE, capabilityAccessGateNode)
   .addNode(NODE.MESSAGE_TYPE_GUARD, messageTypeGuardNode)
   .addNode(NODE.ESCALATION_GATE, escalationGateNode)
   .addNode(NODE.AMBASSADOR_REFERRAL, ambassadorReferralNode)
@@ -144,6 +148,12 @@ builder.addConditionalEdges(NODE.PERSIST_USER, routeAfterPersistUser, {
 });
 
 builder.addConditionalEdges(NODE.SUBSCRIPTION_GATE, routeAfterSubscriptionGate, {
+  [NODE.SEND]: NODE.SEND,
+  [NODE.CAPABILITY_GATE]: NODE.CAPABILITY_GATE,
+  [END]: END,
+});
+
+builder.addConditionalEdges(NODE.CAPABILITY_GATE, routeAfterCapabilityGate, {
   [NODE.SEND]: NODE.SEND,
   [NODE.MESSAGE_TYPE_GUARD]: NODE.MESSAGE_TYPE_GUARD,
   [END]: END,

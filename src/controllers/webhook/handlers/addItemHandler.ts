@@ -29,6 +29,7 @@ import {
   isConfirmedAddQuantity,
   suggestAddQuantity,
 } from '../../../services/addQuantitySuggestion';
+import { assertCanOrder } from '../../../services/ordersCapabilityGate.service';
 
 export class AddItemHandler implements IntentHandler {
   readonly command = ConversationIntent.ADD_ITEM;
@@ -38,6 +39,11 @@ export class AddItemHandler implements IntentHandler {
   }
 
   async execute(ctx: EnrichedContext): Promise<HandlerResult | null> {
+    const ordersGate = await assertCanOrder(ctx.business.id);
+    if (!ordersGate.ok) {
+      return textResponse(ordersGate.message);
+    }
+
     const payloadId = ctx.payloadId ?? '';
     const { productId: menuItemId, quantityFromPayload, variationIndex } =
       parseAddItemButtonPayload(payloadId);

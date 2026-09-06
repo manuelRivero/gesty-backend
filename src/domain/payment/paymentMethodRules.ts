@@ -42,8 +42,8 @@ export function assertCashAllowedWithExternalDelivery(
 
 /**
  * Valida el conjunto de métodos activos del local contra el flag de delivery externo.
- * - Con external ON: al menos un método no-cash activo.
- * - Siempre: al menos un método activo.
+ * - 0 activos es válido (D3): el cobro se exige al habilitar pedidos / en canOrder.
+ * - Con external ON y ≥1 activo: no cash; al menos un método no-cash.
  */
 export function assertValidPaymentMethodCombination(params: {
   activeMethods: ActivePaymentMethodSnapshot[];
@@ -55,9 +55,7 @@ export function assertValidPaymentMethodCombination(params: {
     .filter(isPaymentMethodId);
 
   if (activeIds.length === 0) {
-    throw new PaymentMethodCombinationError(
-      'El negocio debe tener al menos un método de pago activo'
-    );
+    return;
   }
 
   if (params.externalDeliveryEnabled) {

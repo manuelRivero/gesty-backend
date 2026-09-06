@@ -3,7 +3,7 @@ import { EnrichedContext } from '../controllers/webhook/types';
 import { buildListMessageFromButtons } from '../whatsappBuilders';
 import type { WhatsAppListMessage } from '../domain/intent/whatsappTemplates';
 import { formatBotUserMessage } from './productQuery/utils';
-import { getBusinessConfig } from './businessConfig.service';
+import { evaluateBusinessCapabilityAccess } from './evaluateBusinessCapabilityAccess.service';
 import { isReservationAgentEnabled } from '../config/env';
 import {
   buildShortcutsThenListBody,
@@ -15,13 +15,16 @@ import {
   type TipableManagementAction,
 } from './pendingTipables.service';
 
-const baseButtons = [
+const orderBrowseButtons = [
   {
     title: 'Ver menú',
     payload: 'VIEW_MENU',
     description: 'Explorar platos disponibles',
     sectionTitle: 'Opciones'
   },
+];
+
+const alwaysButtons = [
   {
     title: 'Horarios de atención',
     payload: 'BUSINESS_HOURS',
@@ -78,7 +81,7 @@ export const buildSmallTalkButtons = async (ctx: EnrichedContext) => {
   });
   const businessId = ctx.business?.id ?? business?.id ?? null;
 
-  const [activeOrder, defaultAddress, businessConfig] = await Promise.all([
+  const [activeOrder, defaultAddress, capability] = await Promise.all([
     prisma.draft_order.findFirst({
       where: {
         business_id: businessId,
@@ -94,11 +97,17 @@ export const buildSmallTalkButtons = async (ctx: EnrichedContext) => {
       },
       select: { id: true }
     }),
-    businessId ? getBusinessConfig(businessId) : Promise.resolve(null)
+    businessId
+      ? evaluateBusinessCapabilityAccess(businessId)
+      : Promise.resolve(null)
   ]);
 
-  const buttons = [...baseButtons];
-  if (activeOrder) {
+  const canOrder = capability?.canOrder === true;
+  const buttons = [
+    ...(canOrder ? orderBrowseButtons : []),
+    ...alwaysButtons,
+  ];
+  if (canOrder && activeOrder) {
     buttons.unshift({
       title: 'Ver pedido',
       payload: 'VIEW_CART',
@@ -106,7 +115,7 @@ export const buildSmallTalkButtons = async (ctx: EnrichedContext) => {
       sectionTitle: 'Opciones'
     });
   }
-  if (isReservationAgentEnabled() && businessConfig?.reservations_enabled) {
+  if (isReservationAgentEnabled() && capability?.hasReservations) {
     buttons.push({
       title: 'Reservar mesa',
       payload: 'VIEW_RESERVATION',
@@ -114,7 +123,7 @@ export const buildSmallTalkButtons = async (ctx: EnrichedContext) => {
       sectionTitle: 'Opciones'
     });
   }
-  if (defaultAddress) {
+  if (canOrder && defaultAddress) {
     buttons.push({
       title: 'Editar dirección',
       payload: 'EDIT_ADDRESS',

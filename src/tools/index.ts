@@ -40,6 +40,7 @@ import {
 import { getReactContext } from './_context';
 import { createOnlinePaymentLink } from '../services/payment/payment.service';
 import { refreshDraftOrderTimeout } from '../services/draftOrderTimeout.service';
+import { assertCanOrder } from '../services/ordersCapabilityGate.service';
 import { resolveEffectivePrice } from '../helpers/menuItemPrice.helper';
 import { listPaymentAdjustmentsForAmount } from '../services/paymentAdjustment.service';
 import { computeOrderPricing } from '../services/pricing.service';
@@ -1311,6 +1312,15 @@ export const addCartItemTool = new DynamicStructuredTool<
   ) => {
     const { businessId, customerPhone, conversationId, turnStartedAt } =
       getReactContext(config);
+
+    const ordersGate = await assertCanOrder(businessId);
+    if (!ordersGate.ok) {
+      return toJson({
+        success: false,
+        error: ordersGate.error,
+        message: ordersGate.message,
+      });
+    }
 
     // Obtener o crear draft
     let draft = await prisma.draft_order.findFirst({
@@ -3009,7 +3019,15 @@ export const presentProductCtaTool = new DynamicStructuredTool<
     'NO la uses si ya resolviste sin UI (nota, quitar ítem, cierre "¿algo más?").',
   schema: presentProductCtaSchema,
   func: async (input: PresentProductCtaInput, _runManager, config?: RunnableConfig) => {
-    getReactContext(config);
+    const { businessId } = getReactContext(config);
+    const ordersGate = await assertCanOrder(businessId);
+    if (!ordersGate.ok) {
+      return toJson({
+        success: false,
+        error: ordersGate.error,
+        message: ordersGate.message,
+      });
+    }
     return toJson({
       signal: 'present_product_cta',
       primaryKind: input.primaryKind,
