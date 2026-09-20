@@ -14,7 +14,8 @@ export const createConversationMessage = async (
     completionTokens?: number;
     totalTokens?: number;
     estimatedCostUsd?: number;
-  }
+  },
+  sentByUserId?: string | null
 ): Promise<conversation_message | null> => {
   try {
     const created = await prisma.conversation_message.create({
@@ -25,6 +26,7 @@ export const createConversationMessage = async (
         is_ai_generated: isAiGenerated,
         externalMessageId,
         whatsapp_message_id: whatsappMessageId,
+        sent_by_user_id: sentByUserId ?? undefined,
         ai_prompt_tokens: metrics?.promptTokens,
         ai_completion_tokens: metrics?.completionTokens,
         ai_total_tokens: metrics?.totalTokens,
@@ -40,6 +42,15 @@ export const createConversationMessage = async (
       select: { business_id: true }
     });
 
+    let sentByUserName: string | null = null;
+    if (sentByUserId) {
+      const user = await prisma.appUser.findUnique({
+        where: { id: sentByUserId },
+        select: { name: true }
+      });
+      sentByUserName = user?.name ?? null;
+    }
+
     if (conversation?.business_id) {
       emitAdminWhatsappMessageCreated(conversation.business_id, {
         conversationId,
@@ -47,7 +58,9 @@ export const createConversationMessage = async (
         sender: created.sender,
         message: created.message,
         isAiGenerated: created.is_ai_generated,
-        createdAt: created.created_at.toISOString()
+        createdAt: created.created_at.toISOString(),
+        sentByUserId: sentByUserId ?? null,
+        sentByUserName
       });
     }
 

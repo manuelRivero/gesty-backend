@@ -76,5 +76,6 @@ describe('pendingVariation.service', () => {
     expect(text).toMatch(/add_cart_item/i);
     expect(text).toMatch(/clear_pending_variation/i);
     expect(text).toMatch(/Muy picante/);
+    expect(text).toMatch(/NO busques otro producto/i);
   });
 });

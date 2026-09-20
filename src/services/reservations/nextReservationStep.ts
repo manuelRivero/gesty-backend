@@ -53,9 +53,9 @@ export const expectedActionForReservationStep = (step: ReservationStep): string 
     case 'date':
       return 'pedir fecha en prosa; resolverla vos y llamar save_reservation_date(date, weekday?) cuando la indique';
     case 'slot':
-      return 'get_available_slots(date) para mostrar horarios';
+      return 'aceptar horario en prosa o lista; get_available_slots(date) si aún no se mostró; save_reservation_slot(id) / tipable select_slot';
     case 'party_size':
-      return 'pedir cantidad de personas; save_reservation_party_size cuando la indique';
+      return 'aceptar cantidad en prosa; save_reservation_party_size(count) / tipable party_size';
     case 'environment':
       return 'aceptar ambiente en prosa o lista; save_reservation_environment(id|null) / tipable select_environment';
     case 'confirm':

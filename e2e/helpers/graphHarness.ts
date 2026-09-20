@@ -850,3 +850,138 @@ export const disconnectPrisma = async (): Promise<void> => {
   const { prisma } = await import('../../src/lib/prisma');
   await prisma.$disconnect();
 };
+
+/** Borrador tipado de `reservation_draft` en metadata. */
+export type E2eReservationDraft = {
+  date?: string;
+  slotId?: string;
+  time?: string;
+  endTime?: string;
+  partySize?: number;
+  environmentId?: string | null;
+};
+
+export const getReservationDraft = (
+  meta: Record<string, unknown> | undefined
+): E2eReservationDraft | null => {
+  const draft = meta?.reservation_draft;
+  if (!draft || typeof draft !== 'object') return null;
+  return draft as E2eReservationDraft;
+};
+
+export const isReservationAgentActive = (
+  meta: Record<string, unknown> | undefined
+): boolean => meta?.reservation_agent_active === true;
+
+/** Extrae payloads `RESERVATION_*` de list/interactive (contenido o followUps). */
+export const extractReservationPayloadIds = (
+  result: HandlerResult | null | undefined
+): string[] => {
+  if (!result) return [];
+  const ids: string[] = [];
+
+  const collectFromAction = (action: unknown) => {
+    if (!action || typeof action !== 'object') return;
+
+    const buttons = (action as { buttons?: unknown }).buttons;
+    if (Array.isArray(buttons)) {
+      for (const button of buttons) {
+        const id = (button as { reply?: { id?: unknown } })?.reply?.id;
+        if (typeof id === 'string' && id.startsWith('RESERVATION_')) ids.push(id);
+      }
+    }
+
+    const sections = (action as { sections?: unknown }).sections;
+    if (!Array.isArray(sections)) return;
+    for (const section of sections) {
+      const rows = (section as { rows?: unknown })?.rows;
+      if (!Array.isArray(rows)) continue;
+      for (const row of rows) {
+        const id = (row as { id?: unknown })?.id;
+        if (typeof id === 'string' && id.startsWith('RESERVATION_')) ids.push(id);
+      }
+    }
+  };
+
+  const collect = (content: unknown) => {
+    if (!content || typeof content !== 'object') return;
+    // Lista WA directa: { type: 'list', action: { sections } }
+    const listish = content as { type?: string; action?: unknown };
+    if (listish.type === 'list') {
+      collectFromAction(listish.action);
+    }
+    // Interactive anidado: { interactive: { type, action } } o HandlerResult con wrapper
+    const interactive = (content as { interactive?: unknown }).interactive;
+    if (interactive && typeof interactive === 'object') {
+      collectFromAction((interactive as { action?: unknown }).action);
+    }
+    // Botones como contenido raíz { type: 'interactive', interactive: {…} } ya cubierto arriba;
+    // también action en raíz por si llega aplanado.
+    if (listish.type !== 'list') {
+      collectFromAction(listish.action);
+    }
+  };
+
+  collect(result.content);
+  for (const fu of result.followUps ?? []) {
+    if (fu.type === 'list' && fu.listMessage) collect(fu.listMessage);
+    if (fu.type === 'interactive' && fu.message) collect(fu.message);
+  }
+  return ids;
+};
+
+/**
+ * Precondiciones de capacidad para e2e de reservas.
+ * Falla con mensaje accionable si no hay slots (seed) o reservas deshabilitadas.
+ */
+export const ensureE2eReservationPrerequisites = async (
+  businessId: string
+): Promise<{ slotCount: number; environmentNames: string[] }> => {
+  const { prisma } = await import('../../src/lib/prisma');
+  const { getBusinessConfig, upsertBusinessConfig } = await import(
+    '../../src/services/businessConfig.service'
+  );
+
+  await upsertBusinessConfig(businessId, { reservations_enabled: true });
+  const cfg = await getBusinessConfig(businessId);
+  if (!cfg.reservations_enabled) {
+    throw new Error('No se pudo habilitar reservations_enabled para e2e');
+  }
+
+  const slotCount = await prisma.reservation_slot.count({
+    where: { business_id: businessId, OR: [{ is_active: true }, { is_active: null }] },
+  });
+  if (slotCount === 0) {
+    throw new Error(
+      `Sin reservation_slot activos para business=${businessId}. ` +
+        `Correr: npm run seed:reservation-slots -- --business ${businessId}`
+    );
+  }
+
+  const environments = await prisma.environment.findMany({
+    where: { business_id: businessId, is_active: true },
+    select: { name: true },
+    orderBy: { name: 'asc' },
+  });
+
+  return {
+    slotCount,
+    environmentNames: environments.map((e) => e.name?.trim()).filter(Boolean) as string[],
+  };
+};
+
+/** Cancela reservas confirmadas recientes del cliente e2e (evita saturar mesas). */
+export const cancelRecentE2eReservations = async (businessId: string): Promise<number> => {
+  const { prisma } = await import('../../src/lib/prisma');
+  const { findOrCreateCustomer } = await import('../../src/repositories/customer.repository');
+  const customer = await findOrCreateCustomer(businessId, E2E_CUSTOMER_PHONE);
+  const updated = await prisma.reservation.updateMany({
+    where: {
+      business_id: businessId,
+      customer_id: customer.id,
+      status: { in: ['confirmed', 'pending'] },
+    },
+    data: { status: 'closed' },
+  });
+  return updated.count;
+};

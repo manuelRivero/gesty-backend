@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   currentDateLabel,
   formatDMY,
+  formatDraftDateWithWeekday,
   nextDateForWeekday,
   reservationToday,
   weekdayNameEs,
@@ -35,5 +36,10 @@ describe('clock de reservas', () => {
     expect(weekdayNameEs(reservationToday())).toBe('domingo');
     expect(formatDMY(nextDateForWeekday('domingo'))).toBe('06/09/2026');
     expect(formatDMY(nextDateForWeekday('viernes'))).toBe('04/09/2026');
+  });
+
+  it('formatDraftDateWithWeekday usa el calendario (19/09/2026 = sábado, no miércoles)', () => {
+    expect(formatDraftDateWithWeekday('19/09/2026')).toBe('19/09/2026 (sábado)');
+    expect(formatDraftDateWithWeekday('16/09/2026')).toBe('16/09/2026 (miércoles)');
   });
 });

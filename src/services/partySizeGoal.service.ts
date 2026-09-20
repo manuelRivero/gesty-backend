@@ -40,6 +40,11 @@ export type PartySizeGoalFacts = {
   hasOpenOrderLines?: boolean;
   /** D3: alguna línea abierta sin cantidad — lo único que justifica el Goal con cola. */
   hasOrderLineWithoutQuantity?: boolean;
+  /**
+   * FAQ mid-reserva / sesión de reserva activa: no abrir party size de pedido
+   * (PLAN-ACCION-RESERVA-FAQ-HIBRIDO D2).
+   */
+  reservationFaqMode?: boolean;
 };
 
 export type PartySizeGoalLedger = {
@@ -84,6 +89,7 @@ export const derivePartySizeGoal = (
     facts.partySize == null &&
     facts.foodRelatedSignal &&
     !facts.checkoutActive &&
+    !facts.reservationFaqMode &&
     !ledger.abandonment &&
     !(facts.hasOpenOrderLines === true && facts.hasOrderLineWithoutQuantity !== true),
 });

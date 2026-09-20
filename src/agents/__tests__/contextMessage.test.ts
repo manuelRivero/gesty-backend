@@ -247,6 +247,8 @@ describe('buildContextMessage', () => {
     expect(msg).toContain('tienen lomo?');
     expect(msg).toContain('Pregunta de atributo que NOMBRA un candidato');
     expect(msg).toContain('get_products_details_by_ids');
+    expect(msg).toContain('Fuera del shortlist');
+    expect(msg).toContain('Solo con OK explícito buscá fuera');
     expect(msg.endsWith('el de la plancha')).toBe(true);
   });
 
@@ -336,5 +338,30 @@ describe('buildContextMessage', () => {
       })
     );
     expect(msg).not.toContain('Party size recién confirmado');
+  });
+
+  it('FAQ mid-reserva: ledger declara delegación + mesa del draft', async () => {
+    findFirstMock.mockResolvedValue(null);
+    const msg = await buildContextMessage(
+      makeCtx({
+        userMsg: 'el matambre es por plato?',
+        metadata: {
+          reservation_agent_active: true,
+          reservation_faq_delegation: {
+            reason: 'consulta de menú',
+            delegatedAt: new Date().toISOString(),
+          },
+          reservation_draft: { date: '20/09/2026', partySize: 10 },
+        },
+      })
+    );
+    expect(msg).toContain('Delegación FAQ mid-reserva: activa');
+    expect(msg).toContain('Mesa en borrador: 10 personas');
+    expect(msg).toMatch(/NO son personas del pedido/i);
+    expect(msg).toMatch(/no ofrezcas sumar platos al pedido/i);
+    expect(msg).toMatch(
+      /Personas para el pedido: no aplica en este turno \(FAQ mid-reserva/i
+    );
+    expect(msg).not.toMatch(/Goal activo:\s*OBTENER_PERSONAS_DEL_PEDIDO/i);
   });
 });

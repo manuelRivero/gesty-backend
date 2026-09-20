@@ -80,15 +80,17 @@ export function buildSelectEnvironmentValueHints(
   environments: Array<{ id: string; name: string }>
 ): { valueHints: string; actionDescription: string } {
   const lines = environments.map((e) => `- "${e.id}": ${e.name}`);
+  const names = environments.map((e) => e.name).filter(Boolean).join(', ');
   return {
     valueHints: `{
   "environmentId": <uuid del catálogo> | null
 }
 ${lines.join('\n')}
 - null: sin preferencia, cualquiera, me da igual, lo que sea, no importa
-Usá el uuid exacto del catálogo cuando el usuario nombre un ambiente (ej. "salón principal").`,
+- Match parcial inequívoco OK (ej. "salón" → el uuid de "Salón principal" si es el único salón)
+- Si nombra algo que NO está en el catálogo (ej. "carpa cerca de los juegos", "terraza" cuando no hay terraza): NO inventes uuid y NO uses null (null solo es "me da igual"). Dejá el turno como no-fulfilled / reprompt para que el sistema aclare y re-ofrezca: ${names || 'los ambientes listados'}.`,
     actionDescription:
-      'El usuario debe elegir un ambiente del catálogo del local, o indicar que no tiene preferencia (environmentId null).',
+      'El usuario debe elegir un ambiente del catálogo del local, o indicar que no tiene preferencia (environmentId null). Si pide un ambiente inexistente, no cumplas el paso.',
   };
 }
 
@@ -115,6 +117,122 @@ export function isValidEnvironmentSelection(
 ): boolean {
   if (environmentId === null) return true;
   return environments.some((e) => e.id === environmentId);
+}
+
+export type ReservationSlotOption = {
+  id: string;
+  startTime: string;
+  endTime: string;
+};
+
+export const SelectSlotPendingSchema = z.object({
+  /** UUID del slot del catálogo del día. */
+  slotId: z.string(),
+});
+export type SelectSlotPendingValue = z.infer<typeof SelectSlotPendingSchema>;
+
+export const SELECT_SLOT_QUESTION = '¿A qué hora preferís reservar?';
+
+export function buildSelectSlotValueHints(
+  slots: ReservationSlotOption[]
+): { valueHints: string; actionDescription: string } {
+  const lines = slots.map((s) => `- "${s.id}": ${s.startTime}–${s.endTime}`);
+  const bandHint = `
+Bandas (elegí UN uuid del catálogo cuya startTime caiga en la banda):
+- "mediodía", "al mediodía", "almuerzo" → startTime entre 11:00 y 15:59
+- "a la tarde", "tarde" → 16:00–18:59
+- "a la noche", "noche", "sábado a la noche" → 19:00–23:59
+Si hay varios en la banda, elegí el primero de esa banda en el catálogo. Si no hay ninguno, status no-fulfilled (el sistema re-ofrecerá la lista).`;
+  return {
+    valueHints: `{
+  "slotId": <uuid del catálogo>
+}
+${lines.join('\n')}
+Usá el uuid exacto del catálogo cuando el usuario nombre un horario (ej. "a las 19:00", "sí, a las 19", "20:30") o una banda (${bandHint.trim()}).`,
+    actionDescription:
+      'El usuario debe elegir un horario del catálogo (hora exacta o banda mediodía/tarde/noche) para la fecha ya guardada en el borrador.',
+  };
+}
+
+/** Clasificador tipable de horario (nodo + ledger). Catálogo acotado a la fecha del draft. */
+export async function extractSelectSlotPending(
+  userMessage: string,
+  slots: ReservationSlotOption[]
+) {
+  const { valueHints, actionDescription } = buildSelectSlotValueHints(slots);
+  return extractPendingTurnResponse({
+    userMessage,
+    pendingAction: 'select_slot',
+    botQuestion: SELECT_SLOT_QUESTION,
+    schema: SelectSlotPendingSchema,
+    valueHints,
+    actionDescription,
+  });
+}
+
+/** True si el valor fulfilled apunta a un slot del catálogo del día. */
+export function isValidSlotSelection(
+  slotId: string,
+  slots: ReservationSlotOption[]
+): boolean {
+  return slots.some((s) => s.id === slotId);
+}
+
+export const PartySizePendingSchema = z.object({
+  /** Cantidad de personas (entero ≥ 1). */
+  count: z.number().int().positive(),
+});
+export type PartySizePendingValue = z.infer<typeof PartySizePendingSchema>;
+
+export const PARTY_SIZE_QUESTION = '¿Para cuántas personas?';
+
+export function buildPartySizeValueHints(maxCapacity: number | null): {
+  valueHints: string;
+  actionDescription: string;
+} {
+  const maxLine =
+    maxCapacity != null && maxCapacity > 0
+      ? `\nMáximo del local (capacidad combinable): ${maxCapacity}. Si pide más, igual extraé el número (el borde validará).`
+      : '';
+  return {
+    valueHints: `{
+  "count": <entero ≥ 1>
+}
+- "4", "somos 4", "para cuatro", "4 personas" → 4
+- "dos", "para dos", "somos dos" → 2
+- "solo yo", "uno" → 1${maxLine}`,
+    actionDescription:
+      'El usuario debe indicar cuántas personas asistirán a la reserva (número entero positivo).',
+  };
+}
+
+/** Clasificador tipable de cantidad de personas (nodo + ledger). */
+export async function extractPartySizePending(
+  userMessage: string,
+  maxCapacity: number | null = null
+) {
+  const { valueHints, actionDescription } = buildPartySizeValueHints(maxCapacity);
+  return extractPendingTurnResponse({
+    userMessage,
+    pendingAction: 'party_size',
+    botQuestion: PARTY_SIZE_QUESTION,
+    schema: PartySizePendingSchema,
+    valueHints,
+    actionDescription,
+  });
+}
+
+/**
+ * True si el count fulfilled es usable.
+ * `maxCapacity <= 0` = sin tope conocido (mismo criterio que la tool).
+ */
+export function isValidPartySizeSelection(
+  count: number,
+  maxCapacity: number
+): boolean {
+  if (!Number.isInteger(count) || count < 1) return false;
+  if (maxCapacity > 0 && count > maxCapacity) return false;
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -151,8 +269,18 @@ export interface ReservationAgentContext {
   hasEnvironments: boolean;
   environmentNames: Array<{ id: string; name: string }>;
   /**
-   * Tras un tipable de ambiente fulfilled en el mismo turno: no re-interpretar
-   * el mensaje del usuario como confirm_reservation (el texto era el salón).
+   * Slots del día de la fecha del draft (id ↔ horario). Vacío si no hay fecha
+   * o no hay turnos ese día. Alimenta tipable `select_slot` y el ledger.
+   */
+  availableSlots?: ReservationSlotOption[];
+  /**
+   * Capacidad combinable del local (suma de mesas). Alimenta tipable `party_size`
+   * y el ledger; `null`/`0` = sin tope conocido.
+   */
+  maxPartySize?: number | null;
+  /**
+   * Tras un tipable fulfilled en el mismo turno (slot / party size / ambiente): no
+   * re-interpretar el mensaje del usuario como otro pending.
    */
   skipPendingExtraction?: boolean;
 }
@@ -227,16 +355,77 @@ const buildReservationContextMessage = async (
         .map((e) => `${e.name} (id: ${e.id})`)
         .join('; ')}`
     );
+    if (step === 'environment') {
+      lines.push(
+        '- Si el cliente nombra un ambiente fuera de esa lista: aclará que no está entre los del local ' +
+          'y re-mostrá get_available_environments (o pedí elegir / sin preferencia); no inventes ids.'
+      );
+    }
   }
 
-  // Tipables (confirm / ambiente): el nodo ya short-circuitea fulfilled (§3.11).
+  const slotCatalog = reservationCtx.availableSlots ?? [];
+  // Catálogo id↔horario: tipable / save_reservation_slot necesitan el UUID.
+  if (step === 'slot' && slotCatalog.length > 0) {
+    lines.push(
+      `- Horarios disponibles: ${slotCatalog
+        .map((s) => `${s.startTime}–${s.endTime} (id: ${s.id})`)
+        .join('; ')}`
+    );
+    lines.push(
+      '- Si el cliente nombra un horario fuera de esa lista: aclará que no está entre los ofrecidos ' +
+        'y re-mostrá get_available_slots; no inventes slotId ni cambies de tema sin avisar.'
+    );
+  }
+
+  // Tipables (slot / party_size / confirm / ambiente): el nodo ya short-circuitea fulfilled (§3.11).
   // Acá solo inyectamos el bloque para reprompt/delegate cuando el ReAct corre.
   const userText = userMsg.trim();
   const hasPayload = Boolean(ctx.payloadId?.trim());
   let extractionBlock = '';
   if (userText && !hasPayload && !reservationCtx.skipPendingExtraction) {
     try {
-      if (step === 'confirm') {
+      if (step === 'slot' && slotCatalog.length > 0) {
+        const extraction = await extractSelectSlotPending(userText, slotCatalog);
+        console.log(
+          JSON.stringify({
+            event: '[reservation-pending] extraction',
+            action: 'select_slot',
+            status: extraction.status,
+            confidence: extraction.confidence,
+            source: extraction.source,
+            conversationId,
+          })
+        );
+        extractionBlock = formatPendingExtractionBlock({
+          pendingAction: 'select_slot',
+          botQuestion: SELECT_SLOT_QUESTION,
+          status: extraction.status,
+          confidence: extraction.confidence,
+          value: extraction.value,
+          reason: extraction.reason,
+        });
+      } else if (step === 'party_size') {
+        const max = reservationCtx.maxPartySize ?? null;
+        const extraction = await extractPartySizePending(userText, max);
+        console.log(
+          JSON.stringify({
+            event: '[reservation-pending] extraction',
+            action: 'party_size',
+            status: extraction.status,
+            confidence: extraction.confidence,
+            source: extraction.source,
+            conversationId,
+          })
+        );
+        extractionBlock = formatPendingExtractionBlock({
+          pendingAction: 'party_size',
+          botQuestion: PARTY_SIZE_QUESTION,
+          status: extraction.status,
+          confidence: extraction.confidence,
+          value: extraction.value,
+          reason: extraction.reason,
+        });
+      } else if (step === 'confirm') {
         const extraction = await extractConfirmReservationPending(userText);
         console.log(
           JSON.stringify({

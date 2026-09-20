@@ -1,6 +1,7 @@
 import { prisma } from "../lib/prisma";
 import { createConversationMessage, updateConversationLastMessageAt } from "../repositories";
 import { WhatsAppSenderService } from "./whatsappSender.service";
+import { setConversationHumanHandled } from "./conversationHumanHandled.service";
 
 export async function sendAdminWhatsappReply(params: {
   businessId: string;
@@ -48,20 +49,20 @@ export async function sendAdminWhatsappReply(params: {
     conversation.id,
     `admin:${params.adminUserId}`,
     params.message,
-    false
+    false,
+    undefined,
+    undefined,
+    undefined,
+    params.adminUserId
   );
   await updateConversationLastMessageAt(conversation.id);
 
   if (!params.skipHumanTakeover) {
-    await prisma.conversation_state.upsert({
-      where: { conversation_id: conversation.id },
-      create: {
-        conversation_id: conversation.id,
-        is_human_handled: true
-      },
-      update: {
-        is_human_handled: true
-      }
+    await setConversationHumanHandled({
+      conversationId: conversation.id,
+      businessId: params.businessId,
+      humanHandled: true,
+      reason: "manual"
     });
   }
 

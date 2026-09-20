@@ -1,4 +1,5 @@
 import { prisma } from "../lib/prisma";
+import { setConversationHumanHandled } from "./conversationHumanHandled.service";
 
 export async function getConversationBotStatus(
   businessId: string,
@@ -44,15 +45,11 @@ export async function setConversationBotStatus(
     return null;
   }
 
-  await prisma.conversation_state.upsert({
-    where: { conversation_id: conversationId },
-    create: {
-      conversation_id: conversationId,
-      is_human_handled: !enabled
-    },
-    update: {
-      is_human_handled: !enabled
-    }
+  await setConversationHumanHandled({
+    conversationId,
+    businessId,
+    humanHandled: !enabled,
+    reason: "manual"
   });
 
   return {

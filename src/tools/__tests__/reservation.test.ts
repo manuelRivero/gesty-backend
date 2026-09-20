@@ -19,10 +19,12 @@ vi.mock('../../lib/prisma', () => ({
 vi.mock('../../repositories/conversationState.repository', () => ({
   patchConversationMetadata: vi.fn(),
   omitConversationMetadataKeys: vi.fn(),
+  findOrCreateConversationState: vi.fn(),
 }));
 
 vi.mock('../../repositories/reservation.repository', () => ({
   fetchReservationSlotsForBusinessDate: vi.fn(),
+  fetchActiveReservationSlotById: vi.fn(),
   findAnyFutureOccupyingReservationForCustomer: vi.fn(),
   findActiveEnvironmentsByBusinessId: vi.fn(),
   findActiveTablesByBusinessAndEnvironment: vi.fn(),
@@ -35,12 +37,21 @@ vi.mock('../../services/businessConfig.service', () => ({
 }));
 
 import { prisma } from '../../lib/prisma';
-import { patchConversationMetadata } from '../../repositories/conversationState.repository';
-import { findActiveTablesByBusinessAndEnvironment } from '../../repositories/reservation.repository';
+import {
+  patchConversationMetadata,
+  findOrCreateConversationState,
+} from '../../repositories/conversationState.repository';
+import {
+  findActiveTablesByBusinessAndEnvironment,
+  fetchActiveReservationSlotById,
+  findActiveEnvironmentsByBusinessId,
+} from '../../repositories/reservation.repository';
 import { getBusinessConfig } from '../../services/businessConfig.service';
 import {
   saveReservationDateTool,
   saveReservationPartySizeTool,
+  saveReservationSlotTool,
+  saveReservationEnvironmentTool,
   resolveReservationConfirmationTool,
   startReservationSessionTool,
 } from '../reservation';
@@ -58,6 +69,8 @@ const CONFIG = {
 const mockedFindFirst = prisma.conversation_state.findFirst as unknown as ReturnType<typeof vi.fn>;
 const mockedPatch = patchConversationMetadata as unknown as ReturnType<typeof vi.fn>;
 const mockedTables = findActiveTablesByBusinessAndEnvironment as unknown as ReturnType<typeof vi.fn>;
+const mockedActiveSlot = fetchActiveReservationSlotById as unknown as ReturnType<typeof vi.fn>;
+const mockedEnvs = findActiveEnvironmentsByBusinessId as unknown as ReturnType<typeof vi.fn>;
 
 describe('save_reservation_date — gate (D7/R-G)', () => {
   beforeEach(() => {
@@ -180,6 +193,97 @@ describe('save_reservation_party_size — gate de capacidad (D7/R-G)', () => {
   });
 });
 
+describe('save_reservation_slot — gate de catálogo', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedFindFirst.mockResolvedValue({ metadata: { reservation_draft: { date: '20/08/2026' } } });
+  });
+
+  it('rechaza un slot inexistente sin persistir', async () => {
+    mockedActiveSlot.mockResolvedValue(null);
+
+    const raw = await saveReservationSlotTool.func({ slotId: 'missing' }, undefined, CONFIG);
+    expect(JSON.parse(raw)).toEqual({ saved: false, error: 'invalid_slot' });
+    expect(mockedPatch).not.toHaveBeenCalled();
+  });
+
+  it('persiste slotId/time/endTime sin borrar date', async () => {
+    mockedActiveSlot.mockResolvedValue({
+      id: 'slot-19',
+      start_time: '19:00',
+      end_time: '20:30',
+      is_active: true,
+    });
+
+    const raw = await saveReservationSlotTool.func({ slotId: 'slot-19' }, undefined, CONFIG);
+    expect(JSON.parse(raw)).toEqual({
+      saved: true,
+      slotId: 'slot-19',
+      time: '19:00',
+      endTime: '20:30',
+    });
+    expect(mockedPatch).toHaveBeenCalledWith('conv-1', {
+      reservation_draft: {
+        date: '20/08/2026',
+        slotId: 'slot-19',
+        time: '19:00',
+        endTime: '20:30',
+      },
+    });
+  });
+});
+
+describe('save_reservation_environment — gate catálogo', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedFindFirst.mockResolvedValue({
+      metadata: { reservation_draft: { date: '20/08/2026', slotId: 'slot-1', partySize: 4 } },
+    });
+    mockedEnvs.mockResolvedValue([
+      { id: 'env-salon', name: 'Salón principal' },
+      { id: 'env-patio', name: 'Patio exterior' },
+    ]);
+  });
+
+  it('rechaza environmentId fuera de catálogo sin persistir', async () => {
+    const raw = await saveReservationEnvironmentTool.func(
+      { environmentId: 'env-carpa-inventada' },
+      undefined,
+      CONFIG
+    );
+    const parsed = JSON.parse(raw) as {
+      saved: boolean;
+      error?: string;
+      available?: Array<{ id: string }>;
+    };
+    expect(parsed.saved).toBe(false);
+    expect(parsed.error).toBe('invalid_environment');
+    expect(parsed.available?.map((e) => e.id)).toEqual(['env-salon', 'env-patio']);
+    expect(mockedPatch).not.toHaveBeenCalled();
+  });
+
+  it('persiste id de catálogo', async () => {
+    const raw = await saveReservationEnvironmentTool.func(
+      { environmentId: 'env-salon' },
+      undefined,
+      CONFIG
+    );
+    expect(JSON.parse(raw)).toEqual({ saved: true, environmentId: 'env-salon' });
+    expect(mockedPatch).toHaveBeenCalled();
+  });
+
+  it('persiste null (sin preferencia)', async () => {
+    const raw = await saveReservationEnvironmentTool.func(
+      { environmentId: null },
+      undefined,
+      CONFIG
+    );
+    expect(JSON.parse(raw)).toEqual({ saved: true, environmentId: null });
+    expect(mockedEnvs).not.toHaveBeenCalled();
+    expect(mockedPatch).toHaveBeenCalled();
+  });
+});
+
 describe('resolve_reservation_confirmation — señal pura (D3)', () => {
   beforeEach(() => vi.clearAllMocks());
 
@@ -194,7 +298,12 @@ describe('resolve_reservation_confirmation — señal pura (D3)', () => {
 });
 
 describe('start_reservation_session — entrada del híbrido (Fase B)', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(findOrCreateConversationState).mockResolvedValue({
+      metadata: {},
+    } as never);
+  });
 
   it('devuelve la señal cuando el negocio toma reservas', async () => {
     vi.mocked(getBusinessConfig).mockResolvedValue({ reservations_enabled: true } as never);
@@ -223,6 +332,24 @@ describe('start_reservation_session — entrada del híbrido (Fase B)', () => {
 
     expect(parsed.success).toBe(false);
     expect(parsed.error).toBe('reservations_disabled');
+    expect(parsed.signal).toBeUndefined();
+  });
+
+  it('gate: sesión de reserva ya activa no re-emite la señal (anti-loop delegate)', async () => {
+    vi.mocked(getBusinessConfig).mockResolvedValue({ reservations_enabled: true } as never);
+    vi.mocked(findOrCreateConversationState).mockResolvedValue({
+      metadata: { reservation_agent_active: true },
+    } as never);
+
+    const raw = await startReservationSessionTool.func(
+      { reason: 'consulta de menú mid-reserva' },
+      undefined,
+      CONFIG
+    );
+    const parsed = JSON.parse(raw) as { success: boolean; error?: string; signal?: string };
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toBe('reservation_session_already_active');
     expect(parsed.signal).toBeUndefined();
   });
 });

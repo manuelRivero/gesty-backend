@@ -278,6 +278,16 @@ export type ConversationMetadata = {
   reservation_agent_active?: boolean;
 
   /**
+   * Fact efímero de turno FAQ mid-reserva (`delegate_to_main`).
+   * Se setea antes del híbrido inline y se limpia al salir de esa rama —
+   * no sobrevive al siguiente mensaje del usuario (PLAN-ACCION-RESERVA-FAQ-HIBRIDO).
+   */
+  reservation_faq_delegation?: {
+    reason?: string;
+    delegatedAt: string;
+  };
+
+  /**
    * Borrador de los datos recolectados por el agente de reservas durante la
    * sesión activa. Se persiste turno a turno via tools de escritura.
    */

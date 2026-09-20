@@ -15,6 +15,7 @@ import { getReactContext } from './_context';
 import { omitConversationMetadataKeys } from '../repositories/conversationState.repository';
 import {
   fetchReservationSlotsForBusinessDate,
+  fetchActiveReservationSlotById,
   findAnyFutureOccupyingReservationForCustomer,
   findActiveEnvironmentsByBusinessId,
   findActiveTablesByBusinessAndEnvironment,
@@ -33,6 +34,7 @@ import {
 } from '../services/reservations/clock';
 import { RESERVATION_MAX_DAYS_AHEAD } from '../constants/reservation';
 import { patchReservationDraft } from '../services/reservations/draft.repository';
+import { getMaxCombinablePartySize } from '../services/reservations/capacity';
 import { getBusinessConfig } from '../services/businessConfig.service';
 import { prisma } from '../lib/prisma';
 import type { RunnableConfig } from '@langchain/core/runnables';
@@ -110,12 +112,6 @@ function validateReservationDateGate(
   }
 
   return { ok: true };
-}
-
-/** Capacidad máxima combinable del negocio (suma de mesas activas). D7/R-G. */
-async function getMaxCombinablePartySize(businessId: string): Promise<number> {
-  const tables = await findActiveTablesByBusinessAndEnvironment(businessId);
-  return tables.reduce((sum, t) => sum + t.capacity, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -226,12 +222,71 @@ export const saveReservationEnvironmentTool = new DynamicStructuredTool<
   description:
     'Persiste la preferencia de ambiente de la reserva. ' +
     'Pasá el id del catálogo del [ESTADO] / get_available_environments cuando el cliente nombre un ambiente en prosa. ' +
-    'Pasá null cuando el cliente diga que no tiene preferencia o que le da lo mismo.',
+    'Pasá null cuando el cliente diga que no tiene preferencia o que le da lo mismo. ' +
+    'Si el nombre no está en el catálogo, NO inventes un id: la tool devolverá invalid_environment y debés aclarar + re-mostrar get_available_environments.',
   schema: saveReservationEnvironmentSchema,
   func: async ({ environmentId }: SaveReservationEnvironmentInput, _runManager, config?: RunnableConfig) => {
-    const { conversationId } = getReactContext(config);
+    const { conversationId, businessId } = getReactContext(config);
+
+    if (environmentId != null) {
+      const environments = await findActiveEnvironmentsByBusinessId(businessId);
+      const ok = environments.some((e) => e.id === environmentId);
+      if (!ok) {
+        return toJson({
+          saved: false,
+          error: 'invalid_environment',
+          message:
+            'Ese environmentId no está en el catálogo activo. Aclará al cliente y re-mostrá get_available_environments (o null = sin preferencia).',
+          available: environments.map((e) => ({ id: e.id, name: e.name })),
+        });
+      }
+    }
+
     await patchReservationDraft(conversationId, { environmentId });
     return toJson({ saved: true, environmentId });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// ESCRITURA: save_reservation_slot
+// ---------------------------------------------------------------------------
+
+const saveReservationSlotSchema = z.object({
+  slotId: z
+    .string()
+    .describe(
+      'UUID del horario elegido del catálogo de get_available_slots / [ESTADO DE LA RESERVA].'
+    ),
+});
+type SaveReservationSlotInput = z.infer<typeof saveReservationSlotSchema>;
+
+export const saveReservationSlotTool = new DynamicStructuredTool<
+  typeof saveReservationSlotSchema,
+  SaveReservationSlotInput
+>({
+  name: 'save_reservation_slot',
+  description:
+    'Persiste el horario elegido en el borrador. ' +
+    'Pasá el id del catálogo del [ESTADO] / get_available_slots cuando el cliente nombre un horario en prosa ' +
+    '("a las 19:00", "sí, a las 19"). No inventes ids: solo los del catálogo.',
+  schema: saveReservationSlotSchema,
+  func: async ({ slotId }: SaveReservationSlotInput, _runManager, config?: RunnableConfig) => {
+    const { conversationId, businessId } = getReactContext(config);
+    const slot = await fetchActiveReservationSlotById(slotId, businessId);
+    if (!slot) {
+      return toJson({ saved: false, error: 'invalid_slot' });
+    }
+    await patchReservationDraft(conversationId, {
+      slotId: slot.id,
+      time: slot.start_time,
+      endTime: slot.end_time,
+    });
+    return toJson({
+      saved: true,
+      slotId: slot.id,
+      time: slot.start_time,
+      endTime: slot.end_time,
+    });
   },
 });
 
@@ -652,14 +707,15 @@ export const startReservationSessionTool = new DynamicStructuredTool<
     'Delega al agente de reservas cuando el cliente quiere RESERVAR una mesa o gestionar/ver una reserva ' +
     '("quiero reservar", "tienen mesa para el sábado?", "mesa para 4", "ver mi reserva", "cancelar mi reserva"). ' +
     'NO gestiones vos fecha, horario, personas ni ambiente de la reserva: solo delegá con esta tool. ' +
-    'No la uses para pedidos de comida (eso es carrito/menú).',
+    'No la uses para pedidos de comida (eso es carrito/menú). ' +
+    'Si ya hay sesión de reserva activa (error reservation_session_already_active), respondé la consulta del usuario con tools de menú/precio; no reintentes esta tool.',
   schema: startReservationSessionSchema,
   func: async (
     { reason }: StartReservationSessionInput,
     _runManager,
     config?: RunnableConfig
   ) => {
-    const { businessId } = getReactContext(config);
+    const { businessId, conversationId } = getReactContext(config);
     const businessConfig = await getBusinessConfig(businessId);
 
     if (!businessConfig.reservations_enabled) {
@@ -667,6 +723,23 @@ export const startReservationSessionTool = new DynamicStructuredTool<
         success: false,
         error: 'reservations_disabled',
         message: 'Este negocio no toma reservas; no se puede iniciar una sesión de reserva.',
+      });
+    }
+
+    // Anti-loop: si el reservation agent ya delegó este turno al híbrido
+    // (sesión activa), re-emitir la señal vacía la respuesta de menú/precios.
+    const { findOrCreateConversationState } = await import(
+      '../repositories/conversationState.repository'
+    );
+    const state = await findOrCreateConversationState(conversationId);
+    const meta = (state.metadata ?? {}) as Record<string, unknown>;
+    if (meta.reservation_agent_active === true) {
+      return toJson({
+        success: false,
+        error: 'reservation_session_already_active',
+        message:
+          'La sesión de reserva ya está activa. NO vuelvas a delegar: respondé la consulta del cliente ' +
+          '(menú, precios, raciones, ingredientes, horarios) con tus tools. La reserva sigue en curso.',
       });
     }
 
@@ -682,6 +755,7 @@ export const allReservationTools = [
   saveReservationDateTool,
   saveReservationPartySizeTool,
   saveReservationEnvironmentTool,
+  saveReservationSlotTool,
   getActiveReservationTool,
   checkAvailabilityTool,
   getAvailableSlotsTool,

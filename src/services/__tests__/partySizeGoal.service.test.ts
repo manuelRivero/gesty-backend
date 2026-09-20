@@ -75,6 +75,20 @@ describe('derivePartySizeGoal', () => {
       ).open
     ).toBe(false);
   });
+
+  it('cerrado en modo FAQ mid-reserva', () => {
+    expect(
+      derivePartySizeGoal(
+        {
+          partySize: null,
+          foodRelatedSignal: true,
+          checkoutActive: false,
+          reservationFaqMode: true,
+        },
+        EMPTY_LEDGER
+      ).open
+    ).toBe(false);
+  });
 });
 
 describe('isFoodRelatedPartySizeSignal', () => {

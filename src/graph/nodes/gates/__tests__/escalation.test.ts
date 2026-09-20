@@ -16,12 +16,17 @@ vi.mock('../../../../socket/adminSocket', () => ({
   emitAdminWhatsappSupportRequested: vi.fn(),
 }));
 
+vi.mock('../../../../services/conversationHumanHandled.service', () => ({
+  markSupportRequested: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { escalationGateNode } from '../escalation';
 import {
   findOrCreateConversationState,
   updateConversationState,
 } from '../../../../repositories/conversationState.repository';
 import { emitAdminWhatsappSupportRequested } from '../../../../socket/adminSocket';
+import { markSupportRequested } from '../../../../services/conversationHumanHandled.service';
 import type { AgentState } from '../../../state';
 
 const baseState = (overrides: Partial<AgentState> = {}): AgentState =>
@@ -47,7 +52,11 @@ describe('escalationGateNode — interrupt determinista (V-02)', () => {
     expect(result.isHumanHandover).toBe(true);
     expect(result.handlerResult).toBeTruthy();
     expect(findOrCreateConversationState).toHaveBeenCalledWith('conv-1');
-    expect(updateConversationState).toHaveBeenCalledWith('conv-1', { is_human_handled: true });
+    expect(updateConversationState).toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({ is_human_handled: true })
+    );
+    expect(markSupportRequested).toHaveBeenCalledWith('conv-1');
     expect(emitAdminWhatsappSupportRequested).toHaveBeenCalledWith(
       'biz-1',
       expect.objectContaining({ conversationId: 'conv-1' })
@@ -65,7 +74,10 @@ describe('escalationGateNode — interrupt determinista (V-02)', () => {
     const result = await escalationGateNode(state);
 
     expect(result.isHumanHandover).toBe(true);
-    expect(updateConversationState).toHaveBeenCalledWith('conv-1', { is_human_handled: true });
+    expect(updateConversationState).toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({ is_human_handled: true })
+    );
   });
 
   it('NO escala con texto ambiguo que menciona "persona" sin pedir contacto humano', async () => {

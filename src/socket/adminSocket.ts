@@ -429,6 +429,13 @@ export function emitAdminOrderPaymentProofChecked(
   );
 }
 
+export type AdminWhatsappAssignedUserPayload = {
+  id: string;
+  userId: string;
+  name: string | null;
+  role: string;
+} | null;
+
 /** Payloads del canal Socket `admin:whatsapp` (mensajes y señales de inbox). */
 export type AdminWhatsappRealtimePayload =
   | {
@@ -440,6 +447,8 @@ export type AdminWhatsappRealtimePayload =
       message: string;
       isAiGenerated: boolean;
       createdAt: string;
+      sentByUserId: string | null;
+      sentByUserName: string | null;
     }
   | {
       type: "whatsapp.support_requested";
@@ -450,6 +459,44 @@ export type AdminWhatsappRealtimePayload =
       customerPhone: string | null;
       customerName: string | null;
       at: string;
+    }
+  | {
+      type: "whatsapp.support_acked";
+      businessId: string;
+      conversationId: string;
+      ackedBy: AdminWhatsappAssignedUserPayload;
+      at: string;
+    }
+  | {
+      type: "whatsapp.assignment_updated";
+      businessId: string;
+      conversationId: string;
+      assignedUser: AdminWhatsappAssignedUserPayload;
+      assignedAt: string | null;
+    }
+  | {
+      type: "whatsapp.bot_auto_reactivated";
+      businessId: string;
+      conversationId: string;
+      at: string;
+    }
+  | {
+      type: "whatsapp.note_created";
+      businessId: string;
+      conversationId: string;
+      note: {
+        id: string;
+        conversationId: string;
+        body: string;
+        createdAt: string;
+        createdBy: NonNullable<AdminWhatsappAssignedUserPayload>;
+      };
+    }
+  | {
+      type: "whatsapp.viewers_updated";
+      businessId: string;
+      conversationId: string;
+      viewers: Array<{ id: string; name: string | null }>;
     };
 
 function emitAdminWhatsappChannel(
@@ -480,6 +527,8 @@ export function emitAdminWhatsappMessageCreated(
     message: string;
     isAiGenerated: boolean;
     createdAt: string;
+    sentByUserId?: string | null;
+    sentByUserName?: string | null;
   }
 ): void {
   emitAdminWhatsappChannel(businessId, {
@@ -490,7 +539,9 @@ export function emitAdminWhatsappMessageCreated(
     sender: payload.sender,
     message: payload.message,
     isAiGenerated: payload.isAiGenerated,
-    createdAt: payload.createdAt
+    createdAt: payload.createdAt,
+    sentByUserId: payload.sentByUserId ?? null,
+    sentByUserName: payload.sentByUserName ?? null
   });
 }
 
@@ -515,6 +566,88 @@ export function emitAdminWhatsappSupportRequested(
     customerPhone: payload.customerPhone,
     customerName: payload.customerName,
     at: new Date().toISOString()
+  });
+}
+
+export function emitAdminWhatsappSupportAcked(
+  businessId: string,
+  payload: {
+    conversationId: string;
+    ackedBy: AdminWhatsappAssignedUserPayload;
+    at: string;
+  }
+): void {
+  emitAdminWhatsappChannel(businessId, {
+    type: "whatsapp.support_acked",
+    businessId,
+    conversationId: payload.conversationId,
+    ackedBy: payload.ackedBy,
+    at: payload.at
+  });
+}
+
+export function emitAdminWhatsappAssignmentUpdated(
+  businessId: string,
+  payload: {
+    conversationId: string;
+    assignedUser: AdminWhatsappAssignedUserPayload;
+    assignedAt: string | null;
+  }
+): void {
+  emitAdminWhatsappChannel(businessId, {
+    type: "whatsapp.assignment_updated",
+    businessId,
+    conversationId: payload.conversationId,
+    assignedUser: payload.assignedUser,
+    assignedAt: payload.assignedAt
+  });
+}
+
+export function emitAdminWhatsappBotAutoReactivated(
+  businessId: string,
+  payload: { conversationId: string }
+): void {
+  emitAdminWhatsappChannel(businessId, {
+    type: "whatsapp.bot_auto_reactivated",
+    businessId,
+    conversationId: payload.conversationId,
+    at: new Date().toISOString()
+  });
+}
+
+export function emitAdminWhatsappNoteCreated(
+  businessId: string,
+  payload: {
+    conversationId: string;
+    note: {
+      id: string;
+      conversationId: string;
+      body: string;
+      createdAt: string;
+      createdBy: NonNullable<AdminWhatsappAssignedUserPayload>;
+    };
+  }
+): void {
+  emitAdminWhatsappChannel(businessId, {
+    type: "whatsapp.note_created",
+    businessId,
+    conversationId: payload.conversationId,
+    note: payload.note
+  });
+}
+
+export function emitAdminWhatsappViewersUpdated(
+  businessId: string,
+  payload: {
+    conversationId: string;
+    viewers: Array<{ id: string; name: string | null }>;
+  }
+): void {
+  emitAdminWhatsappChannel(businessId, {
+    type: "whatsapp.viewers_updated",
+    businessId,
+    conversationId: payload.conversationId,
+    viewers: payload.viewers
   });
 }
 

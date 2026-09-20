@@ -25,6 +25,7 @@ import { env } from './config/env';
 import { mainGraph } from './graph/mainGraph';
 import { verifyWebhook as verifyWebhookService } from './services/whatsapp.service';
 import { processDraftOrderTimeouts } from './workers/draftOrders';
+import { processHumanHandoffTimeouts } from './workers/humanHandoffTimeout';
 import type { WhatsAppWebhookPayload } from './controllers/webhook/types';
 import { mercadoPagoWebhookHandler } from './controllers/payments/mercadoPagoWebhook.controller';
 import { billingStripeWebhookHandler } from './controllers/billingStripeWebhook.controller';
@@ -40,6 +41,20 @@ if (env.ENABLE_DRAFT_ORDER_WORKER) {
 } else {
   console.log(
     '[worker:draftOrders] disabled (set ENABLE_DRAFT_ORDER_WORKER=true to enable)'
+  );
+}
+
+if (env.ENABLE_HANDOFF_TIMEOUT_WORKER) {
+  const HANDOFF_TIMEOUT_TICK_MS = 60_000;
+  setInterval(() => {
+    void processHumanHandoffTimeouts().catch((err) => {
+      console.error('[worker:handoffTimeout] tick error', err);
+    });
+  }, HANDOFF_TIMEOUT_TICK_MS);
+  console.log('[worker:handoffTimeout] enabled (tick every 60s)');
+} else {
+  console.log(
+    '[worker:handoffTimeout] disabled (set ENABLE_HANDOFF_TIMEOUT_WORKER=true to enable)'
   );
 }
 

@@ -100,6 +100,8 @@ export const buildPendingVariationContextLines = (
       `*${pending.productName}* (productId: ${pending.productId}). Opciones del catálogo: ${opts}. ` +
       `Interpretá el mensaje (nombre parcial, typo razonable, nota extra tipo "sin cebolla") y llamá ` +
       `add_cart_item(productId, quantity: ${pending.quantity}, variation=<opción del catálogo>). ` +
+      `Si pide una variedad que NO está en esas opciones: aclará que para este plato no la tenés, ` +
+      `nombrá las disponibles y pedí que elija; NO busques otro producto. ` +
       `Si además hay preferencia de preparación, después update_item_note. ` +
       `Si cancela: clear_pending_variation() y confirmá breve. ` +
       `NO relistes otros productos ni ignores la variación. NO asumas una opción sin que el cliente elija.`,

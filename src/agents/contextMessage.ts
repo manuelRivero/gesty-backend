@@ -46,6 +46,11 @@ import {
   PARTY_SIZE_GOAL_TYPE,
 } from '../services/partySizeGoal.service';
 import {
+  buildReservationFaqDelegationContextLines,
+  isReservationFaqMode,
+  ORDER_PUSH_INTENTS_DURING_RESERVATION_FAQ,
+} from '../services/reservationFaqDelegation.service';
+import {
   deriveFueraDeCoberturaCandidate,
   derivePedidoPorExpirarCandidate,
   recordAlertEmitted,
@@ -143,8 +148,12 @@ export async function buildPendingProductSelectionLines(
       'get_products_details_by_ids de ESE productId; respondé solo de ese plato. ' +
       'NO preguntes "¿sobre cuál?" ni relistes el resto del shortlist.',
     '- Pregunta de atributo SIN nombrar cuál ("qué trae?"): los candidatos son el foco; resumí o preguntá a cuál de esa lista.',
+    '- Fuera del shortlist (pide un plato/variedad que NO matchea ningún candidato): ' +
+      'NO busques ni abras otra categoría en este turno. Aclará que entre estas opciones no está; ' +
+      'preguntá si quiere que busques en el menú o si prefiere elegir de la lista. Solo con OK explícito buscá fuera.',
     '- PRIORIDAD: si el mensaje es gestión tipable (menú, ver pedido, modificar, finalizar, nota) ' +
-      'o pide otro plato / instrucción de preparación ("poca sal"), NO fuerces add_cart_item del shortlist.',
+      'o instrucción de preparación ("poca sal"), NO fuerces add_cart_item del shortlist. ' +
+      'Pedir otro plato distinto a los candidatos = fuera del shortlist (arriba).',
   ];
   const q = meta.pendingQuestion?.trim();
   if (q) {
@@ -275,6 +284,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
 
   const reservationDraft = meta.reservation_draft;
   const reservationAgentActive = meta.reservation_agent_active === true;
+  const reservationFaqMode = isReservationFaqMode(meta);
   const hasReservationDraft = hasReservationDraftInProgress(reservationDraft);
   let hasEnvironments = false;
   if (hasReservationDraft && businessId) {
@@ -286,10 +296,12 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     }
   }
 
-  const partySizeLine = partySize
-    ? `${partySize} (guía de cantidad a pedir, NO filtro de serves_people)`
-    : 'no informado — NO preguntarlo por iniciativa propia. Solo se pide si aparece el Goal ' +
-      'OBTENER_PERSONAS_DEL_PEDIDO acá abajo o si una tool devuelve party_size_required';
+  const partySizeLine = reservationFaqMode
+    ? 'no aplica en este turno (FAQ mid-reserva — respondé menú; no pidas personas del pedido ni ofrezcas sumar al pedido)'
+    : partySize
+      ? `${partySize} (guía de cantidad a pedir, NO filtro de serves_people)`
+      : 'no informado — NO preguntarlo por iniciativa propia. Solo se pide si aparece el Goal ' +
+        'OBTENER_PERSONAS_DEL_PEDIDO acá abajo o si una tool devuelve party_size_required';
 
   const detection = ctx.detection;
 
@@ -303,7 +315,9 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     orderLedger
   ).catch((err) => console.error('[goal] failed to reset order completion ledger:', err));
 
-  const confirmOfferCandidate = deriveConfirmOfferCandidate(meta);
+  const confirmOfferCandidate = reservationFaqMode
+    ? null
+    : deriveConfirmOfferCandidate(meta);
   const confirmOfferLedger = getConfirmOfferLedgerEntry(meta);
 
   const hasAddress = ctx.hasAddress === true;
@@ -352,34 +366,41 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
       { pendingClosedAddItem: Boolean(meta.pending_closed_add_item) },
       meta.intentLedger?.DESBLOQUEAR_PEDIDO_CERRADO
     ),
-    deriveSuggestComplementCandidate(
-      {
-        cartTags,
-        checkoutActive,
-        hasOpenOrderLines: openOrderLines,
-        promotionSuppressedTags,
-      },
-      meta.intentLedger?.SUGERIR_COMPLEMENTO
-    ),
-    derivePromotionCandidate(
-      {
-        evaluation: promotionEvaluation,
-        checkoutActive,
-        hasOpenOrderLines: openOrderLines,
-      },
-      meta.intentLedger?.[PROMOTION_INTENT_TYPE]
-    ),
+    reservationFaqMode
+      ? null
+      : deriveSuggestComplementCandidate(
+          {
+            cartTags,
+            checkoutActive,
+            hasOpenOrderLines: openOrderLines,
+            promotionSuppressedTags,
+          },
+          meta.intentLedger?.SUGERIR_COMPLEMENTO
+        ),
+    reservationFaqMode
+      ? null
+      : derivePromotionCandidate(
+          {
+            evaluation: promotionEvaluation,
+            checkoutActive,
+            hasOpenOrderLines: openOrderLines,
+          },
+          meta.intentLedger?.[PROMOTION_INTENT_TYPE]
+        ),
     // SUGERIR_DIRECCION: no se inyecta en el híbrido — dirección solo onboarding/checkout.
-    derivePartySizeGoalCandidate(
-      {
-        foodRelatedSignal,
-        partySize: partySize ?? null,
-        checkoutActive,
-        hasOpenOrderLines: openOrderLines,
-        hasOrderLineWithoutQuantity: hasOpenOrderLineWithoutQuantity(meta),
-      },
-      resolvePartySizeLedgerEntry(meta)
-    ),
+    reservationFaqMode
+      ? null
+      : derivePartySizeGoalCandidate(
+          {
+            foodRelatedSignal,
+            partySize: partySize ?? null,
+            checkoutActive,
+            hasOpenOrderLines: openOrderLines,
+            hasOrderLineWithoutQuantity: hasOpenOrderLineWithoutQuantity(meta),
+            reservationFaqMode,
+          },
+          resolvePartySizeLedgerEntry(meta)
+        ),
     confirmOfferCandidate,
   ].filter((c): c is NonNullable<typeof c> => c != null);
 
@@ -395,7 +416,9 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
       hasEnvironments,
     },
     extras,
-  });
+  }).filter((c) =>
+    reservationFaqMode ? !ORDER_PUSH_INTENTS_DURING_RESERVATION_FAQ.has(c.type) : true
+  );
 
   const extrasLedger: IntentLedgerView = {};
   if (confirmOfferLedger) extrasLedger.CONFIRMAR_OFERTA = confirmOfferLedger;
@@ -528,6 +551,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
   );
 
   const lines = [
+    ...buildReservationFaqDelegationContextLines(meta),
     `- Personas para el pedido: ${partySizeLine}`,
     ...partySizeJustConfirmedLines,
     hasItems || checkoutActive || offerStillAlive
@@ -543,7 +567,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     ...pendingOrderLinesLines,
     ...pendingCancelLines,
     ...lastOfferFactLines,
-    ...buildPromotionFactLines(promotionEvaluation),
+    ...(reservationFaqMode ? [] : buildPromotionFactLines(promotionEvaluation)),
     ...intentLines,
     ...optionalComplementLines,
   ].filter((line): line is string => line !== null);

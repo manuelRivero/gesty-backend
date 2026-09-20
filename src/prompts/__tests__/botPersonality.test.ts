@@ -106,6 +106,57 @@ describe('botPersonality', () => {
     expect(hybrid).toMatch(/Pregunta de atributo/i);
     expect(hybrid).toMatch(/NOMBRA un candidato/i);
     expect(hybrid).toMatch(/get_products_details_by_ids/i);
+    expect(hybrid).toMatch(/FUERA DEL SHORTLIST/i);
+    expect(hybrid).toMatch(/salto de foco sin avisar está prohibido/i);
+  });
+
+  it('reservas: fuera de catálogo de horario/ambiente pide claridad', () => {
+    const reservation = buildReservationAgentSystemPrompt();
+    expect(reservation).toMatch(/NO está en el catálogo/i);
+    expect(reservation).toMatch(/entre los turnos ofrecidos/i);
+  });
+
+  it('reservas: paso horario mapea bandas noche/mediodía a slot de catálogo', () => {
+    const reservation = buildReservationAgentSystemPrompt();
+    expect(reservation).toMatch(/a la noche/i);
+    expect(reservation).toMatch(/mediodía/i);
+    expect(reservation).toMatch(/19:00–23:59/);
+    expect(reservation).toMatch(/save_reservation_slot\(slotId\)/);
+  });
+
+  it('reservas: menú mid-reserva → delegate_to_main YA sin transición en prosa', () => {
+    const reservation = buildReservationAgentSystemPrompt();
+    expect(reservation).toMatch(/matambre a la pizza/i);
+    expect(reservation).toMatch(/delegate_to_main YA/i);
+    expect(reservation).toMatch(/No redactes una respuesta de transición/i);
+    expect(reservation).toMatch(/ANTES de save_reservation_\*/i);
+  });
+
+  it('reservas: ambiente fuera de catálogo aclara y no inventa id', () => {
+    const reservation = buildReservationAgentSystemPrompt();
+    expect(reservation).toMatch(/carpa cerca de los juegos/i);
+    expect(reservation).toMatch(/invalid_environment/);
+    expect(reservation).toMatch(/NO cambies de tema a horarios/i);
+  });
+
+  it('hybrid: reservation_session_already_active → no re-delegar, responder menú', () => {
+    const hybrid = buildHybridAgentSystemPrompt(undefined, {
+      reservationDelegationEnabled: true,
+    });
+    expect(hybrid).toMatch(/reservation_session_already_active/);
+    expect(hybrid).toMatch(/NO vuelvas a llamar start_reservation_session/i);
+  });
+
+  it('hybrid: Delegación FAQ mid-reserva → no armar ni ofrecer pedido', () => {
+    const hybrid = buildHybridAgentSystemPrompt(undefined, {
+      reservationDelegationEnabled: true,
+    });
+    expect(hybrid).toMatch(/DELEGACIÓN FAQ MID-RESERVA/);
+    expect(hybrid).toMatch(/Delegación FAQ mid-reserva: activa/);
+    expect(hybrid).toMatch(/PROHIBIDO: armar pedido/i);
+    expect(hybrid).toMatch(/ofrecer sumar platos al pedido/);
+    expect(hybrid).toMatch(/present_product_cta/);
+    expect(hybrid).toMatch(/Mesa en borrador/i);
   });
 
   it('reservas: la fecha la interpreta el agente, sin parser intermedio', () => {

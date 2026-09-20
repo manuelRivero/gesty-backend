@@ -90,6 +90,21 @@ import {
 } from "../controllers/adminWhatsappBotControl.controller";
 import { postAdminWhatsappReply } from "../controllers/adminWhatsappReply.controller";
 import {
+  patchWhatsappConversationAssignment,
+  postWhatsappConversationTake,
+  postWhatsappConversationSupportAck,
+  getWhatsappConversationNotes,
+  postWhatsappConversationNote,
+  deleteWhatsappConversationNote,
+  postWhatsappConversationViewing
+} from "../controllers/adminWhatsappInbox.controller";
+import {
+  getCannedReplies,
+  postCannedReply,
+  patchCannedReply,
+  deleteCannedReplyHandler
+} from "../controllers/adminCannedReplies.controller";
+import {
   getAdminBusiness,
   patchAdminBusiness
 } from "../controllers/adminBusiness.controller";
@@ -226,17 +241,82 @@ router.get(
 router.post("/config", requireRoles("OWNER", "ADMIN"), createAdminBusinessConfig);
 router.patch("/config", requireRoles("OWNER", "ADMIN"), patchAdminBusinessConfig);
 router.delete("/config", requireRoles("OWNER", "ADMIN"), removeAdminBusinessConfig);
-router.get("/whatsapp/messages", getWhatsappMessages);
-router.get("/whatsapp/conversations", getWhatsappConversations);
+router.get("/whatsapp/messages", requireRoles("OWNER", "ADMIN"), getWhatsappMessages);
+router.get(
+  "/whatsapp/conversations",
+  requireRoles("OWNER", "ADMIN"),
+  getWhatsappConversations
+);
 router.get(
   "/whatsapp/conversations/:conversationId/bot",
+  requireRoles("OWNER", "ADMIN"),
   getWhatsappConversationBotStatus
 );
 router.patch(
   "/whatsapp/conversations/:conversationId/bot",
+  requireRoles("OWNER", "ADMIN"),
   patchWhatsappConversationBotStatus
 );
-router.post("/whatsapp/conversations/:conversationId/messages", postAdminWhatsappReply);
+router.post(
+  "/whatsapp/conversations/:conversationId/messages",
+  requireRoles("OWNER", "ADMIN"),
+  postAdminWhatsappReply
+);
+router.patch(
+  "/whatsapp/conversations/:conversationId/assignment",
+  requireRoles("OWNER", "ADMIN"),
+  patchWhatsappConversationAssignment
+);
+router.post(
+  "/whatsapp/conversations/:conversationId/take",
+  requireRoles("OWNER", "ADMIN"),
+  postWhatsappConversationTake
+);
+router.post(
+  "/whatsapp/conversations/:conversationId/support-ack",
+  requireRoles("OWNER", "ADMIN"),
+  postWhatsappConversationSupportAck
+);
+router.get(
+  "/whatsapp/conversations/:conversationId/notes",
+  requireRoles("OWNER", "ADMIN"),
+  getWhatsappConversationNotes
+);
+router.post(
+  "/whatsapp/conversations/:conversationId/notes",
+  requireRoles("OWNER", "ADMIN"),
+  postWhatsappConversationNote
+);
+router.delete(
+  "/whatsapp/conversations/:conversationId/notes/:noteId",
+  requireRoles("OWNER", "ADMIN"),
+  deleteWhatsappConversationNote
+);
+router.post(
+  "/whatsapp/conversations/:conversationId/viewing",
+  requireRoles("OWNER", "ADMIN"),
+  postWhatsappConversationViewing
+);
+router.get(
+  "/whatsapp/canned-replies",
+  requireRoles("OWNER", "ADMIN"),
+  getCannedReplies
+);
+router.post(
+  "/whatsapp/canned-replies",
+  requireRoles("OWNER", "ADMIN"),
+  postCannedReply
+);
+router.patch(
+  "/whatsapp/canned-replies/:id",
+  requireRoles("OWNER", "ADMIN"),
+  patchCannedReply
+);
+router.delete(
+  "/whatsapp/canned-replies/:id",
+  requireRoles("OWNER", "ADMIN"),
+  deleteCannedReplyHandler
+);
 router.get(
   "/menu-categories/options",
   requireRoles("OWNER", "ADMIN"),

@@ -35,6 +35,11 @@ export type ResumeFollowUpInput =
       kind: 'reservation';
       draft: ReservationDraft | undefined;
       hasEnvironments: boolean;
+      /**
+       * Tras FAQ mid-reserva (`delegate_to_main`): anexar invitación
+       * determinística a seguir o cancelar (PLAN-ACCION-RESERVA-FAQ-HIBRIDO D3).
+       */
+      includeContinueOrCancel?: boolean;
     }
   | {
       kind: 'onboarding';
@@ -58,6 +63,10 @@ const RESUME_PREFIX = {
   reservation: 'Seguimos con tu reserva:',
   onboarding: 'Seguimos:',
 } as const;
+
+/** Copy fijo post-FAQ mid-reserva (D3) — no depende del LLM. */
+export const RESERVATION_FAQ_CONTINUE_OR_CANCEL =
+  '¿Seguimos con la reserva o preferís cancelarla?';
 
 /**
  * Exportada para reuso en `reservationCompletionGoal.service.ts` (Fase 1b): es la
@@ -106,8 +115,15 @@ export function buildResumeFollowUp(input: ResumeFollowUpInput): ResumeFollowUp 
     }
     case 'reservation': {
       const question = nextReservationDraftQuestion(input.draft, input.hasEnvironments);
-      if (!question) return { text: null };
-      return { text: `${RESUME_PREFIX.reservation} ${question}` };
+      const cancelInvite = input.includeContinueOrCancel
+        ? RESERVATION_FAQ_CONTINUE_OR_CANCEL
+        : null;
+      if (!question && !cancelInvite) return { text: null };
+      if (!question && cancelInvite) return { text: cancelInvite };
+      const body = `${RESUME_PREFIX.reservation} ${question}`;
+      return {
+        text: cancelInvite ? `${body}\n${cancelInvite}` : body,
+      };
     }
     case 'onboarding': {
       if (input.step === 'done') return { text: null };

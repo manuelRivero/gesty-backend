@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
+import { mapInboxAssignedUser } from "./conversationInbox.shared";
 
 export type ListAdminWhatsappMessagesParams = {
   businessId: string;
@@ -15,6 +16,11 @@ export type ListAdminConversationsParams = {
   pageSize: number;
   sentiment?: string;
   customerPhone?: string;
+  /** `me` | `unassigned` | business_user UUID */
+  assignedTo?: string;
+  actorBusinessUserId?: string;
+  /** Solo pendientes de ack de soporte */
+  supportPending?: boolean;
 };
 
 export async function listAdminWhatsappMessages(
@@ -51,6 +57,9 @@ export async function listAdminWhatsappMessages(
       skip,
       take: pageSize,
       include: {
+        sent_by_user: {
+          select: { id: true, name: true }
+        },
         conversation: {
           select: {
             id: true,
@@ -91,6 +100,8 @@ export async function listAdminWhatsappMessages(
     items: rows.map((row, index) => ({
       ...row,
       message: normalizedMessages[index] ?? row.message,
+      sentByUserId: row.sent_by_user_id ?? null,
+      sentByUserName: row.sent_by_user?.name ?? null,
       conversation: {
         id: row.conversation.id,
         customer: row.conversation.customer,
@@ -220,10 +231,19 @@ async function humanizeInteractivePayloadId(
 
 /**
  * Lista conversaciones del negocio con datos de sentiment para el inbox del admin.
- * Permite filtrar por sentiment y teléfono del cliente.
+ * Permite filtrar por sentiment, teléfono, assignee y support pendiente.
  */
 export async function listAdminConversations(params: ListAdminConversationsParams) {
-  const { businessId, page, pageSize, sentiment, customerPhone } = params;
+  const {
+    businessId,
+    page,
+    pageSize,
+    sentiment,
+    customerPhone,
+    assignedTo,
+    actorBusinessUserId,
+    supportPending
+  } = params;
 
   const where: Prisma.conversationWhereInput = { business_id: businessId };
 
@@ -235,6 +255,19 @@ export async function listAdminConversations(params: ListAdminConversationsParam
     where.customer = {
       phone_number: { contains: customerPhone.trim() }
     };
+  }
+
+  if (assignedTo === "unassigned") {
+    where.assigned_business_user_id = null;
+  } else if (assignedTo === "me" && actorBusinessUserId) {
+    where.assigned_business_user_id = actorBusinessUserId;
+  } else if (assignedTo && assignedTo !== "me") {
+    where.assigned_business_user_id = assignedTo;
+  }
+
+  if (supportPending) {
+    where.support_requested_at = { not: null };
+    where.support_acked_at = null;
   }
 
   const skip = (page - 1) * pageSize;
@@ -252,6 +285,9 @@ export async function listAdminConversations(params: ListAdminConversationsParam
         last_message_at: true,
         ai_sentiment: true,
         ai_sentiment_updated_at: true,
+        assigned_at: true,
+        support_requested_at: true,
+        support_acked_at: true,
         customer: {
           select: {
             id: true,
@@ -265,6 +301,14 @@ export async function listAdminConversations(params: ListAdminConversationsParam
             current_intent: true,
           }
         },
+        assigned_business_user: {
+          select: {
+            id: true,
+            user_id: true,
+            role: true,
+            app_user: { select: { name: true } }
+          }
+        }
       }
     })
   ]);
@@ -282,6 +326,10 @@ export async function listAdminConversations(params: ListAdminConversationsParam
       customer: row.customer,
       botEnabled: !Boolean(row.conversation_state?.is_human_handled),
       currentIntent: row.conversation_state?.current_intent ?? null,
+      assignedUser: mapInboxAssignedUser(row.assigned_business_user),
+      assignedAt: row.assigned_at?.toISOString() ?? null,
+      supportRequestedAt: row.support_requested_at?.toISOString() ?? null,
+      supportAckedAt: row.support_acked_at?.toISOString() ?? null,
     })),
     total,
     page,

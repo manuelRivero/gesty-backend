@@ -97,6 +97,15 @@ const envSchema = z.object({
     .optional()
     .transform((v) => v === 'true' || v === '1'),
 
+  /**
+   * Auto-reactiva bot tras `human_handoff_auto_timeout_minutes` (inbox equipo).
+   * Default off; opt-in con `true`/`1`.
+   */
+  ENABLE_HANDOFF_TIMEOUT_WORKER: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true' || v === '1'),
+
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 
   /**
@@ -227,6 +236,9 @@ export const env: AppEnv = parsed.data;
 /** Worker de expiración de drafts / idle. Sin él, PEDIDO_POR_EXPIRAR no debe anunciarse. */
 export const isDraftOrderWorkerEnabled = (): boolean =>
   env.ENABLE_DRAFT_ORDER_WORKER === true;
+
+export const isHandoffTimeoutWorkerEnabled = (): boolean =>
+  env.ENABLE_HANDOFF_TIMEOUT_WORKER === true;
 
 export const isCheckoutAgentEnabled = (): boolean =>
   env.CHECKOUT_AGENT_ENABLED === true;

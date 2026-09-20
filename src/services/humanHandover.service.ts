@@ -10,6 +10,8 @@
  * Efecto aguas abajo: con `is_human_handled` en true, `buildDetectionContextNode`
  * corta el turno (`bot_disabled_or_human_handled`) y el bot deja de responder
  * automáticamente hasta que un admin devuelva la conversación.
+ *
+ * Inbox equipo: también marca `support_requested_at` y reabre ack pendiente (I7).
  */
 
 import {
@@ -17,6 +19,7 @@ import {
   updateConversationState,
 } from '../repositories/conversationState.repository';
 import { emitAdminWhatsappSupportRequested } from '../socket/adminSocket';
+import { markSupportRequested } from './conversationHumanHandled.service';
 
 export const SUPPORT_MESSAGE =
   '🤖\n\n*Tu consulta fue derivada a nuestro equipo* 🎧\n\n' +
@@ -47,7 +50,11 @@ export async function handOverToHuman(params: {
     // Garantiza la fila antes de actualizarla: según desde dónde se escale,
     // el `conversation_state` puede todavía no existir.
     await findOrCreateConversationState(conversationId);
-    await updateConversationState(conversationId, { is_human_handled: true });
+    await updateConversationState(conversationId, {
+      is_human_handled: true,
+      updated_at: new Date(),
+    });
+    await markSupportRequested(conversationId);
     console.log('[HumanHandover] Conversation handed over to human:', {
       conversationId,
       reason,

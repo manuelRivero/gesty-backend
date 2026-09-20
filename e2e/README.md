@@ -69,6 +69,9 @@ npm run test:agent-history
 npm run test:agent-gates
 npm run test:language-variations
 npm run test:natural-conversations
+
+# Suite diagnóstica de reservas (producción) — NO entra en test:e2e
+npm run test:reservation-production
 ```
 
 Si faltan variables, los tests se **saltan** (no fallan) y un test documenta el motivo.
@@ -84,11 +87,12 @@ Si faltan variables, los tests se **saltan** (no fallan) y un test documenta el 
 | `agent-gates.e2e.test.ts` | Fase 2: variación, cantidad, local cerrado, carrito vacío, Order |
 | `language-variations.e2e.test.ts` | Fase 3: misma intención con formulaciones distintas de WhatsApp → mismo efecto |
 | `natural-conversations.e2e.test.ts` | Fase 4: micro-conversaciones multi-turno (corrección, interrupción, referencia, continuidad) |
+| `reservation-production.e2e.test.ts` | **Diagnóstica** (independiente): replay de reservas reales (Picado). Soft-asserts + log JSON. Requiere slots (`seed:reservation-slots`) y `RESERVATION_AGENT_ENABLED=true`. Reporte en `e2e/.last-reservation-production-report.json` |
 
 ## Helpers
 
 - `e2e/helpers/env.ts` — flags y detección de entorno
-- `e2e/helpers/graphHarness.ts` — payloads WhatsApp, `mainGraph`, reset de cliente, `findE2eSecondAddableProduct`, `getActiveDraftFulfillmentType`, `countUserMessages`
+- `e2e/helpers/graphHarness.ts` — payloads WhatsApp, `mainGraph`, reset de cliente, helpers de reservas (`ensureE2eReservationPrerequisites`, `getReservationDraft`, …)
 
 ## Parity (backend vs agent)
 

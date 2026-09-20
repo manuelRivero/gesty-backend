@@ -7,8 +7,8 @@
  * Responsabilidades del nodo (no del agente):
  *  - Activar `reservation_agent_active` en el primer turno.
  *  - Persistir slot/ambiente en `reservation_draft` cuando llegan payloads de botón.
- *  - Tipables fulfilled (§3.11): ambiente y confirmación en prosa → mismo efecto
- *    que el botón, ANTES del ReAct (`extractPendingTurnResponse`).
+ *  - Tipables fulfilled (§3.11): horario, personas, ambiente y confirmación en prosa
+ *    → mismo efecto que el botón/tool, ANTES del ReAct (`extractPendingTurnResponse`).
  *  - Ejecutar la confirmación determinística (createReservationWithTables + QR).
  *  - Manejar RESERVATION_CANCEL y RESERVATION_RESET.
  *  - Adjuntar listas/botones WhatsApp cuando el agente devuelve señales.
@@ -40,6 +40,7 @@ import {
   formatReservationDateDb,
   formatDbTimeReservation,
 } from '../../../services/reservations/utils';
+import { formatDraftDateWithWeekday } from '../../../services/reservations/clock';
 import {
   patchReservationDraft,
   readReservationDraft,
@@ -56,9 +57,18 @@ import {
   runReservationAgent,
   extractConfirmReservationPending,
   extractSelectEnvironmentPending,
+  extractSelectSlotPending,
+  extractPartySizePending,
   isValidEnvironmentSelection,
+  isValidSlotSelection,
+  isValidPartySizeSelection,
   type ReservationAgentContext,
 } from '../../../agents/reservationAgent';
+import { getMaxCombinablePartySize } from '../../../services/reservations/capacity';
+import {
+  buildReservationFaqDelegation,
+  RESERVATION_FAQ_DELEGATION_KEY,
+} from '../../../services/reservationFaqDelegation.service';
 import { runHybridReactAgent } from '../../../agents/reactAgent';
 import {
   formatBotUserMessage,
@@ -144,15 +154,25 @@ function buildConfirmationButtonsMessage(
   data: ConfirmationData,
   leadText?: string | null
 ): WhatsAppInteractiveMessage {
+  const dateLabel = formatDraftDateWithWeekday(data.date);
   const summary = [
-    `📅 Fecha: ${data.date}`,
+    `📅 Fecha: ${dateLabel}`,
     `⏰ Horario: ${data.time}–${data.endTime}`,
     `👥 Personas: ${data.partySize}`,
     ...(data.environmentName ? [`🏡 Ambiente: ${data.environmentName}`] : []),
     ...(data.customerName ? [`👤 Nombre: ${data.customerName}`] : []),
   ].join('\n');
 
-  const lead = leadText?.trim() ? `${leadText.trim()}\n\n` : '🤖\n\n';
+  // Lead corto sí; si el LLM reescribió el resumen entero (con weekday inventado),
+  // no lo anteponemos: la tarjeta determinística es la fuente de verdad.
+  const trimmedLead = leadText?.trim() ?? '';
+  const leadRestatesSummary =
+    /fecha\s*:/i.test(trimmedLead) ||
+    /horario\s*:/i.test(trimmedLead) ||
+    /confirm(á|a)?\s+tu\s+reserva/i.test(trimmedLead) ||
+    /reserva está lista/i.test(trimmedLead);
+  const lead =
+    trimmedLead && !leadRestatesSummary ? `${trimmedLead}\n\n` : '🤖\n\n';
 
   return {
     type: 'interactive',
@@ -408,11 +428,37 @@ export const reservationAgentNode = async (
   const reservationCtx: ReservationAgentContext = {
     hasEnvironments: environments.length > 0,
     environmentNames: envCatalog,
+    availableSlots: [],
+    maxPartySize: null,
   };
+
+  // Catálogo de slots del día (tipable select_slot + ledger del ReAct).
+  const draftForCatalog = await readReservationDraft(conversationId);
+  if (draftForCatalog.date) {
+    try {
+      const slotsForDate = await fetchReservationSlotsForBusinessDate(
+        business.id,
+        normalizeDate(draftForCatalog.date)
+      );
+      reservationCtx.availableSlots = slotsForDate.map((s) => ({
+        id: s.id,
+        startTime: s.start_time,
+        endTime: s.end_time,
+      }));
+    } catch (err) {
+      console.error('[reservation-agent] error cargando slots para tipable:', err);
+    }
+  }
+
+  try {
+    reservationCtx.maxPartySize = await getMaxCombinablePartySize(business.id);
+  } catch (err) {
+    console.error('[reservation-agent] error cargando capacidad para tipable:', err);
+  }
 
   // ── Tipables fulfilled en el nodo (§3.11) — ANTES del ReAct ───────────────
   // Mismo borde que el botón: extractPendingTurnResponse → efecto, sin esperar
-  // a que el modelo llame resolve_* / save_reservation_environment.
+  // a que el modelo llame resolve_* / save_reservation_*.
   const tipableText = ctx.message?.text?.body?.trim() ?? '';
   const tipableMessageType = ctx.message?.type;
   if (tipableText && !payloadId && tipableMessageType !== 'location') {
@@ -427,7 +473,164 @@ export const reservationAgentNode = async (
       { hasEnvironments: environments.length > 0 }
     );
 
-    if (tipableStep === 'environment' && environments.length > 0) {
+    if (tipableStep === 'slot' && (reservationCtx.availableSlots?.length ?? 0) > 0) {
+      const slotCatalog = reservationCtx.availableSlots ?? [];
+      const extraction = await extractSelectSlotPending(tipableText, slotCatalog);
+      console.log(
+        JSON.stringify({
+          event: '[reservation-agent] select_slot_tipable_extraction',
+          status: extraction.status,
+          confidence: extraction.confidence,
+          source: extraction.source,
+          conversationId,
+        })
+      );
+      if (
+        extraction.status === 'fulfilled' &&
+        extraction.value &&
+        isValidSlotSelection(extraction.value.slotId, slotCatalog)
+      ) {
+        const chosen = slotCatalog.find((s) => s.id === extraction.value!.slotId);
+        if (chosen) {
+          const freshDraft = await patchReservationDraft(conversationId, {
+            slotId: chosen.id,
+            time: chosen.startTime,
+            endTime: chosen.endTime,
+          });
+          const nextAfterSlot = nextReservationStep(
+            {
+              date: freshDraft.date,
+              slotId: freshDraft.slotId,
+              partySize: freshDraft.partySize,
+              environmentId: freshDraft.environmentId,
+            },
+            { hasEnvironments: environments.length > 0 }
+          );
+          // Draft ya completo → misma tarjeta que el tipable de ambiente.
+          if (
+            nextAfterSlot === 'confirm' &&
+            freshDraft.date &&
+            freshDraft.time &&
+            freshDraft.endTime &&
+            freshDraft.partySize != null
+          ) {
+            const environmentName = await resolveEnvironmentName(
+              freshDraft.environmentId,
+              business.id
+            );
+            const ack = formatBotUserMessage(
+              'Horario',
+              '⏰',
+              `Listo, anoté *${chosen.startTime}*.`
+            );
+            const confirmationMsg = buildConfirmationButtonsMessage(
+              {
+                date: freshDraft.date,
+                time: freshDraft.time,
+                endTime: freshDraft.endTime,
+                partySize: freshDraft.partySize,
+                environmentName,
+                customerName: customerName ?? undefined,
+              },
+              ack
+            );
+            return {
+              handlerResult: {
+                content: confirmationMsg,
+                isInteractive: true,
+                skipBodyHumanization: true,
+              },
+              dataCollectionDelegated: true,
+            };
+          }
+          // Falta personas/ambiente: seguir al ReAct sin re-extraer el tipable.
+          reservationCtx.skipPendingExtraction = true;
+        }
+      }
+    } else if (tipableStep === 'party_size') {
+      const max = reservationCtx.maxPartySize ?? 0;
+      const extraction = await extractPartySizePending(
+        tipableText,
+        max > 0 ? max : null
+      );
+      console.log(
+        JSON.stringify({
+          event: '[reservation-agent] party_size_tipable_extraction',
+          status: extraction.status,
+          confidence: extraction.confidence,
+          source: extraction.source,
+          conversationId,
+        })
+      );
+      if (extraction.status === 'fulfilled' && extraction.value) {
+        const count = extraction.value.count;
+        if (max > 0 && count > max) {
+          return {
+            handlerResult: {
+              content: formatBotUserMessage(
+                'Cantidad de Personas',
+                '👥',
+                `Para esta reserva el máximo es *${max}* personas. ¿Cuántos van a ser?`
+              ),
+              isInteractive: false,
+              skipBodyHumanization: true,
+            },
+            dataCollectionDelegated: true,
+          };
+        }
+        if (isValidPartySizeSelection(count, max)) {
+          const freshDraft = await patchReservationDraft(conversationId, {
+            partySize: count,
+          });
+          const nextAfterParty = nextReservationStep(
+            {
+              date: freshDraft.date,
+              slotId: freshDraft.slotId,
+              partySize: freshDraft.partySize,
+              environmentId: freshDraft.environmentId,
+            },
+            { hasEnvironments: environments.length > 0 }
+          );
+          if (
+            nextAfterParty === 'confirm' &&
+            freshDraft.date &&
+            freshDraft.time &&
+            freshDraft.endTime &&
+            freshDraft.partySize != null
+          ) {
+            const environmentName = await resolveEnvironmentName(
+              freshDraft.environmentId,
+              business.id
+            );
+            const ack = formatBotUserMessage(
+              'Cantidad de Personas',
+              '👥',
+              `Listo, anoté *${count}* personas.`
+            );
+            const confirmationMsg = buildConfirmationButtonsMessage(
+              {
+                date: freshDraft.date,
+                time: freshDraft.time,
+                endTime: freshDraft.endTime,
+                partySize: freshDraft.partySize,
+                environmentName,
+                customerName: customerName ?? undefined,
+              },
+              ack
+            );
+            return {
+              handlerResult: {
+                content: confirmationMsg,
+                isInteractive: true,
+                skipBodyHumanization: true,
+              },
+              dataCollectionDelegated: true,
+            };
+          }
+          reservationCtx.skipPendingExtraction = true;
+        }
+      }
+    } else if (tipableStep === 'environment' && environments.length > 0) {
       const extraction = await extractSelectEnvironmentPending(tipableText, envCatalog);
       console.log(
         JSON.stringify({
@@ -443,10 +646,9 @@ export const reservationAgentNode = async (
         extraction.value &&
         isValidEnvironmentSelection(extraction.value.environmentId, envCatalog)
       ) {
-        await patchReservationDraft(conversationId, {
+        const freshDraft = await patchReservationDraft(conversationId, {
           environmentId: extraction.value.environmentId,
         });
-        const freshDraft = await readReservationDraft(conversationId);
         if (
           freshDraft.date &&
           freshDraft.time &&
@@ -558,6 +760,14 @@ export const reservationAgentNode = async (
         conversationId,
       })
     );
+    // Fact efímero FAQ: el híbrido ve modo FAQ en [ESTADO DEL CLIENTE] y no
+    // empuja Goals de pedido (PLAN-ACCION-RESERVA-FAQ-HIBRIDO D1).
+    await patchConversationMetadata(conversationId, {
+      reservation_faq_delegation: buildReservationFaqDelegation(
+        signals.delegateToMainReason
+      ),
+    });
+
     // Llamar al agente principal inline; reservation_agent_active NO se limpia
     let mainResult: HandlerResult | null = null;
     let discardedReentrySignal = false;
@@ -571,6 +781,10 @@ export const reservationAgentNode = async (
       discardedReentrySignal = delegated.discardedReentrySignal;
     } catch (err) {
       console.error('[reservation-agent] error en delegate_to_main:', err);
+    } finally {
+      await omitConversationMetadataKeys(conversationId, [
+        RESERVATION_FAQ_DELEGATION_KEY,
+      ]);
     }
 
     if (discardedReentrySignal) {
@@ -596,6 +810,7 @@ export const reservationAgentNode = async (
       kind: 'reservation',
       draft: freshMeta.reservation_draft,
       hasEnvironments: environments.length > 0,
+      includeContinueOrCancel: true,
     });
 
     return {

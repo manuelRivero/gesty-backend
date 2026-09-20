@@ -5,6 +5,8 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['e2e/**/*.e2e.test.ts'],
+    /** Suite diagnóstica de producción: solo `npm run test:reservation-production`. */
+    exclude: ['e2e/reservation-production.e2e.test.ts'],
     /** Un archivo E2E a la vez: comparten WHATSAPP_TEST_TO / conversación en BD. */
     fileParallelism: false,
     testTimeout: 240_000,

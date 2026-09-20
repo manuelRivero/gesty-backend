@@ -6,8 +6,8 @@
  *  - D4: la tarjeta de confirmación sale aunque el LLM no haya llamado
  *    `present_confirmation`, si el paso derivado es `confirm` y el draft
  *    está completo.
- *  - §3.11: tipable confirm / ambiente fulfilled en el nodo (mismo efecto
- *    que el botón), sin invocar al ReAct.
+ *  - §3.11: tipable slot / party size / confirm / ambiente fulfilled en el nodo
+ *    (mismo efecto que botón/tool), sin invocar al ReAct cuando el draft queda listo.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -25,7 +25,7 @@ vi.mock('../../../../repositories/conversationState.repository', () => ({
 }));
 
 vi.mock('../../../../repositories/reservation.repository', () => ({
-  fetchReservationSlotsForBusinessDate: vi.fn(),
+  fetchReservationSlotsForBusinessDate: vi.fn().mockResolvedValue([]),
   fetchActiveReservationSlotById: vi.fn(),
   findActiveEnvironmentsByBusinessId: vi.fn().mockResolvedValue([]),
   findActiveTablesByBusinessAndEnvironment: vi.fn().mockResolvedValue([]),
@@ -44,10 +44,23 @@ vi.mock('../../../../agents/reservationAgent', () => ({
   runReservationAgent: vi.fn(),
   extractConfirmReservationPending: vi.fn(),
   extractSelectEnvironmentPending: vi.fn(),
+  extractSelectSlotPending: vi.fn(),
+  extractPartySizePending: vi.fn(),
   isValidEnvironmentSelection: vi.fn(
     (environmentId: string | null, environments: Array<{ id: string }>) =>
       environmentId === null || environments.some((e) => e.id === environmentId)
   ),
+  isValidSlotSelection: vi.fn(
+    (slotId: string, slots: Array<{ id: string }>) => slots.some((s) => s.id === slotId)
+  ),
+  isValidPartySizeSelection: vi.fn(
+    (count: number, maxCapacity: number) =>
+      Number.isInteger(count) && count >= 1 && (maxCapacity <= 0 || count <= maxCapacity)
+  ),
+}));
+
+vi.mock('../../../../services/reservations/capacity', () => ({
+  getMaxCombinablePartySize: vi.fn().mockResolvedValue(20),
 }));
 
 vi.mock('../../../../services/reservationCompletionGoal.service', () => ({
@@ -76,6 +89,7 @@ import { prisma } from '../../../../lib/prisma';
 import { patchConversationMetadata, omitConversationMetadataKeys } from '../../../../repositories/conversationState.repository';
 import {
   fetchActiveReservationSlotById,
+  fetchReservationSlotsForBusinessDate,
   findActiveEnvironmentsByBusinessId,
   createReservationWithTables,
   findActiveTablesByBusinessAndEnvironment,
@@ -87,7 +101,10 @@ import {
   runReservationAgent,
   extractConfirmReservationPending,
   extractSelectEnvironmentPending,
+  extractSelectSlotPending,
+  extractPartySizePending,
 } from '../../../../agents/reservationAgent';
+import { getMaxCombinablePartySize } from '../../../../services/reservations/capacity';
 import { reservationAgentNode } from '../index';
 import type { AgentState } from '../../../state';
 
@@ -96,10 +113,14 @@ const mockedEnvFindUnique = prisma.environment.findUnique as unknown as ReturnTy
 const mockedPatch = patchConversationMetadata as unknown as ReturnType<typeof vi.fn>;
 const mockedOmit = omitConversationMetadataKeys as unknown as ReturnType<typeof vi.fn>;
 const mockedSlot = fetchActiveReservationSlotById as unknown as ReturnType<typeof vi.fn>;
+const mockedSlotsForDate = fetchReservationSlotsForBusinessDate as unknown as ReturnType<typeof vi.fn>;
 const mockedEnvs = findActiveEnvironmentsByBusinessId as unknown as ReturnType<typeof vi.fn>;
 const mockedRunAgent = runReservationAgent as unknown as ReturnType<typeof vi.fn>;
 const mockedExtractConfirm = extractConfirmReservationPending as unknown as ReturnType<typeof vi.fn>;
 const mockedExtractEnv = extractSelectEnvironmentPending as unknown as ReturnType<typeof vi.fn>;
+const mockedExtractSlot = extractSelectSlotPending as unknown as ReturnType<typeof vi.fn>;
+const mockedExtractParty = extractPartySizePending as unknown as ReturnType<typeof vi.fn>;
+const mockedMaxParty = getMaxCombinablePartySize as unknown as ReturnType<typeof vi.fn>;
 const mockedCreate = createReservationWithTables as unknown as ReturnType<typeof vi.fn>;
 const mockedTables = findActiveTablesByBusinessAndEnvironment as unknown as ReturnType<typeof vi.fn>;
 const mockedOverlap = findOverlappingReservationForTable as unknown as ReturnType<typeof vi.fn>;
@@ -139,6 +160,8 @@ describe('reservationAgentNode — merge de payloads (P0.1/P0.2)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedEnvs.mockResolvedValue([]);
+    mockedSlotsForDate.mockResolvedValue([]);
+    mockedMaxParty.mockResolvedValue(20);
     mockedRunAgent.mockResolvedValue({
       text: '🤖\n\nListo',
       signals: idleSignals,
@@ -174,6 +197,8 @@ describe('reservationAgentNode — tarjeta de confirmación por estado (D4)', ()
   beforeEach(() => {
     vi.clearAllMocks();
     mockedEnvs.mockResolvedValue([]);
+    mockedSlotsForDate.mockResolvedValue([]);
+    mockedMaxParty.mockResolvedValue(20);
   });
 
   it('adjunta la tarjeta aunque el LLM no haya llamado present_confirmation', async () => {
@@ -222,6 +247,8 @@ describe('reservationAgentNode — tipables fulfilled en el nodo (§3.11)', () =
     mockedEnvs.mockResolvedValue([salonPrincipal]);
     mockedEnvFindUnique.mockResolvedValue({ name: 'Salón principal' });
     mockedOmit.mockResolvedValue(undefined);
+    mockedSlotsForDate.mockResolvedValue([]);
+    mockedMaxParty.mockResolvedValue(20);
   });
 
   it('ambiente en prosa fulfilled → persiste y muestra confirmación sin ReAct', async () => {
@@ -323,5 +350,226 @@ describe('reservationAgentNode — tipables fulfilled en el nodo (§3.11)', () =
     expect(mockedCreate).not.toHaveBeenCalled();
     expect(mockedOmit).toHaveBeenCalled();
     expect(String(result.handlerResult?.content)).toMatch(/cancelada/i);
+  });
+
+  it('horario en prosa fulfilled → persiste slot y muestra confirmación sin ReAct', async () => {
+    const draftWaitingSlot = {
+      date: '20/08/2026',
+      partySize: 4,
+    };
+    const slotRow = {
+      id: 'slot-19',
+      start_time: '19:00',
+      end_time: '20:30',
+      is_active: true,
+    };
+    mockedEnvs.mockResolvedValue([]);
+    mockedSlotsForDate.mockResolvedValue([slotRow]);
+    mockedFindFirst.mockResolvedValue({ metadata: { reservation_draft: draftWaitingSlot } });
+    mockedExtractSlot.mockResolvedValue({
+      status: 'fulfilled',
+      value: { slotId: 'slot-19' },
+      confidence: 0.96,
+      source: 'llm',
+      reason: null,
+    });
+
+    const state = baseState({
+      webhookContext: {
+        payloadId: undefined,
+        message: { type: 'text', text: { body: 'Si a las 19:00' } },
+      } as never,
+      workingConversationState: {
+        metadata: { reservation_agent_active: true, reservation_draft: draftWaitingSlot },
+      } as never,
+    });
+
+    const result = await reservationAgentNode(state);
+
+    expect(mockedExtractSlot).toHaveBeenCalledWith(
+      'Si a las 19:00',
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'slot-19', startTime: '19:00', endTime: '20:30' }),
+      ])
+    );
+    expect(mockedRunAgent).not.toHaveBeenCalled();
+    expect(mockedPatch).toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({
+        reservation_draft: expect.objectContaining({
+          slotId: 'slot-19',
+          time: '19:00',
+          endTime: '20:30',
+        }),
+      })
+    );
+    expect(result.handlerResult?.isInteractive).toBe(true);
+  });
+
+  it('horario en prosa fulfilled sin partySize → persiste y sigue al ReAct', async () => {
+    const draftWaitingSlot = { date: '20/08/2026' };
+    const slotRow = {
+      id: 'slot-19',
+      start_time: '19:00',
+      end_time: '20:30',
+      is_active: true,
+    };
+    mockedEnvs.mockResolvedValue([]);
+    mockedSlotsForDate.mockResolvedValue([slotRow]);
+    mockedFindFirst.mockResolvedValue({ metadata: { reservation_draft: draftWaitingSlot } });
+    mockedExtractSlot.mockResolvedValue({
+      status: 'fulfilled',
+      value: { slotId: 'slot-19' },
+      confidence: 0.95,
+      source: 'llm',
+      reason: null,
+    });
+    mockedRunAgent.mockResolvedValue({
+      text: '🤖\n\n¿Para cuántas personas?',
+      signals: idleSignals,
+    });
+
+    const state = baseState({
+      webhookContext: {
+        payloadId: undefined,
+        message: { type: 'text', text: { body: 'a las 19' } },
+      } as never,
+      workingConversationState: {
+        metadata: { reservation_agent_active: true, reservation_draft: draftWaitingSlot },
+      } as never,
+    });
+
+    await reservationAgentNode(state);
+
+    expect(mockedPatch).toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({
+        reservation_draft: expect.objectContaining({ slotId: 'slot-19', time: '19:00' }),
+      })
+    );
+    expect(mockedRunAgent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ skipPendingExtraction: true })
+    );
+  });
+
+  it('personas en prosa fulfilled → persiste y muestra confirmación sin ReAct', async () => {
+    const draftWaitingParty = {
+      date: '20/08/2026',
+      slotId: 'slot-1',
+      time: '20:00',
+      endTime: '21:00',
+    };
+    mockedEnvs.mockResolvedValue([]);
+    mockedFindFirst.mockResolvedValue({ metadata: { reservation_draft: draftWaitingParty } });
+    mockedExtractParty.mockResolvedValue({
+      status: 'fulfilled',
+      value: { count: 4 },
+      confidence: 0.99,
+      source: 'llm',
+      reason: null,
+    });
+
+    const state = baseState({
+      webhookContext: {
+        payloadId: undefined,
+        message: { type: 'text', text: { body: '4' } },
+      } as never,
+      workingConversationState: {
+        metadata: { reservation_agent_active: true, reservation_draft: draftWaitingParty },
+      } as never,
+    });
+
+    const result = await reservationAgentNode(state);
+
+    expect(mockedExtractParty).toHaveBeenCalledWith('4', 20);
+    expect(mockedRunAgent).not.toHaveBeenCalled();
+    expect(mockedPatch).toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({
+        reservation_draft: expect.objectContaining({ partySize: 4 }),
+      })
+    );
+    expect(result.handlerResult?.isInteractive).toBe(true);
+  });
+
+  it('personas fulfilled sobre capacidad → aclara máximo sin persistir ni ReAct', async () => {
+    const draftWaitingParty = {
+      date: '20/08/2026',
+      slotId: 'slot-1',
+      time: '20:00',
+      endTime: '21:00',
+    };
+    mockedEnvs.mockResolvedValue([]);
+    mockedMaxParty.mockResolvedValue(6);
+    mockedFindFirst.mockResolvedValue({ metadata: { reservation_draft: draftWaitingParty } });
+    mockedExtractParty.mockResolvedValue({
+      status: 'fulfilled',
+      value: { count: 20 },
+      confidence: 0.95,
+      source: 'llm',
+      reason: null,
+    });
+
+    const state = baseState({
+      webhookContext: {
+        payloadId: undefined,
+        message: { type: 'text', text: { body: 'somos 20' } },
+      } as never,
+      workingConversationState: {
+        metadata: { reservation_agent_active: true, reservation_draft: draftWaitingParty },
+      } as never,
+    });
+
+    const result = await reservationAgentNode(state);
+
+    expect(mockedRunAgent).not.toHaveBeenCalled();
+    expect(mockedPatch).not.toHaveBeenCalled();
+    expect(String(result.handlerResult?.content)).toMatch(/máximo es \*6\*/i);
+  });
+
+  it('personas fulfilled con ambientes → persiste y sigue al ReAct', async () => {
+    const draftWaitingParty = {
+      date: '20/08/2026',
+      slotId: 'slot-1',
+      time: '20:00',
+      endTime: '21:00',
+    };
+    mockedEnvs.mockResolvedValue([salonPrincipal]);
+    mockedFindFirst.mockResolvedValue({ metadata: { reservation_draft: draftWaitingParty } });
+    mockedExtractParty.mockResolvedValue({
+      status: 'fulfilled',
+      value: { count: 4 },
+      confidence: 0.98,
+      source: 'llm',
+      reason: null,
+    });
+    mockedRunAgent.mockResolvedValue({
+      text: '🤖\n\n¿En qué ambiente preferís?',
+      signals: idleSignals,
+    });
+
+    const state = baseState({
+      webhookContext: {
+        payloadId: undefined,
+        message: { type: 'text', text: { body: 'somos 4' } },
+      } as never,
+      workingConversationState: {
+        metadata: { reservation_agent_active: true, reservation_draft: draftWaitingParty },
+      } as never,
+    });
+
+    await reservationAgentNode(state);
+
+    expect(mockedPatch).toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({
+        reservation_draft: expect.objectContaining({ partySize: 4 }),
+      })
+    );
+    expect(mockedRunAgent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ skipPendingExtraction: true })
+    );
   });
 });

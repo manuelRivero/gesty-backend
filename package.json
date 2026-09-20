@@ -32,6 +32,7 @@
     "test:checkout-flow": "E2E_RUN=1 vitest run -c vitest.e2e.config.ts e2e/checkout-flow.e2e.test.ts",
     "test:last-offer": "E2E_RUN=1 vitest run -c vitest.e2e.config.ts e2e/last-offer-add-item.e2e.test.ts",
     "test:agent-history": "E2E_RUN=1 vitest run -c vitest.e2e.config.ts e2e/agent-history.e2e.test.ts",
+    "test:reservation-production": "E2E_RUN=1 vitest run -c vitest.e2e.reservation-production.config.ts",
     "postinstall": "prisma generate"
   },
   "engines": {

@@ -66,6 +66,31 @@ export function currentDateLabel(): string {
 }
 
 /**
+ * Etiqueta de una fecha de borrador `DD/MM/AAAA` con weekday del calendario.
+ * Evita que el LLM invente "miércoles" para un sábado en el copy de confirmación.
+ */
+export function formatDraftDateWithWeekday(dmy: string): string {
+  const parts = dmy.trim().split('/');
+  if (parts.length < 2) return dmy;
+  const day = Number(parts[0]);
+  const month = Number(parts[1]) - 1;
+  const year =
+    parts[2] !== undefined ? Number(parts[2]) : reservationNow().getFullYear();
+  if (!Number.isFinite(day) || !Number.isFinite(month) || !Number.isFinite(year)) {
+    return dmy;
+  }
+  const date = new Date(year, month, day);
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month ||
+    date.getDate() !== day
+  ) {
+    return dmy;
+  }
+  return `${formatDMY(date)} (${weekdayNameEs(date)})`;
+}
+
+/**
  * Próxima fecha (desde hoy, excluyéndolo) que cae en `weekday`. La usa el gate
  * para sugerirle al modelo la fecha correcta cuando el día que declaró no
  * coincide con el que calculó.
