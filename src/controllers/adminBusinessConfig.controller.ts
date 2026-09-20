@@ -10,6 +10,7 @@ import { getBotPersonalitySummary } from "../services/botPersonality.service";
 
 const configPatchSchema = z.object({
   bot_enabled: z.boolean().optional(),
+  storefront_enabled: z.boolean().optional(),
   allow_human_handoff: z.boolean().optional(),
   human_handoff_auto_timeout_minutes: z.number().int().positive().nullable().optional(),
   send_idle_reminders: z.boolean().optional(),

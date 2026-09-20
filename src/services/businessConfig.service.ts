@@ -35,8 +35,17 @@ function hasFulfillment(config: {
   );
 }
 
+/** Delivery propio o externo (excluyentes en config; ambos habilitan modo envío). */
+export function hasDeliveryCapability(config: {
+  delivery_enabled: boolean;
+  external_delivery_enabled: boolean;
+}): boolean {
+  return config.delivery_enabled || config.external_delivery_enabled;
+}
+
 export type BusinessConfig = {
   bot_enabled: boolean;
+  storefront_enabled: boolean;
   allow_human_handoff: boolean;
   human_handoff_auto_timeout_minutes: number | null;
   send_idle_reminders: boolean;
@@ -65,9 +74,10 @@ export type BusinessConfig = {
   owner_whatsapp_phones: string[];
 };
 
-/** Defaults limpios (D1): capacidades off; bot on (D11). */
+/** Defaults limpios (D1): capacidades off; bot on (D11); storefront off (BE-15/D5). */
 export const DEFAULT_CONFIG: BusinessConfig = {
   bot_enabled: true,
+  storefront_enabled: false,
   allow_human_handoff: true,
   human_handoff_auto_timeout_minutes: null,
   send_idle_reminders: true,
@@ -245,6 +255,7 @@ async function fetchBusinessConfigRow(
   >`
     SELECT
       bot_enabled,
+      storefront_enabled,
       allow_human_handoff,
       human_handoff_auto_timeout_minutes,
       send_idle_reminders,
@@ -351,6 +362,7 @@ export async function upsertBusinessConfig(
     INSERT INTO business_config (
       business_id,
       bot_enabled,
+      storefront_enabled,
       allow_human_handoff,
       human_handoff_auto_timeout_minutes,
       send_idle_reminders,
@@ -380,6 +392,7 @@ export async function upsertBusinessConfig(
     ) VALUES (
       ${businessId}::uuid,
       ${next.bot_enabled},
+      ${next.storefront_enabled},
       ${next.allow_human_handoff},
       ${next.human_handoff_auto_timeout_minutes},
       ${next.send_idle_reminders},
@@ -410,6 +423,7 @@ export async function upsertBusinessConfig(
     ON CONFLICT (business_id)
     DO UPDATE SET
       bot_enabled = EXCLUDED.bot_enabled,
+      storefront_enabled = EXCLUDED.storefront_enabled,
       allow_human_handoff = EXCLUDED.allow_human_handoff,
       human_handoff_auto_timeout_minutes = EXCLUDED.human_handoff_auto_timeout_minutes,
       send_idle_reminders = EXCLUDED.send_idle_reminders,

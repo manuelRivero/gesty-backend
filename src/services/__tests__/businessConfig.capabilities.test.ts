@@ -41,8 +41,9 @@ const mockedOffered = listOfferedPaymentMethods as unknown as ReturnType<
 >;
 
 describe('DEFAULT_CONFIG capabilities', () => {
-  it('nace con capacidades off y bot on (D1/D11)', () => {
+  it('nace con capacidades off, bot on y storefront off (D1/D11/BE-15)', () => {
     expect(DEFAULT_CONFIG.bot_enabled).toBe(true);
+    expect(DEFAULT_CONFIG.storefront_enabled).toBe(false);
     expect(DEFAULT_CONFIG.orders_enabled).toBe(false);
     expect(DEFAULT_CONFIG.checkout_enabled).toBe(false);
     expect(DEFAULT_CONFIG.reservations_enabled).toBe(false);
@@ -132,6 +133,14 @@ describe('upsertBusinessConfig orders prerequisites', () => {
     });
     expect(cfg.orders_enabled).toBe(true);
     expect(cfg.takeaway_enabled).toBe(true);
+  });
+
+  it('persiste storefront_enabled en patch (BE-15)', async () => {
+    const cfg = await upsertBusinessConfig('biz-1', {
+      storefront_enabled: true,
+    });
+    expect(cfg.storefront_enabled).toBe(true);
+    expect(mockedExecute).toHaveBeenCalled();
   });
 
   it('BusinessConfigValidationError expone code', () => {

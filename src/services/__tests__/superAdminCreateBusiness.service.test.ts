@@ -49,6 +49,8 @@ const mockedHash = hashPassword as unknown as ReturnType<typeof vi.fn>;
 const mockedGrant = grantTrialToBusiness as unknown as ReturnType<typeof vi.fn>;
 
 function createdRow() {
+  const now = new Date();
+  const trialEnd = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
   return {
     id: "biz-new",
     name: "Nuevo Local",
@@ -56,14 +58,14 @@ function createdRow() {
     ai_monthly_tokens_used: 0,
     ai_monthly_token_limit: 100000,
     ai_plan: "basic",
-    ai_reset_at: new Date("2026-09-03"),
-    created_at: new Date("2026-09-03"),
+    ai_reset_at: now,
+    created_at: now,
     subscription: {
       status: "trialing",
       is_trial: true,
-      trial_end: new Date("2026-09-17"),
-      current_period_start: new Date("2026-09-03"),
-      current_period_end: new Date("2026-09-17"),
+      trial_end: trialEnd,
+      current_period_start: now,
+      current_period_end: trialEnd,
       cancel_at_period_end: false
     }
   };
@@ -136,6 +138,7 @@ describe("createBusinessForSuperAdmin", () => {
       data: expect.objectContaining({
         business_id: "biz-new",
         bot_enabled: true,
+        storefront_enabled: false,
         orders_enabled: false,
         checkout_enabled: false,
         reservations_enabled: false,

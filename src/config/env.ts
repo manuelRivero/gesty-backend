@@ -220,6 +220,24 @@ const envSchema = z.object({
   AMBASSADORS_AUTH_HEADER: z.enum(['bearer', 'api_key']).default('bearer'),
   /** Timeout de las requests salientes. Default 5000ms. */
   AMBASSADORS_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
+
+  // --- Geocoding (reverse: pin → textos; compartido bot + storefront) ---
+  /**
+   * Proveedor: google | mapbox | nominatim.
+   * Si se omite: nominatim (sin API key; encaja con Leaflet/OSM).
+   */
+  GEOCODING_PROVIDER: z.enum(['google', 'mapbox', 'nominatim']).optional(),
+  /** API key de Google Geocoding (server-side). Alias: GOOGLE_MAPS_API_KEY. */
+  GEOCODING_GOOGLE_API_KEY: z.string().optional(),
+  /** Alias opcional de GEOCODING_GOOGLE_API_KEY. */
+  GOOGLE_MAPS_API_KEY: z.string().optional(),
+  /** Access token Mapbox (Geocoding API). */
+  MAPBOX_ACCESS_TOKEN: z.string().optional(),
+  /**
+   * User-Agent para Nominatim (OSM exige uno identificable).
+   * Default: gesty-backend/1.0 …
+   */
+  GEOCODING_USER_AGENT: z.string().optional(),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

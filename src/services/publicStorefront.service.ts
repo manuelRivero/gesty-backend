@@ -31,7 +31,7 @@ type PublicBusinessRow = {
 
 /**
  * Resuelve un local activo por slug (preferido) o UUID (compat).
- * Inactivo / inexistente → null (404 "local no disponible").
+ * Inactivo / inexistente / storefront_enabled=false → null (404 "local no disponible").
  */
 export async function resolveActivePublicBusiness(
   slugOrId: string
@@ -39,40 +39,34 @@ export async function resolveActivePublicBusiness(
   const key = slugOrId.trim();
   if (!key) return null;
 
+  const select = {
+    id: true,
+    name: true,
+    description: true,
+    slug: true,
+    timezone: true,
+    currency_code: true,
+    whatsapp_phone_number: true,
+    street_address: true,
+    address_notes: true,
+    latitude: true,
+    longitude: true
+  } as const;
+
+  const storefrontOn = {
+    business_config: { is: { storefront_enabled: true } }
+  };
+
   if (looksLikeUuid(key)) {
     return prisma.business.findFirst({
-      where: { id: key, is_active: true },
-      select: {
-        id: true,
-        name: true,
-        description: true,
-        slug: true,
-        timezone: true,
-        currency_code: true,
-        whatsapp_phone_number: true,
-        street_address: true,
-        address_notes: true,
-        latitude: true,
-        longitude: true
-      }
+      where: { id: key, is_active: true, ...storefrontOn },
+      select
     });
   }
 
   return prisma.business.findFirst({
-    where: { slug: key, is_active: true },
-    select: {
-      id: true,
-      name: true,
-      description: true,
-      slug: true,
-      timezone: true,
-      currency_code: true,
-      whatsapp_phone_number: true,
-      street_address: true,
-      address_notes: true,
-      latitude: true,
-      longitude: true
-    }
+    where: { slug: key, is_active: true, ...storefrontOn },
+    select
   });
 }
 
@@ -196,12 +190,21 @@ export async function getPublicStorefrontFulfillment(slugOrId: string) {
   return {
     ordersEnabled: config?.orders_enabled ?? false,
     checkoutEnabled: config?.checkout_enabled ?? false,
-    deliveryEnabled: config?.delivery_enabled ?? false,
+    /** Propio o externo: mismo criterio que el bot (excluyentes en config). */
+    deliveryEnabled: Boolean(
+      config?.delivery_enabled || config?.external_delivery_enabled
+    ),
     takeawayEnabled: config?.takeaway_enabled ?? false,
+    /** Detalle del modo; deliveryEnabled ya lo incluye. */
     externalDeliveryEnabled: config?.external_delivery_enabled ?? false,
     pickupInstructions: config?.pickup_instructions ?? null,
     ordersWhenClosed: config?.orders_when_closed ?? false,
-    operateWhenClosed: config?.operate_when_closed ?? false
+    operateWhenClosed: config?.operate_when_closed ?? false,
+    /** Viewport del mapa de pin (origen del local). Null → front usa default ciudad. */
+    mapCenter:
+      row.latitude !== null && row.longitude !== null
+        ? { latitude: row.latitude, longitude: row.longitude }
+        : null
   };
 }
 

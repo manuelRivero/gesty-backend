@@ -16,7 +16,7 @@ import { formatBotUserMessage } from './productQuery/utils';
 import { getBusinessConfig } from './businessConfig.service';
 import { listOfferedPaymentMethods } from './paymentMethods.service';
 import { buildPaymentButtonsMessage } from './payment/paymentButtons';
-
+import { reverseGeocodeFormatted } from './geocoding.service';
 
 /** Claves usadas por `stageAddressForDelegatedConfirmation`/`resolveDelegatedAddressConfirmation`. */
 export const DELEGATED_ADDRESS_CONFIRMATION_KEYS = [
@@ -455,7 +455,6 @@ export class AddressService {
     lat: number,
     lng: number
   ): Promise<string> {
-    // TODO: integrar reverse geocoding real
-    return `Ubicación (${lat}, ${lng})`;
+    return reverseGeocodeFormatted(lat, lng);
   }
 }

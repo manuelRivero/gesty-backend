@@ -3,7 +3,8 @@ import { z } from "zod";
 import {
   createPublicCounterOrder,
   getPublicCounterOrder,
-  PublicOrderError
+  PublicOrderError,
+  quotePublicDelivery
 } from "../services/publicOrders.service";
 
 const slugParamSchema = z.object({
@@ -15,26 +16,64 @@ const orderParamsSchema = z.object({
   orderId: z.string().uuid()
 });
 
-const createOrderBodySchema = z.object({
-  customer: z.object({
-    name: z.string().trim().min(1).max(120).optional().nullable(),
-    phone: z.string().trim().min(8).max(32)
-  }),
-  items: z
-    .array(
-      z.object({
-        menuItemId: z.string().uuid(),
-        quantity: z.coerce.number().int().min(1).max(99),
-        variation: z.string().trim().min(1).max(120).optional().nullable(),
-        notes: z.string().trim().max(500).optional().nullable()
-      })
-    )
-    .min(1)
-    .max(50),
-  fulfillmentType: z.literal("TAKE_AWAY").optional().default("TAKE_AWAY"),
-  /** Cobro siempre manual en mostrador; se ignora si el client manda otra cosa. */
-  paymentMethod: z.literal("cash").optional().default("cash"),
-  notes: z.string().trim().max(500).optional().nullable()
+const deliveryAddressSchema = z.object({
+  latitude: z.number(),
+  longitude: z.number(),
+  streetAddress: z.string().trim().min(1).max(255),
+  apartment: z.string().trim().max(50).optional().nullable(),
+  neighborhood: z.string().trim().max(100).optional().nullable(),
+  city: z.string().trim().max(100).optional().nullable(),
+  instructions: z.string().trim().max(500).optional().nullable()
+});
+
+const createOrderBodySchema = z
+  .object({
+    customer: z.object({
+      name: z.string().trim().min(1).max(120).optional().nullable(),
+      phone: z.string().trim().min(8).max(32)
+    }),
+    items: z
+      .array(
+        z.object({
+          menuItemId: z.string().uuid(),
+          quantity: z.coerce.number().int().min(1).max(99),
+          variation: z.string().trim().min(1).max(120).optional().nullable(),
+          notes: z.string().trim().max(500).optional().nullable()
+        })
+      )
+      .min(1)
+      .max(50),
+    fulfillmentType: z
+      .enum(["TAKE_AWAY", "DELIVERY"])
+      .optional()
+      .default("TAKE_AWAY"),
+    address: deliveryAddressSchema.optional().nullable(),
+    /** Cobro siempre manual; se ignora si el client manda otra cosa. */
+    paymentMethod: z.literal("cash").optional().default("cash"),
+    notes: z.string().trim().max(500).optional().nullable()
+  })
+  .superRefine((data, ctx) => {
+    if (data.fulfillmentType === "DELIVERY" && !data.address) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "address es obligatorio para DELIVERY",
+        path: ["address"]
+      });
+    }
+  });
+
+const deliveryQuoteBodySchema = z.object({
+  latitude: z.number(),
+  longitude: z.number(),
+  itemsSubtotal: z
+    .union([z.string(), z.number()])
+    .optional()
+    .nullable()
+    .transform((v) => {
+      if (v == null || v === "") return null;
+      const n = typeof v === "number" ? v : Number(v);
+      return Number.isFinite(n) ? n : null;
+    })
 });
 
 function sendPublicOrderError(res: Response, err: unknown) {
@@ -46,6 +85,34 @@ function sendPublicOrderError(res: Response, err: unknown) {
     });
   }
   throw err;
+}
+
+export async function quoteStorefrontDelivery(req: Request, res: Response) {
+  const parsedParams = slugParamSchema.safeParse(req.params);
+  if (!parsedParams.success) {
+    return res.status(400).json({ error: "slug inválido" });
+  }
+
+  const parsedBody = deliveryQuoteBodySchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    return res.status(400).json({
+      error: "Datos inválidos",
+      code: "INVALID_BODY",
+      details: parsedBody.error.flatten()
+    });
+  }
+
+  try {
+    const quote = await quotePublicDelivery({
+      slugOrId: parsedParams.data.slug,
+      latitude: parsedBody.data.latitude,
+      longitude: parsedBody.data.longitude,
+      itemsSubtotal: parsedBody.data.itemsSubtotal
+    });
+    return res.json(quote);
+  } catch (err) {
+    return sendPublicOrderError(res, err);
+  }
 }
 
 export async function createStorefrontOrder(req: Request, res: Response) {
@@ -77,6 +144,7 @@ export async function createStorefrontOrder(req: Request, res: Response) {
         notes: item.notes
       })),
       fulfillmentType: parsedBody.data.fulfillmentType,
+      address: parsedBody.data.address ?? null,
       notes: parsedBody.data.notes
     });
 

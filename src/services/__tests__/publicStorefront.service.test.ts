@@ -103,28 +103,36 @@ describe("resolveActivePublicBusiness", () => {
     vi.clearAllMocks();
   });
 
-  it("busca por slug cuando no es UUID", async () => {
+  it("busca por slug cuando no es UUID y exige storefront_enabled", async () => {
     mockedBusinessFind.mockResolvedValue(baseBusiness());
     const row = await resolveActivePublicBusiness("sabroson");
     expect(row?.slug).toBe("sabroson");
     expect(mockedBusinessFind).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { slug: "sabroson", is_active: true }
+        where: {
+          slug: "sabroson",
+          is_active: true,
+          business_config: { is: { storefront_enabled: true } }
+        }
       })
     );
   });
 
-  it("busca por id cuando es UUID", async () => {
+  it("busca por id cuando es UUID y exige storefront_enabled", async () => {
     mockedBusinessFind.mockResolvedValue(baseBusiness());
     await resolveActivePublicBusiness(BUSINESS_ID);
     expect(mockedBusinessFind).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: BUSINESS_ID, is_active: true }
+        where: {
+          id: BUSINESS_ID,
+          is_active: true,
+          business_config: { is: { storefront_enabled: true } }
+        }
       })
     );
   });
 
-  it("devuelve null si no hay local activo", async () => {
+  it("devuelve null si no hay local activo o storefront off", async () => {
     mockedBusinessFind.mockResolvedValue(null);
     expect(await resolveActivePublicBusiness("ghost")).toBeNull();
   });
@@ -210,13 +218,34 @@ describe("getPublicStorefrontHours / fulfillment / payment-methods", () => {
     });
   });
 
-  it("fulfillment expone flags de delivery/takeaway", async () => {
+  it("fulfillment expone flags de delivery/takeaway y mapCenter", async () => {
     const fulfillment = await getPublicStorefrontFulfillment("sabroson");
     expect(fulfillment).toMatchObject({
       deliveryEnabled: true,
       takeawayEnabled: true,
       checkoutEnabled: true,
-      pickupInstructions: "Mostrador"
+      pickupInstructions: "Mostrador",
+      mapCenter: { latitude: -34.6, longitude: -58.4 }
+    });
+  });
+
+  it("deliveryEnabled=true con solo external_delivery_enabled", async () => {
+    mockedConfigFind.mockResolvedValue({
+      orders_enabled: true,
+      checkout_enabled: true,
+      delivery_enabled: false,
+      takeaway_enabled: true,
+      external_delivery_enabled: true,
+      pickup_instructions: null,
+      orders_when_closed: false,
+      operate_when_closed: false
+    });
+
+    const fulfillment = await getPublicStorefrontFulfillment("sabroson");
+    expect(fulfillment).toMatchObject({
+      deliveryEnabled: true,
+      externalDeliveryEnabled: true,
+      takeawayEnabled: true
     });
   });
 
