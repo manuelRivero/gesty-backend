@@ -46,12 +46,16 @@ export type StorefrontPushPayload = {
   tag: string;
 };
 
-/** Estados notifiables v1 por fulfillment (solo al cambiar status). */
+/** Estados notifiables v1 por fulfillment (solo al cambiar status).
+ * Admin PATCH usa `shipped` para “listo para retirar” (TAKE_AWAY) y “en camino” (DELIVERY).
+ * `ready_for_pickup` se mantiene por legacy / otros caminos.
+ */
 const NOTIFIABLE: Record<
   FulfillmentType,
   ReadonlySet<OrderStatus>
 > = {
   [FulfillmentType.TAKE_AWAY]: new Set([
+    OrderStatus.shipped,
     OrderStatus.ready_for_pickup,
     OrderStatus.cancelled
   ]),
@@ -61,22 +65,20 @@ const NOTIFIABLE: Record<
   ])
 };
 
-const COPY: Partial<
-  Record<OrderStatus, { title: string; body: string }>
-> = {
-  [OrderStatus.ready_for_pickup]: {
-    title: "Listo para retirar",
-    body: "Acercate al mostrador."
-  },
-  [OrderStatus.shipped]: {
-    title: "En camino",
-    body: "El repartidor ya salió hacia tu dirección."
-  },
-  [OrderStatus.cancelled]: {
-    title: "Pedido cancelado",
-    body: "Este pedido fue cancelado."
-  }
-};
+const PICKUP_READY_COPY = {
+  title: "Listo para retirar",
+  body: "Acercate al mostrador."
+} as const;
+
+const DELIVERY_SHIPPED_COPY = {
+  title: "En camino",
+  body: "El repartidor ya salió hacia tu dirección."
+} as const;
+
+const CANCELLED_COPY = {
+  title: "Pedido cancelado",
+  body: "Este pedido fue cancelado."
+} as const;
 
 const TERMINAL: ReadonlySet<OrderStatus> = new Set([
   OrderStatus.delivered,
@@ -122,9 +124,23 @@ export function isNotifiableStorefrontPush(
 }
 
 export function buildStorefrontPushCopy(
-  status: OrderStatus
+  status: OrderStatus,
+  fulfillmentType?: FulfillmentType | null
 ): { title: string; body: string } | null {
-  return COPY[status] ?? null;
+  if (status === OrderStatus.cancelled) {
+    return { ...CANCELLED_COPY };
+  }
+  const ft = fulfillmentType ?? FulfillmentType.TAKE_AWAY;
+  if (
+    status === OrderStatus.ready_for_pickup ||
+    (status === OrderStatus.shipped && ft === FulfillmentType.TAKE_AWAY)
+  ) {
+    return { ...PICKUP_READY_COPY };
+  }
+  if (status === OrderStatus.shipped && ft === FulfillmentType.DELIVERY) {
+    return { ...DELIVERY_SHIPPED_COPY };
+  }
+  return null;
 }
 
 function trackingPath(slug: string, orderId: string): string {
@@ -397,7 +413,10 @@ export async function notifyStorefrontOrderStatusChange(params: {
     let attempted = 0;
 
     if (shouldNotify) {
-      const copy = buildStorefrontPushCopy(params.status);
+      const copy = buildStorefrontPushCopy(
+        params.status,
+        fulfillmentType
+      );
       if (!copy) {
         if (isTerminal) {
           await clearStorefrontPushSubscriptions(params.orderId);

@@ -102,7 +102,13 @@ describe("storefrontOrderPush.service", () => {
     expect(getVapidPublicKey()).toBe("BK_test_public_key");
   });
 
-  it("isNotifiable: TAKE_AWAY ready_for_pickup sí; preparing no", () => {
+  it("isNotifiable: TAKE_AWAY shipped y ready_for_pickup sí; preparing no", () => {
+    expect(
+      isNotifiableStorefrontPush(
+        FulfillmentType.TAKE_AWAY,
+        OrderStatus.shipped
+      )
+    ).toBe(true);
     expect(
       isNotifiableStorefrontPush(
         FulfillmentType.TAKE_AWAY,
@@ -198,7 +204,7 @@ describe("storefrontOrderPush.service", () => {
     expect(sendNotification).not.toHaveBeenCalled();
   });
 
-  it("ready_for_pickup envía push a las subscriptions", async () => {
+  it("ready_for_pickup (legacy) envía push a las subscriptions", async () => {
     mockedFindMany.mockResolvedValue([
       {
         id: "sub-1",
@@ -242,6 +248,39 @@ describe("storefrontOrderPush.service", () => {
     });
     expect(result.sent).toBe(1);
     expect(result.attempted).toBe(1);
+  });
+
+  it("shipped (TAKE_AWAY / admin) envía push 'Listo para retirar'", async () => {
+    mockedFindMany.mockResolvedValue([
+      {
+        id: "sub-1",
+        order_id: "11111111-1111-4111-8111-111111111111",
+        business_id: "biz-1",
+        endpoint: SUB.endpoint,
+        p256dh: "p256dh-key",
+        auth: "auth-key",
+        user_agent: null,
+        created_at: new Date(),
+        updated_at: new Date()
+      }
+    ]);
+
+    await notifyStorefrontOrderStatusChange({
+      orderId: "11111111-1111-4111-8111-111111111111",
+      businessId: "biz-1",
+      status: OrderStatus.shipped,
+      fulfillmentType: FulfillmentType.TAKE_AWAY,
+      slug: "mi-local"
+    });
+
+    const payload = JSON.parse(
+      (sendNotification.mock.calls[0] as unknown[])[1] as string
+    );
+    expect(payload).toMatchObject({
+      title: "Listo para retirar",
+      body: "Acercate al mostrador.",
+      status: "shipped"
+    });
   });
 
   it("shipped (DELIVERY) envía push", async () => {
