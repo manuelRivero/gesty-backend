@@ -5,72 +5,14 @@ import {
   toMenuItemPriceDto
 } from "../helpers/menuItemPrice.helper";
 import { prisma } from "../lib/prisma";
-import { buildGoogleMapsUrl } from "../utils/googleMapsUrl";
+import {
+  getPublicStorefrontProfile,
+  resolveActivePublicBusiness
+} from "./publicStorefront.service";
 
+/** @deprecated Prefer getPublicStorefrontProfile; se mantiene por compat. */
 export async function getPublicBusinessInfo(params: { businessId: string }) {
-  const row = await prisma.business.findFirst({
-    where: { id: params.businessId, is_active: true },
-    select: {
-      id: true,
-      name: true,
-      description: true,
-      slug: true,
-      timezone: true,
-      currency_code: true,
-      whatsapp_phone_number: true,
-      street_address: true,
-      address_notes: true,
-      latitude: true,
-      longitude: true,
-      business_hours: {
-        orderBy: { day_of_week: "asc" },
-        select: {
-          id: true,
-          day_of_week: true,
-          opens_at: true,
-          closes_at: true,
-          is_closed: true
-        }
-      }
-    }
-  });
-
-  if (!row) return null;
-
-  const mapsUrl = buildGoogleMapsUrl({
-    name: row.name,
-    streetAddress: row.street_address,
-    latitude: row.latitude,
-    longitude: row.longitude
-  });
-
-  return {
-    id: row.id,
-    name: row.name,
-    description: row.description ?? null,
-    slug: row.slug ?? null,
-    timezone: row.timezone,
-    currencyCode: row.currency_code ?? null,
-    whatsappPhoneNumber: row.whatsapp_phone_number ?? null,
-    streetAddress: row.street_address ?? null,
-    addressNotes: row.address_notes ?? null,
-    mapsUrl,
-    location:
-      row.latitude !== null && row.longitude !== null
-        ? {
-            latitude: row.latitude,
-            longitude: row.longitude,
-            mapsUrl
-          }
-        : null,
-    businessHours: row.business_hours.map((h) => ({
-      id: h.id,
-      dayOfWeek: h.day_of_week,
-      opensAt: h.opens_at,
-      closesAt: h.closes_at,
-      isClosed: h.is_closed
-    }))
-  };
+  return getPublicStorefrontProfile(params.businessId);
 }
 
 function mapPublicMenuItem(row: {
@@ -119,14 +61,14 @@ function mapPublicMenuItem(row: {
     prices: activePrice ? [toMenuItemPriceDto(activePrice)] : [],
     discount: resolved.hasDiscount
       ? {
-          discountType: row.discount_type as 'PERCENT' | 'FIXED',
+          discountType: row.discount_type as "PERCENT" | "FIXED",
           discountValue: row.discount_value ? Number(row.discount_value) : null,
           discountAmount: resolved.discountAmount.toFixed(2),
-          finalPrice: resolved.finalPrice.toFixed(2),
+          finalPrice: resolved.finalPrice.toFixed(2)
         }
       : null,
     // [] ≡ null ≡ "sin variaciones" (D1).
-    variations: row.variations.length > 0 ? row.variations : null,
+    variations: row.variations.length > 0 ? row.variations : null
   };
 }
 
@@ -134,11 +76,14 @@ export async function listFeaturedMenuItems(params: {
   businessId: string;
   limit: number;
 }) {
-  const currencyCode = await getBusinessCurrencyCode(params.businessId);
+  const business = await resolveActivePublicBusiness(params.businessId);
+  if (!business) return [];
+
+  const currencyCode = await getBusinessCurrencyCode(business.id);
 
   const rows = await prisma.menu_item.findMany({
     where: {
-      business_id: params.businessId,
+      business_id: business.id,
       is_featured: true,
       is_available: true
     },
@@ -174,12 +119,15 @@ export async function getPublicMenuItemById(params: {
   businessId: string;
   itemId: string;
 }) {
-  const currencyCode = await getBusinessCurrencyCode(params.businessId);
+  const business = await resolveActivePublicBusiness(params.businessId);
+  if (!business) return null;
+
+  const currencyCode = await getBusinessCurrencyCode(business.id);
 
   const row = await prisma.menu_item.findFirst({
     where: {
       id: params.itemId,
-      business_id: params.businessId,
+      business_id: business.id,
       is_available: true
     },
     select: {
