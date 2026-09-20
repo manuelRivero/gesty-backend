@@ -6,7 +6,7 @@ No sincroniza features de otros repos (admin, apps, etc.).
 | Metadato | Valor |
 |----------|--------|
 | Repo | `gesty-backend` |
-| Actualizado | 2026-09-06 |
+| Actualizado | 2026-09-20 |
 | Rule | `.cursor/rules/features-catalog.mdc` |
 | Planes | [`docs/planes-accion/`](./planes-accion/) |
 
@@ -79,6 +79,10 @@ SQL de columnas/tablas inbox: `prisma/sql/inbox_equipo_fase_a_c.sql` (aplicar en
 | ORD-07 | Variaciones de plato | disponible | sí | incluido | Tamaños/variantes sin duplicar ítems | Schema + CRUD admin + picker bot |
 | ORD-08 | Tracking en vivo del repartidor | propuesto | sí | sí | Cliente ve ETA/ubicación | Sin integración hoy |
 | ORD-09 | ETA dinámico de entrega | propuesto | sí | sí | Expectativa de tiempo realista | Hoy solo `expires_at` de draft |
+| ORD-10 | Storefront público por slug (`/shopping/[slug]`) | disponible | sí | incluido | Menú + pedido autoservicio (cobro en mostrador) | GET perfil/menú/hours/fulfillment; POST + GET orders cash unpaid (TAKE_AWAY + DELIVERY vía ORD-11). Menú unificado incluye ficha: `servesPeople`, `ingredients`, `ingredientsNotes`, `preparation`, `variations`. Canal: `storefront_enabled` (BE-15). [PLAN-ACCION-STOREFRONT-PUBLICO](./planes-accion/PLAN-ACCION-STOREFRONT-PUBLICO.md) |
+| ORD-11 | Delivery en storefront (quote + pin) | disponible | sí | incluido | Pedir con envío desde la web, no solo retiro | `POST …/delivery-quote`; POST orders `DELIVERY` + address lat/lng; reusa zonas ORD-04; cash unpaid; `mapCenter` en fulfillment; `deliveryEnabled` = propio **o** externo. [PLAN-ACCION-STOREFRONT-DELIVERY](./planes-accion/PLAN-ACCION-STOREFRONT-DELIVERY.md) · [CONTEXTO-SHOPPING](./planes-accion/CONTEXTO-SHOPPING-STOREFRONT-DELIVERY.md) |
+| ORD-12 | Reverse geocode storefront (pin → calle) | disponible | sí | incluido | Autocompletar calle al soltar el pin (sin reescribir a mano) | `POST …/reverse-geocode`; `geocoding.service` + cache; compartido con bot. [PLAN](./planes-accion/PLAN-ACCION-STOREFRONT-REVERSE-GEOCODE.md) · [CONTEXTO-SHOPPING](./planes-accion/CONTEXTO-SHOPPING-STOREFRONT-REVERSE-GEOCODE.md) |
+| ORD-13 | Web Push seguimiento storefront | disponible | sí | incluido | Aviso del SO cuando el pedido avanza (aunque cierre el browser) | VAPID + subscription; título `{local} · {evento}`; body `Pedido #{ref} · …`; sin logo. TAKE_AWAY: `ready_for_pickup` (+ `shipped` legacy); DELIVERY: `shipped`; + `cancelled`. [PLAN](./planes-accion/PLAN-ACCION-STOREFRONT-WEB-PUSH.md) · [CONTEXTO-SHOPPING](./planes-accion/CONTEXTO-SHOPPING-STOREFRONT-WEB-PUSH.md) |
 
 ---
 
@@ -114,6 +118,7 @@ SQL de columnas/tablas inbox: `prisma/sql/inbox_equipo_fase_a_c.sql` (aplicar en
 | BILL-03 | Cuota AI admin | disponible | sí | incluido | Ver consumo de tokens/costo | `GET /api/admin/ai-quota` |
 | BILL-04 | Super-admin billing (trial, sync, cancel) | disponible | interno | n/d | Ops de plataforma | `/api/super-admin` billing |
 | BILL-05 | Planes públicos | disponible | sí | n/d | Landing / pricing | `GET /api/public/billing/plans` |
+| BILL-06 | Plan solo web (sin IA/bot) | propuesto | sí | sí | SKU barato solo storefront; upgrade para bot | Entitlements `plan.features.channels`. [PLAN-ACCION-STOREFRONT-CANAL](./planes-accion/PLAN-ACCION-STOREFRONT-CANAL.md) Fase B |
 
 ---
 
@@ -128,6 +133,7 @@ SQL de columnas/tablas inbox: `prisma/sql/inbox_equipo_fase_a_c.sql` (aplicar en
 | BE-01 | Capabilities bootstrap (defaults off + validación) | disponible | sí | incluido | Local nuevo no “parece listo” para vender | [PLAN-ACCION-CAPABILITIES-BOOTSTRAP](./planes-accion/PLAN-ACCION-CAPABILITIES-BOOTSTRAP.md) |
 | BE-02 | Gates bot por capacidades (pedidos/reservas) | disponible | sí | incluido | El bot no vende lo que el local no habilitó | `capabilityAccessGate`, `ordersCapabilityGate` |
 | BE-03 | Kill-switch `bot_enabled` | disponible | sí | incluido | Apagar el canal WhatsApp del local | `business_config.bot_enabled` |
+| BE-15 | Canal storefront (`storefront_enabled`) | disponible | sí | incluido | Prender/apagar menú+pedidos web sin bot | Un flag = vitrina+orders. Gate en `resolveActivePublicBusiness`. [PLAN-ACCION-STOREFRONT-CANAL](./planes-accion/PLAN-ACCION-STOREFRONT-CANAL.md) · [CONTEXTO-ADMIN](./planes-accion/CONTEXTO-ADMIN-STOREFRONT-CANAL.md) |
 
 Handoff UI de checklist (otro repo): [PLAN-ACCION-ADMIN-CAPABILITIES-SETUP](./planes-accion/PLAN-ACCION-ADMIN-CAPABILITIES-SETUP.md) — **no** es feature de este backend.
 
@@ -162,7 +168,7 @@ Handoff UI de checklist (otro repo): [PLAN-ACCION-ADMIN-CAPABILITIES-SETUP](./pl
 | ID | Feature | Estado | Ofrecible | Remunerable | Valor para el local | Notas/plan |
 |----|---------|--------|-----------|-------------|---------------------|------------|
 | BE-10 | Anuncios plataforma → admin | disponible | interno | n/d | Comunicar novedades a locales | `announcement*`; super-admin + admin |
-| BE-11 | Menú / planes públicos (vitrina) | disponible | sí | n/d | Landing / deep links | `/api/public/...` |
+| BE-11 | Menú / planes públicos (vitrina) | disponible | sí | n/d | Landing / deep links | `/api/public/...` (featured/item por UUID; storefront slug → ORD-10) |
 | BE-12 | Dashboard + analytics admin | disponible | sí | incluido | Resumen operativo | `/dashboard/summary`, `/analytics/*` |
 | BE-13 | Loyalty / puntos / campañas broadcast | propuesto | sí | sí | Fidelizar y reactivar | Sin modelos campaign/loyalty |
 | BE-14 | Acceso STAFF al inbox | propuesto | sí | incluido | Mozos en chat (hoy solo OWNER/ADMIN) | Fuera de alcance inbox A–C |
@@ -196,4 +202,17 @@ Inventario legado de gaps (parcialmente desactualizado vs código actual): [`PEN
 
 | Fecha | Cambio |
 |-------|--------|
+| 2026-09-20 | ORD-10: menú público (`GET …/menu` e items) serializa ficha de ítem (`servesPeople`, `ingredients`, `ingredientsNotes`, `preparation`, `variations`) para sheet de detalle en vitrina. |
+| 2026-09-20 | ORD-13: push personalizado — `{businessName} · evento` + `Pedido #{orderRef}` en body (sin icon/logo). |
+| 2026-09-20 | ORD-13: TAKE_AWAY también notifica en `shipped` (valor que escribe el admin); copy “Listo para retirar”. `ready_for_pickup` sigue como legacy. |
+| 2026-09-20 | ORD-13 → `disponible`: Web Push storefront (VAPID, subscription por orderId, envío best-effort en cambio de status). Front pendiente staging. |
+| 2026-09-20 | ORD-11: storefront trata `external_delivery_enabled` como envío (mismo OR que el bot). |
+| 2026-09-20 | ORD-12 → `disponible`: reverse geocode público + cache; bot usa el mismo servicio. |
+| 2026-09-20 | ORD-11 → `disponible`: quote + POST DELIVERY (pin lat/lng), snapshot address, `mapCenter` en fulfillment. |
+| 2026-09-20 | ORD-11 propuesto: delivery storefront (quote + mapa/pin; cash unpaid; sin geocode mock). |
+| 2026-09-20 | BE-15 → `disponible`: `storefront_enabled` + gates API pública (Fase A). BILL-06 sigue propuesto (Fase B SKU). |
+| 2026-09-20 | BE-15 + BILL-06 propuestos: canal `storefront_enabled` + plan Stripe solo web (upgrade para IA). Plan + contexto admin. |
+| 2026-09-20 | ORD-10 Fase E: `GET …/orders/:orderId` seguimiento storefront (misma forma que POST 201). |
+| 2026-09-20 | ORD-10 storefront público por slug → `disponible` (GET + POST orders cash/mostrador, aislado de MP/WA). |
+| 2026-09-20 | ORD-10 storefront público por slug → `parcial` (GET perfil/menú/hours/fulfillment/payment-methods; sin POST orders). |
 | 2026-09-06 | Creación del catálogo. Inbox equipo A–C → `disponible` (WA-05…WA-11; viewers `parcial`). Stripe billing backend → `disponible` (BILL-*). Capabilities bootstrap → `disponible` (BE-01/02). |

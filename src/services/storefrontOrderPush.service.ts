@@ -41,10 +41,18 @@ export type StorefrontPushPayload = {
   body: string;
   url: string;
   orderId: string;
+  /** Ref corta para UI / debug (ej. A1B2C3D4). */
+  orderRef: string;
   slug: string;
+  businessName: string | null;
   status: string;
   tag: string;
 };
+
+/** Misma convención que WhatsApp / admin (`#A1B2C3D4`). */
+export function shortOrderRef(orderId: string): string {
+  return orderId.replace(/-/g, "").slice(0, 8).toUpperCase();
+}
 
 /** Estados notifiables v1 por fulfillment (solo al cambiar status).
  * Admin PATCH usa `shipped` para “listo para retirar” (TAKE_AWAY) y “en camino” (DELIVERY).
@@ -123,24 +131,44 @@ export function isNotifiableStorefrontPush(
   return NOTIFIABLE[ft]?.has(status) ?? false;
 }
 
+/**
+ * Copy base por status + modalidad, luego personaliza con nombre del local y ref.
+ * Sin logo (no hay asset de business aún).
+ */
 export function buildStorefrontPushCopy(
   status: OrderStatus,
-  fulfillmentType?: FulfillmentType | null
+  fulfillmentType?: FulfillmentType | null,
+  opts?: { businessName?: string | null; orderId?: string }
 ): { title: string; body: string } | null {
+  let base: { title: string; body: string } | null = null;
+
   if (status === OrderStatus.cancelled) {
-    return { ...CANCELLED_COPY };
+    base = { ...CANCELLED_COPY };
+  } else {
+    const ft = fulfillmentType ?? FulfillmentType.TAKE_AWAY;
+    if (
+      status === OrderStatus.ready_for_pickup ||
+      (status === OrderStatus.shipped && ft === FulfillmentType.TAKE_AWAY)
+    ) {
+      base = { ...PICKUP_READY_COPY };
+    } else if (
+      status === OrderStatus.shipped &&
+      ft === FulfillmentType.DELIVERY
+    ) {
+      base = { ...DELIVERY_SHIPPED_COPY };
+    }
   }
-  const ft = fulfillmentType ?? FulfillmentType.TAKE_AWAY;
-  if (
-    status === OrderStatus.ready_for_pickup ||
-    (status === OrderStatus.shipped && ft === FulfillmentType.TAKE_AWAY)
-  ) {
-    return { ...PICKUP_READY_COPY };
-  }
-  if (status === OrderStatus.shipped && ft === FulfillmentType.DELIVERY) {
-    return { ...DELIVERY_SHIPPED_COPY };
-  }
-  return null;
+
+  if (!base) return null;
+
+  const name = opts?.businessName?.trim() || null;
+  const title = name ? `${name} · ${base.title}` : base.title;
+
+  const orderId = opts?.orderId?.trim();
+  const ref = orderId ? shortOrderRef(orderId) : null;
+  const body = ref ? `Pedido #${ref} · ${base.body}` : base.body;
+
+  return { title, body };
 }
 
 function trackingPath(slug: string, orderId: string): string {
@@ -413,17 +441,6 @@ export async function notifyStorefrontOrderStatusChange(params: {
     let attempted = 0;
 
     if (shouldNotify) {
-      const copy = buildStorefrontPushCopy(
-        params.status,
-        fulfillmentType
-      );
-      if (!copy) {
-        if (isTerminal) {
-          await clearStorefrontPushSubscriptions(params.orderId);
-        }
-        return empty;
-      }
-
       const rows =
         await prisma.storefront_order_push_subscription.findMany({
           where: { order_id: params.orderId }
@@ -436,21 +453,37 @@ export async function notifyStorefrontOrderStatusChange(params: {
         return empty;
       }
 
-      let slug = params.slug?.trim() || null;
-      if (!slug) {
-        const biz = await prisma.business.findUnique({
-          where: { id: params.businessId },
-          select: { slug: true }
-        });
-        slug = biz?.slug?.trim() || params.businessId;
+      const biz = await prisma.business.findUnique({
+        where: { id: params.businessId },
+        select: { slug: true, name: true }
+      });
+      const businessName = biz?.name?.trim() || null;
+      const slug =
+        params.slug?.trim() ||
+        biz?.slug?.trim() ||
+        params.businessId;
+
+      const copy = buildStorefrontPushCopy(
+        params.status,
+        fulfillmentType,
+        { businessName, orderId: params.orderId }
+      );
+      if (!copy) {
+        if (isTerminal) {
+          await clearStorefrontPushSubscriptions(params.orderId);
+        }
+        return empty;
       }
 
+      const orderRef = shortOrderRef(params.orderId);
       const payload: StorefrontPushPayload = {
         title: copy.title,
         body: copy.body,
         url: buildNotificationUrl(slug, params.orderId),
         orderId: params.orderId,
+        orderRef,
         slug,
+        businessName,
         status: params.status,
         tag: `gesty-order-${params.orderId}`
       };

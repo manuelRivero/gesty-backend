@@ -94,7 +94,7 @@ describe("storefrontOrderPush.service", () => {
     mockedUpsert.mockResolvedValue({});
     mockedFindMany.mockResolvedValue([]);
     mockedDeleteMany.mockResolvedValue({ count: 0 });
-    mockedBizUnique.mockResolvedValue({ slug: "mi-local" });
+    mockedBizUnique.mockResolvedValue({ slug: "mi-local", name: "Domingo" });
     sendNotification.mockResolvedValue({});
   });
 
@@ -233,17 +233,19 @@ describe("storefrontOrderPush.service", () => {
         endpoint: SUB.endpoint,
         keys: { p256dh: "p256dh-key", auth: "auth-key" }
       },
-      expect.stringContaining('"title":"Listo para retirar"'),
+      expect.stringContaining('"title":"Domingo · Listo para retirar"'),
       expect.any(Object)
     );
     const payload = JSON.parse(
       (sendNotification.mock.calls[0] as unknown[])[1] as string
     );
     expect(payload).toMatchObject({
-      title: "Listo para retirar",
-      body: "Acercate al mostrador.",
+      title: "Domingo · Listo para retirar",
+      body: "Pedido #11111111 · Acercate al mostrador.",
       url: "/shopping/mi-local/order/11111111-1111-4111-8111-111111111111",
       status: "ready_for_pickup",
+      orderRef: "11111111",
+      businessName: "Domingo",
       tag: "gesty-order-11111111-1111-4111-8111-111111111111"
     });
     expect(result.sent).toBe(1);
@@ -277,8 +279,8 @@ describe("storefrontOrderPush.service", () => {
       (sendNotification.mock.calls[0] as unknown[])[1] as string
     );
     expect(payload).toMatchObject({
-      title: "Listo para retirar",
-      body: "Acercate al mostrador.",
+      title: "Domingo · Listo para retirar",
+      body: "Pedido #11111111 · Acercate al mostrador.",
       status: "shipped"
     });
   });
@@ -309,7 +311,10 @@ describe("storefrontOrderPush.service", () => {
     const payload = JSON.parse(
       (sendNotification.mock.calls[0] as unknown[])[1] as string
     );
-    expect(payload.title).toBe("En camino");
+    expect(payload.title).toBe("Domingo · En camino");
+    expect(payload.body).toBe(
+      "Pedido #11111111 · El repartidor ya salió hacia tu dirección."
+    );
     expect(payload.status).toBe("shipped");
   });
 
