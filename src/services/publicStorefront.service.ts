@@ -286,6 +286,10 @@ type StorefrontMenuItemRow = {
   id: string;
   name: string;
   description: string | null;
+  ingredients: string | null;
+  ingredients_notes: string | null;
+  preparation: string | null;
+  serves_people: number | null;
   image: string | null;
   is_available: boolean;
   is_featured: boolean;
@@ -309,6 +313,10 @@ function mapStorefrontMenuItem(row: StorefrontMenuItemRow) {
     id: row.id,
     name: row.name,
     description: row.description ?? null,
+    ingredients: row.ingredients ?? null,
+    ingredientsNotes: row.ingredients_notes ?? null,
+    preparation: row.preparation ?? null,
+    servesPeople: row.serves_people ?? null,
     price: priceDto ? priceDto.amount : null,
     currencyCode: priceDto ? priceDto.currencyCode : null,
     imageUrl: row.image ?? null,
@@ -350,6 +358,10 @@ export async function listPublicMenuItems(params: {
       id: true,
       name: true,
       description: true,
+      ingredients: true,
+      ingredients_notes: true,
+      preparation: true,
+      serves_people: true,
       image: true,
       is_available: true,
       is_featured: true,
