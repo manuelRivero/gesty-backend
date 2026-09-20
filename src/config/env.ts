@@ -238,6 +238,19 @@ const envSchema = z.object({
    * Default: gesty-backend/1.0 …
    */
   GEOCODING_USER_AGENT: z.string().optional(),
+
+  // --- Web Push (storefront seguimiento; VAPID application server Gesty) ---
+  /** Clave pública VAPID (base64url). Expuesta vía GET /api/public/push/vapid-public-key. */
+  VAPID_PUBLIC_KEY: z.string().optional(),
+  /** Clave privada VAPID. Solo server; nunca exponer. */
+  VAPID_PRIVATE_KEY: z.string().optional(),
+  /** Contacto del publisher (`mailto:…` o `https://…`), requerido por el spec. */
+  VAPID_SUBJECT: z.string().optional(),
+  /**
+   * Origen del storefront/admin para URLs absolutas en el payload push.
+   * Si se omite, el payload usa path relativo (`/shopping/...`).
+   */
+  STOREFRONT_PUBLIC_ORIGIN: z.string().url().optional(),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;
@@ -302,3 +315,14 @@ export const isHybridCtaEnabledForBusiness = (businessId: string): boolean => {
  */
 export const isAmbassadorsConfigured = (): boolean =>
   Boolean(env.AMBASSADORS_API_BASE_URL && env.AMBASSADORS_API_BASE_URL.trim());
+
+/**
+ * Web Push (VAPID) configurado: las tres vars presentes.
+ * Sin ellas → 503 PUSH_NOT_CONFIGURED en endpoints públicos de push.
+ */
+export const isWebPushConfigured = (): boolean =>
+  Boolean(
+    env.VAPID_PUBLIC_KEY?.trim() &&
+      env.VAPID_PRIVATE_KEY?.trim() &&
+      env.VAPID_SUBJECT?.trim()
+  );

@@ -5,6 +5,7 @@ import type { AdminPatchableOrderStatus } from "../constants/orderWorkflow";
 import { prisma } from "../lib/prisma";
 import type { BusinessUserRole } from "../types/auth";
 import { notifyCustomerOrderStatusFromAdmin } from "./orderStatusNotification.service";
+import { scheduleStorefrontOrderPush } from "./storefrontOrderPush.service";
 import {
   emitAdminOrderPaymentStatusChanged,
   emitAdminOrderStatusChanged
@@ -276,6 +277,14 @@ export async function updateAdminOrderDeliveryStatus(
   });
 
   emitAdminOrderStatusChanged(businessId, { orderId, status });
+
+  // Web Push storefront: best-effort; no bloquea ni revierte el status.
+  scheduleStorefrontOrderPush({
+    orderId,
+    businessId,
+    status,
+    fulfillmentType: existing.fulfillment_type
+  });
 
   const order = await getAdminOrderById(businessId, orderId);
   if (!order) {

@@ -5,25 +5,38 @@ type Bucket = {
   resetAt: number;
 };
 
+function clientIp(req: Request): string {
+  return (
+    (typeof req.headers["x-forwarded-for"] === "string"
+      ? req.headers["x-forwarded-for"].split(",")[0]?.trim()
+      : null) ||
+    req.ip ||
+    req.socket.remoteAddress ||
+    "unknown"
+  );
+}
+
 /**
- * Rate limit in-memory por IP (suficiente para abuso desde storefront).
+ * Rate limit in-memory por clave (IP y/o orderId).
  * No es multi-instancia; en varios replicas cada uno tiene su ventana.
  */
-export function createIpRateLimit(opts: {
+export function createKeyedRateLimit(opts: {
   windowMs: number;
   max: number;
+  /** Clave del bucket. Default: IP. */
+  keyFn?: (req: Request) => string;
   code?: string;
   message?: string;
 }) {
   const buckets = new Map<string, Bucket>();
   const code = opts.code ?? "RATE_LIMITED";
   const message = opts.message ?? "Demasiadas solicitudes; reintentá en un momento";
+  const keyFn = opts.keyFn ?? ((req: Request) => `ip:${clientIp(req)}`);
 
-  // Limpieza ocasional para no crecer sin bound.
   const sweepEvery = Math.max(opts.windowMs, 60_000);
   let lastSweep = Date.now();
 
-  return function ipRateLimit(
+  return function keyedRateLimit(
     req: Request,
     res: Response,
     next: NextFunction
@@ -36,18 +49,11 @@ export function createIpRateLimit(opts: {
       }
     }
 
-    const ip =
-      (typeof req.headers["x-forwarded-for"] === "string"
-        ? req.headers["x-forwarded-for"].split(",")[0]?.trim()
-        : null) ||
-      req.ip ||
-      req.socket.remoteAddress ||
-      "unknown";
-
-    let bucket = buckets.get(ip);
+    const key = keyFn(req);
+    let bucket = buckets.get(key);
     if (!bucket || bucket.resetAt <= now) {
       bucket = { count: 0, resetAt: now + opts.windowMs };
-      buckets.set(ip, bucket);
+      buckets.set(key, bucket);
     }
 
     bucket.count += 1;
@@ -66,4 +72,19 @@ export function createIpRateLimit(opts: {
 
     next();
   };
+}
+
+/**
+ * Rate limit in-memory por IP (suficiente para abuso desde storefront).
+ */
+export function createIpRateLimit(opts: {
+  windowMs: number;
+  max: number;
+  code?: string;
+  message?: string;
+}) {
+  return createKeyedRateLimit({
+    ...opts,
+    keyFn: (req) => `ip:${clientIp(req)}`
+  });
 }

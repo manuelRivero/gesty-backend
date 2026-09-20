@@ -58,6 +58,7 @@ model business {
   table                     table[]
   conversation_note         conversation_note[]
   canned_reply              canned_reply[]
+  storefront_order_push_subscription storefront_order_push_subscription[]
 }
 
 model business_user {
@@ -462,10 +463,30 @@ model orders {
   customer                  customer           @relation(fields: [customer_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   payment_intent            payment_intent[]
   payment_proof             payment_proof[]
+  storefront_order_push_subscription storefront_order_push_subscription[]
 
   @@index([customer_address_id], map: "idx_orders_customer_address")
   @@index([assigned_delivery_user_id], map: "idx_orders_assigned_delivery_user")
   @@index([business_id], map: "idx_orders_ambassador_pending", where: raw("((ambassador_public_code IS NOT NULL) AND (ambassador_notified_at IS NULL))"))
+}
+
+/// Web Push subscriptions del cliente de storefront (seguimiento sin login).
+/// El orderId es el secreto; varias subscriptions por pedido (multi-device).
+model storefront_order_push_subscription {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  order_id    String   @db.Uuid
+  business_id String   @db.Uuid
+  endpoint    String   @unique @db.Text
+  p256dh      String
+  auth        String
+  user_agent  String?  @db.VarChar(512)
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+  order       orders   @relation(fields: [order_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  business    business @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([order_id], map: "idx_storefront_push_order")
+  @@index([business_id], map: "idx_storefront_push_business")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.

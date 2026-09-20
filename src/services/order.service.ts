@@ -1,6 +1,7 @@
 // services/orderService.ts
-import { Prisma, OrderStatus, business, conversation, customer, draft_order } from '@prisma/client';
+import { Prisma, OrderStatus, FulfillmentType, business, conversation, customer, draft_order } from '@prisma/client';
 import { emitAdminOrderStatusChanged } from '../socket/adminSocket';
+import { scheduleStorefrontOrderPush } from './storefrontOrderPush.service';
 import { prisma } from '../lib/prisma';
 import {
   findBusinessByPhoneNumberId,
@@ -148,6 +149,7 @@ async function cancelActiveDraft(draftOrderId: string): Promise<void> {
 async function cancelPlacedOrderAndNotifyAdmin(order: {
   id: string;
   business_id: string;
+  fulfillment_type?: FulfillmentType | null;
 }): Promise<void> {
   await prisma.orders.update({
     where: { id: order.id },
@@ -160,6 +162,13 @@ async function cancelPlacedOrderAndNotifyAdmin(order: {
     status: OrderStatus.cancelled,
     orderRef,
     message: `El cliente canceló el pedido #${orderRef}`,
+  });
+
+  scheduleStorefrontOrderPush({
+    orderId: order.id,
+    businessId: order.business_id,
+    status: OrderStatus.cancelled,
+    fulfillmentType: order.fulfillment_type ?? null,
   });
 }
 

@@ -16,9 +16,17 @@ import {
   quoteStorefrontDelivery
 } from "../controllers/publicOrders.controller";
 import { reverseGeocodeStorefront } from "../controllers/publicGeocoding.controller";
+import {
+  getPublicVapidKey,
+  registerStorefrontPushSubscription,
+  unregisterStorefrontPushSubscription
+} from "../controllers/publicPush.controller";
 import { getPaymentProviderLogo } from "../controllers/publicPaymentProviders.controller";
 import { getPublicBillingPlansHandler } from "../controllers/publicBilling.controller";
-import { createIpRateLimit } from "../middleware/publicRateLimit.middleware";
+import {
+  createIpRateLimit,
+  createKeyedRateLimit
+} from "../middleware/publicRateLimit.middleware";
 
 const router = Router();
 
@@ -29,7 +37,24 @@ const reverseGeocodeRateLimit = createIpRateLimit({
   message: "Demasiadas solicitudes de geocode; reintentá en un momento"
 });
 
+const pushSubscribeIpRateLimit = createIpRateLimit({
+  windowMs: 60_000,
+  max: 20,
+  code: "RATE_LIMITED",
+  message: "Demasiadas suscripciones push; reintentá en un momento"
+});
+
+const pushSubscribeOrderRateLimit = createKeyedRateLimit({
+  windowMs: 60_000,
+  max: 10,
+  keyFn: (req) => `order:${String(req.params.orderId ?? "unknown")}`,
+  code: "RATE_LIMITED",
+  message: "Demasiadas suscripciones push para este pedido; reintentá en un momento"
+});
+
 router.get("/billing/plans", getPublicBillingPlansHandler);
+
+router.get("/push/vapid-public-key", getPublicVapidKey);
 
 // Storefront por slug (UUID sigue resolviendo por compat).
 // Rutas más específicas primero.
@@ -43,6 +68,16 @@ router.post(
   reverseGeocodeStorefront
 );
 router.post("/businesses/:slug/orders", createStorefrontOrder);
+router.post(
+  "/businesses/:slug/orders/:orderId/push-subscription",
+  pushSubscribeIpRateLimit,
+  pushSubscribeOrderRateLimit,
+  registerStorefrontPushSubscription
+);
+router.delete(
+  "/businesses/:slug/orders/:orderId/push-subscription",
+  unregisterStorefrontPushSubscription
+);
 router.get("/businesses/:slug/orders/:orderId", getStorefrontOrder);
 router.get("/businesses/:slug/hours", getStorefrontHours);
 router.get("/businesses/:slug/fulfillment", getStorefrontFulfillment);

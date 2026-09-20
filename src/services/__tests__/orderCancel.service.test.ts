@@ -42,6 +42,10 @@ vi.mock('../orderSessionReset.service', () => ({
   clearOrderSessionAfterCancel: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock('../storefrontOrderPush.service', () => ({
+  scheduleStorefrontOrderPush: vi.fn(),
+}));
+
 vi.mock('../productQuery/utils', () => ({
   formatBotUserMessage: (title: string, emoji: string, body: string) =>
     `${emoji} ${title}\n${body}`,
