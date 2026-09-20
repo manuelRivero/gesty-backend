@@ -138,7 +138,7 @@ describe("createBusinessForSuperAdmin", () => {
       data: expect.objectContaining({
         business_id: "biz-new",
         bot_enabled: true,
-        storefront_enabled: false,
+        storefront_enabled: true,
         orders_enabled: false,
         checkout_enabled: false,
         reservations_enabled: false,

@@ -74,10 +74,10 @@ export type BusinessConfig = {
   owner_whatsapp_phones: string[];
 };
 
-/** Defaults limpios (D1): capacidades off; bot on (D11); storefront off (BE-15/D5). */
+/** Defaults limpios (D1): capacidades off; bot on (D11); storefront on (incluido en plan, kill switch admin). */
 export const DEFAULT_CONFIG: BusinessConfig = {
   bot_enabled: true,
-  storefront_enabled: false,
+  storefront_enabled: true,
   allow_human_handoff: true,
   human_handoff_auto_timeout_minutes: null,
   send_idle_reminders: true,

@@ -43,7 +43,7 @@ const mockedOffered = listOfferedPaymentMethods as unknown as ReturnType<
 describe('DEFAULT_CONFIG capabilities', () => {
   it('nace con capacidades off, bot on y storefront off (D1/D11/BE-15)', () => {
     expect(DEFAULT_CONFIG.bot_enabled).toBe(true);
-    expect(DEFAULT_CONFIG.storefront_enabled).toBe(false);
+    expect(DEFAULT_CONFIG.storefront_enabled).toBe(true);
     expect(DEFAULT_CONFIG.orders_enabled).toBe(false);
     expect(DEFAULT_CONFIG.checkout_enabled).toBe(false);
     expect(DEFAULT_CONFIG.reservations_enabled).toBe(false);

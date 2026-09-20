@@ -47,6 +47,8 @@ export type StorefrontPushPayload = {
   businessName: string | null;
   status: string;
   tag: string;
+  /** URL absoluta HTTPS al ícono (mismo origin que la vitrina). */
+  icon?: string;
 };
 
 /** Misma convención que WhatsApp / admin (`#A1B2C3D4`). */
@@ -205,6 +207,13 @@ function buildNotificationUrl(slug: string, orderId: string): string {
   const path = trackingPath(slug, orderId);
   const origin = env.STOREFRONT_PUBLIC_ORIGIN?.replace(/\/$/, "");
   return origin ? `${origin}${path}` : path;
+}
+
+/** Ícono de noti en el origin de la vitrina (Chrome Android exige HTTPS absoluto). */
+function buildNotificationIconUrl(): string | undefined {
+  const origin = env.STOREFRONT_PUBLIC_ORIGIN?.replace(/\/$/, "");
+  if (!origin) return undefined;
+  return `${origin}/food-notification-icon.png`;
 }
 
 function assertPushConfigured(): void {
@@ -502,6 +511,7 @@ export async function notifyStorefrontOrderStatusChange(params: {
       }
 
       const orderRef = shortOrderRef(params.orderId);
+      const icon = buildNotificationIconUrl();
       const payload: StorefrontPushPayload = {
         title: copy.title,
         body: copy.body,
@@ -511,7 +521,8 @@ export async function notifyStorefrontOrderStatusChange(params: {
         slug,
         businessName,
         status: params.status,
-        tag: `gesty-order-${params.orderId}`
+        tag: `gesty-order-${params.orderId}`,
+        ...(icon ? { icon } : {})
       };
 
       attempted = rows.length;
