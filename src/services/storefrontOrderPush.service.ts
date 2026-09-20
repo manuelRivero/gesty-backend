@@ -54,24 +54,37 @@ export function shortOrderRef(orderId: string): string {
   return orderId.replace(/-/g, "").slice(0, 8).toUpperCase();
 }
 
-/** Estados notifiables v1 por fulfillment (solo al cambiar status).
- * Admin PATCH usa `shipped` para “listo para retirar” (TAKE_AWAY) y “en camino” (DELIVERY).
- * `ready_for_pickup` se mantiene por legacy / otros caminos.
+/** Estados notifiables por fulfillment (al cambiar status).
+ * Pipeline: preparing → ready_for_pickup|shipped → delivered (+ cancelled).
  */
 const NOTIFIABLE: Record<
   FulfillmentType,
   ReadonlySet<OrderStatus>
 > = {
   [FulfillmentType.TAKE_AWAY]: new Set([
-    OrderStatus.shipped,
+    OrderStatus.preparing,
     OrderStatus.ready_for_pickup,
+    OrderStatus.shipped, // legacy si algún camino aún escribe shipped en retiro
+    OrderStatus.delivered,
     OrderStatus.cancelled
   ]),
   [FulfillmentType.DELIVERY]: new Set([
+    OrderStatus.preparing,
     OrderStatus.shipped,
+    OrderStatus.delivered,
     OrderStatus.cancelled
   ])
 };
+
+const PREPARING_TAKEAWAY_COPY = {
+  title: "En preparación",
+  body: "Están armando tu pedido."
+} as const;
+
+const PREPARING_DELIVERY_COPY = {
+  title: "En preparación",
+  body: "Están armando tu pedido para enviarlo."
+} as const;
 
 const PICKUP_READY_COPY = {
   title: "Listo para retirar",
@@ -81,6 +94,11 @@ const PICKUP_READY_COPY = {
 const DELIVERY_SHIPPED_COPY = {
   title: "En camino",
   body: "El repartidor ya salió hacia tu dirección."
+} as const;
+
+const DELIVERED_COPY = {
+  title: "Entregado",
+  body: "¡Buen provecho!"
 } as const;
 
 const CANCELLED_COPY = {
@@ -144,6 +162,14 @@ export function buildStorefrontPushCopy(
 
   if (status === OrderStatus.cancelled) {
     base = { ...CANCELLED_COPY };
+  } else if (status === OrderStatus.delivered) {
+    base = { ...DELIVERED_COPY };
+  } else if (status === OrderStatus.preparing) {
+    const ft = fulfillmentType ?? FulfillmentType.TAKE_AWAY;
+    base =
+      ft === FulfillmentType.DELIVERY
+        ? { ...PREPARING_DELIVERY_COPY }
+        : { ...PREPARING_TAKEAWAY_COPY };
   } else {
     const ft = fulfillmentType ?? FulfillmentType.TAKE_AWAY;
     if (

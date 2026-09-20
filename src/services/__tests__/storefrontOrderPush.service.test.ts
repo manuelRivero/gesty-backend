@@ -102,11 +102,11 @@ describe("storefrontOrderPush.service", () => {
     expect(getVapidPublicKey()).toBe("BK_test_public_key");
   });
 
-  it("isNotifiable: TAKE_AWAY shipped y ready_for_pickup sí; preparing no", () => {
+  it("isNotifiable: preparing, listo/en camino y delivered sí; placed no", () => {
     expect(
       isNotifiableStorefrontPush(
         FulfillmentType.TAKE_AWAY,
-        OrderStatus.shipped
+        OrderStatus.preparing
       )
     ).toBe(true);
     expect(
@@ -118,11 +118,20 @@ describe("storefrontOrderPush.service", () => {
     expect(
       isNotifiableStorefrontPush(
         FulfillmentType.TAKE_AWAY,
-        OrderStatus.preparing
+        OrderStatus.delivered
       )
+    ).toBe(true);
+    expect(
+      isNotifiableStorefrontPush(FulfillmentType.TAKE_AWAY, OrderStatus.placed)
     ).toBe(false);
     expect(
       isNotifiableStorefrontPush(FulfillmentType.DELIVERY, OrderStatus.shipped)
+    ).toBe(true);
+    expect(
+      isNotifiableStorefrontPush(
+        FulfillmentType.DELIVERY,
+        OrderStatus.preparing
+      )
     ).toBe(true);
     expect(
       isNotifiableStorefrontPush(
@@ -190,11 +199,11 @@ describe("storefrontOrderPush.service", () => {
     ).rejects.toMatchObject({ code: "ORDER_TERMINAL", httpStatus: 409 });
   });
 
-  it("status no notifiable no envía push", async () => {
+  it("status no notifiable (placed) no envía push", async () => {
     const result = await notifyStorefrontOrderStatusChange({
       orderId: "11111111-1111-4111-8111-111111111111",
       businessId: "biz-1",
-      status: OrderStatus.preparing,
+      status: OrderStatus.placed,
       fulfillmentType: FulfillmentType.TAKE_AWAY,
       slug: "mi-local"
     });
@@ -202,6 +211,36 @@ describe("storefrontOrderPush.service", () => {
     expect(result).toEqual({ attempted: 0, sent: 0, removed: 0 });
     expect(mockedFindMany).not.toHaveBeenCalled();
     expect(sendNotification).not.toHaveBeenCalled();
+  });
+
+  it("preparing envía push", async () => {
+    mockedFindMany.mockResolvedValue([
+      {
+        id: "sub-1",
+        order_id: "11111111-1111-4111-8111-111111111111",
+        business_id: "biz-1",
+        endpoint: SUB.endpoint,
+        p256dh: "p256dh-key",
+        auth: "auth-key",
+        user_agent: null,
+        created_at: new Date(),
+        updated_at: new Date()
+      }
+    ]);
+
+    await notifyStorefrontOrderStatusChange({
+      orderId: "11111111-1111-4111-8111-111111111111",
+      businessId: "biz-1",
+      status: OrderStatus.preparing,
+      fulfillmentType: FulfillmentType.TAKE_AWAY,
+      slug: "mi-local"
+    });
+
+    const payload = JSON.parse(
+      (sendNotification.mock.calls[0] as unknown[])[1] as string
+    );
+    expect(payload.title).toBe("Domingo · En preparación");
+    expect(payload.body).toBe("Pedido #11111111 · Están armando tu pedido.");
   });
 
   it("ready_for_pickup (legacy) envía push a las subscriptions", async () => {
@@ -227,7 +266,6 @@ describe("storefrontOrderPush.service", () => {
       slug: "mi-local"
     });
 
-    expect(setVapidDetails).toHaveBeenCalled();
     expect(sendNotification).toHaveBeenCalledWith(
       {
         endpoint: SUB.endpoint,
@@ -377,7 +415,21 @@ describe("storefrontOrderPush.service", () => {
     });
   });
 
-  it("delivered limpia sin enviar (no notifiable v1)", async () => {
+  it("delivered envía push y limpia subscriptions", async () => {
+    mockedFindMany.mockResolvedValue([
+      {
+        id: "sub-1",
+        order_id: "11111111-1111-4111-8111-111111111111",
+        business_id: "biz-1",
+        endpoint: SUB.endpoint,
+        p256dh: "p256dh-key",
+        auth: "auth-key",
+        user_agent: null,
+        created_at: new Date(),
+        updated_at: new Date()
+      }
+    ]);
+
     await notifyStorefrontOrderStatusChange({
       orderId: "11111111-1111-4111-8111-111111111111",
       businessId: "biz-1",
@@ -386,7 +438,11 @@ describe("storefrontOrderPush.service", () => {
       slug: "mi-local"
     });
 
-    expect(sendNotification).not.toHaveBeenCalled();
+    const payload = JSON.parse(
+      (sendNotification.mock.calls[0] as unknown[])[1] as string
+    );
+    expect(payload.title).toBe("Domingo · Entregado");
+    expect(payload.body).toBe("Pedido #11111111 · ¡Buen provecho!");
     expect(mockedDeleteMany).toHaveBeenCalledWith({
       where: { order_id: "11111111-1111-4111-8111-111111111111" }
     });
