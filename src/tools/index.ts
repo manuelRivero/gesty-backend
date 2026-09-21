@@ -123,6 +123,7 @@ import {
   ORDER_PAYMENT_STATUS_LABEL_ES,
 } from '../constants/orderWorkflow';
 import { hasVariations, matchVariation } from '../services/menu/menuItemVariations';
+import { userMessageSelectsCandidate } from '../services/complementSelectionGate.service';
 import { SUPPORT_MESSAGE, handOverToHuman } from '../services/humanHandover.service';
 
 const toJson = (data: unknown): string => {
@@ -1441,6 +1442,46 @@ export const addCartItemTool = new DynamicStructuredTool<
             'PROHIBIDO decir que ya sumaste.',
         });
       }
+
+      // Soft-gate ola de complemento: solo sumar si el mensaje nombra un candidato.
+      const complementCandidates = (meta.candidateProductIds ?? []).filter(
+        (id): id is string => typeof id === 'string' && id.length > 0
+      );
+      if (
+        meta.pendingComplementSelection === true &&
+        meta.pendingProductSelection === true &&
+        complementCandidates.includes(productId)
+      ) {
+        const rows = await prisma.menu_item.findMany({
+          where: { id: { in: complementCandidates }, business_id: businessId },
+          select: { id: true, name: true },
+        });
+        const names = rows.map((r) => r.name).filter(Boolean);
+        if (!userMessageSelectsCandidate(userMessage ?? null, names)) {
+          console.log(
+            JSON.stringify({
+              event: '[add_cart_item] complement_selection_required',
+              conversationId,
+              productId,
+              userMessagePreview: (userMessage ?? '').slice(0, 80),
+            })
+          );
+          return toJson({
+            success: false,
+            error: 'complement_selection_required',
+            pending: true,
+            candidateProductIds: complementCandidates,
+            candidateNames: names,
+            instruction:
+              'El mensaje NO elige un plato de la ola de complementos. ' +
+              'Si es rechazo blando ("estoy bien así", "nada más", "no gracias", "solo eso"): ' +
+              'llamá mark_complement_refused() y present_cart (o confirmá el pedido breve). ' +
+              'PROHIBIDO add_cart_item sin que el cliente nombre un candidato. ' +
+              'Si quiere uno de la lista, pedí que lo nombre.',
+          });
+        }
+      }
+
       partySize = getRequestedPartySize(meta) ?? null;
       const pendingQty = getPendingAddQuantity(meta);
       pendingReply = isPendingAddQuantityReply({
@@ -2606,7 +2647,7 @@ export const markComplementRefusedTool = new DynamicStructuredTool<
 >({
   name: 'mark_complement_refused',
   description:
-    'Registra que el cliente rechazó completar el menú (dijo no / mejor no / sin postre / no gracias a la oferta de complementos). ' +
+    'Registra que el cliente rechazó completar el menú (dijo no / mejor no / sin postre / no gracias / estoy bien así / nada más / solo eso a la oferta de complementos). ' +
     'Llamá ANTES de responder. Después de esto NO vuelvas a ofrecer present_complement_suggestions en este pedido.',
   schema: markComplementRefusedSchema,
   func: async (_input: MarkComplementRefusedInput, _runManager, config?: RunnableConfig) => {

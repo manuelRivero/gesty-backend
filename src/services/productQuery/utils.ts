@@ -115,6 +115,7 @@ export const clearProductFilterMetadata = (
 /** Claves de shortlist tipable (product query / complementos). */
 export const PENDING_PRODUCT_SELECTION_KEYS = [
   'pendingProductSelection',
+  'pendingComplementSelection',
   'pendingQuestion',
   'candidateProductIds',
   'pendingTipables',

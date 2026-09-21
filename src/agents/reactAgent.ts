@@ -189,6 +189,13 @@ export interface HybridAgentSignals {
   cartAddPendingGate: boolean;
   /** askMessage de quantity_required / variation_required si el add no escribió. */
   cartAddPendingAskMessage: string | null;
+  /**
+   * add falló con complement_selection_required (mensaje no elige candidato de la ola).
+   * No tapar con cart/complement; si mark_complement_refused + present_cart, sí honrar cart.
+   */
+  cartAddComplementBlocked: boolean;
+  /** mark_complement_refused devolvió refused este turno. */
+  markComplementRefused: boolean;
 }
 
 export type HybridAgentRunResult =
@@ -337,6 +344,8 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
     cartAddSucceeded: false,
     cartAddPendingGate: false,
     cartAddPendingAskMessage: null,
+    cartAddComplementBlocked: false,
+    markComplementRefused: false,
   };
 
   for (const msg of messages) {
@@ -374,6 +383,16 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
         if (typeof data.askMessage === 'string' && data.askMessage.trim()) {
           signals.cartAddPendingAskMessage = data.askMessage;
         }
+      }
+      if (
+        m.name === 'add_cart_item' &&
+        data.success === false &&
+        data.error === 'complement_selection_required'
+      ) {
+        signals.cartAddComplementBlocked = true;
+      }
+      if (m.name === 'mark_complement_refused' && data.refused === true) {
+        signals.markComplementRefused = true;
       }
       if (data.signal === 'start_checkout_session') {
         signals.startCheckoutSession = true;
@@ -926,11 +945,20 @@ export const runHybridReactAgent = async (
   }
 
   if (signals.presentCart) {
-    if (signals.cartAddPendingGate && !signals.cartAddSucceeded) {
+    const skipCartForPendingAdd =
+      signals.cartAddPendingGate && !signals.cartAddSucceeded;
+    const skipCartForComplementBlock =
+      signals.cartAddComplementBlocked &&
+      !signals.cartAddSucceeded &&
+      !signals.markComplementRefused;
+    if (skipCartForPendingAdd || skipCartForComplementBlock) {
       console.log(
         JSON.stringify({
           event: '[hybrid-agent] present_cart_skipped_pending_add_gate',
           conversationId,
+          cartAddPendingGate: signals.cartAddPendingGate,
+          cartAddComplementBlocked: signals.cartAddComplementBlocked,
+          markComplementRefused: signals.markComplementRefused,
         })
       );
     } else {

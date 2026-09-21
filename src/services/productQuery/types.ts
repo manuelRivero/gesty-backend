@@ -45,6 +45,11 @@ export type ConversationMetadata = {
    */
   shortlistAwaitingChoice?: boolean;
   /**
+   * Ola de SUGERIR_COMPLEMENTO viva: add solo si el mensaje nombra un candidato.
+   * Soft-gate en add_cart_item (complementSelectionGate).
+   */
+  pendingComplementSelection?: boolean;
+  /**
    * Tras cancelar pedido/reserva con el hilo abierto: el próximo saludo debe
    * ofrecer welcome otra vez (no party size). Se limpia al mostrar welcome o
    * al entrar de nuevo a pedido/reserva/checkout.

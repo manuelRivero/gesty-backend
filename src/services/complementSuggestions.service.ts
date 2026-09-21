@@ -411,6 +411,7 @@ export async function materializeComplementSuggestionsList(
 
   await patchConversationMetadata(ctx.conversation.id, {
     pendingProductSelection: true,
+    pendingComplementSelection: true,
     pendingQuestion: snapshot.title || 'sugerencia de complemento',
     candidateProductIds: ordered.map((row) => row.id),
     ...buildPendingTipablesPatch(COMPLEMENT_MENU_ONLY_TIPABLES),
@@ -454,6 +455,7 @@ export async function presentComplementSuggestionBundle(params: {
     : null;
   await patchConversationMetadata(conversationId, {
     pendingProductSelection: true,
+    pendingComplementSelection: true,
     pendingQuestion: confirmTitle || bundle.snapshot.title || 'sugerencia de complemento',
     candidateProductIds: candidateIds,
     ...buildPendingTipablesPatch(COMPLEMENT_MANAGEMENT_TIPABLES),

@@ -99,6 +99,7 @@ import {
 export async function buildPendingProductSelectionLines(
   meta: {
     pendingProductSelection?: boolean;
+    pendingComplementSelection?: boolean;
     pendingQuestion?: string;
     candidateProductIds?: string[];
     pendingTipables?: {
@@ -134,6 +135,7 @@ export async function buildPendingProductSelectionLines(
   const noteTakesPriority =
     Boolean(getPendingItemNote(meta)) ||
     (meta.pendingTipables?.management ?? []).includes('ITEM_NOTE');
+  const isComplementOla = meta.pendingComplementSelection === true;
 
   const lines = [
     ...(noteTakesPriority
@@ -145,6 +147,13 @@ export async function buildPendingProductSelectionLines(
       : []),
     '- Selección de producto pendiente: el turno anterior ofreció elegir entre varios platos. ' +
       'El mensaje puede ser (a) una elección de cuál quiere, o (b) una pregunta de atributo sobre uno o varios candidatos.',
+    ...(isComplementOla
+      ? [
+          '- Ola de complemento viva: add_cart_item SOLO si el mensaje NOMBRA un candidato de la lista. ' +
+            'Rechazo blando ("estoy bien así", "así está bien", "nada más", "solo eso", "no gracias"): ' +
+            'mark_complement_refused() y present_cart — PROHIBIDO inventar add_cart_item.',
+        ]
+      : []),
     `- Candidatos (usá estos productId; no inventes otros): ${labeled.join(' | ')}.`,
     '- Elección con match claro: present_product_cta(ADD_ITEM) o add_cart_item con ese productId. ' +
       'Incluye "dame N [nombre]", "sumá dos ají…", nombre parcial o ordinal. ' +

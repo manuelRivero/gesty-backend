@@ -26,6 +26,7 @@ const ORDER_SESSION_OMIT_KEYS = [
   'candidateProductIds',
   'intentCandidates',
   'shortlistAwaitingChoice',
+  'pendingComplementSelection',
   // Legacy shortlist de búsqueda de pedido
   'pendingOrderSelection',
   'pendingOrderMessage',

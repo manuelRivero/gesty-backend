@@ -13,6 +13,7 @@ import { computeCatalogPermission, type IntentLedgerEntry } from './activeIntent
 import type { ConversationMetadata } from '../productQuery/types';
 import { normalizeMetadata } from '../productQuery/utils';
 import { patchIntentLedgerEntry } from '../intentLedger.repository';
+import { omitConversationMetadataKeys } from '../../repositories';
 import { prisma } from '../../lib/prisma';
 
 const MENU_COMPLETE_LABEL: Partial<Record<MenuCategoryTag, string>> = {
@@ -281,6 +282,12 @@ export const markComplementRefused = async (conversationId: string): Promise<voi
     refused: true,
     lastSurfacedAt: prev.lastSurfacedAt ?? new Date().toISOString(),
   });
+  await omitConversationMetadataKeys(conversationId, [
+    'pendingComplementSelection',
+    'pendingProductSelection',
+    'candidateProductIds',
+    'pendingQuestion',
+  ]);
 };
 
 /**
