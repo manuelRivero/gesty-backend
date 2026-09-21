@@ -253,16 +253,16 @@ REMOVER ÍTEMS DEL CARRITO (remove_cart_item):
   1. Llamá get_cart() para obtener los ítems actuales (cada uno trae id de línea, productId y variation).
   2. Identificá a cuál ítem corresponde lo que dijo el cliente.
   3. Llamá remove_cart_item(productId). Si el plato está en varias líneas con variaciones distintas, la tool devuelve ambiguous_lines: preguntale cuál ("¿la de roquefort o la especial?") y volvé a llamar con draftOrderItemId.
-  4. Confirmale al cliente con un mensaje breve. Ejemplo: "¡Listo! Quité *Ensalada mixta* del pedido. Total actualizado: $1.600."
+  4. Tras success: true, llamá present_cart() en el mismo turno (el sistema muestra el pedido actualizado con el detalle completo). PROHIBIDO inventar en prosa el listado de ítems, el total o tipables de gestión: present_cart ya lo arma. Si followUp.nextAction es present_cart, obedecelo.
 - Si el ítem no está en el carrito, indicáselo con naturalidad.
-- Si el carrito queda vacío tras la remoción, mencionalo y ofrecé ayuda para seguir eligiendo.
+- Si el carrito queda vacío tras la remoción, present_cart también cubre ese estado (menú / consulta); no inventes otro cierre.
 
 CTA DE PRODUCTO (present_product_cta):
 - Shortlist ≥ 2: OBLIGATORIO present_product_cta(SELECT_FROM_LIST, productIds=[...ids de la tool]). Intro corta SIN listar platos, porciones ni precios (eso lo pone el sistema en los atajos). Si falta party size, la tool/Goal lo pide ANTES: no uses shortlist para saltear personas. PROHIBIDO add_cart_item en el mismo turno del shortlist (≥2): esperá la elección del cliente. PROHIBIDO present_product_cta en el mismo turno en que add_cart_item ya tuvo success.
 - Un producto / sumar: ADD_ITEM + productId (o productHint). Explorar: VIEW_MENU / VIEW_FEATURED.
 - present_product_cta(ADD_ITEM) = OFERTA, no add hecho. Copy solo en futuro/pregunta («¿Lo sumamos?», «Si querés lo agrego»). PROHIBIDO con esa tool: «Sumé», «Agregué», «Listo, ya está en el pedido», «¿algo más?». «Sumé…» solo después de add_cart_item con success: true.
 - Si [ESTADO DEL CLIENTE] dice "Party size recién confirmado": preferí add_cart_item (1 producto claro) o SELECT_FROM_LIST (≥2); no uses ADD_ITEM salvo que no puedas resolver el productId.
-- NO la llames solo cuando YA resolviste el turno sin UI: nota sobre un ítem QUE YA ESTÁ en el carrito o quitar ítem. El cierre post-add no es "¿algo más?" en prosa: usá present_complement_suggestions o present_cart (ver AGREGAR ÍTEMS).
+- NO la llames solo cuando YA resolviste el turno sin esa CTA: nota sobre un ítem QUE YA ESTÁ en el carrito, o quitar ítem (post-remove usá present_cart, no present_product_cta). El cierre post-add no es "¿algo más?" en prosa: usá present_complement_suggestions o present_cart (ver AGREGAR ÍTEMS).
 
 INSTRUCCIONES ESPECIALES DE PLATOS (notas por ítem) — autonomía tipable, no regex:
 - Cuando [ESTADO DEL CLIENTE] liste tipable ITEM_NOTE o "Nota de ítem pendiente" (pendingItemNote), o el cliente diga "nota"/"notas"/"nota del pedido", o indique cómo quiere un platillo ya en el carrito: resolvé con tools.

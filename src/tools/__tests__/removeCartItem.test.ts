@@ -118,6 +118,7 @@ describe('remove_cart_item — Constraint de confirmación (ADR-0002)', () => {
     const result = JSON.parse(raw as string);
 
     expect(result.success).toBe(true);
+    expect(result.followUp?.nextAction).toBe('present_cart');
     expect(prisma.draft_order_item.delete).toHaveBeenCalledWith({ where: { id: LINE_ID } });
     expect(omitConversationMetadataKeys).toHaveBeenCalledWith('conv-1', [
       'pendingAction',
@@ -156,6 +157,7 @@ describe('remove_cart_item — Constraint de confirmación (ADR-0002)', () => {
     const result = JSON.parse(raw as string);
 
     expect(result.success).toBe(true);
+    expect(result.followUp?.nextAction).toBe('present_cart');
     expect(prisma.draft_order_item.delete).toHaveBeenCalled();
   });
 

@@ -1845,6 +1845,7 @@ export const removeCartItemTool = new DynamicStructuredTool<
     'sin que el cliente haya confirmado entre medio. ' +
     'Si querés solo reducir la cantidad (no eliminar), usá add_cart_item con quantity negativo no es posible — ' +
     'en ese caso confirmale al cliente que el ítem fue eliminado y que puede volver a agregarlo con la cantidad deseada. ' +
+    'Tras success: true, followUp.nextAction suele ser present_cart: llamá present_cart() (no listes el pedido en prosa). ' +
     'Devuelve el estado actualizado del carrito.',
   schema: removeCartItemSchema,
   func: async (
@@ -1978,6 +1979,12 @@ export const removeCartItemTool = new DynamicStructuredTool<
           quantity: it.quantity,
           notes: it.notes ?? null,
         })),
+      },
+      followUp: {
+        nextAction: 'present_cart',
+        instruction:
+          'Llamá present_cart para mostrar el pedido actualizado con el detalle completo. ' +
+          'PROHIBIDO listar ítems, total o tipables de gestión en prosa.',
       },
     });
   },
@@ -2552,7 +2559,8 @@ export const presentCartTool = new DynamicStructuredTool<
   name: 'present_cart',
   description:
     'Muestra el resumen interactivo del carrito actual con opciones para modificar, seguir comprando, finalizar o cancelar. ' +
-    'Usala cuando el cliente quiera ver qué tiene en el pedido, o tras add_cart_item si NO vas a ofrecer un complemento. ' +
+    'Usala cuando el cliente quiera ver qué tiene en el pedido, tras add_cart_item si NO vas a ofrecer un complemento, ' +
+    'o tras remove_cart_item con success: true (pedido actualizado con el detalle completo). ' +
     'No describas el carrito en texto: esta tool construye el mensaje interactivo completo.',
   schema: presentCartSchema,
   func: async (_input: PresentCartInput, _runManager, config?: RunnableConfig) => {

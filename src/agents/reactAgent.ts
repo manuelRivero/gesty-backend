@@ -372,6 +372,12 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
       if (m.name === 'add_cart_item' && data.success === true) {
         signals.cartAddSucceeded = true;
       }
+      // Post-remove: el cierre es el resumen interactivo (mismo que VIEW_CART),
+      // no prosa inventada con total suelto. Honramos present_cart aunque el
+      // modelo no haya llamado la tool de señal.
+      if (m.name === 'remove_cart_item' && data.success === true) {
+        signals.presentCart = true;
+      }
       if (
         m.name === 'add_cart_item' &&
         data.success === false &&
