@@ -107,11 +107,9 @@ import {
   reviveOrderCompletionIfAbandoned,
 } from '../services/orderCompletionGoal.service';
 import {
-  getPartySizeGoalLedger,
-  derivePartySizeGoal,
-  PARTY_SIZE_GOAL_TYPE,
+  isPartySizeMissingForOrderingTools,
+  PARTY_SIZE_REQUIRED_TOOL_PAYLOAD,
 } from '../services/partySizeGoal.service';
-import { getIntentCatalogEntry } from '../domain/intent/family';
 import {
   getReservationCompletionLedger,
   recordReservationCompletionAbandonment,
@@ -137,6 +135,15 @@ const toJson = (data: unknown): string => {
 };
 
 const PRODUCT_SHORTLIST_MAX_LIMIT = 12;
+
+/** Gate duro: sin personas no shortlist/add (salvo FAQ reserva / checkout / abandono). */
+const partySizeOrderingGateJson = async (
+  conversationId: string
+): Promise<string | null> => {
+  const state = await findOrCreateConversationState(conversationId);
+  if (!isPartySizeMissingForOrderingTools(state.metadata)) return null;
+  return toJson(PARTY_SIZE_REQUIRED_TOOL_PAYLOAD);
+};
 
 const toShortlistItem = (item: {
   id: string;
@@ -190,7 +197,9 @@ export const searchProductsTool = new DynamicStructuredTool<
     'Busca productos del menú por palabra clave (nombre o ingrediente). Devuelve shortlist liviano (id, nombre, categoría, porciones y precio principal). Si necesitás más detalle por producto, usá get_products_details_by_ids.',
   schema: searchProductsSchema,
   func: async ({ keyword }: SearchProductsInput, _runManager, config?: RunnableConfig) => {
-    const { businessId } = getReactContext(config);
+    const { businessId, conversationId } = getReactContext(config);
+    const partyGate = await partySizeOrderingGateJson(conversationId);
+    if (partyGate) return partyGate;
     const items = await MenuService.searchMenuItemsByKeyword({ businessId, keyword });
     const shortlisted = items.slice(0, PRODUCT_SHORTLIST_MAX_LIMIT);
     return toJson({
@@ -741,6 +750,8 @@ export const findProductsByFilterTool = new DynamicStructuredTool<
     config?: RunnableConfig
   ) => {
     const { businessId, conversationId } = getReactContext(config);
+    const partyGate = await partySizeOrderingGateJson(conversationId);
+    if (partyGate) return partyGate;
 
     const ingredientContainsEarly = containsIngredient?.trim();
     if (ingredientContainsEarly) {
@@ -1091,7 +1102,9 @@ export const getComplementarySuggestionsTool = new DynamicStructuredTool<
     _runManager,
     config?: RunnableConfig
   ) => {
-    const { businessId } = getReactContext(config);
+    const { businessId, conversationId } = getReactContext(config);
+    const partyGate = await partySizeOrderingGateJson(conversationId);
+    if (partyGate) return partyGate;
     let baseTag: (typeof MENU_SUGGESTION_ORDER)[number] | null = null;
     let excludeProductId: string | null = null;
 
@@ -1367,9 +1380,11 @@ export const addCartItemTool = new DynamicStructuredTool<
 
     let partySize: number | null = null;
     let pendingReply = false;
-    let partySizeGoalBlocksAdd = false;
     let orderLine: OrderLine | null = null;
     if (conversationId) {
+      const partyGate = await partySizeOrderingGateJson(conversationId);
+      if (partyGate) return partyGate;
+
       const state = await findOrCreateConversationState(conversationId);
       const meta = normalizeMetadata(state.metadata);
       partySize = getRequestedPartySize(meta) ?? null;
@@ -1381,37 +1396,6 @@ export const addCartItemTool = new DynamicStructuredTool<
         turnStartedAt,
       });
       orderLine = resolveOrderLineForProduct(getPendingOrderLines(meta), item.name);
-      // Gate duro: sin Fact de personas y Goal aún con presupuesto → no escribir carrito.
-      const partyLedger = getPartySizeGoalLedger(meta);
-      const partyGoal = derivePartySizeGoal(
-        {
-          partySize,
-          foodRelatedSignal: true,
-          checkoutActive: meta.checkout_active === true,
-        },
-        partyLedger
-      );
-      const maxSurfaces = getIntentCatalogEntry(PARTY_SIZE_GOAL_TYPE).maxSurfaces;
-      // La línea de la cola con cantidad explícita ya resuelve para qué servía
-      // el Fact de personas (sugerir unidades): no tiene sentido bloquear el
-      // add para preguntar algo que no vamos a usar. Las líneas SIN cantidad
-      // ("una bebida") siguen bajo el Goal blocking.
-      partySizeGoalBlocksAdd =
-        partyGoal.open &&
-        partyLedger.surfaceCount < maxSurfaces &&
-        orderLine?.requestedQuantity == null;
-    }
-
-    if (partySizeGoalBlocksAdd) {
-      return toJson({
-        success: false,
-        error: 'party_size_required',
-        pending: true,
-        instruction:
-          'Falta cuántas personas comen (Goal OBTENER_PERSONAS_DEL_PEDIDO). ' +
-          'Preguntá el número (1–99), llamá save_party_size cuando lo diga, ' +
-          'y recién después reintentá add_cart_item. NO digas que ya sumaste.',
-      });
     }
 
     const { suggestedQuantity } = suggestAddQuantity({
@@ -2547,7 +2531,9 @@ export const presentComplementSuggestionsTool = new DynamicStructuredTool<
     _runManager,
     config?: RunnableConfig
   ) => {
-    getReactContext(config);
+    const { conversationId } = getReactContext(config);
+    const partyGate = await partySizeOrderingGateJson(conversationId);
+    if (partyGate) return partyGate;
     return toJson({
       signal: 'present_complement_suggestions',
       ...(productId ? { productId } : {}),
@@ -2739,6 +2725,8 @@ export const planOrderLinesTool = new DynamicStructuredTool<
     if (!conversationId) {
       return toJson({ success: false, error: 'no_conversation' });
     }
+    const partyGate = await partySizeOrderingGateJson(conversationId);
+    if (partyGate) return partyGate;
     const pending = await setPendingOrderLines({
       conversationId,
       lines,
@@ -2911,7 +2899,9 @@ export const presentCategoryTool = new DynamicStructuredTool<
     'obtener el categoryId. No listés los platos en texto: esta tool arma el mensaje completo.',
   schema: presentCategorySchema,
   func: async (input: PresentCategoryInput, _runManager, config?: RunnableConfig) => {
-    getReactContext(config);
+    const { conversationId } = getReactContext(config);
+    const partyGate = await partySizeOrderingGateJson(conversationId);
+    if (partyGate) return partyGate;
     return toJson({ signal: 'present_category', categoryId: input.categoryId });
   },
 });
@@ -3019,7 +3009,9 @@ export const presentProductCtaTool = new DynamicStructuredTool<
     'NO la uses si ya resolviste sin UI (nota, quitar ítem, cierre "¿algo más?").',
   schema: presentProductCtaSchema,
   func: async (input: PresentProductCtaInput, _runManager, config?: RunnableConfig) => {
-    const { businessId } = getReactContext(config);
+    const { businessId, conversationId } = getReactContext(config);
+    const partyGate = await partySizeOrderingGateJson(conversationId);
+    if (partyGate) return partyGate;
     const ordersGate = await assertCanOrder(businessId);
     if (!ordersGate.ok) {
       return toJson({

@@ -16,6 +16,7 @@ import {
   getRequestedPartySize,
   normalizeMetadata,
 } from '../../../services/productQuery/utils';
+import { isPartySizeMissingForOrderingTools } from '../../../services/partySizeGoal.service';
 import { prisma } from '../../../lib/prisma';
 import { hasVariations, variationByIndex } from '../../../services/menu/menuItemVariations';
 import { clearPendingVariation } from '../../../services/pendingVariation.service';
@@ -51,6 +52,12 @@ export class AddItemHandler implements IntentHandler {
 
     const meta = normalizeMetadata(ctx.conversationState?.metadata);
     const partySize = getRequestedPartySize(meta);
+
+    if (isPartySizeMissingForOrderingTools(meta)) {
+      return textResponse(
+        '🤖\n*¿Para cuántas personas?* 👥\n\nDecime cuántos comen y después sumamos el plato.'
+      );
+    }
 
     // D5/D7 — variación antes que cantidad (plan party-size D4).
     const item = await prisma.menu_item.findFirst({

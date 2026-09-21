@@ -302,15 +302,15 @@ describe('buildContextMessage', () => {
     expect(menuFindManyMock).not.toHaveBeenCalled();
   });
 
-  it('sin party size: el ledger no autoriza preguntarlo por iniciativa propia', async () => {
+  it('sin party size: ledger indica preguntar si Goal/tool lo pide (antes de shortlist)', async () => {
     findFirstMock.mockResolvedValue(null);
     const msg = await buildContextMessage(
       makeCtx({ userMsg: 'Quiero 1 ceviche, 2 papas a la huancaína y una chicha' })
     );
     expect(msg).toContain('Personas para el pedido: no informado');
-    expect(msg).toContain('NO preguntarlo por iniciativa propia');
+    expect(msg).toContain('preguntá PRIMERO');
     expect(msg).toContain('party_size_required');
-    expect(msg).not.toContain('preguntar solo si el cliente consulta platos');
+    expect(msg).not.toContain('NO preguntarlo por iniciativa propia');
   });
 
   it('partySizeJustConfirmed: inyecta hint de resume sin metadata persistida', async () => {

@@ -10,7 +10,8 @@ import { getIntentCatalogEntry, type IntentCandidate } from '../domain/intent/fa
 import { computeCatalogPermission, type IntentLedgerEntry } from './intent/activeIntent.service';
 import { patchIntentLedgerEntry } from './intentLedger.repository';
 import type { ConversationMetadata } from './productQuery/types';
-import { normalizeMetadata } from './productQuery/utils';
+import { getRequestedPartySize, normalizeMetadata } from './productQuery/utils';
+import { isReservationFaqMode } from './reservationFaqDelegation.service';
 
 export const PARTY_SIZE_GOAL_TYPE = 'OBTENER_PERSONAS_DEL_PEDIDO' as const;
 /** Key histórica en intentLedger (Opportunity ambient C.3). */
@@ -36,15 +37,36 @@ export type PartySizeGoalFacts = {
   /** Señal de comida (turno NLP Fase A y/o metadata Fase B). */
   foodRelatedSignal: boolean;
   checkoutActive: boolean;
-  /** D7: cola de pedido abierta (`hasOpenOrderLines`). */
-  hasOpenOrderLines?: boolean;
-  /** D3: alguna línea abierta sin cantidad — lo único que justifica el Goal con cola. */
-  hasOrderLineWithoutQuantity?: boolean;
   /**
    * FAQ mid-reserva / sesión de reserva activa: no abrir party size de pedido
    * (PLAN-ACCION-RESERVA-FAQ-HIBRIDO D2).
    */
   reservationFaqMode?: boolean;
+};
+
+/** Payload estándar de tools cuando falta el Fact de personas. */
+export const PARTY_SIZE_REQUIRED_TOOL_PAYLOAD = {
+  success: false as const,
+  error: 'party_size_required' as const,
+  pending: true as const,
+  instruction:
+    'Falta cuántas personas comen (Goal OBTENER_PERSONAS_DEL_PEDIDO). ' +
+    'Preguntá el número (1–99) con el título *¿Para cuántas personas?*, ' +
+    'llamá save_party_size cuando lo diga, y recién después continuá con shortlist / add. ' +
+    'NO busques productos ni digas que ya sumaste.',
+};
+
+/**
+ * Gate duro de tools de pedido/shortlist: sin Fact PERSONAS no hay catálogo
+ * orientado a pedir ni add. Excepciones: checkout, FAQ mid-reserva, abandono.
+ */
+export const isPartySizeMissingForOrderingTools = (metadata: unknown): boolean => {
+  const meta = normalizeMetadata(metadata);
+  if (getRequestedPartySize(meta) != null) return false;
+  if (meta.checkout_active === true) return false;
+  if (isReservationFaqMode(meta)) return false;
+  if (getPartySizeGoalLedger(meta).abandonment) return false;
+  return true;
 };
 
 export type PartySizeGoalLedger = {
@@ -79,7 +101,8 @@ export type PartySizeGoal = {
 
 /**
  * Derivador puro: abierto ⟺ falta Fact + señal comida + no checkout + no
- * abandono, y — si hay cola de pedido — alguna línea abierta sin cantidad.
+ * abandono. La cantidad por línea de cola NO cierra el Goal: personas van
+ * siempre antes del shortlist/add.
  */
 export const derivePartySizeGoal = (
   facts: PartySizeGoalFacts,
@@ -90,8 +113,7 @@ export const derivePartySizeGoal = (
     facts.foodRelatedSignal &&
     !facts.checkoutActive &&
     !facts.reservationFaqMode &&
-    !ledger.abandonment &&
-    !(facts.hasOpenOrderLines === true && facts.hasOrderLineWithoutQuantity !== true),
+    !ledger.abandonment,
 });
 
 /**
@@ -139,9 +161,10 @@ export const derivePartySizeGoalCandidate = (
     closeMode: cat.closeMode,
     hint:
       '- Goal (OBTENER_PERSONAS_DEL_PEDIDO, blocking): falta cuántas personas comen. ' +
-      'Antes de recomendar platos o sumar al carrito, preguntá el número (1–99) de forma breve. ' +
-      'Cuando el cliente lo diga, persistilo con save_party_size y recién ahí continuá con la comida del turno. ' +
-      'Si ya había una búsqueda/shortlist pendiente, retomalá después de guardar personas.',
+      'PRIMERO preguntá el número (1–99); DESPUÉS shortlist / CTA / add. ' +
+      'PROHIBIDO search_products, find_products_by_filter, present_product_cta, present_category, ' +
+      'plan_order_lines o add_cart_item hasta save_party_size. ' +
+      'Cuando lo diga, persistilo con save_party_size y recién ahí continuá con la comida del turno.',
     tieBreak: 95,
   };
 };

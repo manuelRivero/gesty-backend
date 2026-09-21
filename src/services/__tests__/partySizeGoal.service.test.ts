@@ -22,6 +22,7 @@ import {
   derivePartySizeGoalCandidate,
   getPartySizeGoalLedger,
   isFoodRelatedPartySizeSignal,
+  isPartySizeMissingForOrderingTools,
   PARTY_SIZE_GOAL_TYPE,
   type PartySizeGoalLedger,
 } from '../partySizeGoal.service';
@@ -87,6 +88,47 @@ describe('derivePartySizeGoal', () => {
         },
         EMPTY_LEDGER
       ).open
+    ).toBe(false);
+  });
+
+  it('sigue abierto con cola aunque todas las líneas traigan cantidad', () => {
+    expect(
+      derivePartySizeGoal(
+        {
+          partySize: null,
+          foodRelatedSignal: true,
+          checkoutActive: false,
+        },
+        EMPTY_LEDGER
+      ).open
+    ).toBe(true);
+  });
+});
+
+describe('isPartySizeMissingForOrderingTools', () => {
+  it('bloquea sin Fact de personas', () => {
+    expect(isPartySizeMissingForOrderingTools({})).toBe(true);
+  });
+
+  it('permite con Fact presente', () => {
+    expect(
+      isPartySizeMissingForOrderingTools({ peopleCount: 2, requestedPartySize: 2 })
+    ).toBe(false);
+  });
+
+  it('permite con abandonment', () => {
+    expect(
+      isPartySizeMissingForOrderingTools({
+        intentLedger: { OBTENER_PERSONAS_DEL_PEDIDO: { abandonment: true } },
+      })
+    ).toBe(false);
+  });
+
+  it('permite en FAQ mid-reserva', () => {
+    expect(
+      isPartySizeMissingForOrderingTools({
+        reservation_faq_delegation: { delegatedAt: new Date().toISOString() },
+      })
     ).toBe(false);
   });
 });

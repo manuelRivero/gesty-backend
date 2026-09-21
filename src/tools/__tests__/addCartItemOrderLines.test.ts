@@ -1,10 +1,9 @@
 /**
  * `add_cart_item` con cola de pedido activa (PLAN-ACCION-PEDIDO-MULTI-LINEA.md).
  *
- * D3/D4 (revisados 2026-08-19): la cantidad que el cliente dijo por línea la
- * escribió `plan_order_lines` como Fact de sesión → cuenta como cantidad dicha:
- * no se pregunta cuántas unidades ni cuántas personas comen para esa línea.
- * Las líneas SIN cantidad siguen bajo el Goal blocking de personas.
+ * La cantidad de línea (`plan_order_lines`) cuenta como unidades dichas (no ask
+ * de quantity). El Fact de personas es obligatorio antes del add: la cantidad
+ * de línea no saltea party size.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -23,7 +22,18 @@ vi.mock('../../lib/prisma', () => ({
     },
     business: { findUnique: vi.fn() },
     conversation_state: { findUnique: vi.fn() },
+    $queryRaw: vi.fn(async () => [
+      {
+        bot_enabled: true,
+        orders_enabled: true,
+        reservations_enabled: true,
+      },
+    ]),
   },
+}));
+
+vi.mock('../../services/ordersCapabilityGate.service', () => ({
+  assertCanOrder: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
 vi.mock('../../services/menu.service', () => ({ MenuService: {} }));
@@ -119,8 +129,14 @@ const menuItem = (name: string) => ({
   menu_item_price: [{ amount: new Prisma.Decimal(1000), currency_code: 'ARS' }],
 });
 
-/** Cola "1 ceviche, 2 papas a la huancaína y una chicha", sin party size. */
-const metadataWithQueue = (over?: { requestedQuantity?: number | null }) => ({
+/** Cola "1 ceviche, 2 papas a la huancaína y una chicha". */
+const metadataWithQueue = (over?: {
+  requestedQuantity?: number | null;
+  partySize?: number | null;
+}) => ({
+  ...(over?.partySize != null
+    ? { peopleCount: over.partySize, requestedPartySize: over.partySize }
+    : {}),
   pendingOrderLines: {
     lines: [
       {
@@ -136,6 +152,8 @@ const metadataWithQueue = (over?: { requestedQuantity?: number | null }) => ({
     createdAt: new Date().toISOString(),
   },
 });
+
+const metaWithPartyAndQueue = () => metadataWithQueue({ partySize: 4 });
 
 const callTool = (input: { productId: string; quantity?: number }) =>
   addCartItemTool.func(input, undefined, CONFIG);
@@ -153,13 +171,13 @@ describe('add_cart_item — cola de pedido y cantidad por línea', () => {
       menuItem('Papa a la huancaina') as never
     );
     vi.mocked(prisma.conversation_state.findUnique).mockResolvedValue({
-      metadata: metadataWithQueue(),
+      metadata: metaWithPartyAndQueue(),
     } as never);
-    findOrCreateConversationState.mockResolvedValue({ metadata: metadataWithQueue() });
+    findOrCreateConversationState.mockResolvedValue({ metadata: metaWithPartyAndQueue() });
     advanceAfterLineClose.mockResolvedValue(null);
   });
 
-  it('línea con cantidad: escribe esa cantidad sin ask y sin pedir personas', async () => {
+  it('línea con cantidad: escribe esa cantidad sin ask de unidades (con Fact de personas)', async () => {
     const result = JSON.parse((await callTool({ productId: PRODUCT_ID })) as string);
 
     expect(result.success).toBe(true);
@@ -170,10 +188,18 @@ describe('add_cart_item — cola de pedido y cantidad por línea', () => {
     );
   });
 
-  it('línea con cantidad: no devuelve party_size_required aunque falte el Fact de personas', async () => {
+  it('línea con cantidad: igual exige party size si falta el Fact de personas', async () => {
+    const noParty = metadataWithQueue();
+    findOrCreateConversationState.mockResolvedValue({ metadata: noParty });
+    vi.mocked(prisma.conversation_state.findUnique).mockResolvedValue({
+      metadata: noParty,
+    } as never);
+
     const result = JSON.parse((await callTool({ productId: PRODUCT_ID })) as string);
-    expect(result.error).toBeUndefined();
-    expect(result.success).toBe(true);
+    expect(result).toEqual(
+      expect.objectContaining({ success: false, error: 'party_size_required' })
+    );
+    expect(prisma.draft_order_item.create).not.toHaveBeenCalled();
   });
 
   it('quantity del turno gana a la de la línea (corrección "mejor 3 papas")', async () => {
@@ -207,10 +233,9 @@ describe('add_cart_item — cola de pedido y cantidad por línea', () => {
 
     const result = JSON.parse((await callTool({ productId: PRODUCT_ID })) as string);
 
-    // Sin match de línea vuelve el flujo de hoy: falta el Fact de personas.
-    expect(result).toEqual(
-      expect.objectContaining({ success: false, error: 'party_size_required' })
-    );
+    // Sin match de línea: con Fact de personas suma qty 1 (ask path) o pending quantity.
+    // Acá el fixture tiene party size → no party_size_required.
+    expect(result.error).not.toBe('party_size_required');
   });
 
   it('cierra la línea que matchea el producto, no siempre la activa', async () => {

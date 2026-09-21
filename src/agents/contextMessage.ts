@@ -88,7 +88,6 @@ import {
 import {
   buildPendingOrderLinesContextLines,
   hasOpenOrderLines,
-  hasOpenOrderLineWithoutQuantity,
 } from '../services/pendingOrderLines.service';
 
 /** Hint interno cuando hay shortlist pendiente (SELECT_FROM_LIST / product query). */
@@ -300,8 +299,8 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     ? 'no aplica en este turno (FAQ mid-reserva — respondé menú; no pidas personas del pedido ni ofrezcas sumar al pedido)'
     : partySize
       ? `${partySize} (guía de cantidad a pedir, NO filtro de serves_people)`
-      : 'no informado — NO preguntarlo por iniciativa propia. Solo se pide si aparece el Goal ' +
-        'OBTENER_PERSONAS_DEL_PEDIDO acá abajo o si una tool devuelve party_size_required';
+      : 'no informado — si hay Goal OBTENER_PERSONAS_DEL_PEDIDO abajo o una tool ' +
+        'devuelve party_size_required, preguntá PRIMERO y recién después shortlist/add';
 
   const detection = ctx.detection;
 
@@ -395,8 +394,6 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
             foodRelatedSignal,
             partySize: partySize ?? null,
             checkoutActive,
-            hasOpenOrderLines: openOrderLines,
-            hasOrderLineWithoutQuantity: hasOpenOrderLineWithoutQuantity(meta),
             reservationFaqMode,
           },
           resolvePartySizeLedgerEntry(meta)
