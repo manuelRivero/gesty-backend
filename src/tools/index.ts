@@ -54,6 +54,7 @@ import {
   normalizeMetadata,
   getRequestedPartySize,
   PENDING_PRODUCT_SELECTION_KEYS,
+  SHORTLIST_AWAITING_CHOICE_KEY,
 } from '../services/productQuery/utils';
 import { resolveDeliveryContext } from '../services/deliveryFee.service';
 import { patchConversationMetadata, omitConversationMetadataKeys } from '../repositories/conversationState.repository';
@@ -145,6 +146,21 @@ const partySizeOrderingGateJson = async (
   return toJson(PARTY_SIZE_REQUIRED_TOOL_PAYLOAD);
 };
 
+/** ≥2 hits: el cliente debe elegir antes de add (mismo turno ReAct). */
+const markShortlistAwaitingChoice = async (
+  conversationId: string,
+  productIds: string[],
+  pendingQuestion: string
+): Promise<void> => {
+  if (productIds.length < 2) return;
+  await patchConversationMetadata(conversationId, {
+    [SHORTLIST_AWAITING_CHOICE_KEY]: true,
+    pendingProductSelection: true,
+    pendingQuestion,
+    candidateProductIds: productIds.slice(0, 12),
+  });
+};
+
 const toShortlistItem = (item: {
   id: string;
   name: string;
@@ -202,10 +218,22 @@ export const searchProductsTool = new DynamicStructuredTool<
     if (partyGate) return partyGate;
     const items = await MenuService.searchMenuItemsByKeyword({ businessId, keyword });
     const shortlisted = items.slice(0, PRODUCT_SHORTLIST_MAX_LIMIT);
+    await markShortlistAwaitingChoice(
+      conversationId,
+      shortlisted.map((i) => i.id),
+      keyword
+    );
     return toJson({
       count: shortlisted.length,
       totalMatches: items.length,
       hasMore: items.length > shortlisted.length,
+      ...(shortlisted.length >= 2
+        ? {
+            instruction:
+              'Hay varias opciones: llamá present_product_cta(SELECT_FROM_LIST) con estos ids. ' +
+              'PROHIBIDO add_cart_item hasta que el cliente elija en un turno siguiente.',
+          }
+        : {}),
       items: shortlisted.map((item) =>
         toShortlistItem({
           ...item,
@@ -849,11 +877,24 @@ export const findProductsByFilterTool = new DynamicStructuredTool<
       }),
     ]);
 
+    await markShortlistAwaitingChoice(
+      conversationId,
+      items.map((i) => i.id),
+      'filtro de menú'
+    );
+
     return toJson({
       count: items.length,
       totalMatches,
       hasMore: totalMatches > items.length,
       currencyApplied: currency,
+      ...(items.length >= 2
+        ? {
+            instruction:
+              'Hay varias opciones: llamá present_product_cta(SELECT_FROM_LIST) con estos ids. ' +
+              'PROHIBIDO add_cart_item hasta que el cliente elija en un turno siguiente.',
+          }
+        : {}),
       items: items.map((item) => toShortlistItem(item)),
     });
   },
@@ -1387,6 +1428,19 @@ export const addCartItemTool = new DynamicStructuredTool<
 
       const state = await findOrCreateConversationState(conversationId);
       const meta = normalizeMetadata(state.metadata);
+      if (meta.shortlistAwaitingChoice === true) {
+        return toJson({
+          success: false,
+          error: 'shortlist_selection_required',
+          pending: true,
+          candidateProductIds: meta.candidateProductIds ?? [],
+          instruction:
+            'Hay un shortlist pendiente: el cliente aún no eligió. ' +
+            'Llamá present_product_cta(SELECT_FROM_LIST) si no lo mostraste, ' +
+            'y NO sumes al carrito hasta el próximo mensaje con su elección. ' +
+            'PROHIBIDO decir que ya sumaste.',
+        });
+      }
       partySize = getRequestedPartySize(meta) ?? null;
       const pendingQty = getPendingAddQuantity(meta);
       pendingReply = isPendingAddQuantityReply({
@@ -1583,6 +1637,7 @@ export const addCartItemTool = new DynamicStructuredTool<
       await clearLastOffer(conversationId);
       await omitConversationMetadataKeys(conversationId, [
         ...PENDING_PRODUCT_SELECTION_KEYS,
+        SHORTLIST_AWAITING_CHOICE_KEY,
       ]);
       await markComplementEngagedIfOffered(conversationId, productId);
       // Revival del Goal COMPLETAR_PEDIDO (ADR-0005, corolario): si el

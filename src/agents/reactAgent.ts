@@ -37,7 +37,7 @@ import {
   extractPrimaryProductId,
   formatSelectListCandidateMeta,
 } from '../whatsappBuilders/hybridCta';
-import { patchConversationMetadata } from '../repositories';
+import { patchConversationMetadata, omitConversationMetadataKeys } from '../repositories';
 import { startCheckoutSessionTool } from '../tools/checkout';
 import { startReservationSessionTool } from '../tools/reservation';
 import { startAddressEditSessionTool } from '../tools/onboarding';
@@ -170,6 +170,8 @@ export interface HybridAgentSignals {
   welcomeBodyText: string | null;
   /** CTA de producto pedido explícitamente por el agente (tool present_product_cta). */
   presentProductCta: PresentProductCtaSignal | null;
+  /** True si add_cart_item devolvió success en este turno (no reabrir shortlist). */
+  cartAddSucceeded: boolean;
 }
 
 export type HybridAgentRunResult =
@@ -314,6 +316,7 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
     presentWelcomeOptions: false,
     welcomeBodyText: null,
     presentProductCta: null,
+    cartAddSucceeded: false,
   };
 
   for (const msg of messages) {
@@ -333,7 +336,11 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
         bodyText?: string;
         productId?: string;
         target?: string;
+        success?: boolean;
       };
+      if (m.name === 'add_cart_item' && data.success === true) {
+        signals.cartAddSucceeded = true;
+      }
       if (data.signal === 'start_checkout_session') {
         signals.startCheckoutSession = true;
         signals.startCheckoutReason = typeof data.reason === 'string' ? data.reason : null;
@@ -623,6 +630,14 @@ export const runHybridReactAgent = async (
     currentMessageId: ctx.message?.id ?? null,
   });
 
+  // Nuevo turno del usuario: ya puede elegir del shortlist / add. El flag solo
+  // bloquea add en el mismo ReAct en que se abrió la búsqueda (≥2).
+  try {
+    await omitConversationMetadataKeys(conversationId, ['shortlistAwaitingChoice']);
+  } catch (err) {
+    console.error('[hybrid-agent] clear shortlistAwaitingChoice failed:', err);
+  }
+
   const inputs = {
     messages: [...history, new HumanMessage(await buildContextMessage(ctx))],
   };
@@ -901,7 +916,8 @@ export const runHybridReactAgent = async (
     isHybridCtaEnabled() && isHybridCtaEnabledForBusiness(businessId);
 
   // CTA / lista: preferido si el agente pidió present_product_cta.
-  if (signals.presentProductCta && ctaFeatureOn) {
+  // Si ya sumó al carrito en este turno, no reabrir shortlist (evita «Sumé» + lista).
+  if (signals.presentProductCta && ctaFeatureOn && !signals.cartAddSucceeded) {
     const ctaReq = signals.presentProductCta;
     const lastReferencedProductId =
       (ctx.conversation as { lastReferencedProductId?: string | null }).lastReferencedProductId ??
@@ -996,6 +1012,14 @@ export const runHybridReactAgent = async (
       JSON.stringify({
         event: '[hybrid-cta] cta_skipped',
         reason: 'agent_tool_build_failed',
+        conversationId,
+      })
+    );
+  } else if (signals.presentProductCta && signals.cartAddSucceeded) {
+    console.log(
+      JSON.stringify({
+        event: '[hybrid-cta] cta_skipped',
+        reason: 'cart_add_same_turn',
         conversationId,
       })
     );

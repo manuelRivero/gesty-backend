@@ -39,6 +39,12 @@ export type ConversationMetadata = {
   pendingQuestion?: string;
   candidateProductIds?: string[];
   /**
+   * True mientras el shortlist de este turno ReAct aún no tuvo respuesta del
+   * cliente: `add_cart_item` debe fallar con `shortlist_selection_required`.
+   * Se limpia al inicio del próximo `runHybridReactAgent`.
+   */
+  shortlistAwaitingChoice?: boolean;
+  /**
    * Tipables de gestión ofrecidos en el último mensaje con atajos
    * (complementos / carrito / welcome). El agente razona contra esto + tools.
    */

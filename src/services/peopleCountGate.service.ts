@@ -72,9 +72,10 @@ export function buildPartySizeJustConfirmedContextLines(
   const n = Math.trunc(justConfirmed);
   return [
     `- Party size recién confirmado (${n}). Estás reanudando la consulta de comida.`,
-    '  Si hay 1 producto claro → add_cart_item (sin quantity si el cliente no dijo unidades; la tool pedirá confirmación si hace falta).',
-    '  Si hay ≥2 → present_product_cta(SELECT_FROM_LIST).',
-    '  PROHIBIDO present_product_cta(ADD_ITEM) en este turno salvo que no puedas resolver el productId.',
-    '  PROHIBIDO decir que ya sumaste sin add_cart_item exitoso. PROHIBIDO upsell vacío («¿algo más?»).',
+    '  Orden fijo: search_products / find_products_by_filter → si count ≥ 2, SOLO present_product_cta(SELECT_FROM_LIST).',
+    '  PROHIBIDO add_cart_item en este turno si la búsqueda devolvió ≥2 (el cliente aún no eligió).',
+    '  Si count = 1: nombrá el producto y podés add_cart_item o present_product_cta(ADD_ITEM).',
+    '  PROHIBIDO usar el número de personas como quantity del add.',
+    '  PROHIBIDO present_product_cta(ADD_ITEM) con copy «Sumé». PROHIBIDO decir que ya sumaste sin add exitoso.',
   ];
 }

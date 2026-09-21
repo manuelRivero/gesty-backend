@@ -78,6 +78,7 @@ describe('peopleCountGate', () => {
     expect(buildPartySizeJustConfirmedContextLines(0)).toEqual([]);
     const lines = buildPartySizeJustConfirmedContextLines(3);
     expect(lines.join('\n')).toContain('Party size recién confirmado (3)');
-    expect(lines.join('\n')).toContain('PROHIBIDO present_product_cta(ADD_ITEM)');
+    expect(lines.join('\n')).toContain('PROHIBIDO add_cart_item en este turno');
+    expect(lines.join('\n')).toContain('PROHIBIDO usar el número de personas como quantity');
   });
 });

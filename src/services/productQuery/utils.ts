@@ -120,6 +120,12 @@ export const PENDING_PRODUCT_SELECTION_KEYS = [
   'pendingTipables',
 ] as const;
 
+/**
+ * Tras search/find con ≥2 hits en este turno ReAct: bloquea add_cart_item
+ * hasta el próximo mensaje del usuario (elección tipable).
+ */
+export const SHORTLIST_AWAITING_CHOICE_KEY = 'shortlistAwaitingChoice' as const;
+
 /** Personas en contexto: peopleCount, requestedPartySize o legacy. */
 export function getRequestedPartySize(
   meta: ConversationMetadata
