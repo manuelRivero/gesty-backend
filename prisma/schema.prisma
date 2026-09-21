@@ -823,28 +823,30 @@ model business_payment_provider {
 }
 
 model payment_intent {
-  id                  String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  business_id         String      @db.Uuid
-  draft_order_id      String      @db.Uuid
-  order_id            String?     @db.Uuid
-  provider            String      @default("mercado_pago")
+  id                  String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id         String       @db.Uuid
+  /// WA/draft path. Null en storefront (PAY-06): el intent se liga a order_id.
+  draft_order_id      String?      @db.Uuid
+  order_id            String?      @db.Uuid
+  provider            String       @default("mercado_pago")
   external_id         String?
   preference_id       String?
   init_point          String?
-  status              String      @default("pending")
-  amount              Decimal     @db.Decimal(12, 2)
-  currency            String      @db.Char(3)
+  status              String       @default("pending")
+  amount              Decimal      @db.Decimal(12, 2)
+  currency            String       @db.Char(3)
   raw_webhook_payload Json?
-  created_at          DateTime    @default(now()) @db.Timestamptz(6)
-  updated_at          DateTime    @default(now()) @db.Timestamptz(6)
+  created_at          DateTime     @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime     @default(now()) @db.Timestamptz(6)
   /// Evaluación de promociones congelada al emitir el link (R2). El webhook la
   /// reusa: el cliente ya pagó ese monto y no hay turno donde re-confirmar.
   promotion_snapshot  Json?
-  business            business    @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  draft_order         draft_order @relation(fields: [draft_order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  orders              orders?     @relation(fields: [order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  business            business     @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  draft_order         draft_order? @relation(fields: [draft_order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  orders              orders?      @relation(fields: [order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([draft_order_id, status], map: "idx_pi_draft_status")
+  @@index([order_id, status], map: "idx_pi_order_status")
   @@index([external_id], map: "idx_pi_external_id")
 }
 

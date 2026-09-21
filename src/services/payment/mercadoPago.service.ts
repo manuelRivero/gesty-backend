@@ -25,6 +25,16 @@ export const createMpPreference = async (params: {
   payerEmail?: string;
   businessId: string;
   notificationUrlBase?: string;
+  /**
+   * `undefined` → defaults bot bajo MERCADO_PAGO_WEBHOOK_BASE_URL.
+   * `null` → omitir back_urls (storefront sin STOREFRONT_PUBLIC_ORIGIN).
+   * objeto → esas URLs (sin merge con defaults).
+   */
+  backUrls?: {
+    success?: string;
+    failure?: string;
+    pending?: string;
+  } | null;
 }): Promise<MpPreferenceResult> => {
   const client = new MercadoPagoConfig({ accessToken: params.accessToken });
   const preference = new Preference(client);
@@ -34,17 +44,38 @@ export const createMpPreference = async (params: {
     ? `${notificationBase}/api/payments/mercado-pago/webhook?business_id=${params.businessId}`
     : undefined;
 
+  const defaultBack = notificationBase
+    ? {
+        success: `${notificationBase}/payment/success`,
+        failure: `${notificationBase}/payment/failure`,
+        pending: `${notificationBase}/payment/pending`,
+      }
+    : undefined;
+
+  const back_urls =
+    params.backUrls === null
+      ? undefined
+      : params.backUrls
+        ? {
+            success: params.backUrls.success,
+            failure: params.backUrls.failure,
+            pending: params.backUrls.pending,
+          }
+        : defaultBack;
+
+  const auto_return =
+    back_urls?.success && /^https?:\/\//i.test(back_urls.success)
+      ? ('approved' as const)
+      : undefined;
+
   const result = await preference.create({
     body: {
       items: params.items,
       external_reference: params.externalReference,
       ...(notificationUrl ? { notification_url: notificationUrl } : {}),
       ...(params.payerEmail ? { payer: { email: params.payerEmail } } : {}),
-      back_urls: {
-        success: notificationBase ? `${notificationBase}/payment/success` : undefined,
-        failure: notificationBase ? `${notificationBase}/payment/failure` : undefined,
-        pending: notificationBase ? `${notificationBase}/payment/pending` : undefined,
-      },
+      ...(back_urls ? { back_urls } : {}),
+      ...(auto_return ? { auto_return } : {}),
     },
   });
 

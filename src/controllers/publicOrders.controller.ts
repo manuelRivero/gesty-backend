@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import {
   createPublicCounterOrder,
+  createPublicOrderCheckout,
   getPublicCounterOrder,
   PublicOrderError,
   quotePublicDelivery
@@ -48,8 +49,7 @@ const createOrderBodySchema = z
       .optional()
       .default("TAKE_AWAY"),
     address: deliveryAddressSchema.optional().nullable(),
-    /** Cobro siempre manual; se ignora si el client manda otra cosa. */
-    paymentMethod: z.literal("cash").optional().default("cash"),
+    paymentMethod: z.enum(["cash", "online"]).optional().default("cash"),
     notes: z.string().trim().max(500).optional().nullable()
   })
   .superRefine((data, ctx) => {
@@ -145,6 +145,7 @@ export async function createStorefrontOrder(req: Request, res: Response) {
       })),
       fulfillmentType: parsedBody.data.fulfillmentType,
       address: parsedBody.data.address ?? null,
+      paymentMethod: parsedBody.data.paymentMethod,
       notes: parsedBody.data.notes
     });
 
@@ -169,6 +170,29 @@ export async function getStorefrontOrder(req: Request, res: Response) {
       orderId: parsedParams.data.orderId
     });
     return res.json(order);
+  } catch (err) {
+    return sendPublicOrderError(res, err);
+  }
+}
+
+export async function createStorefrontOrderCheckout(
+  req: Request,
+  res: Response
+) {
+  const parsedParams = orderParamsSchema.safeParse(req.params);
+  if (!parsedParams.success) {
+    return res.status(400).json({
+      error: "Parámetros inválidos",
+      code: "INVALID_PARAMS"
+    });
+  }
+
+  try {
+    const result = await createPublicOrderCheckout({
+      slugOrId: parsedParams.data.slug,
+      orderId: parsedParams.data.orderId
+    });
+    return res.json(result);
   } catch (err) {
     return sendPublicOrderError(res, err);
   }

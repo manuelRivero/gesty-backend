@@ -16,6 +16,10 @@ vi.mock("../businessHours.service", () => ({
   getBusinessOpenInfo: vi.fn()
 }));
 
+vi.mock("../paymentMethods.service", () => ({
+  listOfferedPaymentMethods: vi.fn()
+}));
+
 vi.mock("../../helpers/menuItemPrice.helper", () => ({
   getBusinessCurrencyCode: vi.fn().mockResolvedValue("ARS"),
   activePriceSelect: vi.fn().mockReturnValue({
@@ -43,6 +47,7 @@ vi.mock("../../helpers/menuItemPrice.helper", () => ({
 
 import { prisma } from "../../lib/prisma";
 import { getBusinessOpenInfo } from "../businessHours.service";
+import { listOfferedPaymentMethods } from "../paymentMethods.service";
 import {
   getPublicStorefrontFulfillment,
   getPublicStorefrontHours,
@@ -70,6 +75,9 @@ const mockedItemFind = prisma.menu_item.findMany as unknown as ReturnType<
   typeof vi.fn
 >;
 const mockedOpenInfo = getBusinessOpenInfo as unknown as ReturnType<
+  typeof vi.fn
+>;
+const mockedOffered = listOfferedPaymentMethods as unknown as ReturnType<
   typeof vi.fn
 >;
 
@@ -207,6 +215,18 @@ describe("getPublicStorefrontHours / fulfillment / payment-methods", () => {
         bank_holder: null
       }
     ]);
+    mockedOffered.mockResolvedValue([
+      {
+        id: "cash",
+        label: "Efectivo",
+        buttonId: "PAY_CASH",
+        buttonTitle: "Efectivo",
+        emoji: "💵",
+        collectionKind: "at_delivery",
+        instructions: null,
+        sortOrder: 0
+      }
+    ]);
   });
 
   it("hours incluye isOpen", async () => {
@@ -249,7 +269,7 @@ describe("getPublicStorefrontHours / fulfillment / payment-methods", () => {
     });
   });
 
-  it("payment-methods solo activos", async () => {
+  it("payment-methods expone cash/online ofrecidos", async () => {
     const result = await getPublicStorefrontPaymentMethods("sabroson");
     expect(result?.paymentMethods).toEqual([
       expect.objectContaining({ paymentMethod: "cash", label: "Efectivo" })
@@ -259,11 +279,70 @@ describe("getPublicStorefrontHours / fulfillment / payment-methods", () => {
         where: {
           business_id: BUSINESS_ID,
           is_active: true,
-          payment_method: "cash"
+          payment_method: { in: ["cash"] }
         }
       })
     );
     expect(result).toMatchObject({ collectionMode: "pay_at_counter" });
+  });
+
+  it("incluye online y collectionMode mixto cuando hay provider", async () => {
+    mockedOffered.mockResolvedValue([
+      {
+        id: "cash",
+        label: "Efectivo",
+        buttonId: "PAY_CASH",
+        buttonTitle: "Efectivo",
+        emoji: "💵",
+        collectionKind: "at_delivery",
+        instructions: null,
+        sortOrder: 0
+      },
+      {
+        id: "online",
+        label: "Pago online",
+        buttonId: "PAY_ONLINE",
+        buttonTitle: "Pago online",
+        emoji: "💳",
+        collectionKind: "online_provider",
+        instructions: null,
+        sortOrder: 1
+      }
+    ]);
+    mockedPaymentFind.mockResolvedValue([
+      {
+        id: "pm1",
+        payment_method: "cash",
+        label: "Efectivo",
+        adjustment_type: "NONE",
+        adjustment_value: new Prisma.Decimal(0),
+        is_surcharge: false,
+        instructions: null,
+        sort_order: 0,
+        bank_alias: null,
+        bank_cbu: null,
+        bank_holder: null
+      },
+      {
+        id: "pm2",
+        payment_method: "online",
+        label: "Pago online",
+        adjustment_type: "NONE",
+        adjustment_value: new Prisma.Decimal(0),
+        is_surcharge: false,
+        instructions: null,
+        sort_order: 1,
+        bank_alias: null,
+        bank_cbu: null,
+        bank_holder: null
+      }
+    ]);
+
+    const result = await getPublicStorefrontPaymentMethods("sabroson");
+    expect(result?.paymentMethods).toHaveLength(2);
+    expect(result).toMatchObject({
+      collectionMode: "pay_at_counter_or_online"
+    });
   });
 });
 

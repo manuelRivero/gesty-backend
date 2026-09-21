@@ -12,6 +12,7 @@ import {
 } from "../controllers/publicMenu.controller";
 import {
   createStorefrontOrder,
+  createStorefrontOrderCheckout,
   getStorefrontOrder,
   quoteStorefrontDelivery
 } from "../controllers/publicOrders.controller";
@@ -68,6 +69,10 @@ router.post(
   reverseGeocodeStorefront
 );
 router.post("/businesses/:slug/orders", createStorefrontOrder);
+router.post(
+  "/businesses/:slug/orders/:orderId/checkout",
+  createStorefrontOrderCheckout
+);
 router.post(
   "/businesses/:slug/orders/:orderId/push-subscription",
   pushSubscribeIpRateLimit,

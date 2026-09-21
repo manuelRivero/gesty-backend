@@ -6,6 +6,7 @@ vi.mock("../../lib/prisma", () => ({
     menu_item: { findMany: vi.fn() },
     orders: { create: vi.fn(), findFirst: vi.fn() },
     customer_address: { updateMany: vi.fn(), create: vi.fn() },
+    payment_intent: { findFirst: vi.fn() },
     $executeRaw: vi.fn()
   }
 }));
@@ -39,6 +40,18 @@ vi.mock("../publicStorefront.service", () => ({
   resolveActivePublicBusiness: vi.fn()
 }));
 
+vi.mock("../paymentMethods.service", () => ({
+  isPaymentMethodOffered: vi.fn()
+}));
+
+vi.mock("../paymentAdjustment.service", () => ({
+  resolvePaymentAdjustment: vi.fn()
+}));
+
+vi.mock("../payment/payment.service", () => ({
+  createStorefrontOnlineCheckout: vi.fn()
+}));
+
 vi.mock("../../helpers/menuItemPrice.helper", () => ({
   activePriceSelect: vi.fn().mockReturnValue({}),
   resolveEffectivePrice: vi.fn()
@@ -52,9 +65,13 @@ import { resolveEffectivePrice } from "../../helpers/menuItemPrice.helper";
 import { getBusinessConfig } from "../businessConfig.service";
 import { getBusinessOpenInfo } from "../businessHours.service";
 import { resolveActivePublicBusiness } from "../publicStorefront.service";
+import { isPaymentMethodOffered } from "../paymentMethods.service";
+import { resolvePaymentAdjustment } from "../paymentAdjustment.service";
+import { createStorefrontOnlineCheckout } from "../payment/payment.service";
 import {
   COUNTER_PAYMENT_METHOD,
   createPublicCounterOrder,
+  createPublicOrderCheckout,
   getPublicCounterOrder,
   PublicOrderError,
   quotePublicDelivery
@@ -78,6 +95,15 @@ const mockedCustomer = findOrCreateCustomer as unknown as ReturnType<
 const mockedEmit = emitAdminOrderCreated as unknown as ReturnType<typeof vi.fn>;
 const mockedPrice = resolveEffectivePrice as unknown as ReturnType<typeof vi.fn>;
 const mockedZone = findCoverageZoneForPoint as unknown as ReturnType<typeof vi.fn>;
+const mockedOffered = isPaymentMethodOffered as unknown as ReturnType<typeof vi.fn>;
+const mockedPayAdj = resolvePaymentAdjustment as unknown as ReturnType<
+  typeof vi.fn
+>;
+const mockedCheckout = createStorefrontOnlineCheckout as unknown as ReturnType<
+  typeof vi.fn
+>;
+const mockedIntentFind = prisma.payment_intent
+  .findFirst as unknown as ReturnType<typeof vi.fn>;
 const mockedAddrUpdate = prisma.customer_address
   .updateMany as unknown as ReturnType<typeof vi.fn>;
 const mockedAddrCreate = prisma.customer_address
@@ -109,9 +135,17 @@ function setupHappyPath(opts?: { variations?: string[] }) {
     orders_enabled: true,
     takeaway_enabled: true,
     delivery_enabled: true,
+    external_delivery_enabled: false,
     orders_when_closed: false
   });
   mockedOpen.mockResolvedValue({ isOpen: true, nextOpenText: null });
+  mockedOffered.mockResolvedValue(true);
+  mockedPayAdj.mockResolvedValue({
+    adjustmentAmount: 0,
+    label: null,
+    hasAdjustment: false
+  });
+  mockedIntentFind.mockResolvedValue(null);
   mockedItems.mockResolvedValue([
     {
       id: ITEM_ID,
@@ -285,7 +319,8 @@ describe("createPublicCounterOrder", () => {
       total: "4500.00",
       currencyCode: "ARS",
       deliveryFee: null,
-      address: null
+      address: null,
+      checkoutUrl: null
     });
 
     expect(mockedCreate).toHaveBeenCalledWith(
@@ -306,6 +341,65 @@ describe("createPublicCounterOrder", () => {
       expect.objectContaining({ orderId: ORDER_ID })
     );
     expect(mockedZone).not.toHaveBeenCalled();
+  });
+
+  it("crea orden online con checkoutUrl", async () => {
+    setupHappyPath();
+    mockedCheckout.mockResolvedValue({
+      initPoint: "https://mp.test/checkout",
+      preferenceId: "pref-1",
+      paymentIntentId: "pi-1",
+      isNew: true
+    });
+    mockedCreate.mockResolvedValue({
+      id: ORDER_ID,
+      status: "placed",
+      payment_status: "unpaid",
+      payment_method: "online",
+      fulfillment_type: "TAKE_AWAY",
+      currency_code: "ARS",
+      total_amount: new Prisma.Decimal("4500.00"),
+      delivery_fee: null,
+      created_at: new Date("2026-09-20T15:00:00.000Z")
+    });
+
+    const result = await createPublicCounterOrder({
+      slugOrId: "sabroson",
+      customer: { phone: "5491112345678" },
+      items: [{ menuItemId: ITEM_ID, quantity: 1 }],
+      paymentMethod: "online"
+    });
+
+    expect(result).toMatchObject({
+      paymentMethod: "online",
+      checkoutUrl: "https://mp.test/checkout",
+      total: "4500.00"
+    });
+    expect(mockedCheckout).toHaveBeenCalledWith(
+      expect.objectContaining({
+        businessId: BUSINESS_ID,
+        orderId: ORDER_ID,
+        slug: "sabroson",
+        amount: 4500
+      })
+    );
+  });
+
+  it("403 ONLINE_PAYMENT_UNAVAILABLE si online no ofrecido", async () => {
+    setupHappyPath();
+    mockedOffered.mockResolvedValue(false);
+
+    await expect(
+      createPublicCounterOrder({
+        slugOrId: "sabroson",
+        customer: { phone: "5491112345678" },
+        items: [{ menuItemId: ITEM_ID, quantity: 1 }],
+        paymentMethod: "online"
+      })
+    ).rejects.toMatchObject({
+      code: "ONLINE_PAYMENT_UNAVAILABLE",
+      httpStatus: 403
+    });
   });
 
   it("crea orden DELIVERY con fee, snapshot y address", async () => {
@@ -629,6 +723,7 @@ describe("getPublicCounterOrder", () => {
       total: "9000.00",
       deliveryFee: null,
       address: null,
+      checkoutUrl: null,
       customer: {
         id: CUSTOMER_ID,
         name: "Juan",
@@ -713,5 +808,65 @@ describe("getPublicCounterOrder", () => {
     await expect(
       getPublicCounterOrder({ slugOrId: "ghost", orderId: ORDER_ID })
     ).rejects.toMatchObject({ code: "LOCAL_UNAVAILABLE", httpStatus: 404 });
+  });
+});
+
+describe("createPublicOrderCheckout", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupHappyPath();
+  });
+
+  it("reusa/regen link para orden unpaid online", async () => {
+    mockedFindOrder.mockResolvedValue({
+      id: ORDER_ID,
+      payment_status: "unpaid",
+      payment_method: "online",
+      total_amount: new Prisma.Decimal("4500.00"),
+      delivery_fee: null,
+      payment_adjustment: null,
+      currency_code: "ARS",
+      order_item: [
+        {
+          menu_item_id: ITEM_ID,
+          quantity: 1,
+          unit_price: new Prisma.Decimal("4500.00"),
+          menu_item: { name: "Muzza" }
+        }
+      ]
+    });
+    mockedCheckout.mockResolvedValue({
+      initPoint: "https://mp.test/again",
+      preferenceId: "pref-2",
+      paymentIntentId: "pi-2",
+      isNew: false
+    });
+
+    const result = await createPublicOrderCheckout({
+      slugOrId: "sabroson",
+      orderId: ORDER_ID
+    });
+
+    expect(result).toEqual({
+      checkoutUrl: "https://mp.test/again",
+      orderId: ORDER_ID
+    });
+  });
+
+  it("409 si ya está pagado", async () => {
+    mockedFindOrder.mockResolvedValue({
+      id: ORDER_ID,
+      payment_status: "paid",
+      payment_method: "online",
+      total_amount: new Prisma.Decimal("4500.00"),
+      delivery_fee: null,
+      payment_adjustment: null,
+      currency_code: "ARS",
+      order_item: []
+    });
+
+    await expect(
+      createPublicOrderCheckout({ slugOrId: "sabroson", orderId: ORDER_ID })
+    ).rejects.toMatchObject({ code: "ALREADY_PAID", httpStatus: 409 });
   });
 });

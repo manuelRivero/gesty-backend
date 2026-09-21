@@ -5,7 +5,9 @@ import { getActiveProvider } from '../../services/payment/paymentProvider.reposi
 import { verifyMpWebhookSignature, fetchMpPayment } from '../../services/payment/mercadoPago.service';
 import {
   handleApprovedPayment,
+  handleApprovedStorefrontPayment,
   handleRejectedPayment,
+  handleRejectedStorefrontPayment,
 } from '../../services/payment/payment.service';
 import { sendTextMessageNoCtx } from '../../services/payment/messageHelpers';
 
@@ -55,28 +57,50 @@ export const mercadoPagoWebhookHandler = async (req: Request, res: Response): Pr
       return;
     }
 
-    // Buscar el payment_intent por draft_order_id (external_reference)
+    // Draft (WA): draft_order_id = external_reference.
+    // Storefront (PAY-06): order_id = external_reference.
     const intent = await prisma.payment_intent.findFirst({
       where: {
-        draft_order_id: externalReference,
         business_id: businessId,
         status: 'pending',
+        OR: [
+          { order_id: externalReference },
+          { draft_order_id: externalReference },
+        ],
       },
       orderBy: { created_at: 'desc' },
     });
 
     if (!intent) {
-      console.warn('[mp-webhook] no pending payment_intent for draft', externalReference);
+      console.warn('[mp-webhook] no pending payment_intent for ref', externalReference);
       return;
     }
 
+    const isStorefront = Boolean(intent.order_id);
+
     if (status === 'approved') {
-      await handleApprovedPayment(intent.id, mpPaymentId, paymentAsJson);
-      console.log('[mp-webhook] payment approved, order created for draft', externalReference);
+      if (isStorefront) {
+        await handleApprovedStorefrontPayment(intent.id, mpPaymentId, paymentAsJson);
+        console.log('[mp-webhook] payment approved, storefront order paid', externalReference);
+      } else {
+        await handleApprovedPayment(intent.id, mpPaymentId, paymentAsJson);
+        console.log('[mp-webhook] payment approved, order created for draft', externalReference);
+      }
       return;
     }
 
     if (status === 'rejected' || status === 'cancelled') {
+      if (isStorefront) {
+        await handleRejectedStorefrontPayment(
+          intent.order_id!,
+          mpPaymentId,
+          status,
+          paymentAsJson
+        );
+        console.log('[mp-webhook] payment', status, 'for storefront order', externalReference);
+        return;
+      }
+
       await handleRejectedPayment(externalReference, mpPaymentId, status, paymentAsJson);
 
       // Notificar al cliente que el pago no se completó
@@ -98,7 +122,7 @@ export const mercadoPagoWebhookHandler = async (req: Request, res: Response): Pr
       where: { id: intent.id },
       data: { external_id: mpPaymentId, updated_at: new Date() },
     });
-    console.log('[mp-webhook] payment status', status, 'for draft', externalReference);
+    console.log('[mp-webhook] payment status', status, 'for ref', externalReference);
   } catch (err) {
     console.error('[mp-webhook] error processing webhook:', err);
   }

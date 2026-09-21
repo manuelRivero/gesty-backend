@@ -1,10 +1,11 @@
 import QRCode from 'qrcode';
 import { OrderPaymentStatus, Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
+import { env } from '../../config/env';
 import { getActiveProvider } from './paymentProvider.repository';
-import { createMpPreference, fetchMpPayment } from './mercadoPago.service';
+import { createMpPreference } from './mercadoPago.service';
 import { createOrderFromDraft } from '../checkout.service';
-import { emitAdminOrderCreated } from '../../socket/adminSocket';
+import { emitAdminOrderPaymentStatusChanged } from '../../socket/adminSocket';
 import { sendTextMessageNoCtx, sendImageMessageNoCtx } from './messageHelpers';
 import { formatBotUserMessage } from '../productQuery/utils';
 import { computeOrderPricing } from '../pricing.service';
@@ -71,6 +72,153 @@ export const getOrCreateActiveIntent = async (
   });
   return { id: created.id, initPoint: null, isNew: true };
 };
+
+function storefrontBackUrls(slug: string, orderId: string) {
+  const origin = env.STOREFRONT_PUBLIC_ORIGIN?.replace(/\/$/, '');
+  if (!origin) return undefined;
+  const base = `${origin}/shopping/${encodeURIComponent(slug)}/orders/${orderId}`;
+  return {
+    success: `${base}?payment=success`,
+    failure: `${base}?payment=failure`,
+    pending: `${base}?payment=pending`,
+  };
+}
+
+/**
+ * Checkout Pro para una orden storefront ya creada (PAY-06).
+ * Idempotente por order_id + amount; external_reference = orderId.
+ */
+export async function createStorefrontOnlineCheckout(params: {
+  businessId: string;
+  orderId: string;
+  slug: string;
+  amount: number;
+  currency: string;
+  lineItems: Array<{
+    id: string;
+    title: string;
+    quantity: number;
+    unitPrice: number;
+  }>;
+  deliveryFee?: number;
+  paymentAdjustment?: number;
+  paymentAdjustmentLabel?: string | null;
+}): Promise<PaymentLinkResult | null> {
+  const {
+    businessId,
+    orderId,
+    slug,
+    amount,
+    currency,
+    lineItems,
+    deliveryFee = 0,
+    paymentAdjustment = 0,
+    paymentAdjustmentLabel = null,
+  } = params;
+
+  const existing = await prisma.payment_intent.findFirst({
+    where: { order_id: orderId, business_id: businessId, status: 'pending' },
+    orderBy: { created_at: 'desc' },
+  });
+
+  if (existing) {
+    if (existing.amount.toNumber() === amount && existing.init_point) {
+      return {
+        initPoint: existing.init_point,
+        preferenceId: existing.preference_id ?? '',
+        paymentIntentId: existing.id,
+        isNew: false,
+      };
+    }
+    await prisma.payment_intent.update({
+      where: { id: existing.id },
+      data: { status: 'stale', updated_at: new Date() },
+    });
+  }
+
+  const provider = await getActiveProvider(businessId, 'mercado_pago');
+  if (!provider) return null;
+
+  const intent = await prisma.payment_intent.create({
+    data: {
+      business_id: businessId,
+      order_id: orderId,
+      provider: 'mercado_pago',
+      status: 'pending',
+      amount,
+      currency,
+    },
+  });
+
+  const hasDiscount = paymentAdjustment < 0;
+  const items = hasDiscount
+    ? [
+        {
+          id: 'order_total',
+          title: 'Pedido total',
+          quantity: 1,
+          unit_price: amount,
+          currency_id: currency,
+        },
+      ]
+    : [
+        ...lineItems.map((i) => ({
+          id: i.id,
+          title: i.title,
+          quantity: i.quantity,
+          unit_price: i.unitPrice,
+          currency_id: currency,
+        })),
+        ...(deliveryFee > 0
+          ? [
+              {
+                id: 'delivery_fee',
+                title: 'Envío',
+                quantity: 1,
+                unit_price: deliveryFee,
+                currency_id: currency,
+              },
+            ]
+          : []),
+        ...(paymentAdjustment > 0
+          ? [
+              {
+                id: 'payment_adjustment',
+                title: paymentAdjustmentLabel ?? 'Recargo por pago online',
+                quantity: 1,
+                unit_price: paymentAdjustment,
+                currency_id: currency,
+              },
+            ]
+          : []),
+      ];
+
+  // null = omitir back_urls (no caer en /payment/success del bot).
+  const pref = await createMpPreference({
+    accessToken: provider.accessToken,
+    isSandbox: provider.isSandbox,
+    externalReference: orderId,
+    items,
+    businessId,
+    backUrls: storefrontBackUrls(slug, orderId) ?? null,
+  });
+
+  await prisma.payment_intent.update({
+    where: { id: intent.id },
+    data: {
+      preference_id: pref.preferenceId,
+      init_point: pref.initPoint,
+      updated_at: new Date(),
+    },
+  });
+
+  return {
+    initPoint: pref.initPoint,
+    preferenceId: pref.preferenceId,
+    paymentIntentId: intent.id,
+    isNew: true,
+  };
+}
 
 /** Genera (o reusa) un link de Checkout Pro para el draft_order activo del cliente. */
 export const createOnlinePaymentLink = async (
@@ -322,7 +470,54 @@ export const handleApprovedPayment = async (
   }
 };
 
-/** Marca el intent como rechazado/cancelado. */
+/**
+ * Storefront (PAY-06): la orden ya existe unpaid; solo marca paid + intent approved.
+ * Sin WhatsApp / createOrderFromDraft.
+ */
+export const handleApprovedStorefrontPayment = async (
+  paymentIntentId: string,
+  mpPaymentId: string,
+  rawPayload: Prisma.InputJsonValue
+): Promise<void> => {
+  const intent = await prisma.payment_intent.findUnique({
+    where: { id: paymentIntentId },
+  });
+
+  if (!intent || intent.status === 'approved' || !intent.order_id) return;
+
+  const order = await prisma.orders.findFirst({
+    where: { id: intent.order_id, business_id: intent.business_id },
+    select: { id: true, payment_status: true },
+  });
+  if (!order) return;
+
+  await prisma.$transaction(async (tx) => {
+    if (order.payment_status !== OrderPaymentStatus.paid) {
+      await tx.orders.update({
+        where: { id: order.id },
+        data: { payment_status: OrderPaymentStatus.paid },
+      });
+    }
+    await tx.payment_intent.update({
+      where: { id: intent.id },
+      data: {
+        status: 'approved',
+        external_id: mpPaymentId,
+        raw_webhook_payload: rawPayload,
+        updated_at: new Date(),
+      },
+    });
+  });
+
+  if (order.payment_status !== OrderPaymentStatus.paid) {
+    emitAdminOrderPaymentStatusChanged(intent.business_id, {
+      orderId: order.id,
+      payment_status: OrderPaymentStatus.paid,
+    });
+  }
+};
+
+/** Marca el intent como rechazado/cancelado (por draft_order_id). */
 export const handleRejectedPayment = async (
   draftOrderId: string,
   mpPaymentId: string,
@@ -331,6 +526,24 @@ export const handleRejectedPayment = async (
 ): Promise<void> => {
   await prisma.payment_intent.updateMany({
     where: { draft_order_id: draftOrderId, status: 'pending' },
+    data: {
+      status: newStatus,
+      external_id: mpPaymentId,
+      raw_webhook_payload: rawPayload,
+      updated_at: new Date(),
+    },
+  });
+};
+
+/** Marca intent storefront rechazado/cancelado (por order_id). */
+export const handleRejectedStorefrontPayment = async (
+  orderId: string,
+  mpPaymentId: string,
+  newStatus: 'rejected' | 'cancelled',
+  rawPayload: Prisma.InputJsonValue
+): Promise<void> => {
+  await prisma.payment_intent.updateMany({
+    where: { order_id: orderId, status: 'pending' },
     data: {
       status: newStatus,
       external_id: mpPaymentId,

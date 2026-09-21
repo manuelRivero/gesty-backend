@@ -20,11 +20,19 @@ import {
   matchVariation
 } from "./menu/menuItemVariations";
 import { normalizePhoneDigits } from "./ownerAssistant/matchOwnerPhone";
+import { createStorefrontOnlineCheckout } from "./payment/payment.service";
+import { resolvePaymentAdjustment } from "./paymentAdjustment.service";
+import { isPaymentMethodOffered } from "./paymentMethods.service";
 import { computeOrderPricing } from "./pricing.service";
 import { resolveActivePublicBusiness } from "./publicStorefront.service";
 
-/** Cobro manual en mostrador / al recibir — nunca online/MP. */
+/** Cobro en mostrador / al recibir. */
 export const COUNTER_PAYMENT_METHOD = "cash" as const;
+export const ONLINE_PAYMENT_METHOD = "online" as const;
+
+export type PublicStorefrontPaymentMethod =
+  | typeof COUNTER_PAYMENT_METHOD
+  | typeof ONLINE_PAYMENT_METHOD;
 
 export type PublicOrderLineInput = {
   menuItemId: string;
@@ -53,6 +61,8 @@ export type CreatePublicCounterOrderInput = {
   fulfillmentType?: "TAKE_AWAY" | "DELIVERY";
   /** Obligatorio si fulfillmentType = DELIVERY (lat/lng = destino del pin). */
   address?: PublicDeliveryAddressInput | null;
+  /** cash (default) | online (MP Checkout Pro si está ofrecido). */
+  paymentMethod?: PublicStorefrontPaymentMethod;
   notes?: string | null;
 };
 
@@ -85,6 +95,8 @@ export type PublicOrderView = {
   total: string;
   deliveryFee: string | null;
   address: PublicOrderAddressView | null;
+  /** init_point MP si online unpaid; null en cash o ya paid. */
+  checkoutUrl: string | null;
   customer: {
     id: string;
     name: string | null;
@@ -467,10 +479,66 @@ function buildDeliverySnapshot(address: PublicDeliveryAddressInput) {
   };
 }
 
+function shoppingSlug(business: { slug: string | null }, slugOrId: string): string {
+  return (business.slug?.trim() || slugOrId.trim()) || slugOrId;
+}
+
+async function resolveStorefrontCheckoutUrl(params: {
+  businessId: string;
+  orderId: string;
+  slug: string;
+  amount: number;
+  currency: string;
+  lines: ResolvedLine[];
+  deliveryFee: number;
+  paymentAdjustment: number;
+  paymentAdjustmentLabel: string | null;
+}): Promise<string> {
+  const link = await createStorefrontOnlineCheckout({
+    businessId: params.businessId,
+    orderId: params.orderId,
+    slug: params.slug,
+    amount: params.amount,
+    currency: params.currency,
+    lineItems: params.lines.map((l) => ({
+      id: l.menuItemId,
+      title: l.name,
+      quantity: l.quantity,
+      unitPrice: Number(l.unitPrice)
+    })),
+    deliveryFee: params.deliveryFee,
+    paymentAdjustment: params.paymentAdjustment,
+    paymentAdjustmentLabel: params.paymentAdjustmentLabel
+  });
+  if (!link?.initPoint) {
+    throw new PublicOrderError(
+      "CHECKOUT_UNAVAILABLE",
+      503,
+      "No se pudo generar el link de pago online"
+    );
+  }
+  return link.initPoint;
+}
+
+async function pendingCheckoutUrlForOrder(
+  businessId: string,
+  orderId: string
+): Promise<string | null> {
+  const intent = await prisma.payment_intent.findFirst({
+    where: {
+      business_id: businessId,
+      order_id: orderId,
+      status: "pending"
+    },
+    orderBy: { created_at: "desc" },
+    select: { init_point: true }
+  });
+  return intent?.init_point ?? null;
+}
+
 /**
- * Crea un pedido de autoservicio / mostrador o delivery web.
- * Aislado de WhatsApp draft, conversation y Mercado Pago:
- * `payment_method=cash`, `payment_status=unpaid`, `status=placed`.
+ * Crea un pedido de autoservicio web (cash mostrador o online MP).
+ * Sin conversation/draft: `status=placed`, `payment_status=unpaid`.
  */
 export async function createPublicCounterOrder(
   input: CreatePublicCounterOrderInput
@@ -531,6 +599,37 @@ export async function createPublicCounterOrder(
     }
   }
 
+  const paymentMethod: PublicStorefrontPaymentMethod =
+    input.paymentMethod === ONLINE_PAYMENT_METHOD
+      ? ONLINE_PAYMENT_METHOD
+      : COUNTER_PAYMENT_METHOD;
+
+  if (paymentMethod === ONLINE_PAYMENT_METHOD) {
+    const onlineOk = await isPaymentMethodOffered(business.id, "online", {
+      externalDeliveryEnabled: config.external_delivery_enabled
+    });
+    if (!onlineOk) {
+      throw new PublicOrderError(
+        "ONLINE_PAYMENT_UNAVAILABLE",
+        403,
+        "Este local no tiene pago online disponible"
+      );
+    }
+  } else {
+    const cashOk = await isPaymentMethodOffered(business.id, "cash", {
+      externalDeliveryEnabled: config.external_delivery_enabled
+    });
+    // Compat ORD-10: si nadie activó métodos, cash sigue siendo el default
+    // en takeaway; con delivery externo el bot tampoco ofrece cash.
+    if (!cashOk && config.external_delivery_enabled) {
+      throw new PublicOrderError(
+        "CASH_PAYMENT_UNAVAILABLE",
+        403,
+        "Este local no acepta pago en efectivo por este canal"
+      );
+    }
+  }
+
   const open = await getBusinessOpenInfo({
     businessId: business.id,
     timezone: business.timezone
@@ -560,6 +659,7 @@ export async function createPublicCounterOrder(
   let customerAddressId: string | undefined;
   let deliveryAddressSnapshot: object = {};
   let addressView: PublicOrderAddressView | null = null;
+  let customer = await findOrCreateCustomer(business.id, phone, customerName);
 
   if (fulfillmentType === FulfillmentType.DELIVERY && input.address) {
     assertCoordinates(input.address.latitude, input.address.longitude);
@@ -600,12 +700,6 @@ export async function createPublicCounterOrder(
     }
 
     deliveryFee = zoneFee(zone);
-
-    const customer = await findOrCreateCustomer(
-      business.id,
-      phone,
-      customerName
-    );
     customerAddressId = await upsertCustomerDeliveryAddress({
       customerId: customer.id,
       address: input.address,
@@ -613,118 +707,7 @@ export async function createPublicCounterOrder(
     });
     deliveryAddressSnapshot = buildDeliverySnapshot(input.address);
     addressView = addressViewFromInput(input.address);
-
-    const orderNote = input.notes?.trim()
-      ? input.notes.trim().slice(0, 500)
-      : null;
-    if (orderNote && lines[0]) {
-      lines[0] = {
-        ...lines[0],
-        notes: lines[0].notes
-          ? `${lines[0].notes} | Pedido: ${orderNote}`
-          : `Pedido: ${orderNote}`
-      };
-    }
-
-    const pricing = computeOrderPricing(
-      lines.map((l) => ({
-        quantity: l.quantity,
-        unit_price: l.unitPrice,
-        list_price: l.listPrice,
-        discount_amount: l.discountAmount
-      })),
-      { deliveryFee }
-    );
-
-    const order = await prisma.orders.create({
-      data: {
-        business_id: business.id,
-        customer_id: customer.id,
-        conversation_id: null,
-        status: OrderStatus.placed,
-        payment_status: OrderPaymentStatus.unpaid,
-        payment_method: COUNTER_PAYMENT_METHOD,
-        currency_code: business.currency_code,
-        total_amount: pricing.total,
-        delivery_fee: deliveryFee > 0 ? deliveryFee : null,
-        fulfillment_type: fulfillmentType,
-        customer_address_id: customerAddressId,
-        delivery_address_snapshot: deliveryAddressSnapshot,
-        order_item: {
-          create: lines.map((l) => ({
-            menu_item_id: l.menuItemId,
-            quantity: l.quantity,
-            unit_price: l.unitPrice,
-            list_price: l.listPrice ?? undefined,
-            discount_amount: l.discountAmount ?? undefined,
-            notes: l.notes ?? undefined,
-            variation: l.variation ?? undefined,
-            serves_people: l.servesPeople ?? undefined
-          }))
-        }
-      },
-      select: {
-        id: true,
-        status: true,
-        payment_status: true,
-        payment_method: true,
-        fulfillment_type: true,
-        currency_code: true,
-        total_amount: true,
-        delivery_fee: true,
-        created_at: true
-      }
-    });
-
-    emitAdminOrderCreated(business.id, {
-      orderId: order.id,
-      total: String(pricing.total),
-      currency: business.currency_code
-    });
-
-    return {
-      orderId: order.id,
-      status: order.status,
-      paymentStatus: order.payment_status,
-      paymentMethod: COUNTER_PAYMENT_METHOD,
-      fulfillmentType,
-      currencyCode: order.currency_code,
-      total: Number(pricing.total).toFixed(2),
-      deliveryFee: money(deliveryFee),
-      address: addressView,
-      customer: {
-        id: customer.id,
-        name: customer.name ?? null,
-        phone: customer.phone_number
-      },
-      items: lines.map((l) => ({
-        menuItemId: l.menuItemId,
-        name: l.name,
-        quantity: l.quantity,
-        variation: l.variation,
-        notes: l.notes,
-        unitPrice: l.unitPrice.toFixed(2),
-        lineTotal: l.unitPrice.mul(l.quantity).toFixed(2)
-      })),
-      createdAt: order.created_at.toISOString()
-    };
   }
-
-  // TAKE_AWAY
-  const pricing = computeOrderPricing(
-    lines.map((l) => ({
-      quantity: l.quantity,
-      unit_price: l.unitPrice,
-      list_price: l.listPrice,
-      discount_amount: l.discountAmount
-    }))
-  );
-
-  const customer = await findOrCreateCustomer(
-    business.id,
-    phone,
-    customerName
-  );
 
   const orderNote = input.notes?.trim()
     ? input.notes.trim().slice(0, 500)
@@ -738,6 +721,35 @@ export async function createPublicCounterOrder(
     };
   }
 
+  const pricingBase = computeOrderPricing(
+    lines.map((l) => ({
+      quantity: l.quantity,
+      unit_price: l.unitPrice,
+      list_price: l.listPrice,
+      discount_amount: l.discountAmount
+    })),
+    { deliveryFee }
+  );
+
+  const payAdj = await resolvePaymentAdjustment({
+    businessId: business.id,
+    paymentMethod,
+    baseAmount: pricingBase.total
+  });
+
+  const pricing = computeOrderPricing(
+    lines.map((l) => ({
+      quantity: l.quantity,
+      unit_price: l.unitPrice,
+      list_price: l.listPrice,
+      discount_amount: l.discountAmount
+    })),
+    {
+      deliveryFee,
+      paymentAdjustment: payAdj.adjustmentAmount
+    }
+  );
+
   const order = await prisma.orders.create({
     data: {
       business_id: business.id,
@@ -745,11 +757,19 @@ export async function createPublicCounterOrder(
       conversation_id: null,
       status: OrderStatus.placed,
       payment_status: OrderPaymentStatus.unpaid,
-      payment_method: COUNTER_PAYMENT_METHOD,
+      payment_method: paymentMethod,
       currency_code: business.currency_code,
       total_amount: pricing.total,
+      delivery_fee: deliveryFee > 0 ? deliveryFee : null,
+      payment_adjustment: payAdj.hasAdjustment
+        ? payAdj.adjustmentAmount
+        : null,
       fulfillment_type: fulfillmentType,
-      delivery_address_snapshot: {},
+      customer_address_id: customerAddressId,
+      delivery_address_snapshot:
+        fulfillmentType === FulfillmentType.DELIVERY
+          ? deliveryAddressSnapshot
+          : {},
       order_item: {
         create: lines.map((l) => ({
           menu_item_id: l.menuItemId,
@@ -782,16 +802,33 @@ export async function createPublicCounterOrder(
     currency: business.currency_code
   });
 
+  let checkoutUrl: string | null = null;
+  if (paymentMethod === ONLINE_PAYMENT_METHOD) {
+    checkoutUrl = await resolveStorefrontCheckoutUrl({
+      businessId: business.id,
+      orderId: order.id,
+      slug: shoppingSlug(business, input.slugOrId),
+      amount: pricing.total,
+      currency: business.currency_code,
+      lines,
+      deliveryFee,
+      paymentAdjustment: payAdj.adjustmentAmount,
+      paymentAdjustmentLabel: payAdj.label
+    });
+  }
+
   return {
     orderId: order.id,
     status: order.status,
     paymentStatus: order.payment_status,
-    paymentMethod: COUNTER_PAYMENT_METHOD,
+    paymentMethod,
     fulfillmentType,
     currencyCode: order.currency_code,
     total: Number(pricing.total).toFixed(2),
-    deliveryFee: null,
-    address: null,
+    deliveryFee:
+      fulfillmentType === FulfillmentType.DELIVERY ? money(deliveryFee) : null,
+    address: addressView,
+    checkoutUrl,
     customer: {
       id: customer.id,
       name: customer.name ?? null,
@@ -808,6 +845,94 @@ export async function createPublicCounterOrder(
     })),
     createdAt: order.created_at.toISOString()
   };
+}
+
+/**
+ * Re-emite (o reusa) el link MP de una orden storefront unpaid + online.
+ */
+export async function createPublicOrderCheckout(params: {
+  slugOrId: string;
+  orderId: string;
+}): Promise<{ checkoutUrl: string; orderId: string }> {
+  const business = await resolveActivePublicBusiness(params.slugOrId);
+  if (!business) {
+    throw new PublicOrderError(
+      "LOCAL_UNAVAILABLE",
+      404,
+      "local no disponible"
+    );
+  }
+
+  const order = await prisma.orders.findFirst({
+    where: { id: params.orderId, business_id: business.id },
+    select: {
+      id: true,
+      payment_status: true,
+      payment_method: true,
+      total_amount: true,
+      delivery_fee: true,
+      payment_adjustment: true,
+      currency_code: true,
+      order_item: {
+        select: {
+          menu_item_id: true,
+          quantity: true,
+          unit_price: true,
+          menu_item: { select: { name: true } }
+        }
+      }
+    }
+  });
+
+  if (!order) {
+    throw new PublicOrderError("ORDER_NOT_FOUND", 404, "Pedido no encontrado");
+  }
+
+  if (order.payment_method !== ONLINE_PAYMENT_METHOD) {
+    throw new PublicOrderError(
+      "NOT_ONLINE_ORDER",
+      400,
+      "Este pedido no es de pago online"
+    );
+  }
+
+  if (order.payment_status === OrderPaymentStatus.paid) {
+    throw new PublicOrderError(
+      "ALREADY_PAID",
+      409,
+      "Este pedido ya está pagado"
+    );
+  }
+
+  const amount = order.total_amount ? Number(order.total_amount) : 0;
+  const deliveryFee = order.delivery_fee ? Number(order.delivery_fee) : 0;
+  const paymentAdjustment = order.payment_adjustment
+    ? Number(order.payment_adjustment)
+    : 0;
+
+  const checkoutUrl = await resolveStorefrontCheckoutUrl({
+    businessId: business.id,
+    orderId: order.id,
+    slug: shoppingSlug(business, params.slugOrId),
+    amount,
+    currency: order.currency_code,
+    lines: order.order_item.map((l) => ({
+      menuItemId: l.menu_item_id,
+      name: l.menu_item.name,
+      quantity: l.quantity,
+      variation: null,
+      notes: null,
+      unitPrice: new Prisma.Decimal(l.unit_price),
+      listPrice: null,
+      discountAmount: null,
+      servesPeople: null
+    })),
+    deliveryFee,
+    paymentAdjustment,
+    paymentAdjustmentLabel: null
+  });
+
+  return { checkoutUrl, orderId: order.id };
 }
 
 /**
@@ -875,11 +1000,20 @@ export async function getPublicCounterOrder(params: {
   const fee =
     order.delivery_fee != null ? Number(order.delivery_fee) : null;
 
+  const paymentMethod = order.payment_method ?? COUNTER_PAYMENT_METHOD;
+  let checkoutUrl: string | null = null;
+  if (
+    paymentMethod === ONLINE_PAYMENT_METHOD &&
+    order.payment_status === OrderPaymentStatus.unpaid
+  ) {
+    checkoutUrl = await pendingCheckoutUrlForOrder(business.id, order.id);
+  }
+
   return {
     orderId: order.id,
     status: order.status,
     paymentStatus: order.payment_status,
-    paymentMethod: order.payment_method ?? COUNTER_PAYMENT_METHOD,
+    paymentMethod,
     fulfillmentType,
     currencyCode: order.currency_code,
     total: order.total_amount
@@ -895,6 +1029,7 @@ export async function getPublicCounterOrder(params: {
       fulfillmentType === FulfillmentType.DELIVERY
         ? addressViewFromSnapshot(order.delivery_address_snapshot)
         : null,
+    checkoutUrl,
     customer: {
       id: order.customer.id,
       name: order.customer.name ?? null,
@@ -915,3 +1050,4 @@ export async function getPublicCounterOrder(params: {
     createdAt: order.created_at.toISOString()
   };
 }
+

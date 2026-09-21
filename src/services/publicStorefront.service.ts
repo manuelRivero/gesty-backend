@@ -7,6 +7,7 @@ import {
 import { prisma } from "../lib/prisma";
 import { getBusinessOpenInfo } from "./businessHours.service";
 import { buildGoogleMapsUrl } from "../utils/googleMapsUrl";
+import { listOfferedPaymentMethods } from "./paymentMethods.service";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -212,46 +213,106 @@ export async function getPublicStorefrontPaymentMethods(slugOrId: string) {
   const row = await resolveActivePublicBusiness(slugOrId);
   if (!row) return null;
 
-  // Storefront = cobro manual en mostrador. Online/MP y transfer quedan
-  // exclusivos del flujo WhatsApp; acá solo se publica cash.
-  const rows = await prisma.payment_method_config.findMany({
-    where: {
-      business_id: row.id,
-      is_active: true,
-      payment_method: "cash"
-    },
-    orderBy: [{ sort_order: "asc" }, { payment_method: "asc" }],
-    select: {
-      id: true,
-      payment_method: true,
-      label: true,
-      adjustment_type: true,
-      adjustment_value: true,
-      is_surcharge: true,
-      instructions: true,
-      sort_order: true,
-      bank_alias: true,
-      bank_cbu: true,
-      bank_holder: true
-    }
+  const config = await prisma.business_config.findUnique({
+    where: { business_id: row.id },
+    select: { external_delivery_enabled: true }
   });
 
+  // PAY-06: cash + online (si config + provider MP). Transfer queda fuera de vitrina.
+  const offered = await listOfferedPaymentMethods(row.id, {
+    externalDeliveryEnabled: config?.external_delivery_enabled ?? false
+  });
+  let storefrontMethods = offered.filter(
+    (m) => m.id === "cash" || m.id === "online"
+  );
+
+  // Compat ORD-10: si el local no activó ningún método, la vitrina sigue
+  // ofreciendo cash (mostrador) salvo delivery externo.
+  if (
+    storefrontMethods.length === 0 &&
+    !(config?.external_delivery_enabled ?? false)
+  ) {
+    storefrontMethods = [
+      {
+        id: "cash",
+        label: "Efectivo",
+        buttonId: "PAY_CASH",
+        buttonTitle: "Efectivo",
+        emoji: "💵",
+        collectionKind: "at_delivery",
+        instructions: null,
+        sortOrder: 0
+      }
+    ];
+  }
+
+  const methodIds = storefrontMethods.map((m) => m.id);
+  const rows =
+    methodIds.length === 0
+      ? []
+      : await prisma.payment_method_config.findMany({
+          where: {
+            business_id: row.id,
+            is_active: true,
+            payment_method: { in: methodIds }
+          },
+          orderBy: [{ sort_order: "asc" }, { payment_method: "asc" }],
+          select: {
+            id: true,
+            payment_method: true,
+            label: true,
+            adjustment_type: true,
+            adjustment_value: true,
+            is_surcharge: true,
+            instructions: true,
+            sort_order: true,
+            bank_alias: true,
+            bank_cbu: true,
+            bank_holder: true
+          }
+        });
+
+  const hasCash = methodIds.includes("cash");
+  const hasOnline = methodIds.includes("online");
+  const collectionMode =
+    hasCash && hasOnline
+      ? ("pay_at_counter_or_online" as const)
+      : hasOnline
+        ? ("pay_online" as const)
+        : ("pay_at_counter" as const);
+
+  const paymentMethods =
+    rows.length > 0
+      ? rows.map((r) => ({
+          id: r.id,
+          paymentMethod: r.payment_method,
+          label: r.label,
+          adjustmentType: r.adjustment_type,
+          adjustmentValue: Number(r.adjustment_value),
+          isSurcharge: r.is_surcharge,
+          instructions: r.instructions,
+          sortOrder: r.sort_order,
+          bankAlias: r.bank_alias,
+          bankCbu: r.bank_cbu,
+          bankHolder: r.bank_holder
+        }))
+      : storefrontMethods.map((m) => ({
+          id: m.id,
+          paymentMethod: m.id,
+          label: m.label,
+          adjustmentType: "NONE" as const,
+          adjustmentValue: 0,
+          isSurcharge: false,
+          instructions: m.instructions,
+          sortOrder: m.sortOrder,
+          bankAlias: null as string | null,
+          bankCbu: null as string | null,
+          bankHolder: null as string | null
+        }));
+
   return {
-    paymentMethods: rows.map((r) => ({
-      id: r.id,
-      paymentMethod: r.payment_method,
-      label: r.label,
-      adjustmentType: r.adjustment_type,
-      adjustmentValue: Number(r.adjustment_value),
-      isSurcharge: r.is_surcharge,
-      instructions: r.instructions,
-      sortOrder: r.sort_order,
-      bankAlias: r.bank_alias,
-      bankCbu: r.bank_cbu,
-      bankHolder: r.bank_holder
-    })),
-    /** Siempre cobro en mostrador; el POST ignora otros métodos. */
-    collectionMode: "pay_at_counter" as const
+    paymentMethods,
+    collectionMode
   };
 }
 
