@@ -67,6 +67,9 @@ export type ConversationMetadata = {
       | 'VIEW_CART_FOR_EDITION'
       | 'CHECKOUT'
       | 'ITEM_NOTE'
+      | 'ORDER_FOOD'
+      | 'CANCEL_TARGET_DRAFT'
+      | 'CANCEL_TARGET_ORDER'
     >;
   } | null;
   /**

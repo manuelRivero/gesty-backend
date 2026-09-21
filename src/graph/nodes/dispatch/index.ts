@@ -169,6 +169,10 @@ const sanitizeStateForOrderFoodEntry = (
   };
 };
 
+/** Wipe del carrito + abre reservas (confirmación tipable/botón). */
+const RESERVATION_ENTRY_AFTER_ORDER_CANCEL =
+  'Quiero hacer una reserva de mesa.';
+
 /**
  * Tras confirmar cancelar el pedido para reservar, el webhook aún trae el
  * botón/tipable de confirmación ("Sí, cancelar"). Si se lo pasamos tal cual a
