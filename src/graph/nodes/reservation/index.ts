@@ -413,6 +413,10 @@ export const reservationAgentNode = async (
     await patchConversationMetadata(conversationId, {
       reservation_agent_active: true,
     });
+    const { clearWelcomeEligible } = await import(
+      '../../../services/welcomeEligible.service'
+    );
+    await clearWelcomeEligible(conversationId).catch(() => undefined);
     // Revival del Goal COMPLETAR_RESERVA (ADR-0005, corolario): si el
     // cliente había abandonado la reserva y vuelve a esta sesión, el
     // abandono se limpia solo — retomarla es la señal de reactivación.

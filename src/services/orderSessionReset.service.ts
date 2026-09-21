@@ -127,6 +127,7 @@ export async function clearOrderSessionAfterCancel(
     pending_fulfillment_action: null,
     requestedPartySize: null,
     peopleCount: null,
+    welcomeEligible: true,
   });
 
   await omitConversationMetadataKeys(conversationId, [

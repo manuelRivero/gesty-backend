@@ -45,6 +45,12 @@ export type ConversationMetadata = {
    */
   shortlistAwaitingChoice?: boolean;
   /**
+   * Tras cancelar pedido/reserva con el hilo abierto: el próximo saludo debe
+   * ofrecer welcome otra vez (no party size). Se limpia al mostrar welcome o
+   * al entrar de nuevo a pedido/reserva/checkout.
+   */
+  welcomeEligible?: boolean;
+  /**
    * Tipables de gestión ofrecidos en el último mensaje con atajos
    * (complementos / carrito / welcome). El agente razona contra esto + tools.
    */

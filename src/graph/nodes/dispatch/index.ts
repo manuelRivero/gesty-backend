@@ -194,6 +194,11 @@ const openReservationAfterCartCancel = async (
     customerPhone: phone,
   });
 
+  const { clearWelcomeEligible } = await import(
+    '../../../services/welcomeEligible.service'
+  );
+  await clearWelcomeEligible(conversation.id).catch(() => undefined);
+
   const refreshed = await findOrCreateConversationState(conversation.id);
   if (!isReservationAgentEnabled()) {
     return {

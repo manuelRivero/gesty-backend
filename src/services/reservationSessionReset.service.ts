@@ -51,6 +51,10 @@ export async function clearReservationSessionAfterCancel(
     ...RESERVATION_SESSION_OMIT_KEYS,
   ]);
 
+  await patchConversationMetadata(conversationId, {
+    welcomeEligible: true,
+  });
+
   if (Object.keys(nextLedger).length === 0) {
     await omitConversationMetadataKeys(conversationId, ['intentLedger']);
   } else {

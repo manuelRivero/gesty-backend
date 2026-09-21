@@ -55,6 +55,7 @@ describe('clearOrderSessionAfterCancel', () => {
         checkout_active: false,
         requestedPartySize: null,
         peopleCount: null,
+        welcomeEligible: true,
       })
     );
 

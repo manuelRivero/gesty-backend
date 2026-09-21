@@ -54,6 +54,9 @@ describe('clearReservationSessionAfterCancel', () => {
     );
 
     expect(patchConversationMetadata).toHaveBeenCalledWith('conv-1', {
+      welcomeEligible: true,
+    });
+    expect(patchConversationMetadata).toHaveBeenCalledWith('conv-1', {
       intentLedger: { COMPLETAR_PEDIDO: { surfaceCount: 1 } },
     });
 

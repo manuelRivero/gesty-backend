@@ -51,6 +51,11 @@ import { findOrCreateConversationState } from '../repositories';
 import { AddressService } from '../services/address.service';
 import { buildSmallTalkMenu } from '../services/smallTalk.service';
 import { SUPPORT_MESSAGE } from '../services/humanHandover.service';
+import {
+  clearWelcomeEligible,
+  isWelcomeEligible,
+  isWelcomeEligibleGreeting,
+} from '../services/welcomeEligible.service';
 
 const markHybridResult = (result: HandlerResult): HandlerResult => ({
   ...result,
@@ -693,6 +698,43 @@ export const runHybridReactAgent = async (
   logToolCallTrace(agentMessages, conversationId);
   const signals = extractHybridSignals(agentMessages);
 
+  // Post-cancel (welcomeEligible): saludo sin intención → forzar welcome tipable
+  // aunque el LLM omita la tool o invente party size.
+  try {
+    const liveState = await findOrCreateConversationState(conversationId);
+    if (isWelcomeEligible(liveState.metadata)) {
+      const userMsg = ctx.message?.text?.body ?? '';
+      const busyDomain =
+        signals.cartAddSucceeded ||
+        signals.startReservationSession ||
+        signals.startCheckoutSession ||
+        signals.presentCart ||
+        signals.presentProductCta != null ||
+        signals.presentComplementSuggestions;
+      if (
+        isWelcomeEligibleGreeting(userMsg) &&
+        !signals.presentWelcomeOptions &&
+        !busyDomain
+      ) {
+        signals.presentWelcomeOptions = true;
+        signals.welcomeBodyText =
+          '¡Hola! ¿Te ayudo con el menú, un pedido o una reserva de mesa?';
+        console.log(
+          JSON.stringify({
+            event: '[hybrid-agent] welcome_eligible_force_welcome',
+            conversationId,
+          })
+        );
+      }
+    }
+  } catch (err) {
+    console.error('[hybrid-agent] welcomeEligible check failed:', err);
+  }
+
+  if (signals.cartAddSucceeded) {
+    await clearWelcomeEligible(conversationId).catch(() => undefined);
+  }
+
   // Escalado a humano: la tool ya marcó `is_human_handled`. Cortamos acá para no
   // dejar que el modelo siga conversando sobre un turno que ya no es suyo.
   if (signals.requestHumanSupport) {
@@ -719,6 +761,7 @@ export const runHybridReactAgent = async (
         conversationId,
       })
     );
+    await clearWelcomeEligible(conversationId).catch(() => undefined);
     return {
       kind: 'delegate_checkout',
       reason: signals.startCheckoutReason,
@@ -753,6 +796,7 @@ export const runHybridReactAgent = async (
         conversationId,
       })
     );
+    await clearWelcomeEligible(conversationId).catch(() => undefined);
     return {
       kind: 'delegate_reservation',
       reason: signals.startReservationReason,
@@ -991,6 +1035,7 @@ export const runHybridReactAgent = async (
       const menu = await buildSmallTalkMenu(ctx, signals.welcomeBodyText ?? undefined);
       if (menu && typeof menu !== 'string') {
         console.log(JSON.stringify({ event: '[hybrid-agent] present_welcome_options_signal', conversationId }));
+        await clearWelcomeEligible(conversationId);
         return { kind: 'response', handlerResult: markHybridResult({ content: menu, isInteractive: true }) };
       }
     } catch (err) {

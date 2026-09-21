@@ -90,6 +90,10 @@ import {
   hasOpenOrderLines,
 } from '../services/pendingOrderLines.service';
 import { buildSwitchToReservationContextLines } from '../services/switchToReservationConfirm.service';
+import {
+  buildWelcomeEligibleContextLines,
+  isWelcomeEligible,
+} from '../services/welcomeEligible.service';
 
 /** Hint interno cuando hay shortlist pendiente (SELECT_FROM_LIST / product query). */
 export async function buildPendingProductSelectionLines(
@@ -308,8 +312,10 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     ? 'no aplica en este turno (FAQ mid-reserva — respondé menú; no pidas personas del pedido ni ofrezcas sumar al pedido)'
     : partySize
       ? `${partySize} (guía de cantidad a pedir, NO filtro de serves_people)`
-      : 'no informado — si hay Goal OBTENER_PERSONAS_DEL_PEDIDO abajo o una tool ' +
-        'devuelve party_size_required, preguntá PRIMERO y recién después shortlist/add';
+      : isWelcomeEligible(meta)
+        ? 'no informado — welcomeEligible activo: en saludo/charla NO preguntes personas; usá present_welcome_options'
+        : 'no informado — si hay Goal OBTENER_PERSONAS_DEL_PEDIDO abajo o una tool ' +
+          'devuelve party_size_required, preguntá PRIMERO y recién después shortlist/add';
 
   const detection = ctx.detection;
 
@@ -559,6 +565,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
 
   const lines = [
     ...buildReservationFaqDelegationContextLines(meta),
+    ...buildWelcomeEligibleContextLines(meta),
     `- Personas para el pedido: ${partySizeLine}`,
     ...partySizeJustConfirmedLines,
     hasItems || checkoutActive || offerStillAlive
