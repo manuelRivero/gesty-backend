@@ -82,12 +82,17 @@ export const mercadoPagoWebhookHandler = async (req: Request, res: Response): Pr
     if (provider.webhookSecret) {
       const valid = verifyMpWebhookSignature(req, provider.webhookSecret);
       if (!valid) {
+        const queryDataId = req.query['data.id'] ?? req.query.data_id;
         console.warn(
           JSON.stringify({
             event: '[mp-debug] webhook_skip',
             reason: 'invalid_signature',
             businessId,
             mpPaymentId,
+            hasXRequestId: Boolean(req.headers['x-request-id']),
+            queryDataId: queryDataId ?? null,
+            bodyDataId: body.data?.id ?? null,
+            hint: 'Check webhook_secret vs MP panel; manifest uses data.id + trailing ;',
           })
         );
         return;

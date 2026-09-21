@@ -139,7 +139,11 @@ export const fetchMpPayment = async (
 /**
  * Valida la firma del webhook de Mercado Pago.
  * Header `x-signature` formato: ts=<timestamp>,v1=<hmac>
- * Mensaje a firmar: id:<data.id>;request-id:<x-request-id>;ts:<ts>
+ *
+ * Manifest (docs MP / SDK):
+ *   id:<data.id>;request-id:<x-request-id>;ts:<ts>;
+ * - `data.id` preferir query `data.id` (no solo body); lowercase.
+ * - Omitir pares vacíos; siempre terminar en `;`.
  */
 export const verifyMpWebhookSignature = (
   req: Request,
@@ -147,29 +151,45 @@ export const verifyMpWebhookSignature = (
 ): boolean => {
   try {
     const signatureHeader = req.headers['x-signature'] as string | undefined;
-    const requestId = req.headers['x-request-id'] as string | undefined;
+    const requestIdRaw = req.headers['x-request-id'];
+    const requestId = Array.isArray(requestIdRaw)
+      ? requestIdRaw[0]
+      : requestIdRaw;
 
     if (!signatureHeader) return false;
 
     const parts: Record<string, string> = {};
     for (const part of signatureHeader.split(',')) {
-      const [k, v] = part.split('=');
-      if (k && v) parts[k.trim()] = v.trim();
+      const [k, ...rest] = part.split('=');
+      const v = rest.join('=').trim();
+      if (k && v) parts[k.trim()] = v;
     }
     const ts = parts['ts'];
     const v1 = parts['v1'];
     if (!ts || !v1) return false;
 
+    const queryDataId = req.query['data.id'] ?? req.query.data_id;
+    const queryId = Array.isArray(queryDataId) ? queryDataId[0] : queryDataId;
     const body = req.body as { data?: { id?: string | number } };
-    const dataId = String(body?.data?.id ?? '');
-    const message = `id:${dataId};request-id:${requestId ?? ''};ts:${ts}`;
+    const dataId = String(queryId ?? body?.data?.id ?? '')
+      .trim()
+      .toLowerCase();
+
+    const manifestParts: string[] = [];
+    if (dataId) manifestParts.push(`id:${dataId}`);
+    if (requestId) manifestParts.push(`request-id:${requestId}`);
+    manifestParts.push(`ts:${ts}`);
+    const message = `${manifestParts.join(';')};`;
 
     const expected = crypto
       .createHmac('sha256', webhookSecret)
       .update(message)
       .digest('hex');
 
-    return crypto.timingSafeEqual(Buffer.from(v1), Buffer.from(expected));
+    const a = Buffer.from(v1, 'utf8');
+    const b = Buffer.from(expected, 'utf8');
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
   } catch {
     return false;
   }
