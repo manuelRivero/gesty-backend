@@ -149,7 +149,7 @@ const sanitizeStateForReservationEntry = (
   };
   const webhookContext = {
     ...state.webhookContext!,
-    payloadId: null,
+    payloadId: undefined,
     message: {
       ...(state.webhookContext?.message ?? {}),
       ...entryMessage,
@@ -159,7 +159,7 @@ const sanitizeStateForReservationEntry = (
   const enrichedCtx: EnrichedContext = {
     ...enrichedBase,
     conversationState: conversationState ?? enrichedBase.conversationState,
-    payloadId: null,
+    payloadId: undefined,
     message: {
       ...(enrichedBase.message ?? {}),
       ...entryMessage,
@@ -169,7 +169,7 @@ const sanitizeStateForReservationEntry = (
   return {
     state: {
       ...state,
-      webhookContext: webhookContext as AgentState['webhookContext'],
+      webhookContext: webhookContext as unknown as AgentState['webhookContext'],
       workingConversationState: conversationState,
       enrichedCtx: enrichedCtx as unknown as AgentState['enrichedCtx'],
     },

@@ -143,8 +143,8 @@ describe('switch híbrido → reserva con carrito', () => {
       webhookContext?: { payloadId?: string | null; message?: { text?: { body?: string } } };
       enrichedCtx?: { payloadId?: string | null; message?: { text?: { body?: string } } };
     };
-    expect(agentArg.webhookContext?.payloadId).toBeNull();
-    expect(agentArg.enrichedCtx?.payloadId).toBeNull();
+    expect(agentArg.webhookContext?.payloadId).toBeUndefined();
+    expect(agentArg.enrichedCtx?.payloadId).toBeUndefined();
     expect(agentArg.webhookContext?.message?.text?.body).toMatch(/reserva de mesa/i);
     expect(agentArg.enrichedCtx?.message?.text?.body).toMatch(/reserva de mesa/i);
     expect(update.handlerResult?.content).toBe('¿Para cuántos?');
