@@ -13,6 +13,7 @@ vi.mock('../../lib/prisma', () => ({
   prisma: {
     conversation_state: { findFirst: vi.fn() },
     reservation_slot: { findFirst: vi.fn() },
+    draft_order: { findFirst: vi.fn() },
   },
 }));
 
@@ -67,6 +68,7 @@ const CONFIG = {
 };
 
 const mockedFindFirst = prisma.conversation_state.findFirst as unknown as ReturnType<typeof vi.fn>;
+const mockedDraftFindFirst = prisma.draft_order.findFirst as unknown as ReturnType<typeof vi.fn>;
 const mockedPatch = patchConversationMetadata as unknown as ReturnType<typeof vi.fn>;
 const mockedTables = findActiveTablesByBusinessAndEnvironment as unknown as ReturnType<typeof vi.fn>;
 const mockedActiveSlot = fetchActiveReservationSlotById as unknown as ReturnType<typeof vi.fn>;
@@ -303,6 +305,7 @@ describe('start_reservation_session — entrada del híbrido (Fase B)', () => {
     vi.mocked(findOrCreateConversationState).mockResolvedValue({
       metadata: {},
     } as never);
+    mockedDraftFindFirst.mockResolvedValue(null);
   });
 
   it('devuelve la señal cuando el negocio toma reservas', async () => {
@@ -351,5 +354,37 @@ describe('start_reservation_session — entrada del híbrido (Fase B)', () => {
     expect(parsed.success).toBe(false);
     expect(parsed.error).toBe('reservation_session_already_active');
     expect(parsed.signal).toBeUndefined();
+  });
+
+  it('gate: carrito activo → pending + ask_cancel_cart_for_reservation (no abre reserva)', async () => {
+    vi.mocked(getBusinessConfig).mockResolvedValue({ reservations_enabled: true } as never);
+    mockedDraftFindFirst.mockResolvedValue({
+      _count: { draft_order_item: 2 },
+    });
+
+    const raw = await startReservationSessionTool.func(
+      { reason: 'el cliente quiere reservar' },
+      undefined,
+      CONFIG
+    );
+    const parsed = JSON.parse(raw) as {
+      success: boolean;
+      error?: string;
+      signal?: string;
+      cartItemCount?: number;
+    };
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toBe('active_cart_requires_cancel_confirm');
+    expect(parsed.signal).toBe('ask_cancel_cart_for_reservation');
+    expect(parsed.cartItemCount).toBe(2);
+    expect(mockedPatch).toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({
+        pending_switch_to_reservation: expect.objectContaining({
+          reason: 'el cliente quiere reservar',
+        }),
+      })
+    );
   });
 });

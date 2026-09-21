@@ -715,7 +715,7 @@ export const startReservationSessionTool = new DynamicStructuredTool<
     _runManager,
     config?: RunnableConfig
   ) => {
-    const { businessId, conversationId } = getReactContext(config);
+    const { businessId, conversationId, customerPhone } = getReactContext(config);
     const businessConfig = await getBusinessConfig(businessId);
 
     if (!businessConfig.reservations_enabled) {
@@ -740,6 +740,27 @@ export const startReservationSessionTool = new DynamicStructuredTool<
         message:
           'La sesión de reserva ya está activa. NO vuelvas a delegar: respondé la consulta del cliente ' +
           '(menú, precios, raciones, ingredientes, horarios) con tus tools. La reserva sigue en curso.',
+      });
+    }
+
+    // Carrito activo → confirmar cancelación antes de abrir reservas (§3.11).
+    const { countActiveCartItems, setPendingSwitchToReservation } = await import(
+      '../services/switchToReservationConfirm.service'
+    );
+    const cartItems = await countActiveCartItems({
+      businessId,
+      customerPhone,
+    });
+    if (cartItems > 0) {
+      await setPendingSwitchToReservation(conversationId, reason);
+      return toJson({
+        success: false,
+        error: 'active_cart_requires_cancel_confirm',
+        signal: 'ask_cancel_cart_for_reservation',
+        cartItemCount: cartItems,
+        message:
+          'Hay un pedido/carrito en curso. El sistema ya pide confirmar si cancela el pedido para pasar a reserva. ' +
+          'NO inventes el mensaje ni abras la reserva todavía; esperá la respuesta del cliente.',
       });
     }
 

@@ -254,6 +254,14 @@ export type ConversationMetadata = {
   /** Payload ADD_ITEM pendiente de confirmación cuando el negocio está cerrado con orders_when_closed=true. */
   pending_closed_add_item?: string | null;
   /**
+   * Híbrido → reservas con carrito activo: confirmar cancelar el pedido
+   * antes de abrir la sesión de reserva (botón + tipable §3.11).
+   */
+  pending_switch_to_reservation?: {
+    reason: string;
+    askedAt: string;
+  } | null;
+  /**
    * Timestamp ISO de cuando el cliente aceptó pedir fuera de horario. Dura
    * toda la conversación (D5 de PLAN-ACCION-CALIDAD-CONVERSACIONAL.md): una
    * vez confirmado, los ADD_ITEM siguientes de la misma conversación no

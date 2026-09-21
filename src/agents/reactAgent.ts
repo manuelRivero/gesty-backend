@@ -148,6 +148,11 @@ export interface HybridAgentSignals {
   /** Reserva en prosa (tool start_reservation_session): abre la sesión de reservas. */
   startReservationSession: boolean;
   startReservationReason: string | null;
+  /**
+   * Carrito activo al pedir reserva: el sistema muestra confirmación tipable/botones
+   * (no abre la reserva todavía).
+   */
+  askCancelCartForReservation: boolean;
   /** Cambio de dirección en prosa (tool start_address_edit_session). */
   startAddressEditSession: boolean;
   startAddressEditReason: string | null;
@@ -301,6 +306,7 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
     startCheckoutReason: null,
     startReservationSession: false,
     startReservationReason: null,
+    askCancelCartForReservation: false,
     startAddressEditSession: false,
     startAddressEditReason: null,
     requestHumanSupport: false,
@@ -348,6 +354,9 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
       if (data.signal === 'start_reservation_session') {
         signals.startReservationSession = true;
         signals.startReservationReason = typeof data.reason === 'string' ? data.reason : null;
+      }
+      if (data.signal === 'ask_cancel_cart_for_reservation') {
+        signals.askCancelCartForReservation = true;
       }
       if (data.signal === 'start_address_edit_session') {
         signals.startAddressEditSession = true;
@@ -688,6 +697,26 @@ export const runHybridReactAgent = async (
     return {
       kind: 'delegate_checkout',
       reason: signals.startCheckoutReason,
+    };
+  }
+
+  if (signals.askCancelCartForReservation) {
+    const { buildSwitchToReservationConfirmMessage } = await import(
+      '../services/switchToReservationConfirm.service'
+    );
+    console.log(
+      JSON.stringify({
+        event: '[hybrid-agent] ask_cancel_cart_for_reservation',
+        conversationId,
+      })
+    );
+    return {
+      kind: 'response',
+      handlerResult: {
+        content: buildSwitchToReservationConfirmMessage(),
+        isInteractive: true,
+        skipBodyHumanization: true,
+      },
     };
   }
 

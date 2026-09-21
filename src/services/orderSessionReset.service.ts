@@ -59,6 +59,7 @@ const ORDER_SESSION_OMIT_KEYS = [
   'pending_fulfillment_action',
   'pending_cancel_disambiguation',
   'pending_closed_add_item',
+  'pending_switch_to_reservation',
   'closed_order_confirmed_at',
   // Dirección staged (delegada) — la guardada en customer no se toca
   'pending_address_action',

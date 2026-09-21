@@ -89,6 +89,7 @@ import {
   buildPendingOrderLinesContextLines,
   hasOpenOrderLines,
 } from '../services/pendingOrderLines.service';
+import { buildSwitchToReservationContextLines } from '../services/switchToReservationConfirm.service';
 
 /** Hint interno cuando hay shortlist pendiente (SELECT_FROM_LIST / product query). */
 export async function buildPendingProductSelectionLines(
@@ -543,6 +544,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
   const pendingVariationLines = buildPendingVariationContextLines(meta);
   const pendingAddQuantityLines = buildPendingAddQuantityContextLines(meta);
   const pendingOrderLinesLines = buildPendingOrderLinesContextLines(meta);
+  const switchToReservationLines = buildSwitchToReservationContextLines(meta);
   const partySizeJustConfirmedLines = buildPartySizeJustConfirmedContextLines(
     ctx.partySizeJustConfirmed
   );
@@ -562,6 +564,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     ...pendingVariationLines,
     ...pendingAddQuantityLines,
     ...pendingOrderLinesLines,
+    ...switchToReservationLines,
     ...pendingCancelLines,
     ...lastOfferFactLines,
     ...(reservationFaqMode ? [] : buildPromotionFactLines(promotionEvaluation)),

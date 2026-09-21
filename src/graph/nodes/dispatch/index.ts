@@ -27,6 +27,15 @@ import {
   applyClosedOrderConfirm,
   extractConfirmClosedOrderPending,
 } from '../../../services/closedOrderConfirm.service';
+import {
+  CONFIRM_CANCEL_ORDER_FOR_RESERVATION_PAYLOAD,
+  DECLINE_SWITCH_TO_RESERVATION_PAYLOAD,
+  applySwitchToReservationConfirm,
+  applySwitchToReservationDecline,
+  buildSwitchToReservationConfirmMessage,
+  extractSwitchToReservationPending,
+  getPendingSwitchToReservation,
+} from '../../../services/switchToReservationConfirm.service';
 import type { IntentDetectionResult } from '../../../services/ai/detection.service';
 import { NO_PENDING_CLOSED_ORDER_BOT_MESSAGE } from '../../../services/productQuery/botMessages';
 import {
@@ -118,6 +127,64 @@ const resolveCheckoutHandoff = async (
  * necesita el `AgentState` completo, no el `EnrichedContext`.
  */
 type ReservationHandoff = () => Promise<HandlerResult | null>;
+
+/** Wipe del carrito + abre reservas (confirmación tipable/botón). */
+const openReservationAfterCartCancel = async (
+  state: AgentState,
+  workingConversationState: AgentState['workingConversationState'],
+  enrichedBase: EnrichedContext
+): Promise<{ handlerResult: HandlerResult; workingConversationState: AgentState['workingConversationState'] }> => {
+  const conversation = state.conversation!;
+  const business = state.business!;
+  const customer = state.customer!;
+  const phone =
+    customer.phone_number ?? state.webhookContext?.to ?? '';
+
+  await applySwitchToReservationConfirm({
+    conversation,
+    businessId: business.id,
+    customerPhone: phone,
+  });
+
+  const refreshed = await findOrCreateConversationState(conversation.id);
+  if (!isReservationAgentEnabled()) {
+    return {
+      handlerResult: {
+        content: formatBotUserMessage(
+          'Pedido cancelado',
+          '❌',
+          'Cancelamos tu pedido. Las reservas no están disponibles ahora; pedime el menú cuando quieras armar uno nuevo.'
+        ),
+        isInteractive: false,
+        skipBodyHumanization: true,
+      },
+      workingConversationState: refreshed,
+    };
+  }
+
+  const enrichedCtx: EnrichedContext = {
+    ...enrichedBase,
+    conversationState: refreshed,
+  };
+  const update = await reservationAgentNode({
+    ...state,
+    workingConversationState: refreshed,
+    enrichedCtx: enrichedCtx as unknown as AgentState['enrichedCtx'],
+  });
+
+  return {
+    handlerResult: update.handlerResult ?? {
+      content: formatBotUserMessage(
+        'Reserva',
+        '📅',
+        'Listo, cancelamos el pedido. ¿Para cuántas personas y qué día querés la mesa?'
+      ),
+      isInteractive: false,
+      skipBodyHumanization: true,
+    },
+    workingConversationState: refreshed,
+  };
+};
 
 const resolveAddressEditHandoff = async (
   enrichedCtx: EnrichedContext
@@ -247,6 +314,41 @@ export const interactiveSubgraphNode = async (
         })
       );
     }
+  }
+
+  // Gate: híbrido → reserva con carrito activo (botones §3.11)
+  if (ctx.payloadId === CONFIRM_CANCEL_ORDER_FOR_RESERVATION_PAYLOAD) {
+    const pending = getPendingSwitchToReservation(
+      enrichedBase.conversationState?.metadata
+    );
+    if (!pending) {
+      return {
+        handlerResult: {
+          content: formatBotUserMessage(
+            'Sin pendiente',
+            'ℹ️',
+            'No hay una confirmación de reserva pendiente. Si querés reservar, decime y te ayudo.'
+          ),
+          isInteractive: false,
+          skipBodyHumanization: true,
+        },
+      };
+    }
+    const opened = await openReservationAfterCartCancel(
+      state,
+      state.workingConversationState,
+      enrichedBase
+    );
+    return {
+      handlerResult: opened.handlerResult,
+      workingConversationState: opened.workingConversationState,
+    };
+  }
+
+  if (ctx.payloadId === DECLINE_SWITCH_TO_RESERVATION_PAYLOAD) {
+    return {
+      handlerResult: await applySwitchToReservationDecline(conversation.id),
+    };
   }
 
   // Gate de pedidos en horario cerrado
@@ -409,6 +511,45 @@ export const nlpSubgraphNode = async (
   }
 
   const metaPre = normalizeMetadata(workingConversationState?.metadata);
+
+  // Gate tipable: cancelar pedido para pasar a reserva (§3.11 — mismo efecto que botones)
+  if (getPendingSwitchToReservation(metaPre) && userMessage.trim()) {
+    const extraction = await extractSwitchToReservationPending(userMessage);
+    console.log(
+      JSON.stringify({
+        event: '[switch-to-reservation] confirm_tipable_extraction',
+        status: extraction.status,
+        confidence: extraction.confidence,
+        source: extraction.source,
+        conversationId: conversation.id,
+      })
+    );
+
+    if (extraction.status === 'fulfilled' && extraction.value) {
+      if (extraction.value.confirmed) {
+        const opened = await openReservationAfterCartCancel(
+          state,
+          workingConversationState,
+          enrichedBase
+        );
+        return {
+          handlerResult: opened.handlerResult,
+          workingConversationState: opened.workingConversationState,
+        };
+      }
+      return {
+        handlerResult: await applySwitchToReservationDecline(conversation.id),
+      };
+    }
+
+    return {
+      handlerResult: {
+        content: buildSwitchToReservationConfirmMessage(),
+        isInteractive: true,
+        skipBodyHumanization: true,
+      },
+    };
+  }
 
   // Gate tipable: confirmación de pedido con negocio cerrado (§3.11 — mismo efecto que botones)
   if (
