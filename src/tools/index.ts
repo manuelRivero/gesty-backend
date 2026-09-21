@@ -1364,7 +1364,7 @@ export const addCartItemTool = new DynamicStructuredTool<
     _runManager,
     config?: RunnableConfig
   ) => {
-    const { businessId, customerPhone, conversationId, turnStartedAt } =
+    const { businessId, customerPhone, conversationId, turnStartedAt, userMessage } =
       getReactContext(config);
 
     const ordersGate = await assertCanOrder(businessId);
@@ -1467,6 +1467,7 @@ export const addCartItemTool = new DynamicStructuredTool<
         quantity: quantity ?? null,
         suggestedQuantity,
         pendingReply,
+        userMessage: userMessage ?? null,
       });
     const qty = qtyConfirmed
       ? Math.min(99, Math.max(1, Math.floor(quantity ?? lineQuantity ?? 1)))

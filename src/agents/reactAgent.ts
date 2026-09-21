@@ -177,6 +177,13 @@ export interface HybridAgentSignals {
   presentProductCta: PresentProductCtaSignal | null;
   /** True si add_cart_item devolvió success en este turno (no reabrir shortlist). */
   cartAddSucceeded: boolean;
+  /**
+   * add_cart_item falló con pending tipable (cantidad/variación): no honrar
+   * present_complement / present_cart de cierre; preferí askMessage.
+   */
+  cartAddPendingGate: boolean;
+  /** askMessage de quantity_required / variation_required si el add no escribió. */
+  cartAddPendingAskMessage: string | null;
 }
 
 export type HybridAgentRunResult =
@@ -323,6 +330,8 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
     welcomeBodyText: null,
     presentProductCta: null,
     cartAddSucceeded: false,
+    cartAddPendingGate: false,
+    cartAddPendingAskMessage: null,
   };
 
   for (const msg of messages) {
@@ -343,9 +352,23 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
         productId?: string;
         target?: string;
         success?: boolean;
+        error?: string;
+        askMessage?: string;
       };
       if (m.name === 'add_cart_item' && data.success === true) {
         signals.cartAddSucceeded = true;
+      }
+      if (
+        m.name === 'add_cart_item' &&
+        data.success === false &&
+        (data.error === 'quantity_required' ||
+          data.error === 'variation_required' ||
+          data.error === 'variation_invalid')
+      ) {
+        signals.cartAddPendingGate = true;
+        if (typeof data.askMessage === 'string' && data.askMessage.trim()) {
+          signals.cartAddPendingAskMessage = data.askMessage;
+        }
       }
       if (data.signal === 'start_checkout_session') {
         signals.startCheckoutSession = true;
@@ -652,6 +675,7 @@ export const runHybridReactAgent = async (
   };
 
   const turnStartedAt = new Date().toISOString();
+  const userMessageForTools = ctx.message?.text?.body ?? '';
   const out = await agent.invoke(inputs, {
     recursionLimit: 8,
     configurable: {
@@ -661,6 +685,7 @@ export const runHybridReactAgent = async (
       conversationId,
       conversationStartedAt,
       turnStartedAt,
+      userMessage: userMessageForTools,
     },
   });
 
@@ -749,6 +774,15 @@ export const runHybridReactAgent = async (
   }
 
   if (signals.presentComplementSuggestions) {
+    if (!signals.cartAddSucceeded) {
+      console.log(
+        JSON.stringify({
+          event: '[hybrid-agent] present_complement_skipped_no_add_success',
+          conversationId,
+          cartAddPendingGate: signals.cartAddPendingGate,
+        })
+      );
+    } else {
     try {
       const business = ctx.business as Parameters<typeof tryPresentComplementSuggestions>[0]['business'];
       const draft = await prisma.draft_order.findFirst({
@@ -803,6 +837,7 @@ export const runHybridReactAgent = async (
       console.error('[hybrid-agent] present_complement_suggestions failed, falling through', err);
       signals.presentCart = true;
     }
+    }
   }
 
   if (signals.cancelOrder) {
@@ -847,6 +882,14 @@ export const runHybridReactAgent = async (
   }
 
   if (signals.presentCart) {
+    if (signals.cartAddPendingGate && !signals.cartAddSucceeded) {
+      console.log(
+        JSON.stringify({
+          event: '[hybrid-agent] present_cart_skipped_pending_add_gate',
+          conversationId,
+        })
+      );
+    } else {
     try {
       const business = ctx.business as { id: string; currency_code?: string | null; street_address?: string | null };
       const customer = ctx.customer as { id: string };
@@ -863,6 +906,29 @@ export const runHybridReactAgent = async (
     } catch (err) {
       console.error('[hybrid-agent] present_cart failed, falling through', err);
     }
+    }
+  }
+
+  // Add falló con pending (cantidad/variación): mostrá el ask de la tool, no prosa/cart.
+  if (
+    signals.cartAddPendingGate &&
+    !signals.cartAddSucceeded &&
+    signals.cartAddPendingAskMessage
+  ) {
+    console.log(
+      JSON.stringify({
+        event: '[hybrid-agent] surface_add_pending_ask',
+        conversationId,
+      })
+    );
+    return {
+      kind: 'response',
+      handlerResult: markHybridResult({
+        content: ensureWhatsAppBotFormat(signals.cartAddPendingAskMessage),
+        isInteractive: false,
+        skipBodyHumanization: true,
+      }),
+    };
   }
 
   if (signals.presentCategoryId) {

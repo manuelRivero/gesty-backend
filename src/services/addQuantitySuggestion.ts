@@ -62,26 +62,111 @@ export function needsAddQuantityConfirmation(params: {
   return params.suggestedQuantity >= 2;
 }
 
+const UNIT_NUMBER_WORDS: Record<string, number> = {
+  un: 1,
+  uno: 1,
+  una: 1,
+  dos: 2,
+  tres: 3,
+  cuatro: 4,
+  cinco: 5,
+  seis: 6,
+  siete: 7,
+  ocho: 8,
+  nueve: 9,
+  diez: 10,
+  once: 11,
+  doce: 12,
+};
+
+function normalizeQtyMessage(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Quita frases de party size para no tomar "somos 3" como unidades del plato. */
+function stripPartySizePhrases(normalized: string): string {
+  return normalized
+    .replace(
+      /\b(somos|para)\s+(\d+|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s*(personas?)?\b/gi,
+      ' '
+    )
+    .replace(
+      /\b(mesa|comida)\s+para\s+(\d+|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\b/gi,
+      ' '
+    )
+    .replace(
+      /\bcomemos\s+(\d+|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\b/gi,
+      ' '
+    );
+}
+
+function quantityToken(q: number): string {
+  const words = Object.entries(UNIT_NUMBER_WORDS)
+    .filter(([, n]) => n === q)
+    .map(([w]) => w);
+  const alts = [String(q), ...words].join('|');
+  return `(?:${alts})`;
+}
+
+/**
+ * El mensaje del turno afirma `quantity` como unidades a sumar (no party size).
+ * Validación del argumento de tool contra el texto del cliente (no regex de tipable).
+ */
+export function userMessageStatesUnitQuantity(
+  userMessage: string | null | undefined,
+  quantity: number
+): boolean {
+  if (!userMessage || !Number.isFinite(quantity)) return false;
+  const q = Math.floor(quantity);
+  if (q < 1 || q > 99) return false;
+
+  const normalized = stripPartySizePhrases(normalizeQtyMessage(userMessage));
+  if (!normalized) return false;
+
+  const tok = quantityToken(q);
+  const patterns = [
+    // dame/sumá/quiero + N
+    new RegExp(
+      `\\b(?:dame|damelo|sumame|sumamele|suma|sumá|agrega|agregame|agregá|agregalo|poneme|ponele|poné|pone|quiero|pedime|pedimele|traeme|me\\s+das|me\\s+pones)\\s+${tok}\\b`,
+      'i'
+    ),
+    // N de / N x / N×
+    new RegExp(`\\b${tok}\\s*(?:[x×]\\s*|de\\b)`, 'i'),
+    // N + nombre de plato ("dos adobo", "2 ají")
+    new RegExp(`\\b${tok}\\s+[a-zñ]`, 'i'),
+  ];
+
+  return patterns.some((re) => re.test(normalized));
+}
+
 /**
  * Qty del payload/tool cuenta como confirmada por el cliente (no abrir pending).
  *
- * Si suggested ≥ 2, un número que manda el LLM/CTA NO confirma: party size y
- * “la primera” se copian como quantity y saltaban el pending. Solo confirma
- * `pendingReply` (el cliente respondió al ask de unidades).
+ * Si suggested ≥ 2, un número que manda el LLM/CTA NO confirma por sí solo
+ * (party size se copia como quantity y saltaba el pending). Confirma:
+ * - `pendingReply` (respuesta al ask de unidades), o
+ * - el mensaje del turno afirma esa cantidad como unidades ("dame dos adobo").
  *
- * - n === 1 sin pending: solo si suggested < 2; si suggested ≥ 2, el `:1` del
- *   CTA es intención de sumar, no confirmación (abre pending).
+ * - n === 1 sin pending ni mensaje: solo si suggested < 2; si suggested ≥ 2, el
+ *   `:1` del CTA es intención de sumar, no confirmación (abre pending).
  * - suggested < 2: cualquier n ≥ 1 se escribe (no hay pending que abrir).
- * - Con pendingReply: cualquier n ≥ 1 confirma, incluido 1 (“solo una”).
  */
 export function isConfirmedAddQuantity(params: {
   quantity: number | null | undefined;
   suggestedQuantity: number;
   /** True si hay pendingAddQuantity del mismo producto y el cliente pasó quantity. */
   pendingReply?: boolean;
+  /** Texto del turno actual: si afirma las unidades, confirma aunque suggested ≥ 2. */
+  userMessage?: string | null;
 }): boolean {
   const q = params.quantity;
   if (q == null || q < 1) return false;
   if (params.pendingReply) return true;
-  return params.suggestedQuantity < 2;
+  if (params.suggestedQuantity < 2) return true;
+  return userMessageStatesUnitQuantity(params.userMessage, q);
 }
