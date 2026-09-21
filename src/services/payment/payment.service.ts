@@ -148,6 +148,16 @@ export async function createStorefrontOnlineCheckout(params: {
         orderId,
       })
     ) {
+      console.log(
+        JSON.stringify({
+          event: '[mp-debug] storefront_checkout_reuse',
+          businessId,
+          orderId,
+          slug,
+          paymentIntentId: existing.id,
+          preferenceId: existing.preference_id,
+        })
+      );
       return {
         initPoint: existing.init_point!,
         preferenceId: existing.preference_id ?? '',
@@ -155,6 +165,18 @@ export async function createStorefrontOnlineCheckout(params: {
         isNew: false,
       };
     }
+    console.log(
+      JSON.stringify({
+        event: '[mp-debug] storefront_checkout_stale_intent',
+        businessId,
+        orderId,
+        previousIntentId: existing.id,
+        reason:
+          existing.amount.toNumber() !== amount
+            ? 'amount_changed'
+            : 'refresh_back_urls_or_missing_init',
+      })
+    );
     await prisma.payment_intent.update({
       where: { id: existing.id },
       data: { status: 'stale', updated_at: new Date() },
@@ -162,7 +184,16 @@ export async function createStorefrontOnlineCheckout(params: {
   }
 
   const provider = await getActiveProvider(businessId, 'mercado_pago');
-  if (!provider) return null;
+  if (!provider) {
+    console.warn(
+      JSON.stringify({
+        event: '[mp-debug] storefront_checkout_no_provider',
+        businessId,
+        orderId,
+      })
+    );
+    return null;
+  }
 
   const intent = await prisma.payment_intent.create({
     data: {
@@ -220,10 +251,30 @@ export async function createStorefrontOnlineCheckout(params: {
 
   // null = omitir back_urls (no caer en /payment/success del bot).
   const backUrls = storefrontBackUrls(slug, orderId);
+  console.log(
+    JSON.stringify({
+      event: '[mp-debug] storefront_checkout_create',
+      businessId,
+      orderId,
+      slug,
+      amount,
+      currency,
+      paymentIntentId: intent.id,
+      isSandbox: provider.isSandbox,
+      hasStorefrontOrigin: Boolean(env.STOREFRONT_PUBLIC_ORIGIN),
+      hasWebhookBase: Boolean(env.MERCADO_PAGO_WEBHOOK_BASE_URL),
+      backUrls: backUrls ?? null,
+    })
+  );
   if (!backUrls) {
     console.warn(
-      '[Payment] STOREFRONT_PUBLIC_ORIGIN ausente: preference storefront sin back_urls',
-      { businessId, orderId, slug }
+      JSON.stringify({
+        event: '[mp-debug] storefront_missing_back_urls',
+        hint: 'Set STOREFRONT_PUBLIC_ORIGIN',
+        businessId,
+        orderId,
+        slug,
+      })
     );
   }
   const pref = await createMpPreference({
@@ -243,6 +294,17 @@ export async function createStorefrontOnlineCheckout(params: {
       updated_at: new Date(),
     },
   });
+
+  console.log(
+    JSON.stringify({
+      event: '[mp-debug] storefront_checkout_ready',
+      businessId,
+      orderId,
+      paymentIntentId: intent.id,
+      preferenceId: pref.preferenceId,
+      hasInitPoint: Boolean(pref.initPoint),
+    })
+  );
 
   return {
     initPoint: pref.initPoint,
@@ -515,16 +577,56 @@ export const handleApprovedStorefrontPayment = async (
     where: { id: paymentIntentId },
   });
 
-  if (!intent || intent.status === 'approved' || !intent.order_id) return;
+  if (!intent || intent.status === 'approved' || !intent.order_id) {
+    console.log(
+      JSON.stringify({
+        event: '[mp-debug] storefront_paid_skip',
+        paymentIntentId,
+        mpPaymentId,
+        reason: !intent
+          ? 'intent_not_found'
+          : intent.status === 'approved'
+            ? 'already_approved'
+            : 'no_order_id',
+        intentStatus: intent?.status ?? null,
+        orderId: intent?.order_id ?? null,
+      })
+    );
+    return;
+  }
 
   const order = await prisma.orders.findFirst({
     where: { id: intent.order_id, business_id: intent.business_id },
     select: { id: true, payment_status: true },
   });
-  if (!order) return;
+  if (!order) {
+    console.warn(
+      JSON.stringify({
+        event: '[mp-debug] storefront_paid_order_missing',
+        paymentIntentId,
+        mpPaymentId,
+        orderId: intent.order_id,
+        businessId: intent.business_id,
+      })
+    );
+    return;
+  }
+
+  const wasUnpaid = order.payment_status !== OrderPaymentStatus.paid;
+  console.log(
+    JSON.stringify({
+      event: '[mp-debug] storefront_paid_apply',
+      paymentIntentId,
+      mpPaymentId,
+      orderId: order.id,
+      businessId: intent.business_id,
+      previousPaymentStatus: order.payment_status,
+      willMarkPaid: wasUnpaid,
+    })
+  );
 
   await prisma.$transaction(async (tx) => {
-    if (order.payment_status !== OrderPaymentStatus.paid) {
+    if (wasUnpaid) {
       await tx.orders.update({
         where: { id: order.id },
         data: { payment_status: OrderPaymentStatus.paid },
@@ -541,12 +643,23 @@ export const handleApprovedStorefrontPayment = async (
     });
   });
 
-  if (order.payment_status !== OrderPaymentStatus.paid) {
+  if (wasUnpaid) {
     emitAdminOrderPaymentStatusChanged(intent.business_id, {
       orderId: order.id,
       payment_status: OrderPaymentStatus.paid,
     });
   }
+
+  console.log(
+    JSON.stringify({
+      event: '[mp-debug] storefront_paid_done',
+      paymentIntentId,
+      mpPaymentId,
+      orderId: order.id,
+      paymentStatus: OrderPaymentStatus.paid,
+      socketEmitted: wasUnpaid,
+    })
+  );
 };
 
 /** Marca el intent como rechazado/cancelado (por draft_order_id). */

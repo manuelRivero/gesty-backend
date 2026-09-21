@@ -68,6 +68,32 @@ export const createMpPreference = async (params: {
       ? ('approved' as const)
       : undefined;
 
+  console.log(
+    JSON.stringify({
+      event: '[mp-debug] preference_create_request',
+      businessId: params.businessId,
+      externalReference: params.externalReference,
+      isSandbox: params.isSandbox,
+      hasNotificationUrl: Boolean(notificationUrl),
+      notificationUrl: notificationUrl ?? null,
+      hasBackUrls: Boolean(back_urls),
+      backUrls: back_urls ?? null,
+      autoReturn: auto_return ?? null,
+      itemCount: params.items.length,
+    })
+  );
+
+  if (!notificationUrl) {
+    console.warn(
+      JSON.stringify({
+        event: '[mp-debug] preference_without_notification_url',
+        hint: 'Set MERCADO_PAGO_WEBHOOK_BASE_URL (public API URL). MP will not mark paid.',
+        businessId: params.businessId,
+        externalReference: params.externalReference,
+      })
+    );
+  }
+
   const result = await preference.create({
     body: {
       items: params.items,
@@ -82,6 +108,16 @@ export const createMpPreference = async (params: {
   const initPoint = params.isSandbox
     ? (result.sandbox_init_point ?? result.init_point ?? '')
     : (result.init_point ?? '');
+
+  console.log(
+    JSON.stringify({
+      event: '[mp-debug] preference_create_result',
+      businessId: params.businessId,
+      externalReference: params.externalReference,
+      preferenceId: result.id ?? null,
+      hasInitPoint: Boolean(initPoint),
+    })
+  );
 
   return {
     preferenceId: result.id ?? '',

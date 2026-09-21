@@ -17,24 +17,64 @@ export const mercadoPagoWebhookHandler = async (req: Request, res: Response): Pr
 
   try {
     const businessId = req.query.business_id as string | undefined;
+    const body = req.body as { type?: string; action?: string; data?: { id?: string | number } };
+
+    console.log(
+      JSON.stringify({
+        event: '[mp-debug] webhook_hit',
+        businessId: businessId ?? null,
+        type: body?.type ?? null,
+        action: body?.action ?? null,
+        dataId: body?.data?.id ?? null,
+        hasSignature: Boolean(req.headers['x-signature']),
+      })
+    );
+
     if (!businessId) {
-      console.warn('[mp-webhook] missing business_id query param');
+      console.warn(
+        JSON.stringify({
+          event: '[mp-debug] webhook_skip',
+          reason: 'missing_business_id',
+        })
+      );
       return;
     }
 
-    const body = req.body as { type?: string; action?: string; data?: { id?: string | number } };
-
     // MP envía varios tipos de notificaciones; solo nos interesan los pagos
     if (body.type !== 'payment' && body.action !== 'payment.updated' && body.action !== 'payment.created') {
+      console.log(
+        JSON.stringify({
+          event: '[mp-debug] webhook_skip',
+          reason: 'ignored_type',
+          type: body.type ?? null,
+          action: body.action ?? null,
+          businessId,
+        })
+      );
       return;
     }
 
     const mpPaymentId = String(body.data?.id ?? '');
-    if (!mpPaymentId) return;
+    if (!mpPaymentId) {
+      console.warn(
+        JSON.stringify({
+          event: '[mp-debug] webhook_skip',
+          reason: 'missing_payment_id',
+          businessId,
+        })
+      );
+      return;
+    }
 
     const provider = await getActiveProvider(businessId, 'mercado_pago');
     if (!provider) {
-      console.warn('[mp-webhook] no active provider for business', businessId);
+      console.warn(
+        JSON.stringify({
+          event: '[mp-debug] webhook_skip',
+          reason: 'no_active_provider',
+          businessId,
+        })
+      );
       return;
     }
 
@@ -42,7 +82,14 @@ export const mercadoPagoWebhookHandler = async (req: Request, res: Response): Pr
     if (provider.webhookSecret) {
       const valid = verifyMpWebhookSignature(req, provider.webhookSecret);
       if (!valid) {
-        console.warn('[mp-webhook] invalid signature for business', businessId);
+        console.warn(
+          JSON.stringify({
+            event: '[mp-debug] webhook_skip',
+            reason: 'invalid_signature',
+            businessId,
+            mpPaymentId,
+          })
+        );
         return;
       }
     }
@@ -52,8 +99,25 @@ export const mercadoPagoWebhookHandler = async (req: Request, res: Response): Pr
     const externalReference = payment.external_reference as string | undefined;
     const paymentAsJson = payment as unknown as Prisma.InputJsonValue;
 
+    console.log(
+      JSON.stringify({
+        event: '[mp-debug] webhook_payment_fetched',
+        businessId,
+        mpPaymentId,
+        status,
+        externalReference: externalReference ?? null,
+      })
+    );
+
     if (!externalReference) {
-      console.warn('[mp-webhook] no external_reference in payment', mpPaymentId);
+      console.warn(
+        JSON.stringify({
+          event: '[mp-debug] webhook_skip',
+          reason: 'no_external_reference',
+          businessId,
+          mpPaymentId,
+        })
+      );
       return;
     }
 
@@ -72,19 +136,56 @@ export const mercadoPagoWebhookHandler = async (req: Request, res: Response): Pr
     });
 
     if (!intent) {
-      console.warn('[mp-webhook] no pending payment_intent for ref', externalReference);
+      console.warn(
+        JSON.stringify({
+          event: '[mp-debug] webhook_skip',
+          reason: 'no_pending_intent',
+          businessId,
+          mpPaymentId,
+          externalReference,
+        })
+      );
       return;
     }
 
     const isStorefront = Boolean(intent.order_id);
+    console.log(
+      JSON.stringify({
+        event: '[mp-debug] webhook_intent_matched',
+        businessId,
+        mpPaymentId,
+        externalReference,
+        paymentIntentId: intent.id,
+        isStorefront,
+        orderId: intent.order_id ?? null,
+        draftOrderId: intent.draft_order_id ?? null,
+        status,
+      })
+    );
 
     if (status === 'approved') {
       if (isStorefront) {
         await handleApprovedStorefrontPayment(intent.id, mpPaymentId, paymentAsJson);
-        console.log('[mp-webhook] payment approved, storefront order paid', externalReference);
+        console.log(
+          JSON.stringify({
+            event: '[mp-debug] webhook_approved_storefront',
+            businessId,
+            mpPaymentId,
+            orderId: externalReference,
+            paymentIntentId: intent.id,
+          })
+        );
       } else {
         await handleApprovedPayment(intent.id, mpPaymentId, paymentAsJson);
-        console.log('[mp-webhook] payment approved, order created for draft', externalReference);
+        console.log(
+          JSON.stringify({
+            event: '[mp-debug] webhook_approved_draft',
+            businessId,
+            mpPaymentId,
+            draftOrderId: externalReference,
+            paymentIntentId: intent.id,
+          })
+        );
       }
       return;
     }
@@ -97,7 +198,15 @@ export const mercadoPagoWebhookHandler = async (req: Request, res: Response): Pr
           status,
           paymentAsJson
         );
-        console.log('[mp-webhook] payment', status, 'for storefront order', externalReference);
+        console.log(
+          JSON.stringify({
+            event: '[mp-debug] webhook_rejected_storefront',
+            businessId,
+            mpPaymentId,
+            orderId: externalReference,
+            status,
+          })
+        );
         return;
       }
 
@@ -113,7 +222,15 @@ export const mercadoPagoWebhookHandler = async (req: Request, res: Response): Pr
           '🤖\n\n*Pago no completado* 😕\n\nNo pudimos procesar tu pago. Podés intentar de nuevo con el mismo link o elegir pagar en efectivo.\n\nEscribí *"finalizar pedido"* para ver las opciones.'
         );
       }
-      console.log('[mp-webhook] payment', status, 'for draft', externalReference);
+      console.log(
+        JSON.stringify({
+          event: '[mp-debug] webhook_rejected_draft',
+          businessId,
+          mpPaymentId,
+          draftOrderId: externalReference,
+          status,
+        })
+      );
       return;
     }
 
@@ -122,7 +239,16 @@ export const mercadoPagoWebhookHandler = async (req: Request, res: Response): Pr
       where: { id: intent.id },
       data: { external_id: mpPaymentId, updated_at: new Date() },
     });
-    console.log('[mp-webhook] payment status', status, 'for ref', externalReference);
+    console.log(
+      JSON.stringify({
+        event: '[mp-debug] webhook_status_pendingish',
+        businessId,
+        mpPaymentId,
+        externalReference,
+        status,
+        paymentIntentId: intent.id,
+      })
+    );
   } catch (err) {
     console.error('[mp-webhook] error processing webhook:', err);
   }
