@@ -46,9 +46,9 @@ export const createMpPreference = async (params: {
 
   const defaultBack = notificationBase
     ? {
-        success: `${notificationBase}/payment/success`,
-        failure: `${notificationBase}/payment/failure`,
-        pending: `${notificationBase}/payment/pending`,
+        success: `${notificationBase}/payment/success?business_id=${params.businessId}`,
+        failure: `${notificationBase}/payment/failure?business_id=${params.businessId}`,
+        pending: `${notificationBase}/payment/pending?business_id=${params.businessId}`,
       }
     : undefined;
 

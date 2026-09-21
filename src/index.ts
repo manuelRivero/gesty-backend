@@ -28,6 +28,11 @@ import { processDraftOrderTimeouts } from './workers/draftOrders';
 import { processHumanHandoffTimeouts } from './workers/humanHandoffTimeout';
 import type { WhatsAppWebhookPayload } from './controllers/webhook/types';
 import { mercadoPagoWebhookHandler } from './controllers/payments/mercadoPagoWebhook.controller';
+import {
+  paymentReturnFailureHandler,
+  paymentReturnPendingHandler,
+  paymentReturnSuccessHandler,
+} from './controllers/payments/paymentReturn.controller';
 import { billingStripeWebhookHandler } from './controllers/billingStripeWebhook.controller';
 
 if (env.ENABLE_DRAFT_ORDER_WORKER) {
@@ -92,6 +97,10 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminOrdersRoutes);
 app.post('/api/payments/mercado-pago/webhook', mercadoPagoWebhookHandler);
+/** Back URLs Checkout Pro del bot WA (PAY-07). Storefront usa /shopping/... */
+app.get('/payment/success', paymentReturnSuccessHandler);
+app.get('/payment/failure', paymentReturnFailureHandler);
+app.get('/payment/pending', paymentReturnPendingHandler);
 app.use('/api/super-admin', superAdminRoutes);
 app.use('/checkin', checkinRoutes);
 app.use('/api/public', publicRoutes);
