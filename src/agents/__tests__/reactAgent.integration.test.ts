@@ -478,4 +478,47 @@ describe('runHybridReactAgent', () => {
     expect(result?.kind).toBe('response');
     expect(unwrap(result)!.content).toBe('derivado al equipo');
   });
+
+  it('pending_cancel_disambiguation sin cancel_order → re-muestra botones (no prosa)', async () => {
+    vi.mocked(createReactAgent).mockReturnValue({
+      invoke: makeAgentInvoke(
+        '🤖\n\nNo tenés un carrito activo 🛒\n\n¿Te gustaría ver el menú?'
+      ),
+    } as any);
+
+    const result = unwrap(
+      await runHybridReactAgent(
+        makeCtx({
+          message: { text: { body: 'Carrito' }, type: 'text' },
+          conversationState: {
+            metadata: {
+              pending_cancel_disambiguation: {
+                orderId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+                orderRef: 'ABCD1234',
+                askedAt: new Date().toISOString(),
+              },
+            },
+          },
+        }) as any
+      )
+    );
+
+    expect(result!.isInteractive).toBe(true);
+    expect(result!.content).toMatchObject({
+      type: 'interactive',
+      interactive: {
+        type: 'button',
+        action: {
+          buttons: expect.arrayContaining([
+            expect.objectContaining({
+              reply: expect.objectContaining({ id: 'CANCEL_TARGET:draft' }),
+            }),
+            expect.objectContaining({
+              reply: expect.objectContaining({ id: 'CANCEL_TARGET:order' }),
+            }),
+          ]),
+        },
+      },
+    });
+  });
 });

@@ -25,6 +25,7 @@ import { formatBotUserMessage } from './productQuery/utils';
 import { clearOrderSessionAfterCancel } from './orderSessionReset.service';
 import { DRAFT_CHECKOUT_COLLECTED_FACTS_RESET } from './checkout/draftCheckoutFacts';
 import { shortOrderRef } from './orderStatusNotification.service';
+import { buildPendingTipablesPatch } from './pendingTipables.service';
 
 export const handleOrderSearchPageFromWebhook = async (
   payload: WhatsAppWebhookPayload,
@@ -172,7 +173,7 @@ async function cancelPlacedOrderAndNotifyAdmin(order: {
   });
 }
 
-function buildCancelDisambiguationMessage(orderRef: string): WhatsAppInteractiveMessage {
+export function buildCancelDisambiguationMessage(orderRef: string): WhatsAppInteractiveMessage {
   const body = formatBotUserMessage(
     '¿Qué cancelamos?',
     '❓',
@@ -256,6 +257,9 @@ export const buildCancelOrderMessage = async (
         orderRef,
         askedAt: new Date().toISOString(),
       },
+      // Pisa tipables previos (ej. VIEW_CART) para que tipar "Carrito"/"Pedido"
+      // no compita con present_cart.
+      ...buildPendingTipablesPatch(['CANCEL_TARGET_DRAFT', 'CANCEL_TARGET_ORDER']),
     });
     const msg = buildCancelDisambiguationMessage(orderRef);
     await createConversationMessage(conversation.id, 'ai', msg.interactive.body.text, true);

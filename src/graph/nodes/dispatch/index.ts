@@ -128,9 +128,46 @@ const resolveCheckoutHandoff = async (
  */
 type ReservationHandoff = () => Promise<HandlerResult | null>;
 
-/** Wipe del carrito + abre reservas (confirmación tipable/botón). */
-const RESERVATION_ENTRY_AFTER_ORDER_CANCEL =
-  'Quiero hacer una reserva de mesa.';
+/** Entrada fresca al híbrido desde el atajo welcome ORDER_FOOD. */
+const ORDER_FOOD_ENTRY_MESSAGE = 'Quiero hacer un pedido.';
+
+/**
+ * Payload ORDER_FOOD del welcome: no hay handler interactivo; se convierte en
+ * texto libre y se despacha al híbrido (mismo patrón que la entrada fresca a
+ * reservas tras cancelar carrito).
+ */
+const sanitizeStateForOrderFoodEntry = (
+  state: AgentState,
+  enrichedBase: EnrichedContext
+): AgentState => {
+  const entryMessage = {
+    type: 'text' as const,
+    text: { body: ORDER_FOOD_ENTRY_MESSAGE },
+  };
+  const webhookContext = {
+    ...state.webhookContext!,
+    payloadId: undefined,
+    message: {
+      ...(state.webhookContext?.message ?? {}),
+      ...entryMessage,
+      interactive: undefined,
+    },
+  };
+  const enrichedCtx: EnrichedContext = {
+    ...enrichedBase,
+    payloadId: undefined,
+    message: {
+      ...(enrichedBase.message ?? {}),
+      ...entryMessage,
+      interactive: undefined,
+    },
+  };
+  return {
+    ...state,
+    webhookContext: webhookContext as unknown as AgentState['webhookContext'],
+    enrichedCtx: enrichedCtx as unknown as AgentState['enrichedCtx'],
+  };
+};
 
 /**
  * Tras confirmar cancelar el pedido para reservar, el webhook aún trae el
@@ -405,6 +442,17 @@ export const interactiveSubgraphNode = async (
     return {
       handlerResult: await applySwitchToReservationDecline(conversation.id),
     };
+  }
+
+  // Welcome "Hacer un pedido": sin handler de botón → texto fresco + NLP/híbrido.
+  if (ctx.payloadId === 'ORDER_FOOD') {
+    console.log(
+      JSON.stringify({
+        event: '[interactive] order_food_to_nlp',
+        conversationId: conversation.id,
+      })
+    );
+    return nlpSubgraphNode(sanitizeStateForOrderFoodEntry(state, enrichedBase));
   }
 
   // Gate de pedidos en horario cerrado

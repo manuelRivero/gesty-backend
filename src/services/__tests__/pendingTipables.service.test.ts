@@ -46,6 +46,19 @@ describe('pendingTipables', () => {
     expect(lines.join('\n')).toMatch(/la papa con poca sal|start_item_note/i);
   });
 
+  it('ORDER_FOOD y cancel targets tienen hints de tool', () => {
+    const lines = buildPendingTipablesManagementLines({
+      pendingTipables: {
+        offeredAt: new Date().toISOString(),
+        management: ['ORDER_FOOD', 'CANCEL_TARGET_DRAFT', 'CANCEL_TARGET_ORDER'],
+      },
+    });
+    const joined = lines.join('\n');
+    expect(joined).toMatch(/ORDER_FOOD.*save_party_size|ORDER_FOOD.*personas/i);
+    expect(joined).toMatch(/CANCEL_TARGET_DRAFT.*cancel_order.*draft/i);
+    expect(joined).toMatch(/CANCEL_TARGET_ORDER.*cancel_order.*order/i);
+  });
+
   it('sin tipables: no emite líneas', () => {
     expect(buildPendingTipablesManagementLines({})).toEqual([]);
     expect(

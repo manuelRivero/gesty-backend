@@ -10,7 +10,10 @@ export type TipableManagementAction =
   | 'VIEW_CART'
   | 'VIEW_CART_FOR_EDITION'
   | 'CHECKOUT'
-  | 'ITEM_NOTE';
+  | 'ITEM_NOTE'
+  | 'ORDER_FOOD'
+  | 'CANCEL_TARGET_DRAFT'
+  | 'CANCEL_TARGET_ORDER';
 
 export type PendingTipables = {
   offeredAt: string;
@@ -65,4 +68,10 @@ export const MANAGEMENT_TOOL_HINT: Record<TipableManagementAction, string> = {
     'si solo tipó «nota» sin texto: start_item_note() y mostrá askMessage; ' +
     'si ya trae plato+nota: get_cart → update_item_note en el mismo turno; ' +
     'con pendingItemNote activo: PROHIBIDO add/complementos',
+  ORDER_FOOD:
+    'el cliente quiere armar pedido: si falta el Fact de personas, pedí el número ' +
+    'con el título *¿Para cuántas personas?* y save_party_size; recién después menú / shortlist',
+  CANCEL_TARGET_DRAFT: 'cancel_order(target: "draft") — cancela solo el carrito en armado',
+  CANCEL_TARGET_ORDER:
+    'cancel_order(target: "order") — cancela solo el pedido ya creado',
 };

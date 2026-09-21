@@ -11,6 +11,12 @@ vi.mock('../../../../lib/prisma', () => ({
   },
 }));
 
+vi.mock('../../../../services/ai/openai.service', () => ({
+  openai: {},
+  detectIntent: vi.fn(),
+  generateProductAwareResponse: vi.fn(),
+}));
+
 vi.mock('../../../../controllers/webhook/dispachers', () => ({
   dispatchInteractive: vi.fn(),
   dispatchIntent: vi.fn().mockResolvedValue(null),
@@ -245,6 +251,10 @@ describe('interactiveSubgraphNode — botones', () => {
       content: 'agregado',
       isInteractive: false,
     });
+    vi.mocked(runHybridReactAgent).mockResolvedValue({
+      kind: 'response',
+      handlerResult: { content: '¿Para cuántas personas?', isInteractive: false },
+    } as never);
   });
 
   it('ADD_ITEM: va al mapper, no al ReAct', async () => {
@@ -264,5 +274,45 @@ describe('interactiveSubgraphNode — botones', () => {
     expect(dispatchInteractive).toHaveBeenCalled();
     expect(runHybridReactAgent).not.toHaveBeenCalled();
     expect(result.handlerResult?.content).toBe('agregado');
+  });
+
+  it('ORDER_FOOD: no va a dispatchInteractive; corre NLP/híbrido con texto fresco', async () => {
+    const state = {
+      webhookContext: {
+        payloadId: 'ORDER_FOOD',
+        message: { type: 'interactive', interactive: {} },
+      },
+      enrichedCtx: {
+        payloadId: 'ORDER_FOOD',
+        conversationState: { metadata: {} },
+        conversation: { id: 'conv-1' },
+        business: { id: 'biz-1' },
+        customer: { phone_number: '54911' },
+        message: { type: 'interactive', interactive: {} },
+        to: '54911',
+      },
+      conversation: { id: 'conv-1', lastReferencedProductId: null },
+      customer: { id: 'cust-1', phone_number: '54911' },
+      business: { id: 'biz-1' },
+      conversationState: { metadata: {} },
+      workingConversationState: { metadata: {} },
+      hasAddress: true,
+      isInCoverage: true,
+      detectionContext: {},
+      businessConfig: { delivery_enabled: true, takeaway_enabled: true },
+      businessClosedButOperating: false,
+    } as unknown as AgentState;
+
+    const result = await interactiveSubgraphNode(state);
+
+    expect(dispatchInteractive).not.toHaveBeenCalled();
+    expect(runHybridReactAgent).toHaveBeenCalled();
+    const hybridCtx = vi.mocked(runHybridReactAgent).mock.calls[0]?.[0] as {
+      payloadId?: string | null;
+      message?: { text?: { body?: string }; type?: string };
+    };
+    expect(hybridCtx.payloadId).toBeUndefined();
+    expect(hybridCtx.message?.text?.body).toMatch(/quiero hacer un pedido/i);
+    expect(result.handlerResult?.content).toBe('¿Para cuántas personas?');
   });
 });

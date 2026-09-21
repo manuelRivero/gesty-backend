@@ -17,10 +17,16 @@ import {
 
 const orderBrowseButtons = [
   {
+    title: 'Hacer un pedido',
+    payload: 'ORDER_FOOD',
+    description: 'Armar un pedido nuevo',
+    sectionTitle: 'Opciones',
+  },
+  {
     title: 'Ver menú',
     payload: 'VIEW_MENU',
     description: 'Explorar platos disponibles',
-    sectionTitle: 'Opciones'
+    sectionTitle: 'Opciones',
   },
 ];
 
@@ -45,6 +51,8 @@ export function welcomeShortcutBullet(button: {
   payload: string;
 }): string {
   switch (button.payload) {
+    case 'ORDER_FOOD':
+      return shortcutBullet('Hacer', 'pedido');
     case 'VIEW_MENU':
       return shortcutBullet('Menú');
     case 'BUSINESS_HOURS':
@@ -168,6 +176,7 @@ export const buildSmallTalkMenu = async (
 
   const management: TipableManagementAction[] = [];
   for (const b of buttons) {
+    if (b.payload === 'ORDER_FOOD') management.push('ORDER_FOOD');
     if (b.payload === 'VIEW_MENU') management.push('VIEW_MENU');
     if (b.payload === 'VIEW_CART') management.push('VIEW_CART');
   }

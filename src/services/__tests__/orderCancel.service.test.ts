@@ -159,6 +159,9 @@ describe('buildCancelOrderMessage', () => {
       'conv-1',
       expect.objectContaining({
         pending_cancel_disambiguation: expect.objectContaining({ orderId: ORDER_ID }),
+        pendingTipables: expect.objectContaining({
+          management: ['CANCEL_TARGET_DRAFT', 'CANCEL_TARGET_ORDER'],
+        }),
       })
     );
     expect(prisma.orders.update).not.toHaveBeenCalled();

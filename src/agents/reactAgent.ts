@@ -44,7 +44,7 @@ import { startAddressEditSessionTool } from '../tools/onboarding';
 import type { CtaPlan, CtaPlannerRaw } from './types';
 import { persistLastOffer } from '../services/lastOffer.service';
 import { buildCartSummaryMessage } from '../services/cart.service';
-import { buildCancelOrderMessage } from '../services/order.service';
+import { buildCancelOrderMessage, buildCancelDisambiguationMessage } from '../services/order.service';
 import { tryPresentComplementSuggestions } from '../services/complementSuggestions.service';
 import { buildCategoryProductListMessage } from '../services/category.service';
 import { findOrCreateConversationState } from '../repositories';
@@ -56,7 +56,7 @@ import {
   isWelcomeEligible,
   isWelcomeEligibleGreeting,
 } from '../services/welcomeEligible.service';
-
+import { normalizeMetadata } from '../services/productQuery/utils';
 const markHybridResult = (result: HandlerResult): HandlerResult => ({
   ...result,
   skipBodyHumanization: true,
@@ -722,6 +722,8 @@ export const runHybridReactAgent = async (
   const agentMessages = (out as { messages?: unknown[] }).messages ?? [];
   logToolCallTrace(agentMessages, conversationId);
   const signals = extractHybridSignals(agentMessages);
+  const metaAtTurnStart = normalizeMetadata(ctx.conversationState?.metadata);
+  const pendingCancelAtTurnStart = metaAtTurnStart.pending_cancel_disambiguation;
 
   // Post-cancel (welcomeEligible): saludo sin intención → forzar welcome tipable
   // aunque el LLM omita la tool o invente party size.
@@ -754,6 +756,38 @@ export const runHybridReactAgent = async (
     }
   } catch (err) {
     console.error('[hybrid-agent] welcomeEligible check failed:', err);
+  }
+
+  // Desambiguación cancel tipable: si el modelo no llamó cancel_order, no dejar
+  // pasar prosa inventada ni present_cart competidor — re-mostrar botones.
+  if (
+    pendingCancelAtTurnStart &&
+    typeof pendingCancelAtTurnStart === 'object' &&
+    typeof pendingCancelAtTurnStart.orderRef === 'string' &&
+    !signals.cancelOrder
+  ) {
+    const allowedEscape =
+      signals.startReservationSession ||
+      signals.startCheckoutSession ||
+      signals.startAddressEditSession ||
+      signals.requestHumanSupport;
+    if (!allowedEscape) {
+      console.log(
+        JSON.stringify({
+          event: '[hybrid-agent] cancel_disambiguation_guard',
+          conversationId,
+          orderRef: pendingCancelAtTurnStart.orderRef,
+        })
+      );
+      return {
+        kind: 'response',
+        handlerResult: markHybridResult({
+          content: buildCancelDisambiguationMessage(pendingCancelAtTurnStart.orderRef),
+          isInteractive: true,
+          skipBodyHumanization: true,
+        }),
+      };
+    }
   }
 
   if (signals.cartAddSucceeded) {
