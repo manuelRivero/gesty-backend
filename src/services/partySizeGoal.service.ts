@@ -11,6 +11,9 @@ import { computeCatalogPermission, type IntentLedgerEntry } from './intent/activ
 import { patchIntentLedgerEntry } from './intentLedger.repository';
 import type { ConversationMetadata } from './productQuery/types';
 import { getRequestedPartySize, normalizeMetadata } from './productQuery/utils';
+import {
+  getPendingSwitchToReservation,
+} from './switchToReservationConfirm.service';
 import { isReservationFaqMode } from './reservationFaqDelegation.service';
 
 export const PARTY_SIZE_GOAL_TYPE = 'OBTENER_PERSONAS_DEL_PEDIDO' as const;
@@ -38,10 +41,10 @@ export type PartySizeGoalFacts = {
   foodRelatedSignal: boolean;
   checkoutActive: boolean;
   /**
-   * FAQ mid-reserva / sesión de reserva activa: no abrir party size de pedido
-   * (PLAN-ACCION-RESERVA-FAQ-HIBRIDO D2).
+   * Dominio reserva con ownership de turno (RES-05 opción 1): no abrir
+   * party size de pedido. Ver `blocksOrderPartySizeForReservationDomain`.
    */
-  reservationFaqMode?: boolean;
+  reservationDomainActive?: boolean;
 };
 
 /** Payload estándar de tools cuando falta el Fact de personas. */
@@ -57,14 +60,32 @@ export const PARTY_SIZE_REQUIRED_TOOL_PAYLOAD = {
 };
 
 /**
+ * Ownership de turno en dominio reserva → no competir con personas del pedido.
+ *
+ * Fuentes (Facts / metadata, sin diccionario de prosa):
+ * - FAQ mid-reserva o `reservation_agent_active` (`isReservationFaqMode`)
+ * - Pendiente confirmar cancelar carrito para pasar a reserva
+ *
+ * No usa `reservation_draft` solo: tras handback el cliente puede armar pedido
+ * y sí necesita party size de pedido.
+ */
+export const blocksOrderPartySizeForReservationDomain = (
+  metadata: unknown
+): boolean => {
+  if (isReservationFaqMode(metadata)) return true;
+  if (getPendingSwitchToReservation(metadata)) return true;
+  return false;
+};
+
+/**
  * Gate duro de tools de pedido/shortlist: sin Fact PERSONAS no hay catálogo
- * orientado a pedir ni add. Excepciones: checkout, FAQ mid-reserva, abandono.
+ * orientado a pedir ni add. Excepciones: checkout, dominio reserva activo, abandono.
  */
 export const isPartySizeMissingForOrderingTools = (metadata: unknown): boolean => {
   const meta = normalizeMetadata(metadata);
   if (getRequestedPartySize(meta) != null) return false;
   if (meta.checkout_active === true) return false;
-  if (isReservationFaqMode(meta)) return false;
+  if (blocksOrderPartySizeForReservationDomain(meta)) return false;
   if (getPartySizeGoalLedger(meta).abandonment) return false;
   return true;
 };
@@ -112,7 +133,7 @@ export const derivePartySizeGoal = (
     facts.partySize == null &&
     facts.foodRelatedSignal &&
     !facts.checkoutActive &&
-    !facts.reservationFaqMode &&
+    !facts.reservationDomainActive &&
     !ledger.abandonment,
 });
 

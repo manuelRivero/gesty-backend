@@ -39,6 +39,7 @@ import {
   deriveSuggestComplementCandidate,
 } from '../services/intent/opportunities.service';
 import {
+  blocksOrderPartySizeForReservationDomain,
   derivePartySizeGoalCandidate,
   isFoodRelatedPartySizeSignal,
   recordPartySizeGoalSurfaced,
@@ -309,6 +310,8 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
   const reservationDraft = meta.reservation_draft;
   const reservationAgentActive = meta.reservation_agent_active === true;
   const reservationFaqMode = isReservationFaqMode(meta);
+  const reservationDomainBlocksOrderPartySize =
+    blocksOrderPartySizeForReservationDomain(meta);
   const hasReservationDraft = hasReservationDraftInProgress(reservationDraft);
   let hasEnvironments = false;
   if (hasReservationDraft && businessId) {
@@ -320,8 +323,8 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     }
   }
 
-  const partySizeLine = reservationFaqMode
-    ? 'no aplica en este turno (FAQ mid-reserva — respondé menú; no pidas personas del pedido ni ofrezcas sumar al pedido)'
+  const partySizeLine = reservationDomainBlocksOrderPartySize
+    ? 'no aplica en este turno (dominio reserva activo — no pidas personas del pedido ni ofrezcas sumar al pedido)'
     : partySize
       ? `${partySize} (guía de cantidad a pedir, NO filtro de serves_people)`
       : isWelcomeEligible(meta)
@@ -421,7 +424,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
             foodRelatedSignal,
             partySize: partySize ?? null,
             checkoutActive,
-            reservationFaqMode,
+            reservationDomainActive: reservationDomainBlocksOrderPartySize,
           },
           resolvePartySizeLedgerEntry(meta)
         ),

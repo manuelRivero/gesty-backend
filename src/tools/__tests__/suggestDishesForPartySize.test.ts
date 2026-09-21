@@ -30,6 +30,7 @@ vi.mock('../../repositories/conversationState.repository', () => ({
 }));
 
 import { suggestDishesForPartySizeTool } from '../index';
+import { findOrCreateConversationState } from '../../repositories/conversationState.repository';
 
 const CONFIG = {
   configurable: {
@@ -77,5 +78,22 @@ describe('suggest_dishes_for_party_size', () => {
     expect(result.partySize).toBe(6);
     expect(result.items[0].name).toBe('Pollo a la brasa');
     expect(result.items[0].serves_people).toBe(6);
+  });
+
+  it('sin sesión de reserva pide delegar en vez de party size de pedido', async () => {
+    vi.mocked(findOrCreateConversationState).mockResolvedValueOnce({
+      metadata: {},
+    } as never);
+
+    const raw = await suggestDishesForPartySizeTool.invoke(
+      { partySize: 6, limit: 10 },
+      CONFIG
+    );
+    const result = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    expect(result.error).toBe('reservation_session_required');
+    expect(result.instruction).toMatch(/start_reservation_session/);
+    expect(result.instruction).toMatch(/6 personas/);
+    expect(result.instruction).not.toMatch(/¿Para cuántas personas\?/);
+    expect(findMany).not.toHaveBeenCalled();
   });
 });

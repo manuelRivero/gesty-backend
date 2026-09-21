@@ -383,7 +383,7 @@ describe('buildContextMessage', () => {
     expect(msg).toMatch(/NO son personas del pedido/i);
     expect(msg).toMatch(/no ofrezcas sumar platos al pedido/i);
     expect(msg).toMatch(
-      /Personas para el pedido: no aplica en este turno \(FAQ mid-reserva/i
+      /Personas para el pedido: no aplica en este turno \(dominio reserva activo/i
     );
     expect(msg).not.toMatch(/Goal activo:\s*OBTENER_PERSONAS_DEL_PEDIDO/i);
   });

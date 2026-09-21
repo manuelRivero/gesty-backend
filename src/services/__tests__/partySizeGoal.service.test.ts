@@ -18,6 +18,7 @@ vi.mock('../../lib/prisma', () => ({
 }));
 
 import {
+  blocksOrderPartySizeForReservationDomain,
   derivePartySizeGoal,
   derivePartySizeGoalCandidate,
   getPartySizeGoalLedger,
@@ -84,7 +85,7 @@ describe('derivePartySizeGoal', () => {
           partySize: null,
           foodRelatedSignal: true,
           checkoutActive: false,
-          reservationFaqMode: true,
+          reservationDomainActive: true,
         },
         EMPTY_LEDGER
       ).open
@@ -128,6 +129,52 @@ describe('isPartySizeMissingForOrderingTools', () => {
     expect(
       isPartySizeMissingForOrderingTools({
         reservation_faq_delegation: { delegatedAt: new Date().toISOString() },
+      })
+    ).toBe(false);
+  });
+
+  it('permite con sesión de reserva activa', () => {
+    expect(
+      isPartySizeMissingForOrderingTools({ reservation_agent_active: true })
+    ).toBe(false);
+  });
+
+  it('permite con pending switch a reserva', () => {
+    expect(
+      isPartySizeMissingForOrderingTools({
+        pending_switch_to_reservation: {
+          reason: 'reservar',
+          askedAt: new Date().toISOString(),
+        },
+      })
+    ).toBe(false);
+  });
+});
+
+describe('blocksOrderPartySizeForReservationDomain', () => {
+  it('true con agent active o FAQ o pending switch', () => {
+    expect(blocksOrderPartySizeForReservationDomain({ reservation_agent_active: true })).toBe(
+      true
+    );
+    expect(
+      blocksOrderPartySizeForReservationDomain({
+        reservation_faq_delegation: { delegatedAt: new Date().toISOString() },
+      })
+    ).toBe(true);
+    expect(
+      blocksOrderPartySizeForReservationDomain({
+        pending_switch_to_reservation: {
+          reason: 'x',
+          askedAt: new Date().toISOString(),
+        },
+      })
+    ).toBe(true);
+  });
+
+  it('false con solo draft (handback puede armar pedido)', () => {
+    expect(
+      blocksOrderPartySizeForReservationDomain({
+        reservation_draft: { date: '21/09/2026', partySize: 4 },
       })
     ).toBe(false);
   });

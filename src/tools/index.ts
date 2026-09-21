@@ -116,6 +116,7 @@ import {
   getReservationCompletionLedger,
   recordReservationCompletionAbandonment,
 } from '../services/reservationCompletionGoal.service';
+import { isReservationFaqMode } from '../services/reservationFaqDelegation.service';
 import { updateCustomerName } from '../repositories';
 import { AddressService } from '../services/address.service';
 import { shortOrderRef } from '../services/orderStatusNotification.service';
@@ -146,6 +147,34 @@ const partySizeOrderingGateJson = async (
   const state = await findOrCreateConversationState(conversationId);
   if (!isPartySizeMissingForOrderingTools(state.metadata)) return null;
   return toJson(PARTY_SIZE_REQUIRED_TOOL_PAYLOAD);
+};
+
+/**
+ * RES-05: platos para la mesa sin sesión de reserva abierta.
+ *
+ * Sin este corte la tool caía en el gate de pedido y pedía personas del
+ * *pedido*, que el prompt prohíbe persistir en marco reserva: el cliente
+ * contestaba el número y volvía la misma pregunta. Las personas de la mesa
+ * las toma el draft de reserva.
+ */
+const reservationSessionRequiredJson = async (
+  conversationId: string,
+  partySize: number | null
+): Promise<string | null> => {
+  const state = await findOrCreateConversationState(conversationId);
+  if (isReservationFaqMode(state.metadata)) return null;
+  const partySizeHint =
+    partySize != null ? ` Mencioná en reason que son ${partySize} personas.` : '';
+  return toJson({
+    success: false,
+    error: 'reservation_session_required',
+    pending: true,
+    instruction:
+      'La consulta es sobre platos para una mesa/reserva y todavía no hay sesión de reserva. ' +
+      `Llamá start_reservation_session(reason) en ESTE turno.${partySizeHint} ` +
+      'PROHIBIDO preguntar personas del pedido o llamar save_party_size: ' +
+      'las personas de la mesa las pide el agente de reservas.',
+  });
 };
 
 /** ≥2 hits: el cliente debe elegir antes de add (mismo turno ReAct). */
@@ -1037,7 +1066,9 @@ export const suggestDishesForPartySizeTool = new DynamicStructuredTool<
   name: 'suggest_dishes_for_party_size',
   description:
     'Lista platos del menú cuyo serves_people encaja con N personas de una RESERVA de mesa. ' +
-    'Usala SOLO en FAQ mid-reserva o cuando el cliente pregunta qué platos sirven/convienen para la mesa/reserva. ' +
+    'Usala SOLO con sesión de reserva viva: FAQ mid-reserva o "Mesa en borrador: N personas" en [ESTADO DEL CLIENTE]. ' +
+    'Si el cliente pregunta por platos de una mesa/reserva y NO hay sesión, primero start_reservation_session(reason) ' +
+    '(esta tool devuelve reservation_session_required en ese caso). ' +
     'PROHIBIDO en flujo de pedido (ahí "para N personas" no filtra raciones). ' +
     'Prioriza serves_people exacto; también incluye raciones cercanas (N..N+2).',
   schema: suggestDishesForPartySizeSchema,
@@ -1047,9 +1078,12 @@ export const suggestDishesForPartySizeTool = new DynamicStructuredTool<
     config?: RunnableConfig
   ) => {
     const { businessId, conversationId } = getReactContext(config);
-    // Gate de pedido: en FAQ mid-reserva isPartySizeMissingForOrderingTools es false.
-    const partyGate = await partySizeOrderingGateJson(conversationId);
-    if (partyGate) return partyGate;
+    // Dominio reserva: sin sesión viva se delega en vez de pedir party size de pedido.
+    const sessionRequired = await reservationSessionRequiredJson(
+      conversationId,
+      partySize ?? null
+    );
+    if (sessionRequired) return sessionRequired;
 
     const safeLimit = Math.max(1, Math.min(limit, PRODUCT_SHORTLIST_MAX_LIMIT));
     const kw = keyword?.trim();
