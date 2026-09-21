@@ -85,6 +85,23 @@ function storefrontBackUrls(slug: string, orderId: string) {
 }
 
 /**
+ * Si hay origin, no reusar init_point: la preference vieja pudo crearse sin
+ * `back_urls` (env ausente) y MP deja al cliente en la pantalla de éxito.
+ */
+function shouldReuseStorefrontInitPoint(params: {
+  existingAmount: number;
+  amount: number;
+  initPoint: string | null | undefined;
+  slug: string;
+  orderId: string;
+}): boolean {
+  if (!params.initPoint) return false;
+  if (params.existingAmount !== params.amount) return false;
+  // Con origin → siempre recrear preference con back_urls frescas.
+  return !storefrontBackUrls(params.slug, params.orderId);
+}
+
+/**
  * Checkout Pro para una orden storefront ya creada (PAY-06).
  * Idempotente por order_id + amount; external_reference = orderId.
  */
@@ -122,9 +139,17 @@ export async function createStorefrontOnlineCheckout(params: {
   });
 
   if (existing) {
-    if (existing.amount.toNumber() === amount && existing.init_point) {
-      return {
+    if (
+      shouldReuseStorefrontInitPoint({
+        existingAmount: existing.amount.toNumber(),
+        amount,
         initPoint: existing.init_point,
+        slug,
+        orderId,
+      })
+    ) {
+      return {
+        initPoint: existing.init_point!,
         preferenceId: existing.preference_id ?? '',
         paymentIntentId: existing.id,
         isNew: false,
@@ -194,13 +219,20 @@ export async function createStorefrontOnlineCheckout(params: {
       ];
 
   // null = omitir back_urls (no caer en /payment/success del bot).
+  const backUrls = storefrontBackUrls(slug, orderId);
+  if (!backUrls) {
+    console.warn(
+      '[Payment] STOREFRONT_PUBLIC_ORIGIN ausente: preference storefront sin back_urls',
+      { businessId, orderId, slug }
+    );
+  }
   const pref = await createMpPreference({
     accessToken: provider.accessToken,
     isSandbox: provider.isSandbox,
     externalReference: orderId,
     items,
     businessId,
-    backUrls: storefrontBackUrls(slug, orderId) ?? null,
+    backUrls: backUrls ?? null,
   });
 
   await prisma.payment_intent.update({

@@ -9,3 +9,6 @@ services:
     envVars:
       - key: NODE_VERSION
         value: 22.12.0
+      # Vitrina pública — back_urls MP post-pago (PAY-06)
+      - key: STOREFRONT_PUBLIC_ORIGIN
+        value: https://gesty-admin.vercel.app

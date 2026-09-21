@@ -238,6 +238,61 @@ describe("createStorefrontOnlineCheckout back_urls", () => {
     );
   });
 
+  it("con origin no reusa init_point viejo (recrea preference con back_urls)", async () => {
+    mockedFindFirstIntent.mockResolvedValue({
+      id: INTENT_ID,
+      amount: { toNumber: () => 100 },
+      init_point: "https://mp.test/old-without-back-urls",
+      preference_id: "pref-old"
+    });
+
+    await createStorefrontOnlineCheckout({
+      businessId: BUSINESS_ID,
+      orderId: ORDER_ID,
+      slug: "domingo-sabroson",
+      amount: 100,
+      currency: "ARS",
+      lineItems: [{ id: "i1", title: "Pizza", quantity: 1, unitPrice: 100 }]
+    });
+
+    expect(mockedUpdateIntent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: INTENT_ID },
+        data: expect.objectContaining({ status: "stale" })
+      })
+    );
+    expect(mockedCreatePref).toHaveBeenCalledWith(
+      expect.objectContaining({
+        backUrls: expect.objectContaining({
+          success: expect.stringContaining("payment=success")
+        })
+      })
+    );
+  });
+
+  it("sin origin sí reusa init_point si amount coincide", async () => {
+    envState.STOREFRONT_PUBLIC_ORIGIN = undefined;
+    mockedFindFirstIntent.mockResolvedValue({
+      id: INTENT_ID,
+      amount: { toNumber: () => 100 },
+      init_point: "https://mp.test/old",
+      preference_id: "pref-old"
+    });
+
+    const result = await createStorefrontOnlineCheckout({
+      businessId: BUSINESS_ID,
+      orderId: ORDER_ID,
+      slug: "domingo-sabroson",
+      amount: 100,
+      currency: "ARS",
+      lineItems: [{ id: "i1", title: "Pizza", quantity: 1, unitPrice: 100 }]
+    });
+
+    expect(result?.initPoint).toBe("https://mp.test/old");
+    expect(result?.isNew).toBe(false);
+    expect(mockedCreatePref).not.toHaveBeenCalled();
+  });
+
   it("encodea slug con caracteres especiales", async () => {
     await createStorefrontOnlineCheckout({
       businessId: BUSINESS_ID,
