@@ -47,6 +47,7 @@ import {
   type ReservationDraftData,
 } from '../../../services/reservations/draft.repository';
 import { nextReservationStep } from '../../../services/reservations/nextReservationStep';
+import { clearReservationSessionAfterCancel } from '../../../services/reservationSessionReset.service';
 import { buildListMessageFromButtons } from '../../../whatsappBuilders';
 import { delegateToMainWithDetection } from '../session/delegateToMain';
 import { buildResumeFollowUp } from '../session/buildResumeFollowUp';
@@ -88,11 +89,10 @@ import type { DetectionContext } from '../../../services/ai/detection.service';
 // Helpers: limpiar sesión de reserva
 // ---------------------------------------------------------------------------
 
+/** Cancel / abandon / post-confirm: wipe de sesión de reserva + Ledger. */
+/** Cancel / abandon / post-confirm: wipe de sesión de reserva + Ledger. */
 const clearReservationSession = async (conversationId: string): Promise<void> => {
-  await omitConversationMetadataKeys(conversationId, [
-    'reservation_agent_active',
-    'reservation_draft',
-  ]);
+  await clearReservationSessionAfterCancel(conversationId);
 };
 
 /**
