@@ -473,6 +473,11 @@ const buildSelectFromListPlanFromIds = async (params: {
         description: true,
         serves_people: true,
         menu_item_price: {
+          where: {
+            is_active: true,
+            valid_from: { lte: new Date() },
+            OR: [{ valid_to: null }, { valid_to: { gte: new Date() } }],
+          },
           orderBy: { valid_from: 'desc' },
           take: 1,
           select: { amount: true },

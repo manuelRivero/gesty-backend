@@ -79,6 +79,53 @@ const buildPriceWhere = (currency: string | null, now: Date) => {
 const toButtonTitle = (value: string): string => value.slice(0, 20);
 const toRowDescription = (value: string): string => value.slice(0, 72);
 
+/**
+ * Adjunta el precio activo (moneda del negocio) a resultados de búsqueda RAG.
+ * `searchMenuItemsByKeyword` no joinea `menu_item_price` en el SQL vectorial.
+ */
+async function attachActivePrices(
+  items: MenuItemSearchResult[],
+  businessId: string
+): Promise<MenuItemSearchResult[]> {
+  if (items.length === 0) return items;
+
+  const business = await prisma.business.findUnique({
+    where: { id: businessId },
+    select: { currency_code: true },
+  });
+  const currency = business?.currency_code ?? null;
+  const now = new Date();
+  const priceWhere = buildPriceWhere(currency, now);
+
+  const prices = await prisma.menu_item_price.findMany({
+    where: {
+      menu_item_id: { in: items.map((r) => r.id) },
+      ...priceWhere,
+    },
+    orderBy: { valid_from: 'desc' },
+    select: {
+      menu_item_id: true,
+      amount: true,
+      currency_code: true,
+    },
+  });
+
+  const priceByItem = new Map<string, MenuPrice>();
+  for (const p of prices) {
+    if (!priceByItem.has(p.menu_item_id)) {
+      priceByItem.set(p.menu_item_id, {
+        amount: p.amount,
+        currency_code: p.currency_code,
+      });
+    }
+  }
+
+  return items.map((r) => ({
+    ...r,
+    menu_item_price: priceByItem.has(r.id) ? [priceByItem.get(r.id)!] : [],
+  }));
+}
+
 export class MenuService {
   static async getMenuForCustomer(params: {
     businessId: string;
@@ -315,15 +362,18 @@ export class MenuService {
       (r) => r.distance !== undefined && r.distance < SIMILARITY_THRESHOLD
     );
     
-    let finalResults;
-    
+    let finalResults: MenuItemSearchResult[];
+
     if (filtered.length > 0) {
       finalResults = filtered;
     } else {
       // Fallback inteligente
       finalResults = results.slice(0, 3);
     }
-    return finalResults;
+
+    // El raw SQL de embeddings no joinea precio; sin esto search_products
+    // deja price=null y el LLM suele copiar el monto de otro hit del shortlist.
+    return attachActivePrices(finalResults, businessId);
   }
   static async searchMenuItemsForOrder(params: {
     businessId: string;
