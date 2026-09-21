@@ -108,6 +108,9 @@ describe('botPersonality', () => {
     expect(hybrid).toMatch(/get_products_details_by_ids/i);
     expect(hybrid).toMatch(/FUERA DEL SHORTLIST/i);
     expect(hybrid).toMatch(/salto de foco sin avisar está prohibido/i);
+    expect(hybrid).toMatch(/ola de complementos/i);
+    expect(hybrid).toMatch(/PROHIBIDO present_cart/i);
+    expect(hybrid).toMatch(/elección del candidato tiene prioridad/i);
   });
 
   it('reservas: fuera de catálogo de horario/ambiente pide claridad', () => {

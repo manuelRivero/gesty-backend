@@ -249,6 +249,9 @@ describe('buildContextMessage', () => {
     expect(msg).toContain('get_products_details_by_ids');
     expect(msg).toContain('Fuera del shortlist');
     expect(msg).toContain('Solo con OK explícito buscá fuera');
+    expect(msg).toContain('PRIORIDAD vs tipables de gestión');
+    expect(msg).toMatch(/elección GANA/i);
+    expect(msg).toMatch(/PROHIBIDO present_cart/i);
     expect(msg.endsWith('el de la plancha')).toBe(true);
   });
 
@@ -268,6 +271,8 @@ describe('buildContextMessage', () => {
     expect(msg).toContain('Tipables de gestión ofrecidos');
     expect(msg).toContain('ITEM_NOTE');
     expect(msg).toContain('present_cart');
+    expect(msg).toMatch(/apunta CLARAMENTE/i);
+    expect(msg).toMatch(/NO es VIEW_CART/i);
   });
 
   it('pendingItemNote: prioriza nota y bloquea complementos en contexto', async () => {

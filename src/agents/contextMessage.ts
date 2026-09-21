@@ -143,6 +143,7 @@ export async function buildPendingProductSelectionLines(
       'El mensaje puede ser (a) una elección de cuál quiere, o (b) una pregunta de atributo sobre uno o varios candidatos.',
     `- Candidatos (usá estos productId; no inventes otros): ${labeled.join(' | ')}.`,
     '- Elección con match claro: present_product_cta(ADD_ITEM) o add_cart_item con ese productId. ' +
+      'Incluye "dame N [nombre]", "sumá dos ají…", nombre parcial o ordinal. ' +
       'Elección ambigua: pedí aclaración nombrándolos.',
     '- Pregunta de atributo que NOMBRA un candidato ("el tacu tacu es picante?", "qué trae el lomo"): ' +
       'get_products_details_by_ids de ESE productId; respondé solo de ese plato. ' +
@@ -151,8 +152,11 @@ export async function buildPendingProductSelectionLines(
     '- Fuera del shortlist (pide un plato/variedad que NO matchea ningún candidato): ' +
       'NO busques ni abras otra categoría en este turno. Aclará que entre estas opciones no está; ' +
       'preguntá si quiere que busques en el menú o si prefiere elegir de la lista. Solo con OK explícito buscá fuera.',
-    '- PRIORIDAD: si el mensaje es gestión tipable (menú, ver pedido, modificar, finalizar, nota) ' +
-      'o instrucción de preparación ("poca sal"), NO fuerces add_cart_item del shortlist. ' +
+    '- PRIORIDAD vs tipables de gestión: si el mensaje nombra o pide un candidato ' +
+      '("dame dos ají…", "el de gallina", "sumá 2"), esa elección GANA: add_cart_item / CTA. ' +
+      'PROHIBIDO present_cart solo porque coexisten tipables VIEW_CART / modificar / menú. ' +
+      'Gestión tipable (menú, ver pedido, modificar, finalizar) o nota de preparación ("poca sal") ' +
+      'solo si el mensaje es claramente eso SIN pedir un plato de la lista. ' +
       'Pedir otro plato distinto a los candidatos = fuera del shortlist (arriba).',
   ];
   const q = meta.pendingQuestion?.trim();
@@ -180,7 +184,11 @@ export function buildPendingTipablesManagementLines(meta: {
     '- Tipables de gestión ofrecidos en el mensaje anterior (el cliente puede tiparlos): ' +
       mapped +
       '.',
-    '- Si el mensaje actual apunta a uno de esos tipables, ejecutá esa tool/señal. ' +
+    '- Si el mensaje actual apunta CLARAMENTE a uno de esos tipables (solo "ver pedido", "menú", ' +
+      '"modificar", "finalizar", "nota" sin pedir un plato), ejecutá esa tool/señal. ' +
+      'Si además hay "Selección de producto pendiente" / candidatos y el mensaje nombra o pide ' +
+      'uno de esos platos ("dame dos ají…"): eso NO es VIEW_CART — resolvé la elección con ' +
+      'add_cart_item / CTA; no llames present_cart en su lugar. ' +
       'Para ITEM_NOTE: si solo tipó «nota» sin detalle → start_item_note() y mostrá askMessage ' +
       '(PROHIBIDO add_cart_item / present_complement_suggestions / present_product_cta). ' +
       'Si ya trae plato+nota (ej. "la papa con poca sal"): get_cart → update_item_note ' +
