@@ -121,7 +121,7 @@ describe('switch híbrido → reserva con carrito', () => {
     } as never);
   });
 
-  it('botón confirmar → wipe draft + abre reserva', async () => {
+  it('botón confirmar → wipe draft + abre reserva con entrada fresca (sin payload cancel)', async () => {
     const update = await interactiveSubgraphNode(
       baseState({
         payloadId: CONFIRM_CANCEL_ORDER_FOR_RESERVATION_PAYLOAD,
@@ -139,6 +139,14 @@ describe('switch híbrido → reserva con carrito', () => {
       'pending_switch_to_reservation',
     ]);
     expect(reservationAgentNode).toHaveBeenCalled();
+    const agentArg = vi.mocked(reservationAgentNode).mock.calls[0][0] as {
+      webhookContext?: { payloadId?: string | null; message?: { text?: { body?: string } } };
+      enrichedCtx?: { payloadId?: string | null; message?: { text?: { body?: string } } };
+    };
+    expect(agentArg.webhookContext?.payloadId).toBeNull();
+    expect(agentArg.enrichedCtx?.payloadId).toBeNull();
+    expect(agentArg.webhookContext?.message?.text?.body).toMatch(/reserva de mesa/i);
+    expect(agentArg.enrichedCtx?.message?.text?.body).toMatch(/reserva de mesa/i);
     expect(update.handlerResult?.content).toBe('¿Para cuántos?');
   });
 
@@ -155,7 +163,7 @@ describe('switch híbrido → reserva con carrito', () => {
     expect(String(update.handlerResult?.content)).toMatch(/seguimos con tu pedido/i);
   });
 
-  it('tipable "sí" → wipe + reserva', async () => {
+  it('tipable "sí" → wipe + reserva con entrada fresca (no pasa "sí, cancelá")', async () => {
     vi.mocked(extractPendingTurnResponse).mockResolvedValue({
       status: 'fulfilled',
       confidence: 0.95,
@@ -169,6 +177,12 @@ describe('switch híbrido → reserva con carrito', () => {
 
     expect(buildCancelOrderMessage).toHaveBeenCalled();
     expect(reservationAgentNode).toHaveBeenCalled();
+    const agentArg = vi.mocked(reservationAgentNode).mock.calls[0][0] as {
+      webhookContext?: { message?: { text?: { body?: string } } };
+      enrichedCtx?: { message?: { text?: { body?: string } } };
+    };
+    expect(agentArg.webhookContext?.message?.text?.body).toMatch(/reserva de mesa/i);
+    expect(agentArg.enrichedCtx?.message?.text?.body).not.toMatch(/cancelá/i);
     expect(update.handlerResult?.content).toBe('¿Para cuántos?');
     expect(runHybridReactAgent).not.toHaveBeenCalled();
   });

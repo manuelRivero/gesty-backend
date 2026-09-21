@@ -129,6 +129,54 @@ const resolveCheckoutHandoff = async (
 type ReservationHandoff = () => Promise<HandlerResult | null>;
 
 /** Wipe del carrito + abre reservas (confirmación tipable/botón). */
+const RESERVATION_ENTRY_AFTER_ORDER_CANCEL =
+  'Quiero hacer una reserva de mesa.';
+
+/**
+ * Tras confirmar cancelar el pedido para reservar, el webhook aún trae el
+ * botón/tipable de confirmación ("Sí, cancelar"). Si se lo pasamos tal cual a
+ * `reservationAgentNode`, H-09 lo convierte en texto huérfano y el modelo
+ * llama abandon_reservation. Entrada fresca: sin payloadId, mensaje neutro.
+ */
+const sanitizeStateForReservationEntry = (
+  state: AgentState,
+  enrichedBase: EnrichedContext,
+  conversationState: AgentState['workingConversationState']
+): { state: AgentState; enrichedCtx: EnrichedContext } => {
+  const entryMessage = {
+    type: 'text' as const,
+    text: { body: RESERVATION_ENTRY_AFTER_ORDER_CANCEL },
+  };
+  const webhookContext = {
+    ...state.webhookContext!,
+    payloadId: null,
+    message: {
+      ...(state.webhookContext?.message ?? {}),
+      ...entryMessage,
+      interactive: undefined,
+    },
+  };
+  const enrichedCtx: EnrichedContext = {
+    ...enrichedBase,
+    conversationState: conversationState ?? enrichedBase.conversationState,
+    payloadId: null,
+    message: {
+      ...(enrichedBase.message ?? {}),
+      ...entryMessage,
+      interactive: undefined,
+    },
+  };
+  return {
+    state: {
+      ...state,
+      webhookContext: webhookContext as AgentState['webhookContext'],
+      workingConversationState: conversationState,
+      enrichedCtx: enrichedCtx as unknown as AgentState['enrichedCtx'],
+    },
+    enrichedCtx,
+  };
+};
+
 const openReservationAfterCartCancel = async (
   state: AgentState,
   workingConversationState: AgentState['workingConversationState'],
@@ -162,15 +210,18 @@ const openReservationAfterCartCancel = async (
     };
   }
 
-  const enrichedCtx: EnrichedContext = {
-    ...enrichedBase,
-    conversationState: refreshed,
-  };
-  const update = await reservationAgentNode({
-    ...state,
-    workingConversationState: refreshed,
-    enrichedCtx: enrichedCtx as unknown as AgentState['enrichedCtx'],
-  });
+  const { state: entryState } = sanitizeStateForReservationEntry(
+    state,
+    enrichedBase,
+    refreshed
+  );
+  console.log(
+    JSON.stringify({
+      event: '[switch-to-reservation] open_reservation_fresh_entry',
+      conversationId: conversation.id,
+    })
+  );
+  const update = await reservationAgentNode(entryState);
 
   return {
     handlerResult: update.handlerResult ?? {
