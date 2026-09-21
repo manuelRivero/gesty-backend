@@ -203,7 +203,9 @@ describe('switch híbrido → reserva con carrito', () => {
     );
 
     expect(update.handlerResult?.isInteractive).toBe(true);
-    const content = update.handlerResult?.content as { body?: { text?: string } };
-    expect(content.body?.text).toContain(SWITCH_TO_RESERVATION_QUESTION);
+    const content = update.handlerResult?.content as {
+      interactive?: { body?: { text?: string } };
+    };
+    expect(content.interactive?.body?.text).toContain(SWITCH_TO_RESERVATION_QUESTION);
   });
 });

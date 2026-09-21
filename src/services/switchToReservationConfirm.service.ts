@@ -107,31 +107,36 @@ export async function extractSwitchToReservationPending(userMessage: string) {
 
 export function buildSwitchToReservationConfirmMessage(): WhatsAppInteractiveMessage {
   return {
-    type: 'button',
-    body: {
-      text: formatBotUserMessage(
-        'Pedido en curso',
-        '🛒',
-        `${SWITCH_TO_RESERVATION_QUESTION}\n\nSi cancelás, borramos el carrito y armamos la reserva. Si no, seguimos con tu pedido.`
-      ),
-    },
-    action: {
-      buttons: [
-        {
-          type: 'reply',
-          reply: {
-            id: CONFIRM_CANCEL_ORDER_FOR_RESERVATION_PAYLOAD,
-            title: 'Sí, cancelar',
+    type: 'interactive',
+    interactive: {
+      type: 'button',
+      header: { type: 'text', text: 'Pedido en curso' },
+      body: {
+        text: formatBotUserMessage(
+          'Pedido en curso',
+          '🛒',
+          `${SWITCH_TO_RESERVATION_QUESTION}\n\nSi cancelás, borramos el carrito y armamos la reserva. Si no, seguimos con tu pedido.`
+        ),
+      },
+      footer: { text: 'Reserva o pedido' },
+      action: {
+        buttons: [
+          {
+            type: 'reply',
+            reply: {
+              id: CONFIRM_CANCEL_ORDER_FOR_RESERVATION_PAYLOAD,
+              title: 'Sí, cancelar',
+            },
           },
-        },
-        {
-          type: 'reply',
-          reply: {
-            id: DECLINE_SWITCH_TO_RESERVATION_PAYLOAD,
-            title: 'No, seguir pedido',
+          {
+            type: 'reply',
+            reply: {
+              id: DECLINE_SWITCH_TO_RESERVATION_PAYLOAD,
+              title: 'No, seguir pedido',
+            },
           },
-        },
-      ],
+        ],
+      },
     },
   };
 }

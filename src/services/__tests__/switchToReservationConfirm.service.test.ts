@@ -83,8 +83,9 @@ describe('switchToReservationConfirm.service', () => {
 
   it('buildSwitchToReservationConfirmMessage usa payloads de botón', () => {
     const msg = buildSwitchToReservationConfirmMessage();
-    expect(msg.type).toBe('button');
-    const ids = msg.action.buttons.map((b) => b.reply.id);
+    expect(msg.type).toBe('interactive');
+    expect(msg.interactive.type).toBe('button');
+    const ids = msg.interactive.action.buttons.map((b) => b.reply.id);
     expect(ids).toEqual([
       CONFIRM_CANCEL_ORDER_FOR_RESERVATION_PAYLOAD,
       DECLINE_SWITCH_TO_RESERVATION_PAYLOAD,
