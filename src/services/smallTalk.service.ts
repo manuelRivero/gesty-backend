@@ -52,7 +52,7 @@ export function welcomeShortcutBullet(button: {
 }): string {
   switch (button.payload) {
     case 'ORDER_FOOD':
-      return shortcutBullet('Hacer', 'pedido');
+      return '• Hacer *pedido*';
     case 'VIEW_MENU':
       return shortcutBullet('Menú');
     case 'BUSINESS_HOURS':

@@ -70,7 +70,9 @@ export const MANAGEMENT_TOOL_HINT: Record<TipableManagementAction, string> = {
     'con pendingItemNote activo: PROHIBIDO add/complementos',
   ORDER_FOOD:
     'el cliente quiere armar pedido: si falta el Fact de personas, pedí el número ' +
-    'con el título *¿Para cuántas personas?* y save_party_size; recién después menú / shortlist',
+    'con el título *¿Para cuántas personas?* y save_party_size; ' +
+    'después invitá a tipar el nombre de un plato (lo buscás) O ver menú/categoría — ' +
+    'PROHIBIDO listar todas las categorías en prosa',
   CANCEL_TARGET_DRAFT: 'cancel_order(target: "draft") — cancela solo el carrito en armado',
   CANCEL_TARGET_ORDER:
     'cancel_order(target: "order") — cancela solo el pedido ya creado',

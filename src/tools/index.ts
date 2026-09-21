@@ -65,6 +65,7 @@ import {
   resolvePostAddComplementOpportunity,
   type PostAddComplementOpportunity,
 } from '../services/intent/opportunities.service';
+import { clearComplementSuggestionSnapshot } from '../services/complementSuggestions.service';
 import {
   setPendingVariation,
   clearPendingVariation,
@@ -2312,7 +2313,16 @@ export const savePartySizeTool = new DynamicStructuredTool<
   func: async ({ count }: SavePartySizeInput, _runManager, config?: RunnableConfig) => {
     const { conversationId } = getReactContext(config);
     await patchConversationMetadata(conversationId, partySizeMetadataFields(count));
-    return toJson({ success: true, partySize: count });
+    return toJson({
+      success: true,
+      partySize: count,
+      followUp: {
+        instruction:
+          'Si no hay plato/shortlist pendiente: invitá a tipar el nombre de un plato ' +
+          '(lo buscás) o a ver el menú/categoría. Preferí present_product_cta(VIEW_MENU). ' +
+          'PROHIBIDO listar todas las categorías en prosa.',
+      },
+    });
   },
 });
 
@@ -2813,10 +2823,11 @@ export const planOrderLinesTool = new DynamicStructuredTool<
   name: 'plan_order_lines',
   description:
     'Partí el pedido del cliente en líneas cuando el mensaje trae 2 o más platos/categorías distintos ' +
-    '(ej. "quiero 3 lomos, 2 ceviches y una bebida" → 3 líneas). NO uses esta tool si es un solo plato ' +
-    '(aunque pida varias unidades del mismo, ej. "2 pizzas" es 1 línea, no la necesitás). ' +
-    'Llamala UNA sola vez por mensaje, ANTES de resolver ningún producto. Después de llamarla, trabajá ' +
-    'SOLO la línea activa: si el hint nombra un plato, search_products(keyword=hint entero); ' +
+    '(ej. "quiero 3 lomos, 2 ceviches y una bebida" → 3 líneas). También si hay ola de complemento ' +
+    'viva y nombra 2+ candidatos de esa lista ("1 adobo y 1 ají"): misma tool; cierra la ola y abre cola. ' +
+    'NO uses esta tool si es un solo plato (aunque pida varias unidades del mismo, ej. "2 pizzas" es 1 línea, ' +
+    'no la necesitás). Llamala UNA sola vez por mensaje, ANTES de resolver ningún producto. Después de ' +
+    'llamarla, trabajá SOLO la línea activa: si el hint nombra un plato, search_products(keyword=hint entero); ' +
     'si es sección/rol ("algo de beber", "postre"), get_categories + present_category o ' +
     'find_products_by_filter(categoryTag). PROHIBIDO containsIngredient recortando un nombre de plato. ' +
     'Las demás líneas esperan en cola, no las menciones como shortlist.',
@@ -2837,6 +2848,13 @@ export const planOrderLinesTool = new DynamicStructuredTool<
       lines,
       sourceMessage: lines.map((l) => l.hint).join(', '),
     });
+    // Multi-línea pisa la ola de complemento: la cola manda; sin soft-gate ni
+    // otra opportunity hasta vaciar pendingOrderLines.
+    await omitConversationMetadataKeys(conversationId, [
+      ...PENDING_PRODUCT_SELECTION_KEYS,
+      SHORTLIST_AWAITING_CHOICE_KEY,
+    ]);
+    await clearComplementSuggestionSnapshot(conversationId);
     const active = getActiveOrderLine(pending);
     return toJson({
       success: true,

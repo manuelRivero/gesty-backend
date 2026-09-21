@@ -275,6 +275,24 @@ describe('buildContextMessage', () => {
     expect(msg).toMatch(/NO es VIEW_CART/i);
   });
 
+  it('ola de complemento: bridge multi-candidato → plan_order_lines', async () => {
+    findFirstMock.mockResolvedValue(null);
+    const msg = await buildContextMessage(
+      makeCtx({
+        userMsg: 'Agrega 1 adobo y 1 ají de gallina',
+        metadata: {
+          pendingProductSelection: true,
+          pendingComplementSelection: true,
+          pendingQuestion: '¿Querés sumar algo más?',
+          candidateProductIds: ['prod-adobo', 'prod-aji'],
+        },
+      })
+    );
+    expect(msg).toContain('Ola de complemento viva');
+    expect(msg).toMatch(/DOS O MÁS candidatos/i);
+    expect(msg).toContain('plan_order_lines');
+  });
+
   it('pendingItemNote: prioriza nota y bloquea complementos en contexto', async () => {
     findFirstMock.mockResolvedValue(null);
     const msg = await buildContextMessage(

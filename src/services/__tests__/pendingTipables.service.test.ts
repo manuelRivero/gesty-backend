@@ -55,6 +55,7 @@ describe('pendingTipables', () => {
     });
     const joined = lines.join('\n');
     expect(joined).toMatch(/ORDER_FOOD.*save_party_size|ORDER_FOOD.*personas/i);
+    expect(joined).toMatch(/tipar|nombre de un plato|PROHIBIDO listar/i);
     expect(joined).toMatch(/CANCEL_TARGET_DRAFT.*cancel_order.*draft/i);
     expect(joined).toMatch(/CANCEL_TARGET_ORDER.*cancel_order.*order/i);
   });

@@ -8,7 +8,7 @@ describe('smallTalk welcome shortcuts', () => {
   it('mapea payloads base a atajos tipables', () => {
     expect(
       welcomeShortcutBullet({ title: 'Hacer un pedido', payload: 'ORDER_FOOD' })
-    ).toBe('• *Hacer* pedido');
+    ).toBe('• Hacer *pedido*');
     expect(welcomeShortcutBullet({ title: 'Ver menú', payload: 'VIEW_MENU' })).toBe(
       '• *Menú*'
     );
@@ -36,7 +36,7 @@ describe('smallTalk welcome shortcuts', () => {
     ]);
     expect(bullets).toEqual([
       '• Ver *pedido*',
-      '• *Hacer* pedido',
+      '• Hacer *pedido*',
       '• *Menú*',
       '• *Reservar* mesa',
       '• *Editar* dirección',

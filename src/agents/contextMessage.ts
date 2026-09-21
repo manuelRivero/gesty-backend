@@ -149,7 +149,10 @@ export async function buildPendingProductSelectionLines(
       'El mensaje puede ser (a) una elección de cuál quiere, o (b) una pregunta de atributo sobre uno o varios candidatos.',
     ...(isComplementOla
       ? [
-          '- Ola de complemento viva: add_cart_item SOLO si el mensaje NOMBRA un candidato de la lista. ' +
+          '- Ola de complemento viva: si el mensaje nombra UN solo candidato → add_cart_item ' +
+            '(o CTA) con ese productId. Si nombra DOS O MÁS candidatos distintos de la lista ' +
+            '(ej. "1 adobo y 1 ají"): plan_order_lines(lines) ANTES de cualquier add — misma cola ' +
+            'que PEDIDO MULTI-LÍNEA; después trabajá solo la línea activa. ' +
             'Rechazo blando ("estoy bien así", "así está bien", "nada más", "solo eso", "no gracias"): ' +
             'mark_complement_refused() y present_cart — PROHIBIDO inventar add_cart_item.',
         ]
