@@ -705,10 +705,13 @@ export const startReservationSessionTool = new DynamicStructuredTool<
   name: 'start_reservation_session',
   description:
     'Delega al agente de reservas cuando el cliente quiere RESERVAR una mesa o gestionar/ver una reserva ' +
-    '("quiero reservar", "tienen mesa para el sábado?", "mesa para 4", "ver mi reserva", "cancelar mi reserva"). ' +
+    '("quiero reservar", "tienen mesa para el sábado?", "mesa para 4", "ver mi reserva", "cancelar mi reserva") ' +
+    'O cuando pregunta platos/menú/comida ENMARCADA EN RESERVA ("qué platos sirven para las reservas", ' +
+    '"para reservar sirven pollo?", "qué conviene para la mesa al reservar"). ' +
     'NO gestiones vos fecha, horario, personas ni ambiente de la reserva: solo delegá con esta tool. ' +
-    'No la uses para pedidos de comida (eso es carrito/menú). ' +
-    'Si ya hay sesión de reserva activa (error reservation_session_already_active), respondé la consulta del usuario con tools de menú/precio; no reintentes esta tool.',
+    'NO uses save_party_size de pedido para esas preguntas. ' +
+    'No la uses para pedidos de comida sin marco de reserva (eso es carrito/menú). ' +
+    'Si ya hay sesión de reserva activa (error reservation_session_already_active), respondé la consulta del usuario con tools de menú/precio (suggest_dishes_for_party_size si aplica); no reintentes esta tool.',
   schema: startReservationSessionSchema,
   func: async (
     { reason }: StartReservationSessionInput,

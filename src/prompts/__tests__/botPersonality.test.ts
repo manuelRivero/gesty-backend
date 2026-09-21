@@ -127,12 +127,23 @@ describe('botPersonality', () => {
     expect(reservation).toMatch(/save_reservation_slot\(slotId\)/);
   });
 
-  it('reservas: menú mid-reserva → delegate_to_main YA sin transición en prosa', () => {
+  it('reservas: menú mid-reserva → delegate_to_main (party size primero si falta)', () => {
     const reservation = buildReservationAgentSystemPrompt();
     expect(reservation).toMatch(/matambre a la pizza/i);
     expect(reservation).toMatch(/delegate_to_main YA/i);
     expect(reservation).toMatch(/No redactes una respuesta de transición/i);
-    expect(reservation).toMatch(/ANTES de save_reservation_\*/i);
+    expect(reservation).toMatch(/save_reservation_party_size primero/i);
+    expect(reservation).toMatch(/MENÚ PARA LA MESA/i);
+    expect(reservation).toMatch(/suggest_dishes_for_party_size/i);
+  });
+
+  it('hybrid: platos enmarcados en reserva → start_reservation_session, no save_party_size', () => {
+    const hybrid = buildHybridAgentSystemPrompt(undefined, {
+      reservationDelegationEnabled: true,
+    });
+    expect(hybrid).toMatch(/qué platos sirven para las reservas/i);
+    expect(hybrid).toMatch(/PROHIBIDO save_party_size/i);
+    expect(hybrid).toMatch(/suggest_dishes_for_party_size/i);
   });
 
   it('reservas: ambiente fuera de catálogo aclara y no inventa id', () => {

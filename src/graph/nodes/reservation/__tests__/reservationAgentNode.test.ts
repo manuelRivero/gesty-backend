@@ -12,6 +12,11 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+const { omitConversationMetadataKeysMock, patchConversationMetadataMock } = vi.hoisted(() => ({
+  omitConversationMetadataKeysMock: vi.fn(),
+  patchConversationMetadataMock: vi.fn(),
+}));
+
 vi.mock('../../../../lib/prisma', () => ({
   prisma: {
     conversation_state: { findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
@@ -20,8 +25,10 @@ vi.mock('../../../../lib/prisma', () => ({
 }));
 
 vi.mock('../../../../repositories/conversationState.repository', () => ({
-  omitConversationMetadataKeys: vi.fn(),
-  patchConversationMetadata: vi.fn(),
+  omitConversationMetadataKeys: (...args: unknown[]) =>
+    omitConversationMetadataKeysMock(...args),
+  patchConversationMetadata: (...args: unknown[]) =>
+    patchConversationMetadataMock(...args),
 }));
 
 vi.mock('../../../../repositories/reservation.repository', () => ({
@@ -83,6 +90,11 @@ vi.mock('../../../../services/ai/detection.service', () => ({
 }));
 vi.mock('../../../../repositories', () => ({
   findOrCreateConversationState: vi.fn(),
+  omitConversationMetadataKeys: (...args: unknown[]) =>
+    omitConversationMetadataKeysMock(...args),
+  patchConversationMetadata: (...args: unknown[]) =>
+    patchConversationMetadataMock(...args),
+  updateConversationState: vi.fn(),
 }));
 
 import { prisma } from '../../../../lib/prisma';
@@ -110,8 +122,8 @@ import type { AgentState } from '../../../state';
 
 const mockedFindFirst = prisma.conversation_state.findFirst as unknown as ReturnType<typeof vi.fn>;
 const mockedEnvFindUnique = prisma.environment.findUnique as unknown as ReturnType<typeof vi.fn>;
-const mockedPatch = patchConversationMetadata as unknown as ReturnType<typeof vi.fn>;
-const mockedOmit = omitConversationMetadataKeys as unknown as ReturnType<typeof vi.fn>;
+const mockedPatch = patchConversationMetadataMock;
+const mockedOmit = omitConversationMetadataKeysMock;
 const mockedSlot = fetchActiveReservationSlotById as unknown as ReturnType<typeof vi.fn>;
 const mockedSlotsForDate = fetchReservationSlotsForBusinessDate as unknown as ReturnType<typeof vi.fn>;
 const mockedEnvs = findActiveEnvironmentsByBusinessId as unknown as ReturnType<typeof vi.fn>;
@@ -406,26 +418,19 @@ describe('reservationAgentNode — tipables fulfilled en el nodo (§3.11)', () =
     expect(result.handlerResult?.isInteractive).toBe(true);
   });
 
-  it('horario en prosa fulfilled sin partySize → persiste y sigue al ReAct', async () => {
-    const draftWaitingSlot = { date: '20/08/2026' };
-    const slotRow = {
-      id: 'slot-19',
-      start_time: '19:00',
-      end_time: '20:30',
-      is_active: true,
-    };
+  it('sin partySize el paso es personas: no interpreta horario como slot tipable', async () => {
+    const draftWaitingParty = { date: '20/08/2026' };
     mockedEnvs.mockResolvedValue([]);
-    mockedSlotsForDate.mockResolvedValue([slotRow]);
-    mockedFindFirst.mockResolvedValue({ metadata: { reservation_draft: draftWaitingSlot } });
-    mockedExtractSlot.mockResolvedValue({
+    mockedFindFirst.mockResolvedValue({ metadata: { reservation_draft: draftWaitingParty } });
+    mockedExtractParty.mockResolvedValue({
       status: 'fulfilled',
-      value: { slotId: 'slot-19' },
+      value: { count: 6 },
       confidence: 0.95,
       source: 'llm',
       reason: null,
     });
     mockedRunAgent.mockResolvedValue({
-      text: '🤖\n\n¿Para cuántas personas?',
+      text: '🤖\n\n¿Para qué día?',
       signals: idleSignals,
     });
 
@@ -435,21 +440,19 @@ describe('reservationAgentNode — tipables fulfilled en el nodo (§3.11)', () =
         message: { type: 'text', text: { body: 'a las 19' } },
       } as never,
       workingConversationState: {
-        metadata: { reservation_agent_active: true, reservation_draft: draftWaitingSlot },
+        metadata: { reservation_agent_active: true, reservation_draft: draftWaitingParty },
       } as never,
     });
 
     await reservationAgentNode(state);
 
+    expect(mockedExtractSlot).not.toHaveBeenCalled();
+    expect(mockedExtractParty).toHaveBeenCalled();
     expect(mockedPatch).toHaveBeenCalledWith(
       'conv-1',
       expect.objectContaining({
-        reservation_draft: expect.objectContaining({ slotId: 'slot-19', time: '19:00' }),
+        reservation_draft: expect.objectContaining({ partySize: 6 }),
       })
-    );
-    expect(mockedRunAgent).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ skipPendingExtraction: true })
     );
   });
 

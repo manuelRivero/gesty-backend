@@ -9,6 +9,10 @@
  * El Fact de horario es `slotId` — es lo que valida el nodo al confirmar
  * (`RESERVATION_CONFIRM` busca el slot por id). `time`/`endTime` son
  * derivados para mostrar, no la fuente de verdad.
+ *
+ * Orden (RES-05): personas → fecha → horario → ambiente → confirm.
+ * Personas primero habilita tipable "para 6" y sugerencia de platos por
+ * `serves_people` sin mezclar con party size de pedido.
  */
 
 export type ReservationStep =
@@ -41,21 +45,21 @@ export function nextReservationStep(
   state: ReservationStepState,
   config: ReservationStepConfig
 ): ReservationStep {
+  if (state.partySize == null) return 'party_size';
   if (!state.date) return 'date';
   if (!state.slotId) return 'slot';
-  if (state.partySize == null) return 'party_size';
   if (config.hasEnvironments && state.environmentId === undefined) return 'environment';
   return 'confirm';
 }
 
 export const expectedActionForReservationStep = (step: ReservationStep): string => {
   switch (step) {
+    case 'party_size':
+      return 'aceptar cantidad en prosa; save_reservation_party_size(count) / tipable party_size';
     case 'date':
       return 'pedir fecha en prosa; resolverla vos y llamar save_reservation_date(date, weekday?) cuando la indique';
     case 'slot':
       return 'aceptar horario en prosa o lista; get_available_slots(date) si aún no se mostró; save_reservation_slot(id) / tipable select_slot';
-    case 'party_size':
-      return 'aceptar cantidad en prosa; save_reservation_party_size(count) / tipable party_size';
     case 'environment':
       return 'aceptar ambiente en prosa o lista; save_reservation_environment(id|null) / tipable select_environment';
     case 'confirm':

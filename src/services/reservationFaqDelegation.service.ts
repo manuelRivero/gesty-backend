@@ -74,6 +74,10 @@ export const buildReservationFaqDelegationContextLines = (
     lines.push(
       `- Mesa en borrador: ${party} personas (contexto de la reserva — NO son personas del pedido; no pidas party size de pedido, no armes carrito, no ofrezcas sumar platos al pedido en prosa)`
     );
+    lines.push(
+      `- Si preguntan qué platos sirven/convienen para la mesa o la reserva: suggest_dishes_for_party_size(partySize=${party})` +
+        ' (keyword opcional si nombraron un plato). Respondé con raciones (serves_people); no armes pedido.'
+    );
   } else {
     lines.push(
       '- Mesa en borrador: sin party size aún (NO pidas personas del pedido, no armes carrito, no ofrezcas sumar platos al pedido en prosa)'

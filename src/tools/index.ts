@@ -1007,6 +1007,117 @@ export const getProductsDetailsByIdsTool = new DynamicStructuredTool<
 });
 
 // ---------------------------------------------------------------------------
+// suggest_dishes_for_party_size — RES-05 (FAQ mid-reserva / mesa)
+// ---------------------------------------------------------------------------
+
+const suggestDishesForPartySizeSchema = z.object({
+  partySize: z
+    .number()
+    .int()
+    .min(1)
+    .max(99)
+    .describe(
+      'Personas de la mesa (reservation_draft.partySize / "Mesa en borrador"). NO es party size de pedido.'
+    ),
+  keyword: z
+    .string()
+    .nullable()
+    .optional()
+    .describe(
+      'Opcional: plato o palabra a filtrar (ej. "pollo"). Substring case-insensitive en nombre/ingredientes.'
+    ),
+  limit: z.number().int().positive().max(PRODUCT_SHORTLIST_MAX_LIMIT).default(10),
+});
+type SuggestDishesForPartySizeInput = z.infer<typeof suggestDishesForPartySizeSchema>;
+
+export const suggestDishesForPartySizeTool = new DynamicStructuredTool<
+  typeof suggestDishesForPartySizeSchema,
+  SuggestDishesForPartySizeInput
+>({
+  name: 'suggest_dishes_for_party_size',
+  description:
+    'Lista platos del menú cuyo serves_people encaja con N personas de una RESERVA de mesa. ' +
+    'Usala SOLO en FAQ mid-reserva o cuando el cliente pregunta qué platos sirven/convienen para la mesa/reserva. ' +
+    'PROHIBIDO en flujo de pedido (ahí "para N personas" no filtra raciones). ' +
+    'Prioriza serves_people exacto; también incluye raciones cercanas (N..N+2).',
+  schema: suggestDishesForPartySizeSchema,
+  func: async (
+    { partySize, keyword, limit }: SuggestDishesForPartySizeInput,
+    _runManager,
+    config?: RunnableConfig
+  ) => {
+    const { businessId, conversationId } = getReactContext(config);
+    // Gate de pedido: en FAQ mid-reserva isPartySizeMissingForOrderingTools es false.
+    const partyGate = await partySizeOrderingGateJson(conversationId);
+    if (partyGate) return partyGate;
+
+    const safeLimit = Math.max(1, Math.min(limit, PRODUCT_SHORTLIST_MAX_LIMIT));
+    const kw = keyword?.trim();
+
+    const items = await prisma.menu_item.findMany({
+      where: {
+        business_id: businessId,
+        is_available: true,
+        serves_people: { not: null, gte: partySize, lte: partySize + 2 },
+        menu_category: { is_active: true },
+        ...(kw
+          ? {
+              OR: [
+                { name: { contains: kw, mode: 'insensitive' as const } },
+                { ingredients: { contains: kw, mode: 'insensitive' as const } },
+              ],
+            }
+          : {}),
+      },
+      orderBy: [{ serves_people: 'asc' }, { is_featured: 'desc' }, { name: 'asc' }],
+      take: safeLimit * 2,
+      select: {
+        id: true,
+        name: true,
+        serves_people: true,
+        is_featured: true,
+        variations: true,
+        menu_category: { select: { id: true, name: true, category_tag: true } },
+        menu_item_price: {
+          where: {
+            is_active: true,
+            valid_from: { lte: new Date() },
+            OR: [{ valid_to: null }, { valid_to: { gte: new Date() } }],
+          },
+          orderBy: { valid_from: 'desc' },
+          take: 1,
+          select: { amount: true, currency_code: true },
+        },
+      },
+    });
+
+    const ranked = [...items].sort((a, b) => {
+      const da = Math.abs((a.serves_people ?? 99) - partySize);
+      const db = Math.abs((b.serves_people ?? 99) - partySize);
+      if (da !== db) return da - db;
+      return a.name.localeCompare(b.name, 'es');
+    });
+    const shortlisted = ranked.slice(0, safeLimit);
+
+    return toJson({
+      success: true,
+      partySize,
+      count: shortlisted.length,
+      instruction:
+        shortlisted.length === 0
+          ? 'No hay platos con ración cercana a N. Decilo con claridad; ofrecé buscar un plato por nombre (search_products) o seguir la reserva.'
+          : 'Mencioná nombre + serves_people. No armes pedido ni present_product_cta de compra; es dato para la mesa. El resume de reserva sigue después.',
+      items: shortlisted.map((item) =>
+        toShortlistItem({
+          ...item,
+          menu_category: item.menu_category,
+        })
+      ),
+    });
+  },
+});
+
+// ---------------------------------------------------------------------------
 // check_product_availability
 // ---------------------------------------------------------------------------
 
@@ -3356,6 +3467,7 @@ export const allReactTools = [
   getBusinessHoursTool,
   getRecentMessagesTool,
   findProductsByFilterTool,
+  suggestDishesForPartySizeTool,
   checkProductAvailabilityTool,
   getComplementarySuggestionsTool,
   getBusinessInfoTool,
