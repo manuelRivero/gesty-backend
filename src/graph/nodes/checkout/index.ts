@@ -64,10 +64,12 @@ import {
   logCheckoutGoal,
 } from '../../../services/checkout/checkoutGoal.service';
 import { buildOrderConfirmationMessage } from '../../../services/checkout/orderConfirmationMessage';
-import { resetActiveDraftCheckoutFacts } from '../../../services/checkout/draftCheckoutFacts';
+import { isCancelOrderHandback } from '../../../services/checkout/cancelOrderHandback';
+import { buildCancelOrderMessage } from '../../../services/order.service';
 import { buildResumeFollowUp } from '../session/buildResumeFollowUp';
 import { buildDiscardedReentryMessage } from '../session/discardedSignalMessage';
 import { withOrphanPayloadAsText } from '../session/orphanPayload';
+import type { conversation } from '@prisma/client';
 
 // ---------------------------------------------------------------------------
 // Mensaje de botones de pago (dinámico según config del local)
@@ -503,6 +505,51 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
   }
 
   if (signals.handback) {
+    const userMessage = handbackState?.webhookContext?.message?.text?.body?.trim() ?? '';
+    // Cancelar pedido en checkout = mismo efecto que CANCEL_ORDER (wipe carrito +
+    // sesión de pedido). No dejar el wipe al ReAct del híbrido.
+    if (
+      isCancelOrderHandback({
+        reason: signals.handbackReason,
+        userMessage,
+      })
+    ) {
+      const conversation = enrichedCtx.conversation as conversation;
+      console.log(
+        JSON.stringify({
+          event: '[checkout-agent] handback_cancel_order_wipe',
+          reason: signals.handbackReason,
+          conversationId,
+        })
+      );
+      const result = await buildCancelOrderMessage(
+        conversation,
+        businessId,
+        customerPhone
+      );
+      if (result) {
+        if (typeof result === 'string') {
+          return {
+            content: result,
+            isInteractive: false,
+            skipBodyHumanization: true,
+          };
+        }
+        return {
+          content: result,
+          isInteractive: true,
+          skipBodyHumanization: true,
+        };
+      }
+      await clearCheckoutSession(conversationId);
+      return {
+        content:
+          '🤖\n\n*Pedido cancelado* ❌\n\nTu pedido fue cancelado. Cuando quieras, armamos uno nuevo.',
+        isInteractive: false,
+        skipBodyHumanization: true,
+      };
+    }
+
     await clearCheckoutSession(conversationId);
     console.log(
       JSON.stringify({
@@ -512,7 +559,6 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
       })
     );
 
-    const userMessage = handbackState?.webhookContext?.message?.text?.body?.trim() ?? '';
     const detectionContext = handbackState?.detectionContext;
     let hybridResult: HandlerResult | null = null;
     if (detectionContext && userMessage) {
@@ -769,12 +815,27 @@ export const checkoutAgentNode = async (
   }
 
   if (payloadId === 'CANCEL_CHECKOUT') {
-    await resetActiveDraftCheckoutFacts(business.id, phone);
+    // Wipe completo del dominio pedido (sesión checkout + carrito + metadata),
+    // mismo efecto que CANCEL_ORDER / "cancelar pedido" tipable.
+    const result = await buildCancelOrderMessage(
+      conversation,
+      business.id,
+      phone
+    );
+    if (result) {
+      return {
+        handlerResult:
+          typeof result === 'string'
+            ? { ...textResponse(result), skipBodyHumanization: true }
+            : { content: result, isInteractive: true, skipBodyHumanization: true },
+        dataCollectionDelegated: true,
+      };
+    }
     await clearCheckoutSession(conversationId);
     return {
       handlerResult:
         textResponse(
-          '🤖\n\n*Checkout cancelado* 👋\n\nTu pedido sigue guardado en el carrito. Avisame cuando quieras retomarlo.'
+          '🤖\n\n*Pedido cancelado* ❌\n\nTu pedido fue cancelado. Cuando quieras, armamos uno nuevo.'
         ) ?? undefined,
       dataCollectionDelegated: true,
     };
