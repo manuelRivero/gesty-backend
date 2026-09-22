@@ -180,6 +180,42 @@ const reservationSessionRequiredFromMeta = (
   });
 };
 
+/**
+ * Turno de dominio reserva: las tools informativas responden el dato y no
+ * siembran estado de pedido.
+ *
+ * `search_products` / `find_products_by_filter` escribían `pendingProductSelection`
+ * + candidatos y ordenaban `present_product_cta(SELECT_FROM_LIST)` también durante
+ * FAQ mid-reserva. Ese pending sobrevive turnos y termina en un `add_cart_item` que
+ * el cliente nunca pidió (evidencia 21/9: “Sumé 1× Ceviche Clásico” mientras el
+ * cliente reservaba mesa para 6). El dato del menú se responde igual; el pending y
+ * la UI de selección pertenecen al dominio pedido.
+ *
+ * Lee el estado una sola vez: el gate de personas ya lo necesitaba.
+ */
+const readOrderingTurnScope = async (
+  conversationId: string
+): Promise<{ partyGate: string | null; reservationTurn: boolean }> => {
+  const state = await findOrCreateConversationState(conversationId);
+  return {
+    partyGate: isPartySizeMissingForOrderingTools(state.metadata)
+      ? toJson(PARTY_SIZE_REQUIRED_TOOL_PAYLOAD)
+      : null,
+    reservationTurn: isReservationFaqMode(state.metadata),
+  };
+};
+
+/** Shortlist en turno de pedido: elegir primero, add después. */
+const SHORTLIST_CHOICE_INSTRUCTION =
+  'Hay varias opciones: llamá present_product_cta(SELECT_FROM_LIST) con estos ids. ' +
+  'PROHIBIDO add_cart_item hasta que el cliente elija en un turno siguiente.';
+
+/** Shortlist en turno de reserva: es un dato de menú, no un paso de pedido. */
+const RESERVATION_MENU_DATA_INSTRUCTION =
+  'Turno de reserva: respondé la consulta con estos datos (nombre, ración, precio) y cerrá. ' +
+  'PROHIBIDO invitar a elegir un plato, armar pedido o sumar al carrito. ' +
+  'Si preguntan qué platos convienen para la mesa, usá suggest_dishes_for_party_size.';
+
 /** ≥2 hits: el cliente debe elegir antes de add (mismo turno ReAct). */
 const markShortlistAwaitingChoice = async (
   conversationId: string,
@@ -248,26 +284,26 @@ export const searchProductsTool = new DynamicStructuredTool<
   schema: searchProductsSchema,
   func: async ({ keyword }: SearchProductsInput, _runManager, config?: RunnableConfig) => {
     const { businessId, conversationId } = getReactContext(config);
-    const partyGate = await partySizeOrderingGateJson(conversationId);
+    const { partyGate, reservationTurn } = await readOrderingTurnScope(conversationId);
     if (partyGate) return partyGate;
     const items = await MenuService.searchMenuItemsByKeyword({ businessId, keyword });
     const shortlisted = items.slice(0, PRODUCT_SHORTLIST_MAX_LIMIT);
-    await markShortlistAwaitingChoice(
-      conversationId,
-      shortlisted.map((i) => i.id),
-      keyword
-    );
+    if (!reservationTurn) {
+      await markShortlistAwaitingChoice(
+        conversationId,
+        shortlisted.map((i) => i.id),
+        keyword
+      );
+    }
     return toJson({
       count: shortlisted.length,
       totalMatches: items.length,
       hasMore: items.length > shortlisted.length,
-      ...(shortlisted.length >= 2
-        ? {
-            instruction:
-              'Hay varias opciones: llamá present_product_cta(SELECT_FROM_LIST) con estos ids. ' +
-              'PROHIBIDO add_cart_item hasta que el cliente elija en un turno siguiente.',
-          }
-        : {}),
+      ...(reservationTurn
+        ? { instruction: RESERVATION_MENU_DATA_INSTRUCTION }
+        : shortlisted.length >= 2
+          ? { instruction: SHORTLIST_CHOICE_INSTRUCTION }
+          : {}),
       items: shortlisted.map((item) =>
         toShortlistItem({
           ...item,
@@ -812,7 +848,7 @@ export const findProductsByFilterTool = new DynamicStructuredTool<
     config?: RunnableConfig
   ) => {
     const { businessId, conversationId } = getReactContext(config);
-    const partyGate = await partySizeOrderingGateJson(conversationId);
+    const { partyGate, reservationTurn } = await readOrderingTurnScope(conversationId);
     if (partyGate) return partyGate;
 
     const ingredientContainsEarly = containsIngredient?.trim();
@@ -911,24 +947,24 @@ export const findProductsByFilterTool = new DynamicStructuredTool<
       }),
     ]);
 
-    await markShortlistAwaitingChoice(
-      conversationId,
-      items.map((i) => i.id),
-      'filtro de menú'
-    );
+    if (!reservationTurn) {
+      await markShortlistAwaitingChoice(
+        conversationId,
+        items.map((i) => i.id),
+        'filtro de menú'
+      );
+    }
 
     return toJson({
       count: items.length,
       totalMatches,
       hasMore: totalMatches > items.length,
       currencyApplied: currency,
-      ...(items.length >= 2
-        ? {
-            instruction:
-              'Hay varias opciones: llamá present_product_cta(SELECT_FROM_LIST) con estos ids. ' +
-              'PROHIBIDO add_cart_item hasta que el cliente elija en un turno siguiente.',
-          }
-        : {}),
+      ...(reservationTurn
+        ? { instruction: RESERVATION_MENU_DATA_INSTRUCTION }
+        : items.length >= 2
+          ? { instruction: SHORTLIST_CHOICE_INSTRUCTION }
+          : {}),
       items: items.map((item) => toShortlistItem(item)),
     });
   },
