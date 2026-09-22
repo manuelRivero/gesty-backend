@@ -153,16 +153,33 @@ export const rankDishesForReservationPartySize = <T extends RankableDish>(
   return ranked.filter((d) => d.match === 'over').slice(0, safeLimit);
 };
 
+/**
+ * `reservationActive`: el turno es FAQ mid-reserva y el nodo anexa la única
+ * pregunta del mensaje ("¿Seguimos con la reserva o preferís cancelarla?").
+ * Ahí el texto del modelo termina en el dato del menú: ni cierre propio
+ * (salía "¿Te gustaría seguir con la reserva...?" duplicando la anexada) ni
+ * la frase de unidades del mundo pedido (la reserva guarda la mesa, no platos).
+ */
 export const instructionForDishPartyRanking = (params: {
   count: number;
   bestMatch: DishPartyMatch | 'none';
+  reservationActive: boolean;
 }): string => {
+  const closing = params.reservationActive
+    ? 'CIERRE: terminá en el dato del menú. PROHIBIDO cerrar con una pregunta o una oferta ' +
+      '("¿seguimos con la reserva?", "¿algo más?", "¿te gustaría...?"): el sistema anexa la ' +
+      'única pregunta del turno. '
+    : '';
+
   if (params.count === 0 || params.bestMatch === 'none') {
     return (
       'No hay platos con ración cargada. Decilo con claridad; ' +
-      'ofrecé buscar un plato por nombre (search_products) o seguir la reserva. ' +
-      'PROHIBIDO decir que no hay menú si no llamaste la tool.'
-    );
+      (params.reservationActive
+        ? ''
+        : 'ofrecé buscar un plato por nombre (search_products) o seguir la reserva. ') +
+      'PROHIBIDO decir que no hay menú si no llamaste la tool. ' +
+      closing
+    ).trim();
   }
   const base =
     'Listá cada ítem con displayLine TAL CUAL (mismo formato que pedido: ' +
@@ -170,8 +187,17 @@ export const instructionForDishPartyRanking = (params: {
     'PROHIBIDO copiar suggestedUnits, covers, "3×", "cubre" o fórmulas al cliente. ' +
     'No armes pedido ni present_product_cta. ' +
     'PROHIBIDO ofrecer "agregar alguno a la reserva": la reserva guarda la mesa, no platos. ' +
-    'PROHIBIDO pedir fecha, horario o "día y hora"; el sistema anexa solo seguir/cancelar. ';
+    'PROHIBIDO pedir fecha, horario o "día y hora"; el sistema anexa solo seguir/cancelar. ' +
+    closing;
   if (params.bestMatch === 'cover') {
+    if (params.reservationActive) {
+      return (
+        base +
+        'No hay ración exacta de N: son raciones más chicas. PROHIBIDO agregar la frase de ' +
+        'unidades ("para N podés llevar más de una unidad") — en reserva no se llevan unidades. ' +
+        'Tampoco pongas cantidades por renglón.'
+      );
+    }
     return (
       base +
       'No hay ración exacta de N. Después de la lista, UNA frase como en pedido: ' +
@@ -182,7 +208,9 @@ export const instructionForDishPartyRanking = (params: {
   if (params.bestMatch === 'over') {
     return (
       base +
-      'Solo hay raciones más grandes que la mesa. Después de la lista, UNA frase; no inventes un plato más chico.'
+      'Solo hay raciones más grandes que la mesa. Después de la lista, UNA frase' +
+      (params.reservationActive ? ' (dato, sin pregunta)' : '') +
+      '; no inventes un plato más chico.'
     );
   }
   return base;

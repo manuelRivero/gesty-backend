@@ -1232,6 +1232,7 @@ export const suggestDishesForPartySizeTool = new DynamicStructuredTool<
       instruction: instructionForDishPartyRanking({
         count: shortlisted.length,
         bestMatch,
+        reservationActive: isReservationFaqMode(state.metadata),
       }),
       items: shortlisted.map((item) => ({
         ...toShortlistItem({

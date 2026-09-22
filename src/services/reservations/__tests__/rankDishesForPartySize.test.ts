@@ -55,10 +55,36 @@ describe('rankDishesForReservationPartySize', () => {
   });
 
   it('instruction cover no dice que no hay platos', () => {
-    const text = instructionForDishPartyRanking({ count: 2, bestMatch: 'cover' });
+    const text = instructionForDishPartyRanking({
+      count: 2,
+      bestMatch: 'cover',
+      reservationActive: false,
+    });
     expect(text).toMatch(/displayLine/);
     expect(text).toMatch(/ración para/);
     expect(text).toMatch(/PROHIBIDO copiar suggestedUnits/);
     expect(text).not.toMatch(/No hay platos/);
+  });
+
+  it('instruction cover con reserva activa: sin frase de unidades y sin cierre propio', () => {
+    const text = instructionForDishPartyRanking({
+      count: 2,
+      bestMatch: 'cover',
+      reservationActive: true,
+    });
+    expect(text).toMatch(/PROHIBIDO agregar la frase de unidades/);
+    expect(text).toMatch(/PROHIBIDO cerrar con una pregunta/);
+    expect(text).not.toMatch(/Después de la lista, UNA frase como en pedido/);
+  });
+
+  it('instruction sin platos con reserva activa: no ofrece seguir la reserva', () => {
+    const text = instructionForDishPartyRanking({
+      count: 0,
+      bestMatch: 'none',
+      reservationActive: true,
+    });
+    expect(text).toMatch(/No hay platos con ración cargada/);
+    expect(text).not.toMatch(/o seguir la reserva/);
+    expect(text).toMatch(/PROHIBIDO cerrar con una pregunta/);
   });
 });
