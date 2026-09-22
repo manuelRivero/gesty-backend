@@ -1094,7 +1094,10 @@ const suggestDishesForPartySizeSchema = z.object({
     .nullable()
     .optional()
     .describe(
-      'Opcional: plato o palabra a filtrar (ej. "pollo"). Substring case-insensitive en nombre/ingredientes.'
+      'Plato o palabra que nombró el cliente (ej. "pollo", "ceviche", "mariscos"). ' +
+        'Substring case-insensitive en nombre/ingredientes. ' +
+        'Obligatorio si la consulta menciona un plato o ingrediente; vacío solo si pidió ' +
+        'una recomendación general para la mesa.'
     ),
   limit: z.number().int().positive().max(PRODUCT_SHORTLIST_MAX_LIMIT).default(10),
 });
@@ -1111,6 +1114,10 @@ export const suggestDishesForPartySizeTool = new DynamicStructuredTool<
     'Si el cliente pregunta por platos de una mesa/reserva y NO hay sesión, primero start_reservation_session(reason) ' +
     '(esta tool devuelve reservation_session_required en ese caso). ' +
     'PROHIBIDO en flujo de pedido (ahí "para N personas" no filtra raciones). ' +
+    'Si el cliente nombró un plato o ingrediente ("y tienen pollo?", "algo con mariscos"), ' +
+    'pasá keyword con esa palabra — SIEMPRE. Sin keyword la lista es el menú entero y la ' +
+    'respuesta no contesta lo que preguntó. keyword vacío es solo para "qué platos me ' +
+    'recomendás para la mesa" (sin plato nombrado). ' +
     'Prioriza ración exacta, luego cercana (N..N+2). Si no hay, sugiere platos más chicos ' +
     'con suggestedUnits = ceil(N/serves) — no digas que no hay platos si vienen ítems cover.',
   schema: suggestDishesForPartySizeSchema,
@@ -1149,42 +1156,66 @@ export const suggestDishesForPartySizeTool = new DynamicStructuredTool<
     const safeLimit = Math.max(1, Math.min(limit, PRODUCT_SHORTLIST_MAX_LIMIT));
     const kw = keyword?.trim();
 
-    const items = await prisma.menu_item.findMany({
-      where: {
-        business_id: businessId,
-        is_available: true,
-        serves_people: { not: null },
-        menu_category: { is_active: true },
-        ...(kw
-          ? {
-              OR: [
-                { name: { contains: kw, mode: 'insensitive' as const } },
-                { ingredients: { contains: kw, mode: 'insensitive' as const } },
-              ],
-            }
-          : {}),
+    // El pool se arma por PROXIMIDAD a N, no por ración ascendente. Con un take
+    // global ordenado asc, un catálogo con muchas porciones individuales nunca
+    // llegaba a los platos de N (evidencia 22/9: mesa de 6 con 12 platos para 6
+    // en el menú → salió una lista de `serves=1` con bebidas). Dos consultas
+    // disjuntas e indexadas por `serves_people`:
+    //   gte N, asc  → exact / near / over, el más cercano primero
+    //   lt N,  desc → cover, el plato más grande primero (menos unidades)
+    const poolTake = Math.min(40, Math.max(12, safeLimit * 4));
+    const dishPoolWhere: Prisma.menu_itemWhereInput = {
+      business_id: businessId,
+      is_available: true,
+      menu_category: {
+        is_active: true,
+        // Una bebida o un postre no es “plato para la mesa”. Si el cliente
+        // nombró algo puntual, el foco lo puso él: no se filtra por rol.
+        ...(kw ? {} : { category_tag: { notIn: ['DRINK', 'DESSERT'] } }),
       },
-      orderBy: [{ serves_people: 'asc' }, { is_featured: 'desc' }, { name: 'asc' }],
-      take: Math.min(80, Math.max(24, safeLimit * 8)),
-      select: {
-        id: true,
-        name: true,
-        serves_people: true,
-        is_featured: true,
-        variations: true,
-        menu_category: { select: { id: true, name: true, category_tag: true } },
-        menu_item_price: {
-          where: {
-            is_active: true,
-            valid_from: { lte: new Date() },
-            OR: [{ valid_to: null }, { valid_to: { gte: new Date() } }],
-          },
-          orderBy: { valid_from: 'desc' },
-          take: 1,
-          select: { amount: true, currency_code: true },
+      ...(kw
+        ? {
+            OR: [
+              { name: { contains: kw, mode: 'insensitive' as const } },
+              { ingredients: { contains: kw, mode: 'insensitive' as const } },
+            ],
+          }
+        : {}),
+    };
+    const dishPoolSelect = {
+      id: true,
+      name: true,
+      serves_people: true,
+      is_featured: true,
+      variations: true,
+      menu_category: { select: { id: true, name: true, category_tag: true } },
+      menu_item_price: {
+        where: {
+          is_active: true,
+          valid_from: { lte: new Date() },
+          OR: [{ valid_to: null }, { valid_to: { gte: new Date() } }],
         },
+        orderBy: { valid_from: 'desc' },
+        take: 1,
+        select: { amount: true, currency_code: true },
       },
-    });
+    } satisfies Prisma.menu_itemSelect;
+
+    const [servesAtLeastParty, servesBelowParty] = await Promise.all([
+      prisma.menu_item.findMany({
+        where: { ...dishPoolWhere, serves_people: { gte: resolvedPartySize } },
+        orderBy: [{ serves_people: 'asc' }, { is_featured: 'desc' }, { name: 'asc' }],
+        take: poolTake,
+        select: dishPoolSelect,
+      }),
+      prisma.menu_item.findMany({
+        where: { ...dishPoolWhere, serves_people: { gte: 1, lt: resolvedPartySize } },
+        orderBy: [{ serves_people: 'desc' }, { is_featured: 'desc' }, { name: 'asc' }],
+        take: poolTake,
+        select: dishPoolSelect,
+      }),
+    ]);
+    const items = [...servesAtLeastParty, ...servesBelowParty];
 
     const shortlisted = rankDishesForReservationPartySize(
       items,

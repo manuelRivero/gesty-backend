@@ -48,26 +48,29 @@ describe('suggest_dishes_for_party_size', () => {
   });
 
   it('prioriza serves_people exacto y devuelve shortlist', async () => {
-    findMany.mockResolvedValue([
-      {
-        id: 'a',
-        name: 'Parrillada 8',
-        serves_people: 8,
-        is_featured: false,
-        variations: [],
-        menu_category: { id: 'c1', name: 'Parrilla', category_tag: 'MAIN' },
-        menu_item_price: [{ amount: 100, currency_code: 'ARS' }],
-      },
-      {
-        id: 'b',
-        name: 'Pollo a la brasa',
-        serves_people: 6,
-        is_featured: true,
-        variations: [],
-        menu_category: { id: 'c1', name: 'Parrilla', category_tag: 'MAIN' },
-        menu_item_price: [{ amount: 50, currency_code: 'ARS' }],
-      },
-    ]);
+    // Pool `gte N` (cercanos primero) + pool `lt N` (cover): consultas disjuntas.
+    findMany
+      .mockResolvedValueOnce([
+        {
+          id: 'b',
+          name: 'Pollo a la brasa',
+          serves_people: 6,
+          is_featured: true,
+          variations: [],
+          menu_category: { id: 'c1', name: 'Parrilla', category_tag: 'MAIN' },
+          menu_item_price: [{ amount: 50, currency_code: 'ARS' }],
+        },
+        {
+          id: 'a',
+          name: 'Parrillada 8',
+          serves_people: 8,
+          is_featured: false,
+          variations: [],
+          menu_category: { id: 'c1', name: 'Parrilla', category_tag: 'MAIN' },
+          menu_item_price: [{ amount: 100, currency_code: 'ARS' }],
+        },
+      ])
+      .mockResolvedValueOnce([]);
 
     const raw = await suggestDishesForPartySizeTool.invoke(
       { partySize: 6, limit: 10 },
@@ -83,7 +86,7 @@ describe('suggest_dishes_for_party_size', () => {
   });
 
   it('sin ración de 3: cubre con plato de 2 (2 unidades), no vacío', async () => {
-    findMany.mockResolvedValue([
+    findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([
       {
         id: 'c',
         name: 'Milanesa para 2',
@@ -108,6 +111,40 @@ describe('suggest_dishes_for_party_size', () => {
     expect(result.instruction).toMatch(/displayLine/);
     expect(result.instruction).toMatch(/PROHIBIDO copiar suggestedUnits/);
     expect(result.instruction).not.toMatch(/No hay platos/);
+  });
+
+  it('consulta por proximidad a N: gte N ascendente y lt N descendente', async () => {
+    findMany.mockResolvedValue([]);
+
+    await suggestDishesForPartySizeTool.invoke({ partySize: 6, limit: 10 }, CONFIG);
+
+    expect(findMany).toHaveBeenCalledTimes(2);
+    const [atLeast, below] = findMany.mock.calls.map((c) => c[0] as Record<string, any>);
+    // Sin esto, un take global asc nunca llega a los platos de N en un menú
+    // con muchas porciones individuales (evidencia 22/9).
+    expect(atLeast.where.serves_people).toEqual({ gte: 6 });
+    expect(atLeast.orderBy[0]).toEqual({ serves_people: 'asc' });
+    expect(below.where.serves_people).toEqual({ gte: 1, lt: 6 });
+    expect(below.orderBy[0]).toEqual({ serves_people: 'desc' });
+  });
+
+  it('sin keyword excluye bebidas y postres; con keyword respeta el foco del cliente', async () => {
+    findMany.mockResolvedValue([]);
+
+    await suggestDishesForPartySizeTool.invoke({ partySize: 6, limit: 10 }, CONFIG);
+    const sinKeyword = findMany.mock.calls[0][0] as Record<string, any>;
+    expect(sinKeyword.where.menu_category.category_tag).toEqual({
+      notIn: ['DRINK', 'DESSERT'],
+    });
+
+    findMany.mockClear();
+    await suggestDishesForPartySizeTool.invoke(
+      { partySize: 6, keyword: 'pisco', limit: 10 },
+      CONFIG
+    );
+    const conKeyword = findMany.mock.calls[0][0] as Record<string, any>;
+    expect(conKeyword.where.menu_category.category_tag).toBeUndefined();
+    expect(conKeyword.where.OR).toHaveLength(2);
   });
 
   it('sin sesión de reserva pide delegar en vez de party size de pedido', async () => {

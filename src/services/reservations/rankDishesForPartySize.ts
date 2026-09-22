@@ -169,6 +169,7 @@ export const instructionForDishPartyRanking = (params: {
     '• *Nombre* y debajo "ración para: N"). ' +
     'PROHIBIDO copiar suggestedUnits, covers, "3×", "cubre" o fórmulas al cliente. ' +
     'No armes pedido ni present_product_cta. ' +
+    'PROHIBIDO ofrecer "agregar alguno a la reserva": la reserva guarda la mesa, no platos. ' +
     'PROHIBIDO pedir fecha, horario o "día y hora"; el sistema anexa solo seguir/cancelar. ';
   if (params.bestMatch === 'cover') {
     return (
