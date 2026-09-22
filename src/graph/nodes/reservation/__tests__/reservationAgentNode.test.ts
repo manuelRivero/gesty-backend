@@ -134,6 +134,8 @@ import {
 } from '../../../../agents/reservationAgent';
 import { getMaxCombinablePartySize } from '../../../../services/reservations/capacity';
 import { reservationAgentNode } from '../index';
+import { runHybridReactAgent } from '../../../../agents/reactAgent';
+import { findOrCreateConversationState } from '../../../../repositories';
 import type { AgentState } from '../../../state';
 
 const mockedFindFirst = prisma.conversation_state.findFirst as unknown as ReturnType<typeof vi.fn>;
@@ -154,6 +156,10 @@ const mockedTables = findActiveTablesByBusinessAndEnvironment as unknown as Retu
 const mockedOverlap = findOverlappingReservationForTable as unknown as ReturnType<typeof vi.fn>;
 const mockedBlock = findReservationBlockAtStart as unknown as ReturnType<typeof vi.fn>;
 const mockedQr = generateReservationQR as unknown as ReturnType<typeof vi.fn>;
+const mockedHybrid = runHybridReactAgent as unknown as ReturnType<typeof vi.fn>;
+const mockedFindState = findOrCreateConversationState as unknown as ReturnType<
+  typeof vi.fn
+>;
 
 const EXISTING_DRAFT = { date: '20/08/2026', partySize: 4 };
 
@@ -693,5 +699,80 @@ describe('reservationAgentNode — FAQ platos sin partySize', () => {
     expect(result.handlerResult?.content).toMatch(/¿Para cuántas personas\?/i);
     expect(result.handlerResult?.content).not.toMatch(/Seguimos con tu reserva/i);
     expect(result.handlerResult?.content).not.toMatch(/preferís cancelarla/i);
+    expect(mockedPatch).toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({
+        pendingReservationDishFaq: expect.objectContaining({
+          reason: 'sugerir platos para 1 por raciones',
+          originalUserMessage: 'Quiero saber que platos sirven para una reserva',
+        }),
+      })
+    );
+    expect(mockedHybrid).not.toHaveBeenCalled();
+  });
+});
+
+describe('reservationAgentNode — FAQ platos con Fact pendiente + N', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedEnvs.mockResolvedValue([]);
+    mockedSlotsForDate.mockResolvedValue([]);
+    mockedMaxParty.mockResolvedValue(20);
+    mockedExtractConfirm.mockResolvedValue({ status: 'delegate' });
+    mockedExtractEnv.mockResolvedValue({ status: 'delegate' });
+    mockedExtractSlot.mockResolvedValue({ status: 'delegate' });
+    mockedExtractParty.mockResolvedValue({
+      status: 'fulfilled',
+      value: { count: 6 },
+      confidence: 1,
+      source: 'llm',
+      reason: null,
+    });
+    mockedFindFirst.mockResolvedValue({
+      metadata: {
+        reservation_agent_active: true,
+        reservation_draft: {},
+        pendingReservationDishFaq: {
+          reason: 'sugerir platos para 6 por raciones',
+          originalUserMessage: 'Quiero hacer una reserva Pero no sé que platillos',
+          setAt: new Date().toISOString(),
+        },
+      },
+    });
+    mockedHybrid.mockResolvedValue({
+      kind: 'response',
+      handlerResult: { content: 'Para 6 van bien la parrillada y el pollo.', isInteractive: false },
+    });
+    mockedFindState.mockResolvedValue({
+      metadata: { reservation_draft: { partySize: 6 } },
+    });
+  });
+
+  it('Somos 6 + pending: delega FAQ al híbrido sin ReAct de fecha', async () => {
+    const result = await reservationAgentNode(
+      baseState({
+        webhookContext: {
+          payloadId: undefined,
+          message: { type: 'text', text: { body: 'Somos 6' } },
+        } as never,
+        workingConversationState: {
+          metadata: {
+            reservation_agent_active: true,
+            reservation_draft: {},
+            pendingReservationDishFaq: {
+              reason: 'sugerir platos para 6 por raciones',
+              originalUserMessage: 'Quiero hacer una reserva Pero no sé que platillos',
+              setAt: '2026-09-21T00:00:00.000Z',
+            },
+          },
+        } as never,
+      })
+    );
+
+    expect(mockedRunAgent).not.toHaveBeenCalled();
+    expect(mockedHybrid).toHaveBeenCalled();
+    expect(String(result.handlerResult?.content)).toMatch(/parrillada/i);
+    expect(String(result.handlerResult?.content)).toMatch(/Seguimos con tu reserva/i);
+    expect(String(result.handlerResult?.content)).toMatch(/para qué día/i);
   });
 });

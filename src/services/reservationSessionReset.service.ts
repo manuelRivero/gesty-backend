@@ -19,6 +19,7 @@ const RESERVATION_SESSION_OMIT_KEYS = [
   'reservation_agent_active',
   'reservation_draft',
   'reservation_faq_delegation',
+  'pendingReservationDishFaq',
 ] as const;
 
 /** Goals/alerts del Ledger ligados a reserva (no a pedido). */

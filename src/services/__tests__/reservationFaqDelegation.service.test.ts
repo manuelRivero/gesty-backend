@@ -47,6 +47,17 @@ describe('reservationFaqDelegation.service', () => {
     expect(lines.join('\n')).toMatch(/NO son personas del pedido/i);
   });
 
+  it('reason de platos: empuja suggest_dishes aunque el mensaje sea solo el N', () => {
+    const lines = buildReservationFaqDelegationContextLines({
+      reservation_faq_delegation: buildReservationFaqDelegation(
+        'sugerir platos para 6 por raciones'
+      ),
+      reservation_draft: { partySize: 6 },
+    });
+    expect(lines.join('\n')).toMatch(/YA pidió platos/);
+    expect(lines.join('\n')).toMatch(/suggest_dishes_for_party_size\(partySize=6\)/);
+  });
+
   it('ORDER_PUSH_INTENTS cubre Goals/Opportunities de pedido', () => {
     expect(ORDER_PUSH_INTENTS_DURING_RESERVATION_FAQ.has('COMPLETAR_PEDIDO')).toBe(
       true

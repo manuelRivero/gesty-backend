@@ -28,6 +28,10 @@ import { allReservationTools } from '../tools/reservation';
 import type { EnrichedContext } from '../controllers/webhook/types';
 import { formatBotUserMessage } from '../services/productQuery/utils';
 import { readReservationDraft } from '../services/reservations/draft.repository';
+import {
+  buildPendingReservationDishFaqContextLines,
+  readPendingReservationDishFaq,
+} from '../services/reservations/pendingReservationDishFaq';
 import { currentDateLabel } from '../services/reservations/clock';
 import {
   nextReservationStep,
@@ -346,6 +350,16 @@ const buildReservationContextMessage = async (
     `- Paso actual: ${step}`,
     `- Acción esperada: ${expectedActionForReservationStep(step)}`,
   ];
+
+  const pendingDishFaq = conversationId
+    ? await readPendingReservationDishFaq(conversationId)
+    : null;
+  lines.push(
+    ...buildPendingReservationDishFaqContextLines({
+      pendingReservationDishFaq: pendingDishFaq ?? undefined,
+      reservation_draft: { partySize: draft.partySize },
+    })
+  );
 
   // Catálogo id↔nombre: sin esto el ReAct no puede mapear "salón principal"
   // a un UUID para save_reservation_environment (la señal de UI no lo devuelve).

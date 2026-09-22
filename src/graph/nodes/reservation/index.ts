@@ -52,6 +52,17 @@ import {
   ASK_RESERVATION_PARTY_SIZE_FOR_DISHES,
   shouldBlockDishFaqWithoutPartySize,
 } from '../../../services/reservations/dishFaqPartySizeGate';
+import {
+  PENDING_RESERVATION_DISH_FAQ_KEY,
+  buildPendingReservationDishFaq,
+  clearPendingReservationDishFaq,
+  dishFaqDelegationReasonForPartySize,
+  dishFaqUserMessageForHybrid,
+  readPendingReservationDishFaq,
+  shouldFulfillReservationDishFaq,
+  withDishFaqEnrichedContext,
+  type PendingReservationDishFaq,
+} from '../../../services/reservations/pendingReservationDishFaq';
 import { resolveDomainCancelCommand } from '../../../services/domainCancelCommand.service';
 import { buildCancelOrderMessage } from '../../../services/order.service';
 import { buildListMessageFromButtons } from '../../../whatsappBuilders';
@@ -334,6 +345,91 @@ async function executeReservationConfirmation(params: {
       ) ?? { content: '', isInteractive: false }
     );
   }
+}
+
+/** FAQ de platos adeudada: híbrido inline con la consulta original (no el “Somos N”). */
+async function fulfillOwedReservationDishFaq(params: {
+  conversationId: string;
+  partySize: number;
+  pending: PendingReservationDishFaq;
+  enrichedBase: EnrichedContext;
+  detectionContext: DetectionContext | null | undefined;
+  hasEnvironments: boolean;
+  fallbackText: string;
+}): Promise<{ handlerResult: HandlerResult; dataCollectionDelegated: true }> {
+  const reason = dishFaqDelegationReasonForPartySize(params.partySize);
+  const userText = dishFaqUserMessageForHybrid(params.pending);
+  await clearPendingReservationDishFaq(params.conversationId);
+  await patchConversationMetadata(params.conversationId, {
+    reservation_faq_delegation: buildReservationFaqDelegation(reason),
+  });
+  console.log(
+    JSON.stringify({
+      event: '[reservation-agent] dish_faq_fulfilled_from_pending',
+      reason,
+      conversationId: params.conversationId,
+    })
+  );
+
+  const faqCtx = withDishFaqEnrichedContext(params.enrichedBase, {
+    userText,
+    partySize: params.partySize,
+    reason,
+  });
+
+  let mainResult: HandlerResult | null = null;
+  let discardedReentrySignal = false;
+  try {
+    const delegated = await delegateToMainWithDetection({
+      enrichedCtx: faqCtx,
+      userMessage: userText,
+      detectionContext: params.detectionContext,
+    });
+    mainResult = delegated.handlerResult;
+    discardedReentrySignal = delegated.discardedReentrySignal;
+  } catch (err) {
+    console.error('[reservation-agent] error en dish_faq_pending:', err);
+  } finally {
+    await omitConversationMetadataKeys(params.conversationId, [
+      RESERVATION_FAQ_DELEGATION_KEY,
+    ]);
+  }
+
+  if (discardedReentrySignal) {
+    return {
+      handlerResult: {
+        content: buildDiscardedReentryMessage('reservation'),
+        isInteractive: false,
+      },
+      dataCollectionDelegated: true,
+    };
+  }
+
+  const baseResult = mainResult ?? {
+    content: params.fallbackText,
+    isInteractive: false,
+  };
+  const freshState = await findOrCreateConversationState(params.conversationId);
+  const freshMeta = normalizeMetadata(freshState.metadata);
+  const resume = buildResumeFollowUp({
+    kind: 'reservation',
+    draft: freshMeta.reservation_draft,
+    hasEnvironments: params.hasEnvironments,
+    includeContinueOrCancel: true,
+  });
+
+  return {
+    handlerResult: resume.text
+      ? {
+          ...baseResult,
+          content:
+            typeof baseResult.content === 'string'
+              ? `${baseResult.content}\n\n${resume.text}`
+              : baseResult.content,
+        }
+      : baseResult,
+    dataCollectionDelegated: true,
+  };
 }
 
 /** La usan por igual `RESERVATION_CANCEL` y `resolve_reservation_confirmation(false)`. */
@@ -634,6 +730,24 @@ export const reservationAgentNode = async (
           const freshDraft = await patchReservationDraft(conversationId, {
             partySize: count,
           });
+          const owedDishFaq = await readPendingReservationDishFaq(conversationId);
+          if (
+            shouldFulfillReservationDishFaq({
+              pending: owedDishFaq,
+              partySize: freshDraft.partySize,
+            }) &&
+            owedDishFaq
+          ) {
+            return fulfillOwedReservationDishFaq({
+              conversationId,
+              partySize: freshDraft.partySize as number,
+              pending: owedDishFaq,
+              enrichedBase,
+              detectionContext: state.detectionContext,
+              hasEnvironments: environments.length > 0,
+              fallbackText: ASK_RESERVATION_PARTY_SIZE_FOR_DISHES,
+            });
+          }
           const nextAfterParty = nextReservationStep(
             {
               date: freshDraft.date,
@@ -783,6 +897,27 @@ export const reservationAgentNode = async (
   const agentCtx =
     payloadId && !isKnownReservationPayload ? withOrphanPayloadAsText(enrichedBase) : enrichedBase;
 
+  const owedBeforeReact = await readPendingReservationDishFaq(conversationId);
+  const draftBeforeReact = await readReservationDraft(conversationId);
+  if (
+    shouldFulfillReservationDishFaq({
+      pending: owedBeforeReact,
+      partySize: draftBeforeReact.partySize,
+    }) &&
+    owedBeforeReact &&
+    draftBeforeReact.partySize != null
+  ) {
+    return fulfillOwedReservationDishFaq({
+      conversationId,
+      partySize: draftBeforeReact.partySize,
+      pending: owedBeforeReact,
+      enrichedBase,
+      detectionContext: state.detectionContext,
+      hasEnvironments: environments.length > 0,
+      fallbackText: ASK_RESERVATION_PARTY_SIZE_FOR_DISHES,
+    });
+  }
+
   // ── Invocar el agente de reservas ─────────────────────────────────────────
   let agentResult: Awaited<ReturnType<typeof runReservationAgent>>;
   try {
@@ -820,6 +955,12 @@ export const reservationAgentNode = async (
           conversationId,
         })
       );
+      await patchConversationMetadata(conversationId, {
+        [PENDING_RESERVATION_DISH_FAQ_KEY]: buildPendingReservationDishFaq({
+          reason: signals.delegateToMainReason,
+          originalUserMessage: ctx.message?.text?.body,
+        }),
+      });
       return {
         handlerResult:
           textResponse(ASK_RESERVATION_PARTY_SIZE_FOR_DISHES) ?? {
@@ -829,6 +970,8 @@ export const reservationAgentNode = async (
         dataCollectionDelegated: true,
       };
     }
+
+    await clearPendingReservationDishFaq(conversationId);
 
     console.log(
       JSON.stringify({
@@ -902,6 +1045,27 @@ export const reservationAgentNode = async (
         : baseResult,
       dataCollectionDelegated: true,
     };
+  }
+
+  const owedAfterReact = await readPendingReservationDishFaq(conversationId);
+  const draftAfterReact = await readReservationDraft(conversationId);
+  if (
+    shouldFulfillReservationDishFaq({
+      pending: owedAfterReact,
+      partySize: draftAfterReact.partySize,
+    }) &&
+    owedAfterReact &&
+    draftAfterReact.partySize != null
+  ) {
+    return fulfillOwedReservationDishFaq({
+      conversationId,
+      partySize: draftAfterReact.partySize,
+      pending: owedAfterReact,
+      enrichedBase,
+      detectionContext: state.detectionContext,
+      hasEnvironments: environments.length > 0,
+      fallbackText: text,
+    });
   }
 
   // ── Señal: handback temporal (conserva el borrador) ───────────────────────

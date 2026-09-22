@@ -54,6 +54,7 @@ describe('clearReservationSessionAfterCancel', () => {
         'reservation_agent_active',
         'reservation_draft',
         'reservation_faq_delegation',
+        'pendingReservationDishFaq',
       ])
     );
 

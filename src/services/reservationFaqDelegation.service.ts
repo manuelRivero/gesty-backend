@@ -8,6 +8,7 @@
 import type { IntentType } from '../domain/intent/family';
 import type { ConversationMetadata } from './productQuery/types';
 import { normalizeMetadata } from './productQuery/utils';
+import { isDishSuggestionDelegationReason } from './reservations/dishFaqPartySizeGate';
 
 export const RESERVATION_FAQ_DELEGATION_KEY = 'reservation_faq_delegation' as const;
 
@@ -78,6 +79,11 @@ export const buildReservationFaqDelegationContextLines = (
       `- Si preguntan qué platos sirven/convienen para la mesa o la reserva: suggest_dishes_for_party_size(partySize=${party})` +
         ' (keyword opcional si nombraron un plato). Respondé con raciones (serves_people); no armes pedido.'
     );
+    if (isDishSuggestionDelegationReason(faq?.reason)) {
+      lines.push(
+        `- El cliente YA pidió platos para la mesa (${party} personas). Llamá suggest_dishes_for_party_size(partySize=${party}) en ESTE turno — el mensaje actual puede ser solo el N o la consulta original.`
+      );
+    }
   } else {
     lines.push(
       '- Mesa en borrador: sin party size aún (NO pidas personas del pedido, no armes carrito, no ofrezcas sumar platos al pedido en prosa)'

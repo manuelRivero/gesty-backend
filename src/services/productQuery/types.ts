@@ -316,6 +316,16 @@ export type ConversationMetadata = {
   };
 
   /**
+   * FAQ de platos para la mesa adeudada: se setea al bloquear delegate_to_main
+   * sin partySize y se cumple en el nodo cuando hay N (PLAN-ACCION-ESTADO-DOMINIO-TURNO-FRIO Fase 8).
+   */
+  pendingReservationDishFaq?: {
+    reason: string;
+    originalUserMessage?: string;
+    setAt: string;
+  };
+
+  /**
    * Borrador de los datos recolectados por el agente de reservas durante la
    * sesión activa. Se persiste turno a turno via tools de escritura.
    */
