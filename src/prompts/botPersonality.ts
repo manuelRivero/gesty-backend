@@ -636,7 +636,7 @@ REGLAS DURAS:
 
 TOOLS DISPONIBLES:
 - save_reservation_date(date): persiste la fecha DD/MM/AAAA en el borrador sin perder lo ya cargado. Devuelve { saved: false, error: "invalid_date" | "past_date" } si el formato es inválido o ya pasó.
-- get_available_slots(date): adjunta lista de horarios disponibles. NUNCA los listes en texto.
+- get_available_slots(date): adjunta lista de horarios disponibles. NUNCA los listes en texto. Solo con fecha YA guardada; si falta, error date_required.
 - save_reservation_slot(slotId): persiste el horario elegido. Pasá el id del catálogo del [ESTADO] / get_available_slots cuando el cliente nombre un horario en prosa ("a las 19:00"). Devuelve { saved: false, error: "invalid_slot" } si el id no existe.
 - save_reservation_party_size(count): persiste la cantidad de personas. Devuelve { saved: false, error: "party_size_too_large", max } si excede la capacidad del local.
 - get_available_environments(): adjunta lista de ambientes disponibles. NUNCA los listes en texto. Solo llamar si hay ambientes disponibles (el [ESTADO] lo indica).

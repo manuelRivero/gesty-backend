@@ -33,7 +33,10 @@ import {
   type WeekdayEs,
 } from '../services/reservations/clock';
 import { RESERVATION_MAX_DAYS_AHEAD } from '../constants/reservation';
-import { patchReservationDraft } from '../services/reservations/draft.repository';
+import {
+  patchReservationDraft,
+  readReservationDraft,
+} from '../services/reservations/draft.repository';
 import { getMaxCombinablePartySize } from '../services/reservations/capacity';
 import { getBusinessConfig } from '../services/businessConfig.service';
 import { prisma } from '../lib/prisma';
@@ -448,6 +451,9 @@ type GetAvailableSlotsInput = z.infer<typeof getAvailableSlotsSchema>;
 /**
  * Señal: el nodo fetchea los slots de la DB y adjunta la lista de WhatsApp.
  * El agente NO escribe los horarios en texto; solo llama esta tool.
+ *
+ * Gate duro: la fecha debe existir en el borrador y coincidir con el arg.
+ * Sin eso no hay señal — evita listar horarios mientras el paso es `date`.
  */
 export const getAvailableSlotsTool = new DynamicStructuredTool<
   typeof getAvailableSlotsSchema,
@@ -455,13 +461,34 @@ export const getAvailableSlotsTool = new DynamicStructuredTool<
 >({
   name: 'get_available_slots',
   description:
-    'Muestra al cliente la lista de horarios disponibles para la fecha indicada. ' +
+    'Muestra al cliente la lista de horarios disponibles para la fecha del borrador. ' +
     'NUNCA listes los horarios en texto: siempre llamá esta tool. ' +
-    'Solo llamar cuando la fecha ya está guardada en el borrador.',
+    'Solo llamar cuando la fecha YA está guardada (save_reservation_date). ' +
+    'Devuelve { presented: false, error: "date_required" } si falta fecha en el borrador; ' +
+    '{ presented: false, error: "date_mismatch", draftDate } si el arg no coincide.',
   schema: getAvailableSlotsSchema,
   func: async ({ date }: GetAvailableSlotsInput, _runManager, config?: RunnableConfig) => {
-    getReactContext(config); // validar contexto
-    return toJson({ signal: 'present_slots', date });
+    const { conversationId } = getReactContext(config);
+    const draft = await readReservationDraft(conversationId);
+    if (!draft.date) {
+      return toJson({ presented: false, error: 'date_required' });
+    }
+    try {
+      if (normalizeDate(date).getTime() !== normalizeDate(draft.date).getTime()) {
+        return toJson({
+          presented: false,
+          error: 'date_mismatch',
+          draftDate: draft.date,
+        });
+      }
+    } catch {
+      return toJson({
+        presented: false,
+        error: 'date_mismatch',
+        draftDate: draft.date,
+      });
+    }
+    return toJson({ signal: 'present_slots', date: draft.date });
   },
 });
 

@@ -802,3 +802,81 @@ describe('reservationAgentNode — FAQ platos con Fact pendiente + N', () => {
     expect(String(result.handlerResult?.content)).not.toMatch(/Seguimos con tu reserva/i);
   });
 });
+
+// El gate de fecha vive en `get_available_slots` (ver reservation.test.ts): sin
+// fecha guardada no hay señal. Acá se cubre el camino feliz, que es el que la
+// suite no tenía: con la señal, la lista de horarios se adjunta.
+describe('reservationAgentNode — present_slots adjunta la lista', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedEnvs.mockResolvedValue([]);
+    mockedSlotsForDate.mockResolvedValue([
+      { id: 'slot-1', start_time: '20:00', end_time: '21:00' },
+    ]);
+    mockedMaxParty.mockResolvedValue(20);
+    mockedExtractConfirm.mockResolvedValue({ status: 'delegate' });
+    mockedExtractEnv.mockResolvedValue({ status: 'delegate' });
+    mockedExtractSlot.mockResolvedValue({ status: 'delegate' });
+    mockedExtractParty.mockResolvedValue({ status: 'delegate' });
+    mockedFindFirst.mockResolvedValue({
+      metadata: {
+        reservation_agent_active: true,
+        reservation_draft: { partySize: 6, date: '25/09/2026' },
+      },
+    });
+    mockedRunAgent.mockResolvedValue({
+      text: '🤖\n\n*Reserva para 6 el 25/09*\n\n¿A qué hora?',
+      signals: {
+        ...idleSignals,
+        presentSlots: true,
+        presentSlotsDate: '25/09/2026',
+      },
+    });
+  });
+
+  it('con fecha guardada adjunta la lista interactiva de horarios', async () => {
+    const result = await reservationAgentNode(
+      baseState({
+        webhookContext: {
+          payloadId: undefined,
+          message: { text: { body: 'Para el 25' } },
+        } as never,
+        workingConversationState: {
+          metadata: {
+            reservation_agent_active: true,
+            reservation_draft: { partySize: 6, date: '25/09/2026' },
+          },
+        } as never,
+      })
+    );
+
+    expect(mockedSlotsForDate).toHaveBeenCalled();
+    expect(result.handlerResult?.isInteractive).toBe(true);
+    expect(JSON.stringify(result.handlerResult?.content)).toMatch(
+      /RESERVATION_SLOT:slot-1/
+    );
+  });
+
+  it('sin horarios para esa fecha avisa en texto y no manda lista', async () => {
+    // `mockResolvedValue`, no `Once`: el nodo consulta slots más de una vez por turno.
+    mockedSlotsForDate.mockResolvedValue([]);
+
+    const result = await reservationAgentNode(
+      baseState({
+        webhookContext: {
+          payloadId: undefined,
+          message: { text: { body: 'Para el 25' } },
+        } as never,
+        workingConversationState: {
+          metadata: {
+            reservation_agent_active: true,
+            reservation_draft: { partySize: 6, date: '25/09/2026' },
+          },
+        } as never,
+      })
+    );
+
+    expect(result.handlerResult?.isInteractive).toBe(false);
+    expect(String(result.handlerResult?.content)).toMatch(/No hay horarios disponibles/i);
+  });
+});

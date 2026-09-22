@@ -1157,6 +1157,8 @@ export const reservationAgentNode = async (
   }
 
   // ── Señal: mostrar lista de horarios disponibles ───────────────────────────
+  // `presentSlotsDate` es la fecha del borrador, no la que dijo el modelo: el gate
+  // duro vive en `get_available_slots` (sin fecha guardada no hay señal).
   if (signals.presentSlots && signals.presentSlotsDate) {
     try {
       const parsedDate = normalizeDate(signals.presentSlotsDate);

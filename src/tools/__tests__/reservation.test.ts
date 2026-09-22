@@ -55,6 +55,7 @@ import {
   saveReservationEnvironmentTool,
   resolveReservationConfirmationTool,
   startReservationSessionTool,
+  getAvailableSlotsTool,
 } from '../reservation';
 
 const CONFIG = {
@@ -386,5 +387,70 @@ describe('start_reservation_session — entrada del híbrido (Fase B)', () => {
         }),
       })
     );
+  });
+});
+
+describe('get_available_slots — gate fecha en borrador', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('rechaza sin fecha en el borrador (no emite present_slots)', async () => {
+    mockedFindFirst.mockResolvedValue({
+      metadata: { reservation_draft: { partySize: 6 } },
+    });
+
+    const raw = await getAvailableSlotsTool.func(
+      { date: '25/09/2026' },
+      undefined,
+      CONFIG
+    );
+    const parsed = JSON.parse(raw) as {
+      presented?: boolean;
+      error?: string;
+      signal?: string;
+    };
+
+    expect(parsed).toEqual({ presented: false, error: 'date_required' });
+    expect(parsed.signal).toBeUndefined();
+  });
+
+  it('rechaza si el arg no coincide con la fecha del borrador', async () => {
+    mockedFindFirst.mockResolvedValue({
+      metadata: { reservation_draft: { date: '20/08/2026', partySize: 4 } },
+    });
+
+    const raw = await getAvailableSlotsTool.func(
+      { date: '25/09/2026' },
+      undefined,
+      CONFIG
+    );
+    const parsed = JSON.parse(raw) as {
+      presented?: boolean;
+      error?: string;
+      draftDate?: string;
+      signal?: string;
+    };
+
+    expect(parsed).toEqual({
+      presented: false,
+      error: 'date_mismatch',
+      draftDate: '20/08/2026',
+    });
+  });
+
+  it('emite present_slots con la fecha canónica del borrador', async () => {
+    mockedFindFirst.mockResolvedValue({
+      metadata: { reservation_draft: { date: '20/08/2026', partySize: 4 } },
+    });
+
+    const raw = await getAvailableSlotsTool.func(
+      { date: '20/08/2026' },
+      undefined,
+      CONFIG
+    );
+    const parsed = JSON.parse(raw) as { signal?: string; date?: string };
+
+    expect(parsed).toEqual({ signal: 'present_slots', date: '20/08/2026' });
   });
 });
