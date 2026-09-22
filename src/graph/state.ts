@@ -28,6 +28,7 @@ import type { getBusinessOpenInfo } from '../services/businessHours.service';
 import type { BusinessConfig } from '../services/businessConfig.service';
 import type { ConversationIntent } from '../types/conversationIntent';
 import type { OrderAwaitingTransferProof } from '../services/payment/transferProof.service';
+import type { CapabilityAccessResult } from '../services/evaluateBusinessCapabilityAccess.service';
 
 export type BusinessOpenInfo = Awaited<ReturnType<typeof getBusinessOpenInfo>>;
 
@@ -132,6 +133,15 @@ export const AgentStateAnnotation = Annotation.Root({
   isInCoverage: Annotation<boolean>({
     reducer: (_prev, next) => next,
     default: () => false,
+  }),
+  /**
+   * Capacidades del local ya evaluadas por `capabilityAccessGateNode`.
+   * El dueño no pasa por esa evaluación: queda `null` y el mapa de dominio
+   * no se emite. No recalcular en `contextMessage`.
+   */
+  capabilityAccess: Annotation<CapabilityAccessResult | null>({
+    reducer: (_prev, next) => next,
+    default: () => null,
   }),
 
   // ─── NLP ──────────────────────────────────────────────────────────────────

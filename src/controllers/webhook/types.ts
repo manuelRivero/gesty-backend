@@ -4,6 +4,7 @@ import type {
 } from '../../domain/intent/whatsappTemplates';
 import { ConversationIntent } from '../../types/conversationIntent';
 import { IntentDetectionResult } from '../../services/ai/detection.service';
+import type { CapabilityAccessResult } from '../../services/evaluateBusinessCapabilityAccess.service';
 
 // Payload de WhatsApp (sin cambios)
 export interface WhatsAppWebhookPayload {
@@ -68,6 +69,11 @@ export interface EnrichedContext extends WebhookContext {
   /** Estado de dirección — propagado desde AgentState para el contexto del ReAct agent. */
   hasAddress?: boolean;
   isInCoverage?: boolean;
+  /**
+   * Capacidades del local — propagadas desde AgentState para el contexto del
+   * ReAct agent. Ausente ⇒ el mapa de dominio no se emite.
+   */
+  capabilityAccess?: CapabilityAccessResult | null;
   /**
    * Ephemeral (solo este turno): party size acabó de confirmarse y se reanuda
    * la consulta de comida. No se persiste en conversation metadata.

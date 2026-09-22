@@ -52,6 +52,10 @@ import {
   ORDER_PUSH_INTENTS_DURING_RESERVATION_FAQ,
 } from '../services/reservationFaqDelegation.service';
 import {
+  buildDomainStateContextLines,
+  isStructurallyColdDomainTurn,
+} from './domainStateContext';
+import {
   deriveFueraDeCoberturaCandidate,
   derivePedidoPorExpirarCandidate,
   recordAlertEmitted,
@@ -323,14 +327,20 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     }
   }
 
+  const coldDomainTurn = isStructurallyColdDomainTurn(meta, hasItems);
+  const reservationsOnly = ctx.capabilityAccess?.mode === 'reservations_only';
   const partySizeLine = reservationDomainBlocksOrderPartySize
     ? 'no aplica en este turno (dominio reserva activo — no pidas personas del pedido ni ofrezcas sumar al pedido)'
-    : partySize
-      ? `${partySize} (guía de cantidad a pedir, NO filtro de serves_people)`
-      : isWelcomeEligible(meta)
-        ? 'no informado — welcomeEligible activo: en saludo/charla NO preguntes personas; usá present_welcome_options'
-        : 'no informado — si hay Goal OBTENER_PERSONAS_DEL_PEDIDO abajo o una tool ' +
-          'devuelve party_size_required, preguntá PRIMERO y recién después shortlist/add';
+    : reservationsOnly
+      ? 'no aplica (este local no toma pedidos)'
+      : partySize
+        ? `${partySize} (guía de cantidad a pedir, NO filtro de serves_people)`
+        : coldDomainTurn
+          ? 'no informado'
+          : isWelcomeEligible(meta)
+            ? 'no informado — welcomeEligible activo: en saludo/charla NO preguntes personas; usá present_welcome_options'
+            : 'no informado — si hay Goal OBTENER_PERSONAS_DEL_PEDIDO abajo o una tool ' +
+              'devuelve party_size_required, preguntá PRIMERO y recién después shortlist/add';
 
   const detection = ctx.detection;
 
@@ -579,6 +589,11 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
   );
 
   const lines = [
+    ...buildDomainStateContextLines({
+      metadata: meta,
+      hasCartItems: hasItems,
+      capability: ctx.capabilityAccess,
+    }),
     ...buildReservationFaqDelegationContextLines(meta),
     ...buildWelcomeEligibleContextLines(meta),
     `- Personas para el pedido: ${partySizeLine}`,

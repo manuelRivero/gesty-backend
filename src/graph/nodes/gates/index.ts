@@ -133,10 +133,11 @@ export const capabilityAccessGateNode = async (
   );
 
   if (access.mode !== 'blocked' || !access.message) {
-    return {};
+    return { capabilityAccess: access };
   }
 
   return {
+    capabilityAccess: access,
     handlerResult: {
       content: access.message,
       isInteractive: false,

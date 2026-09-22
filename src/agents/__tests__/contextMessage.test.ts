@@ -51,6 +51,20 @@ vi.mock('../../services/complementSuggestions.service', () => ({
 import { buildContextMessage } from '../contextMessage';
 import { prisma } from '../../lib/prisma';
 import type { EnrichedContext } from '../../controllers/webhook/types';
+import type { CapabilityAccessResult } from '../../services/evaluateBusinessCapabilityAccess.service';
+
+const capability = (
+  mode: CapabilityAccessResult['mode']
+): CapabilityAccessResult => ({
+  mode,
+  canOrder: mode === 'full' || mode === 'orders_only',
+  hasReservations: mode === 'full' || mode === 'reservations_only',
+  hasPayment: true,
+  hasActiveMenu: true,
+  hasFulfillment: true,
+  reason: 'ok',
+  message: null,
+});
 
 const findFirstMock = prisma.draft_order.findFirst as unknown as ReturnType<typeof vi.fn>;
 const menuFindManyMock = prisma.menu_item.findMany as unknown as ReturnType<typeof vi.fn>;
@@ -60,6 +74,7 @@ const makeCtx = (
     metadata?: Record<string, unknown>;
     userMsg?: string;
     partySizeJustConfirmed?: number;
+    capabilityAccess?: CapabilityAccessResult | null;
   } = {}
 ): EnrichedContext =>
   ({
@@ -72,6 +87,7 @@ const makeCtx = (
     to: '51999000000',
     detection: null,
     partySizeJustConfirmed: overrides.partySizeJustConfirmed,
+    capabilityAccess: overrides.capabilityAccess,
   }) as unknown as EnrichedContext;
 
 describe('buildContextMessage', () => {
@@ -325,15 +341,90 @@ describe('buildContextMessage', () => {
     expect(menuFindManyMock).not.toHaveBeenCalled();
   });
 
-  it('sin party size: ledger indica preguntar si Goal/tool lo pide (antes de shortlist)', async () => {
+  it('turno frío sin party size: la línea queda en el dato, sin imperativo', async () => {
     findFirstMock.mockResolvedValue(null);
     const msg = await buildContextMessage(
-      makeCtx({ userMsg: 'Quiero 1 ceviche, 2 papas a la huancaína y una chicha' })
+      makeCtx({
+        userMsg: 'Quiero 1 ceviche, 2 papas a la huancaína y una chicha',
+        capabilityAccess: capability('full'),
+      })
     );
-    expect(msg).toContain('Personas para el pedido: no informado');
+    expect(msg).toContain('- Personas para el pedido: no informado');
+    expect(msg).not.toContain('preguntá PRIMERO');
+    expect(msg).not.toContain('party_size_required');
+    expect(msg).toContain('- Sesión: ninguna abierta (sin pedido en armado, sin reserva, sin checkout).');
+    expect(msg).toContain('- El local toma: pedidos y reservas de mesa.');
+    expect(msg).not.toMatch(/querés pedir o reservar/i);
+    expect(msg).not.toContain('start_reservation_session');
+    expect(msg.indexOf('Sesión: ninguna abierta')).toBeLessThan(
+      msg.indexOf('Personas para el pedido')
+    );
+  });
+
+  it('turno frío reservations_only: personas no aplican y no se inventa un pedido', async () => {
+    findFirstMock.mockResolvedValue(null);
+    const msg = await buildContextMessage(
+      makeCtx({
+        userMsg: 'Que platos sirven para la reserva ?',
+        capabilityAccess: capability('reservations_only'),
+      })
+    );
+    expect(msg).toContain('- Personas para el pedido: no aplica (este local no toma pedidos)');
+    expect(msg).toContain('- El local toma: solo reservas de mesa. NO toma pedidos por este chat.');
+    expect(msg).not.toContain('preguntá PRIMERO');
+    expect(msg).not.toContain('start_reservation_session');
+  });
+
+  it('turno frío orders_only: no menciona reservas', async () => {
+    findFirstMock.mockResolvedValue(null);
+    const msg = await buildContextMessage(
+      makeCtx({ capabilityAccess: capability('orders_only') })
+    );
+    expect(msg).toContain('- El local toma: pedidos.');
+    expect(msg).not.toMatch(/reserva/i);
+    expect(msg).toContain('- Personas para el pedido: no informado');
+  });
+
+  it('sin capacidades en el contexto: no hay mapa', async () => {
+    findFirstMock.mockResolvedValue(null);
+    const msg = await buildContextMessage(makeCtx({ userMsg: 'Que platos sirven para la reserva ?' }));
+    expect(msg).not.toContain('El local toma:');
+    expect(msg).not.toContain('Sesión: ninguna abierta');
+    expect(msg).toContain('- Personas para el pedido: no informado');
+    expect(msg).not.toContain('preguntá PRIMERO');
+  });
+
+  it('sesión viva: no emite el mapa y conserva el imperativo de personas', async () => {
+    findFirstMock.mockResolvedValue({
+      id: 'draft-1',
+      fulfillment_type: null,
+      expires_at: null,
+      _count: { draft_order_item: 1 },
+    });
+    const msg = await buildContextMessage(
+      makeCtx({
+        userMsg: 'sumá otra',
+        capabilityAccess: capability('full'),
+      })
+    );
+    expect(msg).not.toContain('El local toma:');
+    expect(msg).not.toContain('Sesión: ninguna abierta');
     expect(msg).toContain('preguntá PRIMERO');
-    expect(msg).toContain('party_size_required');
-    expect(msg).not.toContain('NO preguntarlo por iniciativa propia');
+  });
+
+  it('draft de reserva sin sesión: el mapa se emite y no dice “sin reserva”', async () => {
+    findFirstMock.mockResolvedValue(null);
+    const msg = await buildContextMessage(
+      makeCtx({
+        capabilityAccess: capability('full'),
+        metadata: { reservation_draft: { date: '21/09/2026', partySize: 4 } },
+      })
+    );
+    expect(msg).toContain(
+      '- Sesión: ninguna abierta. Hay una reserva en borrador sin sesión (no la retomes por tu cuenta).'
+    );
+    expect(msg).toContain('- El local toma: pedidos y reservas de mesa.');
+    expect(msg).not.toContain('sin reserva, sin checkout');
   });
 
   it('partySizeJustConfirmed: inyecta hint de resume sin metadata persistida', async () => {

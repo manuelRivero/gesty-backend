@@ -37,6 +37,7 @@ describe('capabilityAccessGateNode', () => {
     });
     const result = await capabilityAccessGateNode(baseState());
     expect(result.earlyExit).toBe('capabilities_blocked');
+    expect(result.capabilityAccess).toMatchObject({ mode: 'blocked' });
     expect(result.handlerResult).toEqual({
       content: 'bloqueado',
       isInteractive: false,
@@ -53,6 +54,11 @@ describe('capabilityAccessGateNode', () => {
     const result = await capabilityAccessGateNode(baseState());
     expect(result.earlyExit).toBeUndefined();
     expect(result.handlerResult).toBeUndefined();
+    expect(result.capabilityAccess).toMatchObject({
+      mode: 'reservations_only',
+      canOrder: false,
+      hasReservations: true,
+    });
   });
 
   it('exime owner assistant (D17)', async () => {

@@ -203,6 +203,26 @@ describe('reservationAgentNode — merge de payloads (P0.1/P0.2)', () => {
       },
     });
   });
+
+  it('al abrir la sesión limpia personas del pedido (save_party_size del híbrido)', async () => {
+    mockedFindFirst.mockResolvedValue({ metadata: {} });
+
+    const state = baseState({
+      workingConversationState: {
+        metadata: { requestedPartySize: 3, peopleCount: 3 },
+      } as never,
+    });
+
+    await reservationAgentNode(state);
+
+    expect(mockedPatch).toHaveBeenCalledWith('conv-1', {
+      reservation_agent_active: true,
+    });
+    expect(mockedOmit).toHaveBeenCalledWith('conv-1', [
+      'requestedPartySize',
+      'peopleCount',
+    ]);
+  });
 });
 
 describe('reservationAgentNode — tarjeta de confirmación por estado (D4)', () => {

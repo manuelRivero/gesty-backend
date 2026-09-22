@@ -417,6 +417,21 @@ export const reservationAgentNode = async (
       '../../../services/welcomeEligible.service'
     );
     await clearWelcomeEligible(conversationId).catch(() => undefined);
+    // Personas del *pedido* no sobreviven a la apertura de la mesa: el híbrido
+    // puede haber llamado save_party_size en el mismo turno en que delegó, y
+    // ese Fact reaparecería como "Personas para el pedido" tras el handback.
+    // Este camino llega con carrito vacío (con carrito se pide confirmar antes).
+    const { omitConversationMetadataKeys } = await import(
+      '../../../repositories/conversationState.repository'
+    );
+    try {
+      await omitConversationMetadataKeys(conversationId, [
+        'requestedPartySize',
+        'peopleCount',
+      ]);
+    } catch {
+      /* no bloquea la apertura de la sesión */
+    }
     // Revival del Goal COMPLETAR_RESERVA (ADR-0005, corolario): si el
     // cliente había abandonado la reserva y vuelve a esta sesión, el
     // abandono se limpia solo — retomarla es la señal de reactivación.

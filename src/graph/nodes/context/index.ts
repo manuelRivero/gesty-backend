@@ -241,6 +241,7 @@ export const buildDetectionContextNode = async (
       customer,
       conversationState,
       conversationId: conversation.id,
+      ...(state.capabilityAccess ? { capabilityAccess: state.capabilityAccess } : {}),
     };
 
     const csMeta = normalizeMetadata(conversationState.metadata);
