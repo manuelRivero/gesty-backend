@@ -100,14 +100,16 @@ const ORDER_LEDGER_KEYS = [
 ] as const;
 
 /**
- * Tras cancelar el pedido (o expirar el draft): flags en false, omite claves
- * de sesión de pedido y limpia el Ledger de Goals/Opportunities/Alerts de pedido.
+ * Wipe del dominio pedido: Facts de personas, claves de sesión/CTA/pendings y
+ * Ledger de Goals de pedido. No decide política de bienvenida ni canvas —
+ * eso lo define cada caller según por qué se cierra el dominio.
  *
  * Preserva: reservation*, onboarding_*, temp_address, ambassador_ref,
  * COMPLETAR_RESERVA, RESERVA_PROXIMA.
  */
-export async function clearOrderSessionAfterCancel(
-  conversationId: string
+async function wipeOrderDomainState(
+  conversationId: string,
+  opts: { welcomeEligible: boolean }
 ): Promise<void> {
   const row = await prisma.conversation_state.findUnique({
     where: { conversation_id: conversationId },
@@ -129,7 +131,7 @@ export async function clearOrderSessionAfterCancel(
     pending_fulfillment_action: null,
     requestedPartySize: null,
     peopleCount: null,
-    welcomeEligible: true,
+    ...(opts.welcomeEligible ? { welcomeEligible: true } : {}),
   });
 
   await omitConversationMetadataKeys(conversationId, [
@@ -156,6 +158,34 @@ export async function clearOrderSessionAfterCancel(
   } catch {
     /* conversación inexistente: ignore */
   }
+}
 
+/**
+ * Tras cancelar el pedido (o expirar el draft): wipe + la conversación vuelve a
+ * ser elegible para bienvenida y el canvas queda sin dueño.
+ */
+export async function clearOrderSessionAfterCancel(
+  conversationId: string
+): Promise<void> {
+  await wipeOrderDomainState(conversationId, { welcomeEligible: true });
   await maybeClearConversationCanvas(conversationId);
+}
+
+/**
+ * Cambio de dominio pedido → reserva al abrir la mesa (carrito vacío; con
+ * carrito se pide confirmar antes — `switchToReservationConfirm.service`).
+ *
+ * Mismo invariante que `clearReservationSessionAfterCancel` en el sentido
+ * inverso: el estado del dominio saliente no sobrevive a la apertura del
+ * entrante. Si no, `peopleCount`, shortlist y pendings de pedido entran vivos a
+ * la sesión de reserva y siguen empujando al carrito.
+ *
+ * No toca `welcomeEligible` (el nodo de reservas lo apaga en el mismo turno) ni
+ * el canvas (la sesión de reserva es la nueva dueña). Las personas se adoptan
+ * en el draft ANTES de este wipe (`adoptOrderPartySizeIntoReservationDraft`).
+ */
+export async function clearOrderDomainOnReservationOpen(
+  conversationId: string
+): Promise<void> {
+  await wipeOrderDomainState(conversationId, { welcomeEligible: false });
 }

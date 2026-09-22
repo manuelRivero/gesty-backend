@@ -86,12 +86,15 @@ vi.mock('../../../../agents/reactAgent', () => ({
   runHybridReactAgent: vi.fn(),
 }));
 
-const { buildCancelOrderMessageMock, clearReservationSessionAfterCancelMock } = vi.hoisted(
-  () => ({
-    buildCancelOrderMessageMock: vi.fn(),
-    clearReservationSessionAfterCancelMock: vi.fn(),
-  })
-);
+const {
+  buildCancelOrderMessageMock,
+  clearReservationSessionAfterCancelMock,
+  clearOrderDomainOnReservationOpenMock,
+} = vi.hoisted(() => ({
+  buildCancelOrderMessageMock: vi.fn(),
+  clearReservationSessionAfterCancelMock: vi.fn(),
+  clearOrderDomainOnReservationOpenMock: vi.fn(),
+}));
 
 vi.mock('../../../../services/order.service', () => ({
   buildCancelOrderMessage: (...args: unknown[]) => buildCancelOrderMessageMock(...args),
@@ -100,6 +103,10 @@ vi.mock('../../../../services/order.service', () => ({
 vi.mock('../../../../services/reservationSessionReset.service', () => ({
   clearReservationSessionAfterCancel: (...args: unknown[]) =>
     clearReservationSessionAfterCancelMock(...args),
+}));
+vi.mock('../../../../services/orderSessionReset.service', () => ({
+  clearOrderDomainOnReservationOpen: (...args: unknown[]) =>
+    clearOrderDomainOnReservationOpenMock(...args),
 }));
 vi.mock('../../../../services/ai/detection.service', () => ({
   detectIntentWithConfidence: vi.fn(),
@@ -226,7 +233,7 @@ describe('reservationAgentNode — merge de payloads (P0.1/P0.2)', () => {
     });
   });
 
-  it('al abrir la sesión limpia personas del pedido (save_party_size del híbrido)', async () => {
+  it('al abrir la sesión adopta personas del pedido en el draft y cierra el dominio pedido', async () => {
     mockedFindFirst.mockResolvedValue({ metadata: {} });
 
     const state = baseState({
@@ -240,10 +247,29 @@ describe('reservationAgentNode — merge de payloads (P0.1/P0.2)', () => {
     expect(mockedPatch).toHaveBeenCalledWith('conv-1', {
       reservation_agent_active: true,
     });
-    expect(mockedOmit).toHaveBeenCalledWith('conv-1', [
-      'requestedPartySize',
-      'peopleCount',
-    ]);
+    expect(mockedPatch).toHaveBeenCalledWith('conv-1', {
+      reservation_draft: { partySize: 3 },
+    });
+    expect(clearOrderDomainOnReservationOpenMock).toHaveBeenCalledWith('conv-1');
+  });
+
+  it('no sobrescribe el partySize del draft con el del pedido', async () => {
+    mockedFindFirst.mockResolvedValue({
+      metadata: { reservation_draft: { partySize: 8 } },
+    });
+
+    const state = baseState({
+      workingConversationState: {
+        metadata: { reservation_draft: { partySize: 8 }, peopleCount: 3 },
+      } as never,
+    });
+
+    await reservationAgentNode(state);
+
+    expect(mockedPatch).not.toHaveBeenCalledWith('conv-1', {
+      reservation_draft: { partySize: 3 },
+    });
+    expect(clearOrderDomainOnReservationOpenMock).toHaveBeenCalledWith('conv-1');
   });
 });
 
