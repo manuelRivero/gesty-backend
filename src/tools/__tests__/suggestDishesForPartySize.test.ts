@@ -96,4 +96,22 @@ describe('suggest_dishes_for_party_size', () => {
     expect(result.instruction).not.toMatch(/¿Para cuántas personas\?/);
     expect(findMany).not.toHaveBeenCalled();
   });
+
+  it('sesión viva sin N: reservation_party_size_required, no start_reservation_session', async () => {
+    vi.mocked(findOrCreateConversationState).mockResolvedValue({
+      metadata: {
+        reservation_agent_active: true,
+        reservation_faq_delegation: {
+          delegatedAt: new Date().toISOString(),
+          reason: 'sugerir platos para 1 por raciones',
+        },
+      },
+    } as never);
+
+    const raw = await suggestDishesForPartySizeTool.invoke({}, CONFIG);
+    const result = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    expect(result.error).toBe('reservation_party_size_required');
+    expect(result.instruction).not.toMatch(/start_reservation_session/);
+    expect(findMany).not.toHaveBeenCalled();
+  });
 });

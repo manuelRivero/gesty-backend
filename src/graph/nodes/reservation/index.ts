@@ -48,6 +48,10 @@ import {
 } from '../../../services/reservations/draft.repository';
 import { nextReservationStep } from '../../../services/reservations/nextReservationStep';
 import { clearReservationSessionAfterCancel } from '../../../services/reservationSessionReset.service';
+import {
+  ASK_RESERVATION_PARTY_SIZE_FOR_DISHES,
+  shouldBlockDishFaqWithoutPartySize,
+} from '../../../services/reservations/dishFaqPartySizeGate';
 import { resolveDomainCancelCommand } from '../../../services/domainCancelCommand.service';
 import { buildCancelOrderMessage } from '../../../services/order.service';
 import { buildListMessageFromButtons } from '../../../whatsappBuilders';
@@ -801,6 +805,31 @@ export const reservationAgentNode = async (
 
   // ── Señal: delegar turno al agente principal (off-topic temporal) ─────────
   if (signals.delegateToMain) {
+    const draftForFaq = await readReservationDraft(conversationId);
+    if (
+      shouldBlockDishFaqWithoutPartySize({
+        delegateToMain: true,
+        reason: signals.delegateToMainReason,
+        partySize: draftForFaq.partySize,
+      })
+    ) {
+      console.log(
+        JSON.stringify({
+          event: '[reservation-agent] dish_faq_blocked_missing_party_size',
+          reason: signals.delegateToMainReason,
+          conversationId,
+        })
+      );
+      return {
+        handlerResult:
+          textResponse(ASK_RESERVATION_PARTY_SIZE_FOR_DISHES) ?? {
+            content: ASK_RESERVATION_PARTY_SIZE_FOR_DISHES,
+            isInteractive: false,
+          },
+        dataCollectionDelegated: true,
+      };
+    }
+
     console.log(
       JSON.stringify({
         event: '[reservation-agent] delegate_to_main',

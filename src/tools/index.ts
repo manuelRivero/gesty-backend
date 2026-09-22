@@ -157,12 +157,11 @@ const partySizeOrderingGateJson = async (
  * contestaba el número y volvía la misma pregunta. Las personas de la mesa
  * las toma el draft de reserva.
  */
-const reservationSessionRequiredJson = async (
-  conversationId: string,
+const reservationSessionRequiredFromMeta = (
+  metadata: unknown,
   partySize: number | null
-): Promise<string | null> => {
-  const state = await findOrCreateConversationState(conversationId);
-  if (isReservationFaqMode(state.metadata)) return null;
+): string | null => {
+  if (isReservationFaqMode(metadata)) return null;
   const partySizeHint =
     partySize != null ? ` Mencioná en reason que son ${partySize} personas.` : '';
   return toJson({
@@ -1045,8 +1044,10 @@ const suggestDishesForPartySizeSchema = z.object({
     .int()
     .min(1)
     .max(99)
+    .optional()
     .describe(
-      'Personas de la mesa (reservation_draft.partySize / "Mesa en borrador"). NO es party size de pedido.'
+      'Personas de la mesa (reservation_draft.partySize / "Mesa en borrador"). NO es party size de pedido. ' +
+        'Si falta, la tool lee el draft; si el draft tampoco tiene N, reservation_party_size_required.'
     ),
   keyword: z
     .string()
@@ -1078,12 +1079,31 @@ export const suggestDishesForPartySizeTool = new DynamicStructuredTool<
     config?: RunnableConfig
   ) => {
     const { businessId, conversationId } = getReactContext(config);
+    const state = await findOrCreateConversationState(conversationId);
+    const meta = normalizeMetadata(state.metadata);
+    const draftParty = meta.reservation_draft?.partySize;
+    const resolvedPartySize =
+      partySize ??
+      (typeof draftParty === 'number' && draftParty >= 1 ? draftParty : null);
+
     // Dominio reserva: sin sesión viva se delega en vez de pedir party size de pedido.
-    const sessionRequired = await reservationSessionRequiredJson(
-      conversationId,
-      partySize ?? null
+    const sessionRequired = reservationSessionRequiredFromMeta(
+      state.metadata,
+      resolvedPartySize
     );
     if (sessionRequired) return sessionRequired;
+
+    if (resolvedPartySize == null) {
+      return toJson({
+        success: false,
+        error: 'reservation_party_size_required',
+        pending: true,
+        instruction:
+          'Falta cuántas personas son en la mesa. ' +
+          'NO reabras la reserva ni narres el estado interno. ' +
+          'Pedí el número (1–99) con el título *¿Para cuántas personas?* y no inventes N.',
+      });
+    }
 
     const safeLimit = Math.max(1, Math.min(limit, PRODUCT_SHORTLIST_MAX_LIMIT));
     const kw = keyword?.trim();
@@ -1092,7 +1112,7 @@ export const suggestDishesForPartySizeTool = new DynamicStructuredTool<
       where: {
         business_id: businessId,
         is_available: true,
-        serves_people: { not: null, gte: partySize, lte: partySize + 2 },
+        serves_people: { not: null, gte: resolvedPartySize, lte: resolvedPartySize + 2 },
         menu_category: { is_active: true },
         ...(kw
           ? {
@@ -1126,8 +1146,8 @@ export const suggestDishesForPartySizeTool = new DynamicStructuredTool<
     });
 
     const ranked = [...items].sort((a, b) => {
-      const da = Math.abs((a.serves_people ?? 99) - partySize);
-      const db = Math.abs((b.serves_people ?? 99) - partySize);
+      const da = Math.abs((a.serves_people ?? 99) - resolvedPartySize);
+      const db = Math.abs((b.serves_people ?? 99) - resolvedPartySize);
       if (da !== db) return da - db;
       return a.name.localeCompare(b.name, 'es');
     });
@@ -1135,7 +1155,7 @@ export const suggestDishesForPartySizeTool = new DynamicStructuredTool<
 
     return toJson({
       success: true,
-      partySize,
+      partySize: resolvedPartySize,
       count: shortlisted.length,
       instruction:
         shortlisted.length === 0

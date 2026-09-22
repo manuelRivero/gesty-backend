@@ -656,3 +656,42 @@ describe('reservationAgentNode — comando de dominio', () => {
     expect(result.handlerResult?.content).toMatch(/Reserva cancelada/i);
   });
 });
+
+describe('reservationAgentNode — FAQ platos sin partySize', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedEnvs.mockResolvedValue([]);
+    mockedSlotsForDate.mockResolvedValue([]);
+    mockedMaxParty.mockResolvedValue(20);
+    mockedExtractConfirm.mockResolvedValue({ status: 'delegate' });
+    mockedExtractEnv.mockResolvedValue({ status: 'delegate' });
+    mockedExtractSlot.mockResolvedValue({ status: 'delegate' });
+    mockedExtractParty.mockResolvedValue({ status: 'delegate' });
+    mockedFindFirst.mockResolvedValue({
+      metadata: { reservation_agent_active: true, reservation_draft: {} },
+    });
+    mockedRunAgent.mockResolvedValue({
+      text: 'te paso al menú',
+      signals: {
+        ...idleSignals,
+        delegateToMain: true,
+        delegateToMainReason: 'sugerir platos para 1 por raciones',
+      },
+    });
+  });
+
+  it('sin Fact de personas: pide N y no delega al híbrido ni anexa resume', async () => {
+    const result = await reservationAgentNode(
+      baseState({
+        webhookContext: {
+          payloadId: undefined,
+          message: { text: { body: 'Quiero saber que platos sirven para una reserva' } },
+        } as never,
+      })
+    );
+
+    expect(result.handlerResult?.content).toMatch(/¿Para cuántas personas\?/i);
+    expect(result.handlerResult?.content).not.toMatch(/Seguimos con tu reserva/i);
+    expect(result.handlerResult?.content).not.toMatch(/preferís cancelarla/i);
+  });
+});
