@@ -772,7 +772,8 @@ describe('reservationAgentNode — FAQ platos con Fact pendiente + N', () => {
     expect(mockedRunAgent).not.toHaveBeenCalled();
     expect(mockedHybrid).toHaveBeenCalled();
     expect(String(result.handlerResult?.content)).toMatch(/parrillada/i);
-    expect(String(result.handlerResult?.content)).toMatch(/Seguimos con tu reserva/i);
-    expect(String(result.handlerResult?.content)).toMatch(/para qué día/i);
+    expect(String(result.handlerResult?.content)).toMatch(/Seguimos con la reserva o preferís cancelarla/i);
+    expect(String(result.handlerResult?.content)).not.toMatch(/para qué día/i);
+    expect(String(result.handlerResult?.content)).not.toMatch(/Seguimos con tu reserva/i);
   });
 });

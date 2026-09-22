@@ -36,8 +36,7 @@ export type ResumeFollowUpInput =
       draft: ReservationDraft | undefined;
       hasEnvironments: boolean;
       /**
-       * Tras FAQ mid-reserva (`delegate_to_main`): anexar invitación
-       * determinística a seguir o cancelar (PLAN-ACCION-RESERVA-FAQ-HIBRIDO D3).
+       * Tras FAQ mid-reserva: solo D3 (seguir o cancelar). No anexa fecha/slot.
        */
       includeContinueOrCancel?: boolean;
     }
@@ -114,16 +113,14 @@ export function buildResumeFollowUp(input: ResumeFollowUpInput): ResumeFollowUp 
       };
     }
     case 'reservation': {
+      // FAQ (D3): una sola pregunta seguir/cancelar. No anexar fecha/horario —
+      // eso lo pide el agente de reservas en el turno siguiente (lista de slots).
+      if (input.includeContinueOrCancel) {
+        return { text: RESERVATION_FAQ_CONTINUE_OR_CANCEL };
+      }
       const question = nextReservationDraftQuestion(input.draft, input.hasEnvironments);
-      const cancelInvite = input.includeContinueOrCancel
-        ? RESERVATION_FAQ_CONTINUE_OR_CANCEL
-        : null;
-      if (!question && !cancelInvite) return { text: null };
-      if (!question && cancelInvite) return { text: cancelInvite };
-      const body = `${RESUME_PREFIX.reservation} ${question}`;
-      return {
-        text: cancelInvite ? `${body}\n${cancelInvite}` : body,
-      };
+      if (!question) return { text: null };
+      return { text: `${RESUME_PREFIX.reservation} ${question}` };
     }
     case 'onboarding': {
       if (input.step === 'done') return { text: null };

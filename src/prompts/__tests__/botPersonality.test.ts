@@ -144,6 +144,7 @@ describe('botPersonality', () => {
     expect(hybrid).toMatch(/qué platos sirven para las reservas/i);
     expect(hybrid).toMatch(/PROHIBIDO save_party_size/i);
     expect(hybrid).toMatch(/suggest_dishes_for_party_size/i);
+    expect(hybrid).toMatch(/PROHIBIDO pedir fecha, horario/i);
   });
 
   it('reservas: ambiente fuera de catálogo aclara y no inventa id', () => {

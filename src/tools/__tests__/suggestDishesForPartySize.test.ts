@@ -103,8 +103,10 @@ describe('suggest_dishes_for_party_size', () => {
     expect(result.success).toBe(true);
     expect(result.bestMatch).toBe('cover');
     expect(result.items[0].suggestedUnits).toBe(2);
-    expect(result.items[0].note).toMatch(/2×/);
-    expect(result.instruction).toMatch(/más de una unidad/);
+    expect(result.items[0].note).toBe('ración para: 2');
+    expect(result.items[0].displayLine).toBe('• *Milanesa para 2*\nración para: 2');
+    expect(result.instruction).toMatch(/displayLine/);
+    expect(result.instruction).toMatch(/PROHIBIDO copiar suggestedUnits/);
     expect(result.instruction).not.toMatch(/No hay platos/);
   });
 

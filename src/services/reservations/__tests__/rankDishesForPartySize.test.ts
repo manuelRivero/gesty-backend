@@ -26,7 +26,7 @@ describe('rankDishesForReservationPartySize', () => {
     expect(two.match).toBe('cover');
     expect(two.suggestedUnits).toBe(2);
     expect(two.covers).toBe(4);
-    expect(two.note).toMatch(/2×/);
+    expect(two.note).toBe('ración para: 2');
 
     const ranked = rankDishesForReservationPartySize(
       [
@@ -40,6 +40,7 @@ describe('rankDishesForReservationPartySize', () => {
     expect(ranked.every((d) => d.match === 'cover')).toBe(true);
     expect(ranked[0].id).toBe('2');
     expect(ranked[0].suggestedUnits).toBe(2);
+    expect(ranked[0].displayLine).toBe('• *Milanesa 2*\nración para: 2');
     expect(ranked.some((d) => d.id === '8')).toBe(false);
   });
 
@@ -55,7 +56,9 @@ describe('rankDishesForReservationPartySize', () => {
 
   it('instruction cover no dice que no hay platos', () => {
     const text = instructionForDishPartyRanking({ count: 2, bestMatch: 'cover' });
-    expect(text).toMatch(/más de una unidad/);
+    expect(text).toMatch(/displayLine/);
+    expect(text).toMatch(/ración para/);
+    expect(text).toMatch(/PROHIBIDO copiar suggestedUnits/);
     expect(text).not.toMatch(/No hay platos/);
   });
 });

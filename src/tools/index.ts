@@ -1175,6 +1175,7 @@ export const suggestDishesForPartySizeTool = new DynamicStructuredTool<
         suggestedUnits: item.suggestedUnits,
         covers: item.covers,
         note: item.note,
+        displayLine: item.displayLine,
       })),
     });
   },

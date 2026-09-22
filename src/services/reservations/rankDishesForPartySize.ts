@@ -21,10 +21,22 @@ export type DishPartyRankFields = {
   suggestedUnits: number;
   covers: number;
   surplus: number;
+  /** Copy al cliente: mismo dato que el shortlist de pedido (`ración para: N`). */
   note: string;
 };
 
-export type RankedDishForParty<T extends RankableDish> = T & DishPartyRankFields;
+/** Misma meta que `formatSelectListCandidateMeta` (pedido). */
+export const formatDishPartyRationNote = (servesPeople: number): string =>
+  `ración para: ${Math.floor(servesPeople)}`;
+
+/** Viñeta al cliente: `• *Nombre*` + línea de ración (pedido). */
+export const formatDishPartyDisplayLine = (
+  name: string,
+  servesPeople: number
+): string => `• *${name.trim()}*\n${formatDishPartyRationNote(servesPeople)}`;
+
+export type RankedDishForParty<T extends RankableDish> = T &
+  DishPartyRankFields & { displayLine: string };
 
 const MATCH_RANK: Record<DishPartyMatch, number> = {
   exact: 0,
@@ -40,13 +52,15 @@ export const classifyDishForPartySize = (
   const serves = Math.max(1, Math.floor(servesPeople));
   const party = Math.max(1, Math.floor(partySize));
 
+  const note = formatDishPartyRationNote(serves);
+
   if (serves === party) {
     return {
       match: 'exact',
       suggestedUnits: 1,
       covers: serves,
       surplus: 0,
-      note: `ración exacta para ${party}`,
+      note,
     };
   }
 
@@ -56,7 +70,7 @@ export const classifyDishForPartySize = (
       suggestedUnits: 1,
       covers: serves,
       surplus: serves - party,
-      note: `ración de ${serves} (sobra ${serves - party})`,
+      note,
     };
   }
 
@@ -71,7 +85,7 @@ export const classifyDishForPartySize = (
       suggestedUnits,
       covers,
       surplus: covers - party,
-      note: `${suggestedUnits}× ración de ${serves} → cubre ${covers}`,
+      note,
     };
   }
 
@@ -80,7 +94,7 @@ export const classifyDishForPartySize = (
     suggestedUnits: 1,
     covers: serves,
     surplus: serves - party,
-    note: `ración de ${serves} (más grande que la mesa)`,
+    note,
   };
 };
 
@@ -121,7 +135,12 @@ export const rankDishesForReservationPartySize = <T extends RankableDish>(
     if (typeof serves !== 'number' || !Number.isFinite(serves) || serves < 1) {
       continue;
     }
-    ranked.push({ ...item, ...classifyDishForPartySize(serves, partySize) });
+    const fields = classifyDishForPartySize(serves, partySize);
+    ranked.push({
+      ...item,
+      ...fields,
+      displayLine: formatDishPartyDisplayLine(item.name, serves),
+    });
   }
   ranked.sort(compareRanked);
 
@@ -146,23 +165,24 @@ export const instructionForDishPartyRanking = (params: {
     );
   }
   const base =
-    'Mencioná nombre + serves_people. No armes pedido ni present_product_cta; ' +
-    'es dato para la mesa. El resume de reserva sigue después. ';
+    'Listá cada ítem con displayLine TAL CUAL (mismo formato que pedido: ' +
+    '• *Nombre* y debajo "ración para: N"). ' +
+    'PROHIBIDO copiar suggestedUnits, covers, "3×", "cubre" o fórmulas al cliente. ' +
+    'No armes pedido ni present_product_cta. ' +
+    'PROHIBIDO pedir fecha, horario o "día y hora"; el sistema anexa solo seguir/cancelar. ';
   if (params.bestMatch === 'cover') {
     return (
       base +
-      'No hay ración exacta ni cercana a N. Estas cubren con más de una unidad: ' +
-      'decí suggestedUnits + note (ej. "2 del que sirve 2"). No inventes cantidades.'
+      'No hay ración exacta de N. Después de la lista, UNA frase como en pedido: ' +
+      'son ración individual / más chica; para N podés llevar más de una unidad. ' +
+      'No pongas cantidades por renglón.'
     );
   }
   if (params.bestMatch === 'over') {
     return (
       base +
-      'Solo hay raciones más grandes que la mesa. Decilo (note) y no inventes un plato más chico.'
+      'Solo hay raciones más grandes que la mesa. Después de la lista, UNA frase; no inventes un plato más chico.'
     );
   }
-  if (params.bestMatch === 'near') {
-    return base + 'Ración un poco mayor que N: mencioná serves_people y que sobra.';
-  }
-  return base + 'Priorizá match=exact; si listás near, aclará la ración.';
+  return base;
 };

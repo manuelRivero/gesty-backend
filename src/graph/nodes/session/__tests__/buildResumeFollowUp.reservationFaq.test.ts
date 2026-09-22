@@ -8,7 +8,7 @@ describe('buildResumeFollowUp (kind: reservation + FAQ)', () => {
   it('sin FAQ: solo pregunta del paso pendiente', () => {
     const resume = buildResumeFollowUp({
       kind: 'reservation',
-      draft: { date: '20/09/2026' },
+      draft: { date: '20/09/2026', partySize: 4 },
       hasEnvironments: false,
     });
     expect(resume.text).toMatch(/Seguimos con tu reserva:/i);
@@ -16,15 +16,17 @@ describe('buildResumeFollowUp (kind: reservation + FAQ)', () => {
     expect(resume.text).not.toContain(RESERVATION_FAQ_CONTINUE_OR_CANCEL);
   });
 
-  it('con FAQ: pregunta + seguir o cancelar', () => {
+  it('con FAQ: solo seguir o cancelar (sin fecha/horario)', () => {
     const resume = buildResumeFollowUp({
       kind: 'reservation',
       draft: { date: '20/09/2026', partySize: 10 },
       hasEnvironments: false,
       includeContinueOrCancel: true,
     });
-    expect(resume.text).toMatch(/Seguimos con tu reserva:/i);
-    expect(resume.text).toContain(RESERVATION_FAQ_CONTINUE_OR_CANCEL);
+    expect(resume.text).toBe(RESERVATION_FAQ_CONTINUE_OR_CANCEL);
+    expect(resume.text).not.toMatch(/para qué día/i);
+    expect(resume.text).not.toMatch(/horario/i);
+    expect(resume.text).not.toMatch(/Seguimos con tu reserva/i);
   });
 
   it('con FAQ y draft listo para confirm: solo invitación seguir/cancelar', () => {
