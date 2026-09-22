@@ -234,12 +234,13 @@ describe('reservationAgentNode — merge de payloads (P0.1/P0.2)', () => {
   });
 
   it('al abrir la sesión adopta personas del pedido en el draft y cierra el dominio pedido', async () => {
-    mockedFindFirst.mockResolvedValue({ metadata: {} });
+    // Lectura fresca: el save_party_size del híbrido no está en el snapshot del turno.
+    mockedFindFirst.mockResolvedValue({
+      metadata: { requestedPartySize: 3, peopleCount: 3 },
+    });
 
     const state = baseState({
-      workingConversationState: {
-        metadata: { requestedPartySize: 3, peopleCount: 3 },
-      } as never,
+      workingConversationState: { metadata: {} } as never,
     });
 
     await reservationAgentNode(state);
@@ -255,13 +256,11 @@ describe('reservationAgentNode — merge de payloads (P0.1/P0.2)', () => {
 
   it('no sobrescribe el partySize del draft con el del pedido', async () => {
     mockedFindFirst.mockResolvedValue({
-      metadata: { reservation_draft: { partySize: 8 } },
+      metadata: { reservation_draft: { partySize: 8 }, peopleCount: 3 },
     });
 
     const state = baseState({
-      workingConversationState: {
-        metadata: { reservation_draft: { partySize: 8 }, peopleCount: 3 },
-      } as never,
+      workingConversationState: { metadata: {} } as never,
     });
 
     await reservationAgentNode(state);

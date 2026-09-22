@@ -555,10 +555,8 @@ export const reservationAgentNode = async (
     // el dato aunque la puerta elegida haya sido la equivocada.
     // Este camino llega con carrito vacío (con carrito se pide confirmar antes).
     try {
-      const adoptedPartySize = await adoptOrderPartySizeIntoReservationDraft({
-        conversationId,
-        metadata: wsMeta,
-      });
+      const adoptedPartySize =
+        await adoptOrderPartySizeIntoReservationDraft(conversationId);
       const { clearOrderDomainOnReservationOpen } = await import(
         '../../../services/orderSessionReset.service'
       );
