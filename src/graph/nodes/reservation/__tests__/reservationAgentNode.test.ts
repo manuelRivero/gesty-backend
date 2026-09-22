@@ -85,6 +85,22 @@ vi.mock('../../../../services/reservationCompletionGoal.service', () => ({
 vi.mock('../../../../agents/reactAgent', () => ({
   runHybridReactAgent: vi.fn(),
 }));
+
+const { buildCancelOrderMessageMock, clearReservationSessionAfterCancelMock } = vi.hoisted(
+  () => ({
+    buildCancelOrderMessageMock: vi.fn(),
+    clearReservationSessionAfterCancelMock: vi.fn(),
+  })
+);
+
+vi.mock('../../../../services/order.service', () => ({
+  buildCancelOrderMessage: (...args: unknown[]) => buildCancelOrderMessageMock(...args),
+}));
+
+vi.mock('../../../../services/reservationSessionReset.service', () => ({
+  clearReservationSessionAfterCancel: (...args: unknown[]) =>
+    clearReservationSessionAfterCancelMock(...args),
+}));
 vi.mock('../../../../services/ai/detection.service', () => ({
   detectIntentWithConfidence: vi.fn(),
 }));
@@ -279,6 +295,7 @@ describe('reservationAgentNode — tipables fulfilled en el nodo (§3.11)', () =
     mockedEnvs.mockResolvedValue([salonPrincipal]);
     mockedEnvFindUnique.mockResolvedValue({ name: 'Salón principal' });
     mockedOmit.mockResolvedValue(undefined);
+    clearReservationSessionAfterCancelMock.mockResolvedValue(undefined);
     mockedSlotsForDate.mockResolvedValue([]);
     mockedMaxParty.mockResolvedValue(20);
   });
@@ -380,7 +397,7 @@ describe('reservationAgentNode — tipables fulfilled en el nodo (§3.11)', () =
 
     expect(mockedRunAgent).not.toHaveBeenCalled();
     expect(mockedCreate).not.toHaveBeenCalled();
-    expect(mockedOmit).toHaveBeenCalled();
+    expect(clearReservationSessionAfterCancelMock).toHaveBeenCalledWith('conv-1');
     expect(String(result.handlerResult?.content)).toMatch(/cancelada/i);
   });
 
@@ -594,5 +611,48 @@ describe('reservationAgentNode — tipables fulfilled en el nodo (§3.11)', () =
       expect.anything(),
       expect.objectContaining({ skipPendingExtraction: true })
     );
+  });
+});
+
+describe('reservationAgentNode — comando de dominio', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedEnvs.mockResolvedValue([]);
+    mockedSlotsForDate.mockResolvedValue([]);
+    mockedMaxParty.mockResolvedValue(20);
+    clearReservationSessionAfterCancelMock.mockResolvedValue(undefined);
+    buildCancelOrderMessageMock.mockResolvedValue('pedido wipe');
+  });
+
+  it('Cancelar pedido con sesión de reserva: wipe de pedido, no invoca al agente', async () => {
+    const result = await reservationAgentNode(
+      baseState({
+        webhookContext: {
+          payloadId: undefined,
+          message: { text: { body: 'Cancelar pedido' } },
+          to: '54911',
+        } as never,
+        customer: { id: 'cust-1', name: 'Ana', phone_number: '54911' } as never,
+      })
+    );
+
+    expect(buildCancelOrderMessageMock).toHaveBeenCalled();
+    expect(mockedRunAgent).not.toHaveBeenCalled();
+    expect(result.handlerResult?.content).toBe('pedido wipe');
+  });
+
+  it('Cancelar reserva en texto: wipe de reserva, no invoca al agente', async () => {
+    const result = await reservationAgentNode(
+      baseState({
+        webhookContext: {
+          payloadId: undefined,
+          message: { text: { body: 'Cancelar reserva' } },
+        } as never,
+      })
+    );
+
+    expect(clearReservationSessionAfterCancelMock).toHaveBeenCalledWith('conv-1');
+    expect(mockedRunAgent).not.toHaveBeenCalled();
+    expect(result.handlerResult?.content).toMatch(/Reserva cancelada/i);
   });
 });

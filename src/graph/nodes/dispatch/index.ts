@@ -60,6 +60,9 @@ import type {
   HandlerResult,
 } from '../../../controllers/webhook/types';
 import type { AgentState, AgentStateUpdate } from '../../state';
+import { resolveDomainCancelCommand } from '../../../services/domainCancelCommand.service';
+import { buildCancelOrderMessage } from '../../../services/order.service';
+import { clearReservationSessionAfterCancel } from '../../../services/reservationSessionReset.service';
 
 /** Stub para EnrichedContext / CTAs que aún leen detection. El híbrido busca con tools. */
 const NLP_AGENT_FIRST_DETECTION: IntentDetectionResult = {
@@ -700,6 +703,52 @@ export const nlpSubgraphNode = async (
       state.businessStatus?.nextOpenText ?? null
     );
     return { handlerResult: { content: confirmation, isInteractive: true } };
+  }
+
+  const domainCancel = resolveDomainCancelCommand({
+    payloadId: ctx.payloadId,
+    userMessage,
+  });
+  if (domainCancel === 'reservation') {
+    await clearReservationSessionAfterCancel(conversation.id);
+    console.log(
+      JSON.stringify({
+        event: '[nlp] domain_cancel_reservation',
+        conversationId: conversation.id,
+      })
+    );
+    return {
+      handlerResult: {
+        content: formatBotUserMessage(
+          'Reserva cancelada',
+          '❌',
+          'Si en algún momento querés hacer una nueva reserva, avisame.'
+        ),
+        isInteractive: false,
+        skipBodyHumanization: true,
+      },
+    };
+  }
+  if (domainCancel === 'order') {
+    const result = await buildCancelOrderMessage(
+      conversation,
+      business.id,
+      customer.phone_number ?? ctx.to
+    );
+    if (result) {
+      console.log(
+        JSON.stringify({
+          event: '[nlp] domain_cancel_order',
+          conversationId: conversation.id,
+        })
+      );
+      return {
+        handlerResult:
+          typeof result === 'string'
+            ? { content: result, isInteractive: false, skipBodyHumanization: true }
+            : { content: result, isInteractive: true, skipBodyHumanization: true },
+      };
+    }
   }
 
   const detection = NLP_AGENT_FIRST_DETECTION;

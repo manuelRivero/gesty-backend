@@ -66,6 +66,9 @@ import {
 import { buildOrderConfirmationMessage } from '../../../services/checkout/orderConfirmationMessage';
 import { isCancelOrderHandback } from '../../../services/checkout/cancelOrderHandback';
 import { buildCancelOrderMessage } from '../../../services/order.service';
+import { resolveDomainCancelCommand } from '../../../services/domainCancelCommand.service';
+import { clearReservationSessionAfterCancel } from '../../../services/reservationSessionReset.service';
+import { formatBotUserMessage } from '../../../services/productQuery/utils';
 import { buildResumeFollowUp } from '../session/buildResumeFollowUp';
 import { buildDiscardedReentryMessage } from '../session/discardedSignalMessage';
 import { withOrphanPayloadAsText } from '../session/orphanPayload';
@@ -712,6 +715,38 @@ export const checkoutAgentNode = async (
   const deliveryEnabled =
     (businessConfig?.delivery_enabled ?? true) || externalDeliveryEnabled;
   const takeawayEnabled = businessConfig?.takeaway_enabled ?? false;
+
+  const domainCancel = resolveDomainCancelCommand({
+    payloadId,
+    userMessage: ctx.message?.text?.body,
+  });
+  if (domainCancel === 'reservation') {
+    await clearReservationSessionAfterCancel(conversationId);
+    return {
+      handlerResult: {
+        content: formatBotUserMessage(
+          'Reserva cancelada',
+          '❌',
+          'Si en algún momento querés hacer una nueva reserva, avisame.'
+        ),
+        isInteractive: false,
+        skipBodyHumanization: true,
+      },
+      dataCollectionDelegated: true,
+    };
+  }
+  if (domainCancel === 'order') {
+    const result = await buildCancelOrderMessage(conversation, business.id, phone);
+    if (result) {
+      return {
+        handlerResult:
+          typeof result === 'string'
+            ? { ...textResponse(result), skipBodyHumanization: true }
+            : { content: result, isInteractive: true, skipBodyHumanization: true },
+        dataCollectionDelegated: true,
+      };
+    }
+  }
 
   // PAY_*: elegir el método NO cobra — ADR-0002. Muestra resumen y espera confirmación.
   // Gate de write: setDraftPaymentMethod rechaza si faltan fulfillment/dirección/nombre.

@@ -13,6 +13,7 @@ import {
 } from '../repositories';
 import type { ConversationMetadata } from './productQuery/types';
 import { normalizeMetadata } from './productQuery/utils';
+import { maybeClearConversationCanvas } from './conversationCanvas.service';
 
 const RESERVATION_SESSION_OMIT_KEYS = [
   'reservation_agent_active',
@@ -66,4 +67,6 @@ export async function clearReservationSessionAfterCancel(
   } catch {
     /* sin fila de state: no bloquea */
   }
+
+  await maybeClearConversationCanvas(conversationId);
 }

@@ -17,6 +17,10 @@ vi.mock('../../repositories', () => ({
   updateConversationState: vi.fn().mockResolvedValue({}),
 }));
 
+vi.mock('../conversationCanvas.service', () => ({
+  maybeClearConversationCanvas: vi.fn().mockResolvedValue(false),
+}));
+
 import { prisma } from '../../lib/prisma';
 import {
   omitConversationMetadataKeys,

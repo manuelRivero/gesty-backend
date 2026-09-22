@@ -50,6 +50,14 @@ vi.mock('../../../../agents/reactAgent', () => ({
   runHybridReactAgent: vi.fn(),
 }));
 
+vi.mock('../../../../services/order.service', () => ({
+  buildCancelOrderMessage: vi.fn().mockResolvedValue('pedido wipe'),
+}));
+
+vi.mock('../../../../services/reservationSessionReset.service', () => ({
+  clearReservationSessionAfterCancel: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock('../../checkout', () => ({
   activateCheckoutSessionIfCartHasItems: vi.fn(),
   applyDefaultFulfillmentIfSingleOption: vi.fn(),
@@ -85,6 +93,8 @@ import { reservationAgentNode } from '../../reservation';
 import { isCheckoutAgentEnabled, isReservationAgentEnabled } from '../../../../config/env';
 import { ConversationIntent } from '../../../../types/conversationIntent';
 import type { AgentState } from '../../../state';
+import { buildCancelOrderMessage } from '../../../../services/order.service';
+import { clearReservationSessionAfterCancel } from '../../../../services/reservationSessionReset.service';
 
 const nlpState = (message: string, metadata: Record<string, unknown> = {}): AgentState =>
   ({
@@ -314,5 +324,29 @@ describe('interactiveSubgraphNode — botones', () => {
     expect(hybridCtx.payloadId).toBeUndefined();
     expect(hybridCtx.message?.text?.body).toMatch(/quiero hacer un pedido/i);
     expect(result.handlerResult?.content).toBe('¿Para cuántas personas?');
+  });
+});
+
+describe('nlpSubgraphNode — comando de dominio', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(isCheckoutAgentEnabled).mockReturnValue(false);
+    vi.mocked(isReservationAgentEnabled).mockReturnValue(false);
+    vi.mocked(buildCancelOrderMessage).mockResolvedValue('pedido wipe');
+    vi.mocked(clearReservationSessionAfterCancel).mockResolvedValue(undefined);
+  });
+
+  it('Cancelar reserva: wipe de reserva, no pasa por el híbrido', async () => {
+    const result = await nlpSubgraphNode(nlpState('Cancelar reserva'));
+    expect(clearReservationSessionAfterCancel).toHaveBeenCalledWith('conv-1');
+    expect(runHybridReactAgent).not.toHaveBeenCalled();
+    expect(result.handlerResult?.content).toMatch(/Reserva cancelada/i);
+  });
+
+  it('Cancelar pedido: wipe de pedido, no pasa por el híbrido', async () => {
+    const result = await nlpSubgraphNode(nlpState('Cancelar pedido'));
+    expect(buildCancelOrderMessage).toHaveBeenCalled();
+    expect(runHybridReactAgent).not.toHaveBeenCalled();
+    expect(result.handlerResult?.content).toBe('pedido wipe');
   });
 });

@@ -13,6 +13,7 @@ import {
 import { COMPLEMENT_METADATA_KEY } from '../domain/complementSuggestions.schema';
 import type { ConversationMetadata } from './productQuery/types';
 import { normalizeMetadata } from './productQuery/utils';
+import { maybeClearConversationCanvas } from './conversationCanvas.service';
 
 /**
  * Claves de metadata de pedido/checkout/CTA/party-size/pendings tipables.
@@ -155,4 +156,6 @@ export async function clearOrderSessionAfterCancel(
   } catch {
     /* conversación inexistente: ignore */
   }
+
+  await maybeClearConversationCanvas(conversationId);
 }

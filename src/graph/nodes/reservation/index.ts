@@ -48,6 +48,8 @@ import {
 } from '../../../services/reservations/draft.repository';
 import { nextReservationStep } from '../../../services/reservations/nextReservationStep';
 import { clearReservationSessionAfterCancel } from '../../../services/reservationSessionReset.service';
+import { resolveDomainCancelCommand } from '../../../services/domainCancelCommand.service';
+import { buildCancelOrderMessage } from '../../../services/order.service';
 import { buildListMessageFromButtons } from '../../../whatsappBuilders';
 import { delegateToMainWithDetection } from '../session/delegateToMain';
 import { buildResumeFollowUp } from '../session/buildResumeFollowUp';
@@ -375,6 +377,33 @@ export const reservationAgentNode = async (
   if (payloadId === 'RESERVATION_CANCEL') {
     const handlerResult = await executeReservationCancellation(conversationId);
     return { handlerResult, dataCollectionDelegated: true };
+  }
+
+  // Comando de dominio (texto o CANCEL_ORDER): el wipe es el del comando,
+  // aunque este nodo tenga el turno.
+  const domainCancel = resolveDomainCancelCommand({
+    payloadId,
+    userMessage: ctx.message?.text?.body,
+  });
+  if (domainCancel === 'reservation') {
+    const handlerResult = await executeReservationCancellation(conversationId);
+    return { handlerResult, dataCollectionDelegated: true };
+  }
+  if (domainCancel === 'order') {
+    const result = await buildCancelOrderMessage(
+      conversation,
+      business.id,
+      customer.phone_number ?? ctx.to ?? ''
+    );
+    if (result) {
+      return {
+        handlerResult:
+          typeof result === 'string'
+            ? { content: result, isInteractive: false, skipBodyHumanization: true }
+            : { content: result, isInteractive: true, skipBodyHumanization: true },
+        dataCollectionDelegated: true,
+      };
+    }
   }
 
   // ── RESERVATION_RESET — limpiar draft y reiniciar con el agente ───────────
