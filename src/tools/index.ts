@@ -117,6 +117,10 @@ import {
   recordReservationCompletionAbandonment,
 } from '../services/reservationCompletionGoal.service';
 import { isReservationFaqMode } from '../services/reservationFaqDelegation.service';
+import {
+  instructionForDishPartyRanking,
+  rankDishesForReservationPartySize,
+} from '../services/reservations/rankDishesForPartySize';
 import { updateCustomerName } from '../repositories';
 import { AddressService } from '../services/address.service';
 import { shortOrderRef } from '../services/orderStatusNotification.service';
@@ -1071,7 +1075,8 @@ export const suggestDishesForPartySizeTool = new DynamicStructuredTool<
     'Si el cliente pregunta por platos de una mesa/reserva y NO hay sesión, primero start_reservation_session(reason) ' +
     '(esta tool devuelve reservation_session_required en ese caso). ' +
     'PROHIBIDO en flujo de pedido (ahí "para N personas" no filtra raciones). ' +
-    'Prioriza serves_people exacto; también incluye raciones cercanas (N..N+2).',
+    'Prioriza ración exacta, luego cercana (N..N+2). Si no hay, sugiere platos más chicos ' +
+    'con suggestedUnits = ceil(N/serves) — no digas que no hay platos si vienen ítems cover.',
   schema: suggestDishesForPartySizeSchema,
   func: async (
     { partySize, keyword, limit }: SuggestDishesForPartySizeInput,
@@ -1112,7 +1117,7 @@ export const suggestDishesForPartySizeTool = new DynamicStructuredTool<
       where: {
         business_id: businessId,
         is_available: true,
-        serves_people: { not: null, gte: resolvedPartySize, lte: resolvedPartySize + 2 },
+        serves_people: { not: null },
         menu_category: { is_active: true },
         ...(kw
           ? {
@@ -1124,7 +1129,7 @@ export const suggestDishesForPartySizeTool = new DynamicStructuredTool<
           : {}),
       },
       orderBy: [{ serves_people: 'asc' }, { is_featured: 'desc' }, { name: 'asc' }],
-      take: safeLimit * 2,
+      take: Math.min(80, Math.max(24, safeLimit * 8)),
       select: {
         id: true,
         name: true,
@@ -1145,28 +1150,32 @@ export const suggestDishesForPartySizeTool = new DynamicStructuredTool<
       },
     });
 
-    const ranked = [...items].sort((a, b) => {
-      const da = Math.abs((a.serves_people ?? 99) - resolvedPartySize);
-      const db = Math.abs((b.serves_people ?? 99) - resolvedPartySize);
-      if (da !== db) return da - db;
-      return a.name.localeCompare(b.name, 'es');
-    });
-    const shortlisted = ranked.slice(0, safeLimit);
+    const shortlisted = rankDishesForReservationPartySize(
+      items,
+      resolvedPartySize,
+      safeLimit
+    );
+    const bestMatch = shortlisted[0]?.match ?? 'none';
 
     return toJson({
       success: true,
       partySize: resolvedPartySize,
       count: shortlisted.length,
-      instruction:
-        shortlisted.length === 0
-          ? 'No hay platos con ración cercana a N. Decilo con claridad; ofrecé buscar un plato por nombre (search_products) o seguir la reserva.'
-          : 'Mencioná nombre + serves_people. No armes pedido ni present_product_cta de compra; es dato para la mesa. El resume de reserva sigue después.',
-      items: shortlisted.map((item) =>
-        toShortlistItem({
+      bestMatch,
+      instruction: instructionForDishPartyRanking({
+        count: shortlisted.length,
+        bestMatch,
+      }),
+      items: shortlisted.map((item) => ({
+        ...toShortlistItem({
           ...item,
           menu_category: item.menu_category,
-        })
-      ),
+        }),
+        match: item.match,
+        suggestedUnits: item.suggestedUnits,
+        covers: item.covers,
+        note: item.note,
+      })),
     });
   },
 });

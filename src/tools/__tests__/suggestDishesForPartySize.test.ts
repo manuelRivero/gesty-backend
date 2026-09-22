@@ -78,6 +78,34 @@ describe('suggest_dishes_for_party_size', () => {
     expect(result.partySize).toBe(6);
     expect(result.items[0].name).toBe('Pollo a la brasa');
     expect(result.items[0].serves_people).toBe(6);
+    expect(result.items[0].match).toBe('exact');
+    expect(result.bestMatch).toBe('exact');
+  });
+
+  it('sin ración de 3: cubre con plato de 2 (2 unidades), no vacío', async () => {
+    findMany.mockResolvedValue([
+      {
+        id: 'c',
+        name: 'Milanesa para 2',
+        serves_people: 2,
+        is_featured: false,
+        variations: [],
+        menu_category: { id: 'c1', name: 'Minutas', category_tag: 'MAIN' },
+        menu_item_price: [{ amount: 40, currency_code: 'ARS' }],
+      },
+    ]);
+
+    const raw = await suggestDishesForPartySizeTool.invoke(
+      { partySize: 3, limit: 10 },
+      CONFIG
+    );
+    const result = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    expect(result.success).toBe(true);
+    expect(result.bestMatch).toBe('cover');
+    expect(result.items[0].suggestedUnits).toBe(2);
+    expect(result.items[0].note).toMatch(/2×/);
+    expect(result.instruction).toMatch(/más de una unidad/);
+    expect(result.instruction).not.toMatch(/No hay platos/);
   });
 
   it('sin sesión de reserva pide delegar en vez de party size de pedido', async () => {
