@@ -166,7 +166,18 @@ export const verifyMpWebhookSignature = (
     }
     const ts = parts['ts'];
     const v1 = parts['v1'];
-    if (!ts || !v1) return false;
+    if (!ts || !v1) {
+      console.warn(
+        JSON.stringify({
+          event: '[mp-debug] webhook_signature_diff',
+          reason: 'missing_ts_or_v1',
+          signatureHeader,
+          requestId: requestId ?? null,
+          requestIdRaw: requestIdRaw ?? null,
+        })
+      );
+      return false;
+    }
 
     const queryDataId = req.query['data.id'] ?? req.query.data_id;
     const queryId = Array.isArray(queryDataId) ? queryDataId[0] : queryDataId;
@@ -188,9 +199,32 @@ export const verifyMpWebhookSignature = (
 
     const a = Buffer.from(v1, 'utf8');
     const b = Buffer.from(expected, 'utf8');
-    if (a.length !== b.length) return false;
-    return crypto.timingSafeEqual(a, b);
-  } catch {
+    const matches = a.length === b.length && crypto.timingSafeEqual(a, b);
+    if (!matches) {
+      console.warn(
+        JSON.stringify({
+          event: '[mp-debug] webhook_signature_diff',
+          manifest: message,
+          requestId: requestId ?? null,
+          requestIdRaw: requestIdRaw ?? null,
+          ts,
+          v1,
+          expected,
+          secretLength: webhookSecret.length,
+          secretHead: webhookSecret.slice(0, 4),
+          secretTail: webhookSecret.slice(-4),
+        })
+      );
+    }
+    return matches;
+  } catch (err) {
+    console.warn(
+      JSON.stringify({
+        event: '[mp-debug] webhook_signature_diff',
+        reason: 'throw',
+        message: err instanceof Error ? err.message : String(err),
+      })
+    );
     return false;
   }
 };
