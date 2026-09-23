@@ -68,6 +68,21 @@ export const RESERVATION_FAQ_CONTINUE_OR_CANCEL =
   '¿Seguimos con la reserva o preferís cancelarla?';
 
 /**
+ * Anexa el follow-up salvo que el texto del agente ya lo traiga: el modelo a
+ * veces copia la pregunta de cierre y el mensaje salía con ella dos veces
+ * (e2e 22/9, FAQ de platos mid-reserva).
+ */
+export function appendResumeFollowUp(
+  content: string,
+  followUp: string
+): string {
+  const normalize = (s: string): string => s.replace(/\s+/g, ' ').trim().toLowerCase();
+  return normalize(content).includes(normalize(followUp))
+    ? content
+    : `${content}\n\n${followUp}`;
+}
+
+/**
  * Exportada para reuso en `reservationCompletionGoal.service.ts` (Fase 1b): es la
  * misma fuente de verdad de qué falta en el borrador, tanto para retomar tras
  * una interrupción como para saber si el Goal `COMPLETAR_RESERVA` sigue abierto.

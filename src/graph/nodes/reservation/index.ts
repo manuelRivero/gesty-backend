@@ -68,7 +68,7 @@ import { resolveDomainCancelCommand } from '../../../services/domainCancelComman
 import { buildCancelOrderMessage } from '../../../services/order.service';
 import { buildListMessageFromButtons } from '../../../whatsappBuilders';
 import { delegateToMainWithDetection } from '../session/delegateToMain';
-import { buildResumeFollowUp } from '../session/buildResumeFollowUp';
+import { appendResumeFollowUp, buildResumeFollowUp } from '../session/buildResumeFollowUp';
 import { buildDiscardedReentryMessage } from '../session/discardedSignalMessage';
 import { withOrphanPayloadAsText } from '../session/orphanPayload';
 import { findOrCreateConversationState } from '../../../repositories';
@@ -425,7 +425,7 @@ async function fulfillOwedReservationDishFaq(params: {
           ...baseResult,
           content:
             typeof baseResult.content === 'string'
-              ? `${baseResult.content}\n\n${resume.text}`
+              ? appendResumeFollowUp(baseResult.content, resume.text)
               : baseResult.content,
         }
       : baseResult,
@@ -1050,7 +1050,7 @@ export const reservationAgentNode = async (
             ...baseResult,
             content:
               typeof baseResult.content === 'string'
-                ? `${baseResult.content}\n\n${resume.text}`
+                ? appendResumeFollowUp(baseResult.content, resume.text)
                 : baseResult.content,
           }
         : baseResult,

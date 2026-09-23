@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  appendResumeFollowUp,
   buildResumeFollowUp,
   RESERVATION_FAQ_CONTINUE_OR_CANCEL,
 } from '../buildResumeFollowUp';
@@ -43,5 +44,25 @@ describe('buildResumeFollowUp (kind: reservation + FAQ)', () => {
       includeContinueOrCancel: true,
     });
     expect(resume.text).toBe(RESERVATION_FAQ_CONTINUE_OR_CANCEL);
+  });
+});
+
+describe('appendResumeFollowUp', () => {
+  it('anexa cuando el texto del agente no cierra', () => {
+    const out = appendResumeFollowUp(
+      'Tenemos ceviche clásico.',
+      RESERVATION_FAQ_CONTINUE_OR_CANCEL
+    );
+    expect(out).toBe(`Tenemos ceviche clásico.\n\n${RESERVATION_FAQ_CONTINUE_OR_CANCEL}`);
+  });
+
+  it('no duplica si el modelo ya copió la pregunta de cierre', () => {
+    const content = `Tenemos ceviche clásico.\n\n${RESERVATION_FAQ_CONTINUE_OR_CANCEL}`;
+    expect(appendResumeFollowUp(content, RESERVATION_FAQ_CONTINUE_OR_CANCEL)).toBe(content);
+  });
+
+  it('ignora diferencias de espacios y mayúsculas al detectar el duplicado', () => {
+    const content = '• *Pollo a la brasa*\n\n¿SEGUIMOS  con la reserva o preferís cancelarla?';
+    expect(appendResumeFollowUp(content, RESERVATION_FAQ_CONTINUE_OR_CANCEL)).toBe(content);
   });
 });

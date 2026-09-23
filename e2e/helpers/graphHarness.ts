@@ -537,15 +537,16 @@ export const getOfferedE2ePayButtonId = async (
   return { buttonId: offered[0].buttonId, methodId: offered[0].id };
 };
 
-export const getActiveDraftItems = async (
+export type E2eDraftLine = {
+  product_id: string | null;
+  quantity: number;
+  variation: string | null;
+};
+
+/** Misma lectura que carrito/checkout: `findFirst` active, sin orderBy. */
+export const getActiveDraftSnapshot = async (
   businessId: string
-): Promise<
-  Array<{
-    product_id: string | null;
-    quantity: number;
-    variation: string | null;
-  }>
-> => {
+): Promise<{ draftId: string | null; items: E2eDraftLine[] }> => {
   const { prisma } = await import('../../src/lib/prisma');
   const draft = await prisma.draft_order.findFirst({
     where: {
@@ -554,12 +555,20 @@ export const getActiveDraftItems = async (
       status: 'active',
     },
     select: {
+      id: true,
       draft_order_item: {
         select: { product_id: true, quantity: true, variation: true },
       },
     },
   });
-  return draft?.draft_order_item ?? [];
+  return { draftId: draft?.id ?? null, items: draft?.draft_order_item ?? [] };
+};
+
+export const getActiveDraftItems = async (
+  businessId: string
+): Promise<E2eDraftLine[]> => {
+  const snapshot = await getActiveDraftSnapshot(businessId);
+  return snapshot.items;
 };
 
 export const findLatestOrderForE2eCustomer = async (
@@ -638,8 +647,18 @@ export const addItemViaButtonHappyPath = async (params: {
   let lastState = await runGraphTurn(params.graph, buildInteractivePayload(payloadId));
 
   for (let step = 0; step < 5; step++) {
-    const items = await getActiveDraftItems(params.businessId);
-    if (items.some((i) => i.product_id === params.productId)) return lastState;
+    const snapshot = await getActiveDraftSnapshot(params.businessId);
+    console.log(
+      JSON.stringify({
+        event: '[e2e-add-item] draft_read',
+        productId: params.productId,
+        readDraftId: snapshot.draftId,
+        itemCount: snapshot.items.length,
+        hasProduct: snapshot.items.some((i) => i.product_id === params.productId),
+        step,
+      })
+    );
+    if (snapshot.items.some((i) => i.product_id === params.productId)) return lastState;
 
     const meta = lastState.workingConversationState?.metadata as
       | Record<string, unknown>
@@ -684,8 +703,31 @@ export const addItemViaButtonHappyPath = async (params: {
     break;
   }
 
-  const finalItems = await getActiveDraftItems(params.businessId);
-  if (!finalItems.some((i) => i.product_id === params.productId)) {
+  const finalSnapshot = await getActiveDraftSnapshot(params.businessId);
+  if (!finalSnapshot.items.some((i) => i.product_id === params.productId)) {
+    const { prisma } = await import('../../src/lib/prisma');
+    const activeDrafts = await prisma.draft_order.findMany({
+      where: {
+        business_id: params.businessId,
+        customer_phone: E2E_CUSTOMER_PHONE,
+        status: 'active',
+      },
+      select: {
+        id: true,
+        created_at: true,
+        draft_order_item: {
+          select: { product_id: true, quantity: true, variation: true },
+        },
+      },
+    });
+    console.error(
+      JSON.stringify({
+        event: '[e2e-add-item] product_not_in_cart',
+        productId: params.productId,
+        readDraftId: finalSnapshot.draftId,
+        activeDrafts,
+      })
+    );
     throw new Error(
       `addItemViaButtonHappyPath: producto no en carrito (productId=${params.productId})`
     );

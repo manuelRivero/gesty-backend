@@ -1,4 +1,17 @@
-import 'dotenv/config';
+import { loadEnv } from '../../src/config/loadEnv';
+
+/**
+ * Misma resolución de env que la app (`loadEnv`):
+ *   - local / develop → `.env.development`
+ *   - production → `.env.production`
+ *   - override → `DOTENV_CONFIG_PATH`
+ *
+ * La BD (`DATABASE_URL`) y el negocio (`PHONE_NUMBER_ID`) salen de ese archivo:
+ * hay que apuntar a la base del entorno con el que se quiere probar (develop ≠ prod).
+ * No usar `import 'dotenv/config'` acá: carga `.env` primero y deja fijada la URL
+ * incorrecta antes de que `loadEnv` pueda aplicar `.env.development`.
+ */
+loadEnv();
 
 /** Variables mínimas para correr e2e contra BD + LLM reales. Requiere opt-in `E2E_RUN=1`. */
 export const isE2eEnabled = (): boolean =>

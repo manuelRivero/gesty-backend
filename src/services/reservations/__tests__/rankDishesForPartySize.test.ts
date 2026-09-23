@@ -73,7 +73,7 @@ describe('rankDishesForReservationPartySize', () => {
       reservationActive: true,
     });
     expect(text).toMatch(/PROHIBIDO agregar la frase de unidades/);
-    expect(text).toMatch(/PROHIBIDO cerrar con una pregunta/);
+    expect(text).toMatch(/NO escribas ninguna pregunta/);
     expect(text).not.toMatch(/Después de la lista, UNA frase como en pedido/);
   });
 
@@ -85,6 +85,6 @@ describe('rankDishesForReservationPartySize', () => {
     });
     expect(text).toMatch(/No hay platos con ración cargada/);
     expect(text).not.toMatch(/o seguir la reserva/);
-    expect(text).toMatch(/PROHIBIDO cerrar con una pregunta/);
+    expect(text).toMatch(/NO escribas ninguna pregunta/);
   });
 });

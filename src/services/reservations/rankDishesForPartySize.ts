@@ -166,9 +166,11 @@ export const instructionForDishPartyRanking = (params: {
   reservationActive: boolean;
 }): string => {
   const closing = params.reservationActive
-    ? 'CIERRE: terminá en el dato del menú. PROHIBIDO cerrar con una pregunta o una oferta ' +
-      '("¿seguimos con la reserva?", "¿algo más?", "¿te gustaría...?"): el sistema anexa la ' +
-      'única pregunta del turno. '
+    ? // Sin citar la frase que anexa el nodo: si se la mostrás como ejemplo,
+      // el modelo la copia y el mensaje sale con la pregunta repetida (e2e 22/9).
+      'CIERRE: el último renglón de tu texto es el último plato de la lista. ' +
+      'Después NO escribas ninguna pregunta, invitación ni frase de acompañamiento: ' +
+      'el sistema agrega la pregunta de cierre del turno. '
     : '';
 
   if (params.count === 0 || params.bestMatch === 'none') {

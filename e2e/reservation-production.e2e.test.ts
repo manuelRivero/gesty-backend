@@ -46,6 +46,7 @@ import {
 } from './helpers/graphHarness';
 import { formatDMY, nextDateForWeekday } from '../src/services/reservations/clock';
 import { nextReservationStep } from '../src/services/reservations/nextReservationStep';
+import { RESERVATION_FAQ_CONTINUE_OR_CANCEL } from '../src/graph/nodes/session/buildResumeFollowUp';
 
 type TurnObservation = {
   caseId: string;
@@ -459,6 +460,79 @@ describe.sequential.skipIf(!isE2eEnabled())(
           .toBe(true);
       }
     }, 360_000);
+
+    // ── 4c. FAQ de platos: un solo cierre ──────────────────────────────────
+    //
+    // Evidencia 22/9 (Sabrosón): mesa de 6 + "Y pollo?" devolvió la lista y
+    // después DOS cierres — el del modelo ("¿Te gustaría seguir con la reserva
+    // o hay algo más que necesites?") y el fijo del nodo — más la frase de
+    // unidades del mundo pedido ("para 6 podés llevar más de una unidad"),
+    // que no aplica porque la reserva guarda la mesa, no platos.
+
+    it('faq-platos-cierre-unico: lista + solo la pregunta fija seguir/cancelar', async () => {
+      const reset = await resetE2eCustomer();
+      conversationId = reset.conversationId;
+      await cancelRecentE2eReservations(businessId);
+
+      // Sesión sembrada (como los casos de ambiente): el caso a cubrir es el
+      // cierre de la respuesta de menú, no el routing que abre la reserva.
+      const { patchConversationMetadata } = await import(
+        '../src/repositories/conversationState.repository'
+      );
+      await patchConversationMetadata(conversationId, {
+        reservation_agent_active: true,
+        reservation_draft: { partySize: 6 },
+      });
+
+      const user = 'Y tienen pollo?';
+      const state = await runGraphTurn(graph, buildTextPayload(user));
+      expect(hasHandlerResponse(state.handlerResult)).toBe(true);
+      const dishTurn = await observeTurn({
+        caseId: 'faq-platos-cierre-unico',
+        turn: 1,
+        user,
+        state,
+      });
+
+      expect
+        .soft(
+          /ración para:/i.test(dishTurn.responseText),
+          'debería listar platos con "ración para:"'
+        )
+        .toBe(true);
+
+      const text = dishTurn.responseText;
+
+      expect
+        .soft(
+          text.includes(RESERVATION_FAQ_CONTINUE_OR_CANCEL),
+          'debería cerrar con la pregunta fija seguir/cancelar'
+        )
+        .toBe(true);
+
+      // Un solo cierre: la única pregunta del mensaje es la anexada.
+      const questionMarks = (text.match(/\?/g) ?? []).length;
+      expect
+        .soft(questionMarks <= 1, `una sola pregunta en el mensaje, got ${questionMarks}`)
+        .toBe(true);
+
+      const modelClosing =
+        /te gustar[ií]a seguir|seguir con la reserva o hay algo|algo m[aá]s que necesit|necesit[aá]s algo m[aá]s|quer[eé]s que busque otra|si necesit[aá]s m[aá]s (info|informaci[oó]n)|avisame|decime si|consultame/i.test(
+          text
+        );
+      expect
+        .soft(modelClosing, 'el modelo no debería agregar su propio cierre')
+        .toBe(false);
+
+      // Frase de unidades (copy de pedido) fuera de la respuesta de reserva.
+      const unitsPhrase =
+        /m[aá]s de una unidad|varias unidades|sumar (m[aá]s )?unidades|m[aá]s unidades/i.test(
+          text
+        );
+      expect
+        .soft(unitsPhrase, 'sin frase de unidades del mundo pedido')
+        .toBe(false);
+    }, 480_000);
 
     // ── 5. Ambiente en prosa (si el negocio tiene environments) ─────────────
 

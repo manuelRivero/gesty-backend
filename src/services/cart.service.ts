@@ -263,6 +263,27 @@ export type AddItemMessageResult =
       complementOnly?: boolean;
     };
 
+export type AddItemWriteVerifyStatus = 'ok' | 'missing' | 'ambiguous';
+
+/**
+ * Invariante post-add: la línea escrita tiene que ser visible en el draft
+ * activo que lee el carrito (`findFirst` sin orderBy).
+ * `ambiguous` = se escribió en un draft y la lectura resuelve otro (la línea
+ * se ve; no bloquea al cliente).
+ */
+export function classifyAddItemWriteVerify(params: {
+  writtenDraftId: string;
+  readDraft: { id: string; draft_order_item: Array<{ id: string }> } | null;
+}): { status: AddItemWriteVerifyStatus; readDraftId: string | null } {
+  if (!params.readDraft || params.readDraft.draft_order_item.length === 0) {
+    return { status: 'missing', readDraftId: params.readDraft?.id ?? null };
+  }
+  if (params.readDraft.id !== params.writtenDraftId) {
+    return { status: 'ambiguous', readDraftId: params.readDraft.id };
+  }
+  return { status: 'ok', readDraftId: params.readDraft.id };
+}
+
 export const buildRemoveItemMessage = async (
   business: business,
   conversation: conversation,
@@ -378,9 +399,10 @@ export const buildAddItemMessage = async (
     where: { draft_order_id: cart.id, product_id: item.id, variation }
   });
 
+  let writtenLineId: string;
   if (existingItem) {
     const newQ = mode === 'set' ? qty : existingItem.quantity + qty;
-    await prisma.draft_order_item.update({
+    const updated = await prisma.draft_order_item.update({
       where: { draft_order_id: cart.id, id: existingItem.id },
       data: {
         quantity: newQ,
@@ -389,9 +411,11 @@ export const buildAddItemMessage = async (
         list_price: resolved.hasDiscount ? resolved.listPrice : null,
         discount_amount: resolved.hasDiscount ? resolved.discountAmount : null,
       },
+      select: { id: true },
     });
+    writtenLineId = updated.id;
   } else {
-    await prisma.draft_order_item.create({
+    const created = await prisma.draft_order_item.create({
       data: {
         draft_order_id: cart.id,
         product_id: item.id,
@@ -402,7 +426,59 @@ export const buildAddItemMessage = async (
         discount_amount: resolved.hasDiscount ? resolved.discountAmount : null,
         variation,
       },
+      select: { id: true },
     });
+    writtenLineId = created.id;
+  }
+
+  console.log(
+    JSON.stringify({
+      event: '[add-item] draft_write',
+      writtenDraftId: cart.id,
+      lineId: writtenLineId,
+      productId: item.id,
+      quantity: qty,
+      mode,
+      variation,
+      op: existingItem ? 'update' : 'create',
+    })
+  );
+
+  // Misma lectura que carrito/checkout/e2e (`findFirst` active por negocio +
+  // teléfono): no devolver "sumado" si la línea no es visible ahí.
+  const verifyDraft = await prisma.draft_order.findFirst({
+    where: {
+      business_id: business.id,
+      customer_phone: customer.phone_number,
+      status: 'active',
+    },
+    select: {
+      id: true,
+      draft_order_item: {
+        where: { product_id: item.id, variation },
+        select: { id: true },
+      },
+    },
+  });
+  const verify = classifyAddItemWriteVerify({
+    writtenDraftId: cart.id,
+    readDraft: verifyDraft,
+  });
+  console.log(
+    JSON.stringify({
+      event: '[add-item] draft_write_verify',
+      status: verify.status,
+      writtenDraftId: cart.id,
+      readDraftId: verify.readDraftId,
+      lineId: writtenLineId,
+      productId: item.id,
+    })
+  );
+  if (verify.status === 'missing') {
+    const errorText = 'No pude agregar el producto al pedido. Probá de nuevo.';
+    await createConversationMessage(conversation.id, 'ai', errorText, false);
+    await updateConversationLastMessageAt(conversation.id);
+    return errorText;
   }
 
   const total = await prisma.draft_order_item.aggregate({

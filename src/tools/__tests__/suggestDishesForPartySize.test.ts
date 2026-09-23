@@ -113,7 +113,7 @@ describe('suggest_dishes_for_party_size', () => {
     expect(result.instruction).not.toMatch(/No hay platos/);
     // FAQ mid-reserva: el nodo anexa la única pregunta del turno.
     expect(result.instruction).toMatch(/PROHIBIDO agregar la frase de unidades/);
-    expect(result.instruction).toMatch(/PROHIBIDO cerrar con una pregunta/);
+    expect(result.instruction).toMatch(/NO escribas ninguna pregunta/);
   });
 
   it('consulta por proximidad a N: gte N ascendente y lt N descendente', async () => {
