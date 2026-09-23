@@ -39,12 +39,17 @@ vi.mock('../productQuery', () => ({
 
 import { recordOpportunitySurfaced } from '../intent/opportunities.service';
 import { buildComplementarySuggestionsWithLlm } from '../ai/complementarySuggestion.ai.service';
+import { prisma } from '../../lib/prisma';
+import { patchConversationMetadata } from '../../repositories';
 import {
   buildAddItemShortcutsFollowUpList,
   buildComplementConfirmBodyIntro,
   buildComplementSuggestionsListMessage,
+  buildItemNoteConfirmTitle,
+  buildItemNoteSuccessListMessage,
   canSurfaceComplementOpportunity,
   presentComplementSuggestionBundle,
+  presentItemNoteSuccessList,
   tryPresentComplementSuggestions,
 } from '../complementSuggestions.service';
 
@@ -156,6 +161,90 @@ describe('buildComplementConfirmBodyIntro', () => {
     expect(text).toMatch(/^Total hasta ahora: \$12[.\s]?000\./);
     expect(text).toContain('• *Envío:*');
     expect(text.indexOf('• *Envío:*')).toBeLessThan(text.indexOf('¿Sumás una bebida?'));
+  });
+});
+
+describe('buildItemNoteSuccessListMessage', () => {
+  it('confirma la nota y cierra con las guías de gestión', () => {
+    const list = buildItemNoteSuccessListMessage({
+      itemNames: ['Ceviche Clásico'],
+      note: 'con poco picante',
+      totalAmount: 4100,
+      shippingBullet: '• *Envío:* a tu dirección, $4.000. El retiro en el local es sin cargo.',
+      suggestions: [
+        { id: 'adobo', name: 'Adobo arequipeno', categoryName: 'Principales' },
+      ],
+    });
+
+    const rows = list.action.sections.flatMap((s) => s.rows);
+    expect(list.body.text).toContain('¡Listo! Anoté «con poco picante» en Ceviche Clásico');
+    expect(list.body.text).toMatch(/gestión de tu pedido/i);
+    expect(list.body.text).toContain('• *Menú*');
+    expect(list.body.text).toContain('• Ver *pedido*');
+    expect(list.body.text).toContain('• *Modificar* pedido');
+    expect(list.body.text).toContain('• *Finalizar* pedido');
+    expect(list.body.text).toContain('• *Nota* del pedido');
+    expect(list.body.text).toContain('• *Adobo arequipeno*');
+    expect(list.footer.text).toBe('Elegí o escribí');
+    expect(rows.some((r) => r.id === 'ADD_ITEM:adobo')).toBe(true);
+    expect(rows.some((r) => r.id === 'VIEW_CART')).toBe(true);
+    expect(rows.some((r) => r.id === 'CHECKOUT')).toBe(true);
+    expect(rows.some((r) => r.id === 'ITEM_NOTE')).toBe(true);
+    expect(rows.some((r) => r.id === 'VIEW_MENU')).toBe(true);
+  });
+
+  it('sin nota guardada dice que la sacó', () => {
+    expect(
+      buildItemNoteConfirmTitle({ itemNames: ['Ceviche Clásico'], note: null })
+    ).toBe('¡Listo! Saqué la nota de Ceviche Clásico');
+  });
+});
+
+describe('presentItemNoteSuccessList', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('reabre la ola viva sin volver a contar la opportunity', async () => {
+    const adoboId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    vi.mocked(prisma.draft_order.findFirst).mockResolvedValue({
+      total_amount: 4100,
+      fulfillment_type: null,
+    } as never);
+    vi.mocked(prisma.menu_item.findMany).mockResolvedValue([
+      {
+        id: adoboId,
+        name: 'Adobo arequipeno',
+        menu_category: { name: 'Principales' },
+      },
+    ] as never);
+
+    const list = await presentItemNoteSuccessList({
+      conversationId: 'conv-1',
+      businessId: 'biz-1',
+      customerPhone: '5491100000000',
+      customerId: 'cust-1',
+      metadata: {
+        pendingComplementSelection: true,
+        candidateProductIds: [adoboId],
+      },
+      itemNames: ['Ceviche Clásico'],
+      note: 'con poco picante',
+    });
+
+    expect(list?.body.text).toContain('• *Adobo arequipeno*');
+    expect(list?.body.text).toMatch(/gestión de tu pedido/i);
+    expect(recordOpportunitySurfaced).not.toHaveBeenCalled();
+    expect(patchConversationMetadata).toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({
+        pendingComplementSelection: true,
+        candidateProductIds: [adoboId],
+        pendingTipables: expect.objectContaining({
+          management: expect.arrayContaining(['VIEW_MENU', 'CHECKOUT', 'ITEM_NOTE']),
+        }),
+      })
+    );
   });
 });
 

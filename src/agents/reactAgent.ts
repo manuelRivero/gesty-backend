@@ -45,7 +45,10 @@ import type { CtaPlan, CtaPlannerRaw } from './types';
 import { persistLastOffer } from '../services/lastOffer.service';
 import { buildCartSummaryMessage } from '../services/cart.service';
 import { buildCancelOrderMessage, buildCancelDisambiguationMessage } from '../services/order.service';
-import { tryPresentComplementSuggestions } from '../services/complementSuggestions.service';
+import {
+  presentItemNoteSuccessList,
+  tryPresentComplementSuggestions,
+} from '../services/complementSuggestions.service';
 import { buildCategoryProductListMessage } from '../services/category.service';
 import { findOrCreateConversationState } from '../repositories';
 import { AddressService } from '../services/address.service';
@@ -196,6 +199,13 @@ export interface HybridAgentSignals {
   cartAddComplementBlocked: boolean;
   /** mark_complement_refused devolvió refused este turno. */
   markComplementRefused: boolean;
+  /**
+   * update_item_note escribió la nota. El runtime cierra con la lista de
+   * gestión (y la ola de complementos si sigue viva), no con prosa del modelo.
+   */
+  itemNoteSaved: boolean;
+  itemNoteItemNames: string[];
+  itemNoteText: string | null;
 }
 
 export type HybridAgentRunResult =
@@ -346,6 +356,9 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
     cartAddPendingAskMessage: null,
     cartAddComplementBlocked: false,
     markComplementRefused: false,
+    itemNoteSaved: false,
+    itemNoteItemNames: [],
+    itemNoteText: null,
   };
 
   for (const msg of messages) {
@@ -371,6 +384,26 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
       };
       if (m.name === 'add_cart_item' && data.success === true) {
         signals.cartAddSucceeded = true;
+      }
+      if (m.name === 'update_item_note' && data.success === true) {
+        signals.itemNoteSaved = true;
+        const names: string[] = [];
+        if (Array.isArray(data.items)) {
+          for (const row of data.items) {
+            if (
+              row &&
+              typeof row === 'object' &&
+              typeof (row as { itemName?: unknown }).itemName === 'string'
+            ) {
+              names.push((row as { itemName: string }).itemName);
+            }
+          }
+        }
+        if (names.length === 0 && typeof data.itemName === 'string' && data.itemName.trim()) {
+          names.push(data.itemName);
+        }
+        signals.itemNoteItemNames = names;
+        signals.itemNoteText = typeof data.note === 'string' ? data.note : null;
       }
       // Post-remove: el cierre es el resumen interactivo (mismo que VIEW_CART),
       // no prosa inventada con total suelto. Honramos present_cart aunque el
@@ -737,7 +770,8 @@ export const runHybridReactAgent = async (
         signals.startCheckoutSession ||
         signals.presentCart ||
         signals.presentProductCta != null ||
-        signals.presentComplementSuggestions;
+        signals.presentComplementSuggestions ||
+        signals.itemNoteSaved;
       if (
         isWelcomeEligibleGreeting(userMsg) &&
         !signals.presentWelcomeOptions &&
@@ -981,6 +1015,40 @@ export const runHybridReactAgent = async (
       }
     } catch (err) {
       console.error('[hybrid-agent] cancel_order failed, falling through', err);
+    }
+  }
+
+  // Post-nota: la lista (total + ola viva + gestión) reemplaza la prosa del modelo.
+  // Si el mismo turno sumó al carrito, el cierre del alta ya trae esas guías.
+  if (signals.itemNoteSaved && !signals.cartAddSucceeded) {
+    try {
+      const customer = ctx.customer as { id: string };
+      const noteList = await presentItemNoteSuccessList({
+        conversationId,
+        businessId,
+        customerPhone,
+        customerId: customer.id,
+        metadata: ctx.conversationState?.metadata,
+        itemNames: signals.itemNoteItemNames,
+        note: signals.itemNoteText,
+      });
+      if (noteList) {
+        console.log(
+          JSON.stringify({
+            event: '[hybrid-agent] item_note_success_list',
+            conversationId,
+          })
+        );
+        return {
+          kind: 'response',
+          handlerResult: markHybridResult({
+            content: noteList,
+            isInteractive: true,
+          }),
+        };
+      }
+    } catch (err) {
+      console.error('[hybrid-agent] item_note_success_list failed, falling through', err);
     }
   }
 

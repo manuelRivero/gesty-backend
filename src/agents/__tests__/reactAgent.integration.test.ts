@@ -76,6 +76,9 @@ vi.mock('../../lib/prisma', () => ({
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn().mockResolvedValue({ name: 'Ceviche Clásico' }),
     },
+    draft_order: {
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
   },
 }));
 
@@ -339,6 +342,36 @@ describe('runHybridReactAgent', () => {
     expect(result!.isInteractive).toBe(false);
     expect(planCta).not.toHaveBeenCalled();
     expect(buildHybridCtaInteractive).not.toHaveBeenCalled();
+  });
+
+  it('update_item_note exitoso → lista con guías de gestión', async () => {
+    vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
+    vi.mocked(prisma.draft_order.findFirst).mockResolvedValue({
+      total_amount: 4100,
+      fulfillment_type: null,
+    } as never);
+    vi.mocked(createReactAgent).mockReturnValue({
+      invoke: makeAgentInvokeWithNote(
+        '¡Listo! Anoté que el Lomo saltado es con poca sal y acá van unos platos.'
+      ),
+    } as any);
+
+    const result = unwrap(
+      await runHybridReactAgent(
+        makeCtx({
+          message: { text: { body: 'con poca sal' }, type: 'text' },
+        }) as any
+      )
+    );
+
+    expect(result!.isInteractive).toBe(true);
+    const list = result!.content as { body: { text: string }; footer: { text: string } };
+    expect(list.body.text).toContain('¡Listo! Anoté «poca sal» en Lomo saltado');
+    expect(list.body.text).toMatch(/gestión de tu pedido/i);
+    expect(list.body.text).toContain('• *Menú*');
+    expect(list.body.text).toContain('• Ver *pedido*');
+    expect(list.footer.text).toBe('Elegí o escribí');
+    expect(list.body.text).not.toContain('acá van unos platos');
   });
 
   it('flag CTA off + present_product_cta → texto plano', async () => {

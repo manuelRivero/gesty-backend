@@ -193,6 +193,28 @@ export function buildComplementConfirmTitle(params: {
   return `¡Listo! Sumé ${qtyPrefix}${name} al pedido`;
 }
 
+function formatItemNoteNameList(itemNames: string[]): string {
+  const names = itemNames.map((name) => name.trim()).filter(Boolean);
+  if (names.length === 0) return 'el pedido';
+  if (names.length === 1) return names[0]!;
+  if (names.length === 2) return `${names[0]} y ${names[1]}`;
+  return `${names.slice(0, -1).join(', ')} y ${names[names.length - 1]}`;
+}
+
+/** Título de la lista post-nota. El runtime lo arma; el modelo no redacta el cierre. */
+export function buildItemNoteConfirmTitle(params: {
+  itemNames: string[];
+  note: string | null;
+}): string {
+  const label = formatItemNoteNameList(params.itemNames);
+  const note = params.note?.trim() ?? '';
+  if (!note) return `¡Listo! Saqué la nota de ${label}`;
+  return `¡Listo! Anoté «${note}» en ${label}`;
+}
+
+const ITEM_NOTE_SUGGESTION_PITCH =
+  'Si querés sumar algo más, estas opciones siguen disponibles.';
+
 export function buildComplementConfirmBodyIntro(params: {
   totalAmount: string | number;
   pitch: string;
@@ -489,6 +511,122 @@ export async function presentComplementSuggestionBundle(params: {
   await clearComplementSuggestionSnapshot(conversationId);
   await createConversationMessage(conversationId, 'ai', listMessage.body.text, true);
   await updateConversationLastMessageAt(conversationId);
+
+  return listMessage;
+}
+
+/**
+ * Cierre post-nota: misma lista que el alta (total, ola viva si sigue abierta,
+ * y siempre las guías de gestión). No vuelve a contar la Opportunity.
+ */
+export function buildItemNoteSuccessListMessage(params: {
+  itemNames: string[];
+  note: string | null;
+  totalAmount: string | number;
+  shippingBullet?: string;
+  suggestions?: ComplementSuggestionListItem[];
+}): WhatsAppListMessage {
+  const suggestions = (params.suggestions ?? []).slice(0, 5);
+  const title = buildItemNoteConfirmTitle({
+    itemNames: params.itemNames,
+    note: params.note,
+  });
+  return buildComplementSuggestionsListMessage({
+    title,
+    titleEmoji: '📝',
+    bodyPlain: buildComplementConfirmBodyIntro({
+      totalAmount: params.totalAmount,
+      pitch: suggestions.length > 0 ? ITEM_NOTE_SUGGESTION_PITCH : '',
+      shippingBullet: params.shippingBullet,
+    }),
+    items: suggestions,
+    includeManagementRows: true,
+  });
+}
+
+export async function presentItemNoteSuccessList(params: {
+  conversationId: string;
+  businessId: string;
+  customerPhone: string;
+  customerId: string;
+  metadata: unknown;
+  itemNames: string[];
+  note: string | null;
+}): Promise<WhatsAppListMessage | null> {
+  const draft = await prisma.draft_order.findFirst({
+    where: {
+      business_id: params.businessId,
+      customer_phone: params.customerPhone,
+      status: 'active',
+    },
+    select: { total_amount: true, fulfillment_type: true },
+  });
+  if (!draft) return null;
+
+  const meta = normalizeMetadata(params.metadata) as ConversationMetadata;
+  const refused = meta.intentLedger?.SUGERIR_COMPLEMENTO?.refused === true;
+  const candidateIds =
+    !refused && meta.pendingComplementSelection === true && !hasOpenOrderLines(params.metadata)
+      ? (meta.candidateProductIds ?? []).filter((id) => id.trim().length > 0).slice(0, 5)
+      : [];
+
+  let suggestions: ComplementSuggestionListItem[] = [];
+  if (candidateIds.length > 0) {
+    const rows = await prisma.menu_item.findMany({
+      where: { id: { in: candidateIds }, business_id: params.businessId },
+      select: {
+        id: true,
+        name: true,
+        menu_category: { select: { name: true } },
+      },
+    });
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    suggestions = candidateIds.flatMap((id) => {
+      const row = byId.get(id);
+      if (!row?.name?.trim()) return [];
+      return [
+        {
+          id: row.id,
+          name: row.name,
+          categoryName: row.menu_category?.name?.trim() || 'Sugerencias',
+        },
+      ];
+    });
+  }
+
+  let shippingBullet = '';
+  try {
+    shippingBullet = await resolveCartShippingBullet({
+      businessId: params.businessId,
+      customerId: params.customerId,
+      fulfillmentType: draft.fulfillment_type,
+    });
+  } catch (err) {
+    console.error('[item-note] shipping bullet failed', err);
+  }
+
+  const listMessage = buildItemNoteSuccessListMessage({
+    itemNames: params.itemNames,
+    note: params.note,
+    totalAmount: draft.total_amount?.toString() ?? '0',
+    shippingBullet,
+    suggestions,
+  });
+
+  await patchConversationMetadata(params.conversationId, {
+    ...(suggestions.length > 0
+      ? {
+          pendingProductSelection: true,
+          pendingComplementSelection: true,
+          pendingQuestion: buildItemNoteConfirmTitle({
+            itemNames: params.itemNames,
+            note: params.note,
+          }),
+          candidateProductIds: suggestions.map((row) => row.id),
+        }
+      : {}),
+    ...buildPendingTipablesPatch(COMPLEMENT_MANAGEMENT_TIPABLES),
+  });
 
   return listMessage;
 }

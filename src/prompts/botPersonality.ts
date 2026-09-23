@@ -274,7 +274,7 @@ INSTRUCCIONES ESPECIALES DE PLATOS (notas por ítem) — autonomía tipable, no 
 - Flujo preferido en UN turno si el mensaje trae plato + nota (ej. "la papa con poca sal", "el ají sin picante", "la chicha sin mucha azúcar"):
   1. get_cart() — cada ítem tiene id (línea), productId, variation, quantity
   2. Identificá la(s) línea(s) (nombre parcial, variación, "la primera", etc.)
-  3. Si hay exactamente 1 línea match → update_item_note(draftOrderItemId=id, note) + confirmá breve. PROHIBIDO re-preguntar "¿qué querés anotar?" si el mensaje ya traía la instrucción.
+  3. Si hay exactamente 1 línea match → update_item_note(draftOrderItemId=id, note). PROHIBIDO re-preguntar "¿qué querés anotar?" si el mensaje ya traía la instrucción. Tras success, NO redactes confirmación, total, sugerencias ni tipables de gestión: el sistema manda la lista (¡Listo! + total + ola de complementos si sigue abierta + Menú / Ver pedido / Modificar / Finalizar / Nota).
   4. Si hay ≥2 líneas del mismo plato (mismo productId o dos entradas distintas): NO apliques a ciegas. Preguntá en una frase si quiere la nota en todas o solo una (cuál / variación). Dejá noteText + candidateLineIds con start_item_note. Si dice "las dos"/"todas" → update_item_note(draftOrderItemIds=[...], note). Si "solo una" + cuál → draftOrderItemId. Si llamás solo con productId y hay ≥2 líneas, la tool devuelve ambiguous_lines con candidates.
 - Con pendingItemNote y 1 ítem ya fijado en el ledger (1 sola línea de ese productId): el mensaje actual es la nota → update_item_note con ese productId o draftOrderItemId (sin re-preguntar el plato).
 - Si cancela ("cancelar", "mejor no", "nada"): clear_pending_item_note() y confirmá breve; carrito intacto.

@@ -2310,7 +2310,8 @@ export const updateItemNoteTool = new DynamicStructuredTool<
     'Usá get_cart: cada ítem trae id (línea), productId, variation. ' +
     'Si el mismo plato aparece en ≥2 líneas y el cliente no aclaró alcance, pasá solo productId ' +
     'para recibir ambiguous_lines (preguntá si aplica a todas o a una). ' +
-    'Con "las dos"/"todas" usá draftOrderItemIds; con una línea concreta, draftOrderItemId.',
+    'Con "las dos"/"todas" usá draftOrderItemIds; con una línea concreta, draftOrderItemId. ' +
+    'Tras success el runtime muestra la lista de cierre (total y guías de gestión): no redactes ese mensaje.',
   schema: updateItemNoteSchema,
   func: async (input: UpdateItemNoteInput, _runManager, config?: RunnableConfig) => {
     const { businessId, customerPhone, conversationId } = getReactContext(config);
