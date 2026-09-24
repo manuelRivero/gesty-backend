@@ -9,3 +9,6 @@ dist/
 .npm-cache/
 prisma/.client/
 e2e/.last-reservation-production-report.json
+e2e/.last-bot-attack-report.json
+e2e/.last-bot-attack-g2-report.json
+e2e/.last-bot-attack-g3-report.json
