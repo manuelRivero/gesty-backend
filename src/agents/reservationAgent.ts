@@ -32,7 +32,7 @@ import {
   buildPendingReservationDishFaqContextLines,
   readPendingReservationDishFaq,
 } from '../services/reservations/pendingReservationDishFaq';
-import { currentDateLabel } from '../services/reservations/clock';
+import { coerceIanaTimezone, currentDateLabel } from '../services/reservations/clock';
 import {
   nextReservationStep,
   expectedActionForReservationStep,
@@ -304,7 +304,8 @@ const buildReservationContextMessage = async (
 
   // Fecha actual con día de semana — mismo reloj que el gate de la tool, para
   // que lo que el modelo lee acá y lo que el borde valida no puedan diferir.
-  const dateLine = currentDateLabel();
+  const businessTimezone = coerceIanaTimezone(ctx.business?.timezone);
+  const dateLine = currentDateLabel(businessTimezone);
 
   const draft = conversationId ? await readReservationDraft(conversationId) : {};
 

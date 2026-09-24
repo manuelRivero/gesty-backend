@@ -30,11 +30,15 @@ vi.mock('../ctaResolver', () => ({
   hasLexicalBuySignal: vi.fn(() => false),
 }));
 
-vi.mock('../../whatsappBuilders/hybridCta', () => ({
-  buildHybridCtaInteractive: vi.fn(),
-  extractPrimaryPayload: vi.fn(() => 'ADD_ITEM:prod-1:1'),
-  extractPrimaryProductId: vi.fn(() => 'prod-1'),
-}));
+vi.mock('../../whatsappBuilders/hybridCta', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../whatsappBuilders/hybridCta')>();
+  return {
+    ...actual,
+    buildHybridCtaInteractive: vi.fn(),
+    extractPrimaryPayload: vi.fn(() => 'ADD_ITEM:prod-1:1'),
+    extractPrimaryProductId: vi.fn(() => 'prod-1'),
+  };
+});
 
 vi.mock('../../repositories', () => ({
   patchConversationMetadata: vi.fn().mockResolvedValue(undefined),
@@ -431,7 +435,8 @@ describe('runHybridReactAgent', () => {
       expect.anything(),
       expect.anything(),
       categoryId,
-      1
+      1,
+      { bodyText: null }
     );
     expect(buildHybridCtaInteractive).not.toHaveBeenCalled();
   });

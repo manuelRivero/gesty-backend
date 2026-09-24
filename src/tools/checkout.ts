@@ -22,6 +22,7 @@ import type { RunnableConfig } from '@langchain/core/runnables';
 import { PAYMENT_METHOD_IDS, type PaymentMethodId } from '../domain/payment/paymentMethods';
 import { isPaymentMethodOffered } from '../services/paymentMethods.service';
 import { getBusinessConfig } from '../services/businessConfig.service';
+import { getBusinessOpenInfo } from '../services/businessHours.service';
 import { incrementRefusalCount } from '../services/intent/intentRefusal.service';
 import { resolveDeliveryContext } from '../services/deliveryFee.service';
 import { nextCheckoutStep, type CheckoutStep } from '../services/checkout/nextCheckoutStep';
@@ -556,11 +557,20 @@ export const startCheckoutSessionTool = new DynamicStructuredTool<
   name: 'start_checkout_session',
   description:
     'Delega al agente de checkout cuando el cliente quiere CERRAR, PAGAR o FINALIZAR el pedido actual. ' +
+    'REGLA DE CIERRE: si dice "cerrar pedido", "cerrame el pedido", "finalizar", "pagar", "eso es todo" o "nada más", ' +
+    'llamá esta tool ya y no sugieras más platos (ni present_complement_suggestions). ' +
     'Usá esta tool cuando el cliente exprese intención de terminar la compra (no cuando quiera agregar platos). ' +
     'Antes de llamarla, verificá con get_cart que haya ítems; si el carrito está vacío, NO la uses y explicá que primero debe elegir platos. ' +
     'NO gestiones vos tipo de entrega, dirección, nombre ni pago: solo delegá con esta tool.',
   schema: startCheckoutSessionSchema,
   func: async ({ reason }: StartCheckoutSessionInput, _runManager, config?: RunnableConfig) => {
+    console.log(
+      JSON.stringify({
+        event: '[tool:start]',
+        tool: 'start_checkout_session',
+        args: { reason },
+      })
+    );
     const { businessId, customerPhone } = getReactContext(config);
 
     const ordersGate = await assertCanOrder(businessId);
@@ -569,7 +579,26 @@ export const startCheckoutSessionTool = new DynamicStructuredTool<
         success: false,
         error: ordersGate.error,
         message: ordersGate.message,
+        instruction:
+          'Instrucción crítica: NO VUELVAS a llamar a start_checkout_session en este turno. Detente e informá al usuario.',
       });
+    }
+
+    const business = await prisma.business.findUnique({
+      where: { id: businessId },
+      select: { timezone: true },
+    });
+    if (business?.timezone) {
+      const [open, bizCfg] = await Promise.all([
+        getBusinessOpenInfo({ businessId, timezone: business.timezone }),
+        getBusinessConfig(businessId),
+      ]);
+      if (!open.isOpen && !bizCfg.orders_when_closed) {
+        return (
+          'ERROR_LOCAL_CERRADO. Instrucción crítica: NO VUELVAS a llamar a esta tool en este turno. ' +
+          'Detente e informa al usuario que el local está cerrado.'
+        );
+      }
     }
 
     const draft = await prisma.draft_order.findFirst({
@@ -588,6 +617,8 @@ export const startCheckoutSessionTool = new DynamicStructuredTool<
         success: false,
         error: 'empty_cart',
         message: 'El carrito está vacío; no se puede iniciar checkout.',
+        instruction:
+          'Instrucción crítica: NO VUELVAS a llamar a start_checkout_session en este turno. Detente e informá al usuario que primero tiene que elegir platos.',
       });
     }
 

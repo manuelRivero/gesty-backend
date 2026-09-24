@@ -60,6 +60,7 @@ vi.mock('../../../../services/order.service', () => ({
 }));
 
 import { interactiveSubgraphNode, nlpSubgraphNode } from '../index';
+import { prisma } from '../../../../lib/prisma';
 import { extractPendingTurnResponse } from '../../../../services/ai/extractPendingTurnResponse';
 import { runHybridReactAgent } from '../../../../agents/reactAgent';
 import { reservationAgentNode } from '../../reservation';
@@ -116,6 +117,9 @@ const baseState = (overrides: {
 describe('switch híbrido → reserva con carrito', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(prisma.draft_order.findFirst).mockResolvedValue({
+      _count: { draft_order_item: 1 },
+    } as never);
     vi.mocked(reservationAgentNode).mockResolvedValue({
       handlerResult: { content: '¿Para cuántos?', isInteractive: false },
     } as never);
@@ -221,5 +225,35 @@ describe('switch híbrido → reserva con carrito', () => {
       interactive?: { body?: { text?: string } };
     };
     expect(content.interactive?.body?.text).toContain(SWITCH_TO_RESERVATION_QUESTION);
+    expect(runHybridReactAgent).not.toHaveBeenCalled();
+  });
+
+  it('pending con carrito vacío → limpia la metadata y sigue al híbrido', async () => {
+    vi.mocked(prisma.draft_order.findFirst).mockResolvedValue(null);
+    vi.mocked(runHybridReactAgent).mockResolvedValue({
+      kind: 'response',
+      handlerResult: { content: '¿Qué ceviche querés?', isInteractive: false },
+    } as never);
+
+    const metadata = { ...PENDING_META };
+    const update = await nlpSubgraphNode(
+      baseState({
+        userMessage: 'Hola, quiero pedir 2 ceviches clásicos.',
+        metadata,
+      })
+    );
+
+    expect(extractPendingTurnResponse).not.toHaveBeenCalled();
+    expect(omitConversationMetadataKeys).toHaveBeenCalledWith('conv-1', [
+      'pending_switch_to_reservation',
+    ]);
+    expect(metadata.pending_switch_to_reservation).toBeUndefined();
+    expect(reservationAgentNode).not.toHaveBeenCalled();
+    expect(runHybridReactAgent).toHaveBeenCalled();
+    const hybridCtx = vi.mocked(runHybridReactAgent).mock.calls[0]?.[0] as {
+      conversationState?: { metadata?: Record<string, unknown> };
+    };
+    expect(hybridCtx.conversationState?.metadata?.pending_switch_to_reservation).toBeUndefined();
+    expect(update.handlerResult?.content).toBe('¿Qué ceviche querés?');
   });
 });

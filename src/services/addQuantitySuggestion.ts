@@ -147,13 +147,15 @@ export function userMessageStatesUnitQuantity(
 /**
  * Qty del payload/tool cuenta como confirmada por el cliente (no abrir pending).
  *
- * Si suggested ≥ 2, un número que manda el LLM/CTA NO confirma por sí solo
- * (party size se copia como quantity y saltaba el pending). Confirma:
+ * `explicitToolQuantity`: el argumento `quantity` de `add_cart_item` confirma
+ * solo. El modelo ya extrajo las unidades; no hace falta que el texto matchee
+ * `userMessageStatesUnitQuantity`.
+ *
+ * Sin ese flag (botón/CTA), suggested ≥ 2 no se confirma con el número pelado
+ * (el `:1` del CTA es “sumar”, no “una unidad”). Confirma:
  * - `pendingReply` (respuesta al ask de unidades), o
  * - el mensaje del turno afirma esa cantidad como unidades ("dame dos adobo").
  *
- * - n === 1 sin pending ni mensaje: solo si suggested < 2; si suggested ≥ 2, el
- *   `:1` del CTA es intención de sumar, no confirmación (abre pending).
  * - suggested < 2: cualquier n ≥ 1 se escribe (no hay pending que abrir).
  */
 export function isConfirmedAddQuantity(params: {
@@ -163,9 +165,12 @@ export function isConfirmedAddQuantity(params: {
   pendingReply?: boolean;
   /** Texto del turno actual: si afirma las unidades, confirma aunque suggested ≥ 2. */
   userMessage?: string | null;
+  /** `quantity` vino en el tool call de add_cart_item, no en un payload de botón. */
+  explicitToolQuantity?: boolean;
 }): boolean {
   const q = params.quantity;
   if (q == null || q < 1) return false;
+  if (params.explicitToolQuantity) return true;
   if (params.pendingReply) return true;
   if (params.suggestedQuantity < 2) return true;
   return userMessageStatesUnitQuantity(params.userMessage, q);

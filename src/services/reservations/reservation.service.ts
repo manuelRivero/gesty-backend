@@ -41,7 +41,7 @@ import { emitAdminReservationEditStarted } from '../../socket/adminSocket';
 import { generateReservationQR } from '../../utils/reservationQr';
 import type { FindTableInput, FindTableResult, ReservationState } from './types';
 import { wantsReservationManagement } from './reservationIntentText';
-import { reservationNow } from './clock';
+import { coerceIanaTimezone, reservationNow } from './clock';
 import {
   buildDateTime,
   filterSlotsByTurnLead,
@@ -426,6 +426,7 @@ export const handleReservationIntent = async (
 ): Promise<
   string | WhatsAppInteractiveMessage | WhatsAppListMessage | HandlerResult | null
 > => {
+  const timezone = coerceIanaTimezone(ctx.business?.timezone);
   const businessConfig = ctx.business?.id
     ? await getBusinessConfig(ctx.business.id)
     : null;
@@ -467,7 +468,7 @@ export const handleReservationIntent = async (
 
   if (ctx.payloadId === 'RESERVATION_CANCEL') {
     if (!reservation && ctx.customer?.id) {
-      const now = reservationNow();
+      const now = reservationNow(timezone);
       now.setHours(0, 0, 0, 0);
       const activeReservation =
         await findFutureOccupyingReservationForCustomerOrdered(
@@ -505,7 +506,7 @@ export const handleReservationIntent = async (
 
   if (!reservation) {
     if (ctx.customer?.id) {
-      const today = reservationNow();
+      const today = reservationNow(timezone);
       today.setHours(0, 0, 0, 0);
       const activeReservation = await findAnyFutureOccupyingReservationForCustomer(
         ctx.customer.id,
@@ -533,8 +534,8 @@ export const handleReservationIntent = async (
         );
       }
       try {
-        const parsedDate = normalizeDate(messageText);
-        const today = reservationNow();
+        const parsedDate = normalizeDate(messageText, timezone);
+        const today = reservationNow(timezone);
         today.setHours(0, 0, 0, 0);
         const selected = new Date(parsedDate);
         selected.setHours(0, 0, 0, 0);
@@ -564,8 +565,8 @@ export const handleReservationIntent = async (
           '🤖\n\n*Sin disponibilidad* ❌\n\nNo hay disponibilidad.'
         );
       }
-      const date = normalizeDate(messageText);
-      const now = reservationNow();
+      const date = normalizeDate(messageText, timezone);
+      const now = reservationNow(timezone);
       const slots = await getReservationSlotsForBusinessDate(
         ctx.business.id,
         date
@@ -602,8 +603,8 @@ export const handleReservationIntent = async (
         );
       }
       if (!ctx.payloadId?.startsWith('RESERVATION_SLOT:')) {
-        const date = normalizeDate(reservation.date);
-        const now = reservationNow();
+        const date = normalizeDate(reservation.date, timezone);
+        const now = reservationNow(timezone);
         const slots = await getReservationSlotsForBusinessDate(
           ctx.business.id,
           date
@@ -643,7 +644,7 @@ export const handleReservationIntent = async (
           '🤖\n\n*Slot inválido* ❌\n\nEse horario ya no está disponible. Elegí otro para continuar.'
         );
       }
-      const reservationDateForLead = normalizeDate(reservation.date);
+      const reservationDateForLead = normalizeDate(reservation.date, timezone);
       const slotStart = buildDateTime(reservationDateForLead, slot.start_time);
       const minAllowedStart = new Date(
         Date.now() + reservationMinLeadMinutes * 60000
@@ -898,7 +899,7 @@ export const handleReservationIntent = async (
         );
       }
       if (result.tableIds && ctx.customer?.id) {
-        const reservationDate = normalizeDate(reservation.date ?? '');
+        const reservationDate = normalizeDate(reservation.date ?? '', timezone);
         const created = await createReservationWithTables({
           businessId: ctx.business.id,
           customerId: ctx.customer.id,

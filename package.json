@@ -33,6 +33,9 @@
     "test:last-offer": "E2E_RUN=1 vitest run -c vitest.e2e.config.ts e2e/last-offer-add-item.e2e.test.ts",
     "test:agent-history": "E2E_RUN=1 vitest run -c vitest.e2e.config.ts e2e/agent-history.e2e.test.ts",
     "test:reservation-production": "E2E_RUN=1 vitest run -c vitest.e2e.reservation-production.config.ts",
+    "test:bot-attack": "E2E_RUN=1 vitest run -c vitest.e2e.bot-attack.config.ts",
+    "test:bot-attack-g2": "E2E_RUN=1 vitest run -c vitest.e2e.bot-attack-g2.config.ts",
+    "test:bot-attack-g3": "E2E_RUN=1 vitest run -c vitest.e2e.bot-attack-g3.config.ts",
     "postinstall": "prisma generate"
   },
   "engines": {

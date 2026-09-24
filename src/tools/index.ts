@@ -205,10 +205,17 @@ const readOrderingTurnScope = async (
   };
 };
 
-/** Shortlist en turno de pedido: elegir primero, add después. */
+/** Búsqueda semántica sin ningún hit bajo el umbral de distancia. */
+const SEARCH_NOT_FOUND_INSTRUCTION =
+  'Ningún plato de la carta está cerca de esta búsqueda (count 0). ' +
+  'Decile al cliente que no lo tenemos. ' +
+  'PROHIBIDO present_product_cta, PROHIBIDO ofrecer otros platos como si fueran ese pedido, ' +
+  'y PROHIBIDO decir que hay opciones de la palabra que buscó.';
+
+/** Shortlist en turno de pedido: agregar si el plato está claro; listar solo si es ambiguo. */
 const SHORTLIST_CHOICE_INSTRUCTION =
-  'Hay varias opciones: llamá present_product_cta(SELECT_FROM_LIST) con estos ids. ' +
-  'PROHIBIDO add_cart_item hasta que el cliente elija en un turno siguiente.';
+  'Si encontrás los platos exactos que el cliente pidió, usá add_cart_item directamente con sus IDs. ' +
+  'Solo usá present_product_cta(SELECT_FROM_LIST) si el pedido fue realmente ambiguo y necesitás que el cliente elija.';
 
 /** Shortlist en turno de reserva: es un dato de menú, no un paso de pedido. */
 const RESERVATION_MENU_DATA_INSTRUCTION =
@@ -216,7 +223,7 @@ const RESERVATION_MENU_DATA_INSTRUCTION =
   'PROHIBIDO invitar a elegir un plato, armar pedido o sumar al carrito. ' +
   'Si preguntan qué platos convienen para la mesa, usá suggest_dishes_for_party_size.';
 
-/** ≥2 hits: el cliente debe elegir antes de add (mismo turno ReAct). */
+/** ≥2 hits: deja los candidatos en metadata. No bloquea add_cart_item en el mismo turno. */
 const markShortlistAwaitingChoice = async (
   conversationId: string,
   productIds: string[],
@@ -280,9 +287,12 @@ export const searchProductsTool = new DynamicStructuredTool<
 >({
   name: 'search_products',
   description:
-    'Busca productos del menú por palabra clave (nombre o ingrediente). Devuelve shortlist liviano (id, nombre, categoría, porciones y precio principal). Si necesitás más detalle por producto, usá get_products_details_by_ids.',
+    'Busca productos del menú por palabra clave (nombre o ingrediente). Devuelve shortlist liviano (id, nombre, categoría, porciones y precio principal). Si necesitás más detalle por producto, usá get_products_details_by_ids. ' +
+    'FILTRO DE SALUD: si el usuario menciona restricciones médicas (ej. "enfermo de la panza", "sin picante", "nada frito"), tenés PROHIBIDO sugerir platos que violen esas reglas, INCLUSO SI esta tool te los devuelve como resultados principales. Filtrá los resultados y recomendá solo opciones suaves (ej. caldo, aguadito, ensaladas). ' +
+    'FILTRO MÉDICO/DIETARIO: Eres un experto gastronómico. Si el cliente tiene restricciones (ej. "enfermo", "sin picante", "nada frito"), debes filtrar los resultados devueltos por la búsqueda usando tu conocimiento general. Si la búsqueda te devuelve un "Ceviche" pero el cliente no puede comer picante/ácido, DESCÁRTALO internamente y ofrécele solo las opciones suaves devueltas (ej. sopas, caldos, ensaladas).',
   schema: searchProductsSchema,
   func: async ({ keyword }: SearchProductsInput, _runManager, config?: RunnableConfig) => {
+    console.log(JSON.stringify({ event: '[tool:start]', tool: 'search_products', args: { keyword } }));
     const { businessId, conversationId } = getReactContext(config);
     const { partyGate, reservationTurn } = await readOrderingTurnScope(conversationId);
     if (partyGate) return partyGate;
@@ -301,9 +311,11 @@ export const searchProductsTool = new DynamicStructuredTool<
       hasMore: items.length > shortlisted.length,
       ...(reservationTurn
         ? { instruction: RESERVATION_MENU_DATA_INSTRUCTION }
-        : shortlisted.length >= 2
-          ? { instruction: SHORTLIST_CHOICE_INSTRUCTION }
-          : {}),
+        : shortlisted.length === 0
+          ? { instruction: SEARCH_NOT_FOUND_INSTRUCTION }
+          : shortlisted.length >= 2
+            ? { instruction: SHORTLIST_CHOICE_INSTRUCTION }
+            : {}),
       items: shortlisted.map((item) =>
         toShortlistItem({
           ...item,
@@ -401,6 +413,7 @@ export const getCartTool = new DynamicStructuredTool<
     const { businessId, customerPhone, customerId } = getReactContext(config);
     const draft = await prisma.draft_order.findFirst({
       where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
+      orderBy: { created_at: 'desc' },
       include: {
         draft_order_item: {
           include: { menu_item: { select: { id: true, name: true } } },
@@ -1569,18 +1582,22 @@ const addCartItemSchema = z.object({
     .max(99)
     .optional()
     .describe(
-      'Unidades a agregar, solo si el cliente las dijo en ESTE mensaje ' +
-        '("dos milanesas", "solo una"). NO uses el party size ni "para N personas". ' +
-        'Si no dijo unidades, omití el campo: el sistema sugerirá y pedirá confirmación.'
+      'Cantidad FINAL que quedará en el carrito (set absoluto: no es un incremento). ' +
+        'Si el plato ya está, enviá el total nuevo, no la diferencia. ' +
+        'Cuando el cliente las dijo en ESTE mensaje, incluso en palabras: ' +
+        '"un"/"una" = 1, "dos" = 2, "un par" = 2 ("un arroz", "una bebida", "dos milanesas", "un par de causas"). ' +
+        'Pasalo siempre que haya número. NO uses el party size ni "para N personas". ' +
+        'INFERENCIA DE CANTIDAD: Extrae SIEMPRE la cantidad del contexto coloquial del cliente. Si dice "mandame uno" = 1. Si dice "un par" = 2. Envía ese número en el campo quantity para evitar que el sistema detenga el flujo pidiendo confirmaciones.'
     ),
   variation: z
     .string()
     .optional()
     .describe(
       'Variedad elegida por el cliente (ej. "Roquefort") cuando el producto tiene variaciones ' +
-      '(ver el campo variations devuelto por search_products/find_products_by_filter/get_products_details_by_ids). ' +
-      'Obligatorio si el producto tiene variaciones: si no la tenés, preguntale al cliente cuál quiere ' +
-      'antes de llamar a esta tool. Tiene que ser una de las listadas en variations, nunca inventada.'
+        '(ver el campo variations devuelto por search_products/find_products_by_filter/get_products_details_by_ids). ' +
+        'Obligatorio si el producto tiene variaciones: si no la tenés, preguntale al cliente cuál quiere ' +
+        'antes de llamar a esta tool. Tiene que ser una de las listadas en variations, nunca inventada. ' +
+        'Si el cliente evadió la elección o pidió una variedad que no está, NO pases una opción adivinada.'
     ),
 });
 type AddCartItemInput = z.infer<typeof addCartItemSchema>;
@@ -1591,24 +1608,55 @@ export const addCartItemTool = new DynamicStructuredTool<
 >({
   name: 'add_cart_item',
   description:
-    'Agrega (o aumenta) un producto al carrito activo del cliente. ' +
+    'BLOQUEO ANTI-ALUCINACIÓN: ' +
+    '1. ESTRICTAMENTE PROHIBIDO usar esta herramienta para un plato si el usuario NO LO NOMBRÓ en su mensaje más reciente. ' +
+    '2. ESTRICTAMENTE PROHIBIDO inventar un `productId`. Si no lo tienes en el historial, DEBES usar `search_products` primero. No asumas UUIDs. ' +
+    '3. No intentes \'compensar\' o \'equilibrar\' el carrito por tu cuenta. Sé literal. ' +
+    'REGLA DE ESTADO ABSOLUTO: Esta tool NO suma ni incrementa, sino que DEFINE LA CANTIDAD FINAL (Set). ' +
+    'El valor que envíes en `quantity` será exactamente el número de unidades que quedarán en el carrito. ' +
+    '- Si el cliente no tiene el plato y pide 1, envía `quantity: 1`. ' +
+    '- Si el cliente ya tiene 1 plato en el [ESTADO DEL CLIENTE] y dice \'agregame otro\', debes calcular mentalmente el total y enviar `quantity: 2`. ' +
+    '- Si el cliente tiene 1 y dice \'hacemelo para 2 en vez de 1\', envía `quantity: 2`. ' +
+    'Al ser absoluta, puedes llamarla con seguridad: si envías `quantity: 2` varias veces, el carrito seguirá teniendo 2. NO intentes enviar solo la diferencia. ' +
+    'ANTI-BUCLE: Nunca llames a la misma herramienta para el mismo producto más de una vez en el mismo turno. Haz la llamada con la cantidad total y RESPONDE INMEDIATAMENTE al usuario con un mensaje de texto para finalizar tu turno. ' +
+    'REGLA DE BORRADO: si pide sacar, borrar, quitar, eliminar o "no quiero" un plato que ya está en el carrito, ' +
+    'ESTÁ ESTRICTAMENTE PROHIBIDO usar esta tool. Usá remove_cart_item con el ProductID de [ESTADO DEL CLIENTE]. ' +
+    'LÉXICO LOCAL ARGENTINO: "un par" (ej. "un par de empanadas", "un par de causas") es SIEMPRE quantity 2. ' +
     'Usá este tool cuando el cliente confirme que quiere agregar un plato en texto libre: ' +
     '"sí, agregalo", "quiero uno de eso", "ponelo", "dale", "sumá 2 pizzas", etc. ' +
-    'Si el producto ya está en el carrito con la misma variación, suma la cantidad indicada; ' +
-    'variaciones distintas del mismo producto son líneas separadas. ' +
+    'CANTIDADES EXPLÍCITAS: si dice "un", "una" o "dos" ("un arroz", "una bebida", "dos ceviches"), ' +
+    'extraé 1 o 2 y pasalo obligatorio en quantity. Varios platos distintos en el mismo mensaje: ' +
+    'una llamada por plato, cada una con su quantity. ' +
+    'Variaciones distintas del mismo producto son líneas separadas. ' +
     'Antes de llamar necesitás el productId: si ya lo tenés del contexto úsalo; ' +
-    'si no, llamá search_products primero. Si el producto tiene variaciones y no sabés cuál quiere ' +
-    'el cliente, preguntale antes de llamar (esta tool rechaza el llamado si falta y el producto la requiere). ' +
+    'si no, llamá search_products primero. ' +
+    'REGLA DE VARIACIONES OBLIGATORIAS: si el catálogo indica que el producto tiene variaciones ' +
+    '(tamaños, sabores, niveles de picante), el usuario tiene que elegir una opción real. ' +
+    'Si evade la pregunta o pide una variación inventada, NO LLAMES a esta herramienta. ' +
+    'Volvé a preguntarle y obligalo a elegir una de las opciones válidas. ' +
+    'No podés avanzar a pedir cantidades sin resolver esto. ' +
+    'Si igual llamás sin variation o con una que no está en el catálogo, la tool rechaza y no abre el paso de cantidad. ' +
     'Devuelve el carrito actualizado. Si incluye "opportunity" con nextAction ' +
     'present_complement_suggestions, llamá esa tool en este turno (no preguntes upsell en prosa). ' +
     'Si incluye "promotion", el sistema ya calculó el beneficio: comunicá EXACTAMENTE ese dato ' +
-    '(aplicada = ya está en el total; desbloqueable = ofrecela en una línea). Nunca calcules descuentos.',
+    '(aplicada = ya está en el total; desbloqueable = ofrecela en una línea). Nunca calcules descuentos. ' +
+    'ACCIÓN INMEDIATA: EJECUTÁ add_cart_item en este turno, sin preguntar "¿te lo sumo?", si el cliente pide el plato o pregunta por disponibilidad para comerlo ya: "mandame", "quiero", "dame", "agregame", "¿tenés...?", "¿hay...?", "para picar", "al toque", "un par de". Si hay stock, eso es la orden. "¿Tenés un par de causas para picar?" = add_cart_item con quantity 2. PROHIBIDO responder solo "tengo 1, ¿la sumo?". ' +
+    'LENGUAJE: Si el cliente pide "un par", asume siempre `quantity: 2`. ' +
+    'PERSISTENCIA AUTOMÁTICA: Los platos en el carrito NO se borran solos. Si el usuario pide modificar el \'Arroz\', usa esta tool SÓLO para el Arroz. TIENES ESTRICTAMENTE PROHIBIDO usar esta tool para \'mantener\' o \'reafirmar\' otros platos (ej. el Ají) que el usuario no pidió modificar. SÓLO toca lo que cambia. ' +
+    'CÓMO AÑADIR ALGO NUEVO: Si el cliente pide un plato nuevo (ej. \'Suspiro\') y NO tienes su `productId`, NO repitas las herramientas de los platos viejos. Llama a `search_products` INMEDIATAMENTE para buscar el nuevo plato. NUNCA inventes un ID.',
   schema: addCartItemSchema,
   func: async (
     { productId, quantity, variation }: AddCartItemInput,
     _runManager,
     config?: RunnableConfig
   ) => {
+    console.log(
+      JSON.stringify({
+        event: '[tool:start]',
+        tool: 'add_cart_item',
+        args: { productId, quantity, variation },
+      })
+    );
     const { businessId, customerPhone, conversationId, turnStartedAt, userMessage } =
       getReactContext(config);
 
@@ -1618,30 +1666,9 @@ export const addCartItemTool = new DynamicStructuredTool<
         success: false,
         error: ordersGate.error,
         message: ordersGate.message,
+        instruction:
+          'Instrucción crítica: NO VUELVAS a llamar a add_cart_item en este turno. Detente e informá al usuario.',
       });
-    }
-
-    // Obtener o crear draft
-    let draft = await prisma.draft_order.findFirst({
-      where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
-    });
-    if (!draft) {
-      const business = await prisma.business.findUnique({
-        where: { id: businessId },
-        select: { currency_code: true },
-      });
-      draft = await prisma.draft_order.create({
-        data: {
-          business_id: businessId,
-          customer_phone: customerPhone,
-          status: 'active',
-          currency: business?.currency_code ?? 'ARS',
-        },
-      });
-      // Inicialización (no renovación): fija el primer expires_at del draft
-      // recién creado. La renovación por actividad del usuario la maneja
-      // exclusivamente touchSession (src/services/sessionActivity.service.ts).
-      await refreshDraftOrderTimeout(draft.id);
     }
 
     // Verificar que el producto existe y está disponible
@@ -1673,19 +1700,6 @@ export const addCartItemTool = new DynamicStructuredTool<
 
       const state = await findOrCreateConversationState(conversationId);
       const meta = normalizeMetadata(state.metadata);
-      if (meta.shortlistAwaitingChoice === true) {
-        return toJson({
-          success: false,
-          error: 'shortlist_selection_required',
-          pending: true,
-          candidateProductIds: meta.candidateProductIds ?? [],
-          instruction:
-            'Hay un shortlist pendiente: el cliente aún no eligió. ' +
-            'Llamá present_product_cta(SELECT_FROM_LIST) si no lo mostraste, ' +
-            'y NO sumes al carrito hasta el próximo mensaje con su elección. ' +
-            'PROHIBIDO decir que ya sumaste.',
-        });
-      }
 
       // Soft-gate ola de complemento: solo sumar si el mensaje nombra un candidato.
       const complementCandidates = (meta.candidateProductIds ?? []).filter(
@@ -1753,6 +1767,7 @@ export const addCartItemTool = new DynamicStructuredTool<
         suggestedQuantity,
         pendingReply,
         userMessage: userMessage ?? null,
+        explicitToolQuantity: typeof quantity === 'number' && quantity >= 1,
       });
     const qty = qtyConfirmed
       ? Math.min(99, Math.max(1, Math.floor(quantity ?? lineQuantity ?? 1)))
@@ -1772,12 +1787,20 @@ export const addCartItemTool = new DynamicStructuredTool<
     const qtyForVariationPending = qtyConfirmed ? qty : suggestedQuantity;
 
     // D5 — el agente híbrido no adivina la variación: la tool lo obliga a
-    // preguntar. Se resuelve ANTES de tocar draft_order_item, para que un
-    // llamado sin variación (o con una inválida) no escriba nada.
+    // preguntar. Se resuelve ANTES de cantidad y de tocar draft_order_item.
+    const variationUnresolvedInstruction =
+      'REGLA DE VARIACIONES OBLIGATORIAS: falta una variación válida del catálogo. ' +
+      'NO avances a cantidad. Instrucción crítica: NO VUELVAS a llamar a add_cart_item en este turno con una opción adivinada. ' +
+      'Detente y preguntá: el cliente tiene que elegir UNA de "variations".';
+
     let resolvedVariation: string | null = null;
     if (hasVariations(item)) {
-      if (!variation) {
+      const rejectVariation = async (
+        error: 'variation_required' | 'variation_invalid',
+        extra?: { candidates?: string[] }
+      ) => {
         if (conversationId) {
+          await clearPendingAddQuantity(conversationId);
           await setPendingVariation({
             conversationId,
             productId,
@@ -1788,32 +1811,36 @@ export const addCartItemTool = new DynamicStructuredTool<
         }
         return toJson({
           success: false,
-          error: 'variation_required',
+          error,
           productName: item.name,
           variations: item.variations,
           pendingVariation: true,
+          instruction: variationUnresolvedInstruction,
+          ...(extra?.candidates ? { candidates: extra.candidates } : {}),
         });
+      };
+
+      if (!variation?.trim()) {
+        return rejectVariation('variation_required');
       }
       const match = matchVariation(variation, item.variations);
       if (match.status !== 'ok') {
-        if (conversationId) {
-          await setPendingVariation({
-            conversationId,
-            productId,
-            productName: item.name,
-            variations: item.variations,
-            quantity: qtyForVariationPending,
-          });
-        }
-        return toJson({
-          success: false,
-          error: 'variation_invalid',
-          variations: item.variations,
-          pendingVariation: true,
+        return rejectVariation('variation_invalid', {
           ...(match.status === 'ambiguous' ? { candidates: match.candidates } : {}),
         });
       }
       resolvedVariation = match.value;
+    }
+
+    if (hasVariations(item) && !resolvedVariation) {
+      return toJson({
+        success: false,
+        error: 'variation_required',
+        productName: item.name,
+        variations: item.variations,
+        pendingVariation: true,
+        instruction: variationUnresolvedInstruction,
+      });
     }
 
     // D7 — cantidad: si party sugiere ≥2 y el cliente no dio número, no escribir.
@@ -1855,8 +1882,8 @@ export const addCartItemTool = new DynamicStructuredTool<
         askMessage: buildPendingAddQuantityMessage(pending),
         instruction:
           'Mostrá askMessage (o equivalente) pidiendo cuántas unidades, con la sugerencia. ' +
-          'NO digas que ya sumaste. NO reintentes add_cart_item con quantity en este mismo turno. ' +
-          'NO llames present_complement_suggestions ni present_cart hasta confirmar.',
+          'NO digas que ya sumaste. Instrucción crítica: NO VUELVAS a llamar a add_cart_item en este turno. ' +
+          'Detente e informá al usuario. NO llames present_complement_suggestions ni present_cart hasta confirmar.',
       });
     }
 
@@ -1866,53 +1893,97 @@ export const addCartItemTool = new DynamicStructuredTool<
     const resolved = resolveEffectivePrice(item);
     const unitPrice = resolved.finalPrice;
 
-    // La variación es parte de la identidad de la línea (D4): una pizza
-    // especial y una de roquefort son dos líneas, no una con cantidad 2.
-    const existing = await prisma.draft_order_item.findFirst({
-      where: { draft_order_id: draft.id, product_id: productId, variation: resolvedVariation },
-    });
+    // Dos add_cart_item del mismo turno corren en paralelo. El lock de la
+    // transacción serializa alta de draft, línea y total para este cliente:
+    // la segunda espera a ver la línea que escribió la primera.
+    const lockKey = `${businessId}:${customerPhone}`;
+    const writeCartLine = async (
+      tx: Pick<
+        typeof prisma,
+        'draft_order' | 'draft_order_item' | 'business' | '$executeRaw'
+      >,
+      lock: boolean
+    ) => {
+      if (lock) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
+      }
+      let row = await tx.draft_order.findFirst({
+        where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
+        orderBy: { created_at: 'desc' },
+      });
+      let createdDraft = false;
+      if (!row) {
+        const business = await tx.business.findUnique({
+          where: { id: businessId },
+          select: { currency_code: true },
+        });
+        row = await tx.draft_order.create({
+          data: {
+            business_id: businessId,
+            customer_phone: customerPhone,
+            status: 'active',
+            currency: business?.currency_code ?? 'ARS',
+          },
+        });
+        createdDraft = true;
+      }
 
-    let newQty: number;
-    if (existing) {
-      newQty = existing.quantity + qty;
-      await prisma.draft_order_item.update({
-        where: { id: existing.id },
-        data: {
-          quantity: newQty,
-          unit_price: unitPrice,
-          total_price: unitPrice.mul(newQty),
-          list_price: resolved.hasDiscount ? resolved.listPrice : null,
-          discount_amount: resolved.hasDiscount ? resolved.discountAmount : null,
-        },
+      const existing = await tx.draft_order_item.findFirst({
+        where: { draft_order_id: row.id, product_id: productId, variation: resolvedVariation },
       });
-    } else {
-      newQty = qty;
-      await prisma.draft_order_item.create({
-        data: {
-          draft_order_id: draft.id,
-          product_id: productId,
-          quantity: newQty,
-          unit_price: unitPrice,
-          total_price: unitPrice.mul(newQty),
-          list_price: resolved.hasDiscount ? resolved.listPrice : null,
-          discount_amount: resolved.hasDiscount ? resolved.discountAmount : null,
-          variation: resolvedVariation,
-        },
+
+      let lineQty: number;
+      if (existing) {
+        lineQty = qty;
+        await tx.draft_order_item.update({
+          where: { id: existing.id },
+          data: {
+            quantity: qty,
+            unit_price: unitPrice,
+            total_price: unitPrice.mul(lineQty),
+            list_price: resolved.hasDiscount ? resolved.listPrice : null,
+            discount_amount: resolved.hasDiscount ? resolved.discountAmount : null,
+          },
+        });
+      } else {
+        lineQty = qty;
+        await tx.draft_order_item.create({
+          data: {
+            draft_order_id: row.id,
+            product_id: productId,
+            quantity: lineQty,
+            unit_price: unitPrice,
+            total_price: unitPrice.mul(lineQty),
+            list_price: resolved.hasDiscount ? resolved.listPrice : null,
+            discount_amount: resolved.hasDiscount ? resolved.discountAmount : null,
+            variation: resolvedVariation,
+          },
+        });
+      }
+
+      const agg = await tx.draft_order_item.aggregate({
+        where: { draft_order_id: row.id },
+        _sum: { total_price: true },
       });
+      const total = agg._sum.total_price ?? new Prisma.Decimal(0);
+      await tx.draft_order.update({
+        where: { id: row.id },
+        data: { total_amount: total },
+      });
+      return { draft: row, newQty: lineQty, newTotal: total, createdDraft };
+    };
+
+    const { draft, newQty, newTotal, createdDraft } =
+      typeof prisma.$transaction === 'function'
+        ? await prisma.$transaction((tx) => writeCartLine(tx, true))
+        : await writeCartLine(prisma, false);
+
+    if (createdDraft) {
+      // Inicialización (no renovación): fija el primer expires_at del draft
+      // recién creado. La renovación por actividad del usuario la maneja
+      // exclusivamente touchSession (src/services/sessionActivity.service.ts).
+      await refreshDraftOrderTimeout(draft.id);
     }
-
-    // Recalcular total del draft
-    const agg = await prisma.draft_order_item.aggregate({
-      where: { draft_order_id: draft.id },
-      _sum: { total_price: true },
-    });
-    const newTotal = agg._sum.total_price ?? new Prisma.Decimal(0);
-    await prisma.draft_order.update({
-      where: { id: draft.id },
-      data: { total_amount: newTotal },
-    });
-    // Si el draft ya existía, touchSession ya renovó su expires_at al
-    // inicio del turno; si acaba de crearse, ya se inicializó más arriba.
 
     let postAddOpportunity: PostAddComplementOpportunity | null = null;
     let postAddPromotion: PostAddPromotion | null = null;
@@ -2037,36 +2108,23 @@ export const addCartItemTool = new DynamicStructuredTool<
 // que se escribió en un llamado/turno anterior, nunca un flag que el modelo
 // pueda setear en el mismo schema (eso sería confiar en el llamador).
 //
-// `pendingAction`/`pendingItemId` es la MISMA clave que usa el flujo
-// determinístico de botones (`cart.service.ts`) para su
-// propia confirmación por UI. Antes esta Tool llevaba su propio
-// `pending_item_removal` separado — dos fuentes de verdad para "¿ya se
-// preguntó por este ítem?" que no se enteraban una de la otra. Un cliente que
-// respondía en texto libre ("sí") a la confirmación por botones podía terminar
-// re-preguntado por la Tool, y viceversa. Unificar en un solo campo hace que
-// cualquiera de los dos caminos que preguntó primero sea evidencia válida
-// para que el otro proceda — ya no hay dos preguntas por el mismo ítem.
-const REMOVAL_CONFIRMATION_TTL_MS = 5 * 60 * 1000;
-
-const removeCartItemSchema = z
-  .object({
-    productId: z
-      .string()
-      .uuid()
-      .optional()
-      .describe('UUID del menu_item a remover del carrito (usar productId de get_cart)'),
-    draftOrderItemId: z
-      .string()
-      .uuid()
-      .optional()
-      .describe(
-        'UUID de UNA línea del carrito (get_cart.items[].id). Obligatorio cuando el mismo ' +
-          'plato aparece en varias líneas con variaciones distintas.'
-      ),
-  })
-  .refine((v) => Boolean(v.productId) || Boolean(v.draftOrderItemId), {
-    message: 'Pasá productId o draftOrderItemId.',
-  });
+const removeCartItemSchema = z.object({
+  productId: z
+    .string()
+    .uuid()
+    .describe(
+      'UUID del menu_item a remover. Obligatorio: leelo del carrito en [ESTADO DEL CLIENTE] ' +
+        '(ProductID) o de get_cart.items[].productId.'
+    ),
+  draftOrderItemId: z
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      'UUID de UNA línea del carrito (get_cart.items[].id o LineID del estado). ' +
+        'Usalo cuando el mismo plato aparece en varias líneas con variaciones distintas.'
+    ),
+});
 type RemoveCartItemInput = z.infer<typeof removeCartItemSchema>;
 
 export const removeCartItemTool = new DynamicStructuredTool<
@@ -2076,53 +2134,107 @@ export const removeCartItemTool = new DynamicStructuredTool<
   name: 'remove_cart_item',
   description:
     'Elimina completamente un producto del carrito activo del cliente. ' +
+    'REGLA DE BORRADO: si el usuario te pide explícitamente "sacar", "borrar", "quitar", "eliminar" o "no quiero" ' +
+    'un plato que ya está en el carrito, ESTÁ ESTRICTAMENTE PROHIBIDO usar add_cart_item. ' +
+    'Debés leer el [ESTADO DEL CLIENTE], extraer el ID exacto del plato mencionado, ' +
+    'y usar ÚNICAMENTE esta herramienta (remove_cart_item). ' +
     'Usá este tool cuando el cliente pida quitar un ítem en texto libre: ' +
     '"quitá el pollo", "sacá la ensalada", "no quiero la pizza", "borralo", etc. ' +
+    'Para modificar o quitar "el de pollo", leé los ítems actuales en [ESTADO DEL CLIENTE] ' +
+    'y usá get_cart para obtener su ID exacto. ' +
+    'PARA ELIMINAR O REMOVER UN ÍTEM, ESTÁ PROHIBIDO USAR search_products. ' +
+    'Debés leer EXCLUSIVAMENTE la lista de ítems en [ESTADO DEL CLIENTE], encontrar el ID del ítem ' +
+    'que coincide con lo que pide el usuario, y enviarlo directamente a esta herramienta. ' +
+    'Si el id no está en el estado, get_cart; no busques el plato en el menú. ' +
     'Antes de llamar necesitás el productId: si no lo tenés, llamá get_cart primero. ' +
     'Si el mismo plato aparece en ≥2 líneas (variaciones distintas) y pasás solo productId, ' +
     'devuelve ambiguous_lines con los candidatos: preguntale al cliente cuál y volvé a llamar ' +
     'con draftOrderItemId. ' +
-    'Requiere confirmación explícita del cliente: el primer llamado NO elimina — devuelve ' +
-    '`requiresConfirmation: true` con el ítem encontrado. Preguntale al cliente si confirma ' +
-    '("¿confirmás que elimino la milanesa?") y llamá la tool de nuevo con el mismo productId ' +
-    'recién cuando el cliente confirme explícitamente. No la llames dos veces en el mismo turno ' +
-    'sin que el cliente haya confirmado entre medio. ' +
+    'Si el modelo llama esta tool, el cliente ya pidió borrar: elimina la línea en el acto. ' +
+    'No pidas una segunda confirmación ni vuelvas a llamar la tool en el mismo turno. ' +
     'Si querés solo reducir la cantidad (no eliminar), usá add_cart_item con quantity negativo no es posible — ' +
     'en ese caso confirmale al cliente que el ítem fue eliminado y que puede volver a agregarlo con la cantidad deseada. ' +
     'Tras success: true, followUp.nextAction suele ser present_cart: llamá present_cart() (no listes el pedido en prosa). ' +
-    'Devuelve el estado actualizado del carrito.',
+    'Devuelve el estado actualizado del carrito. ' +
+    'Solo elimina el ítem solicitado. BAJO NINGUNA CIRCUNSTANCIA intentes re-agregar o modificar los demás ítems del carrito usando `add_cart_item` para "compensar". Limítate a borrar lo que se pidió.',
   schema: removeCartItemSchema,
   func: async (
     { productId, draftOrderItemId }: RemoveCartItemInput,
     _runManager,
     config?: RunnableConfig
   ) => {
+    console.log(
+      JSON.stringify({
+        event: '[tool:start]',
+        tool: 'remove_cart_item',
+        args: { productId, draftOrderItemId },
+      })
+    );
     const { businessId, customerPhone, conversationId } = getReactContext(config);
 
-    const draft = await prisma.draft_order.findFirst({
-      where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
-    });
+    // Mismo lock que add_cart_item: el delete y el total se calculan sobre el
+    // draft activo más reciente, sin lecturas paralelas de un total a medio borrar.
+    const lockKey = `${businessId}:${customerPhone}`;
+    const removeLine = async (
+      tx: Pick<typeof prisma, 'draft_order' | 'draft_order_item' | '$executeRaw'>,
+      lock: boolean
+    ) => {
+      if (lock) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
+      }
 
-    if (!draft) {
+      const draft = await tx.draft_order.findFirst({
+        where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
+        orderBy: { created_at: 'desc' },
+      });
+      if (!draft) return { kind: 'no_active_cart' as const };
+
+      // Con variaciones, un producto puede ocupar dos líneas. Pedir por producto
+      // y borrar la primera que devuelva la query elimina una arbitraria: si hay
+      // ambigüedad se devuelven los candidatos, igual que `update_item_note`.
+      const candidates = await tx.draft_order_item.findMany({
+        where: draftOrderItemId
+          ? { draft_order_id: draft.id, id: draftOrderItemId }
+          : { draft_order_id: draft.id, product_id: productId },
+        include: { menu_item: { select: { id: true, name: true } } },
+        orderBy: { id: 'asc' },
+      });
+
+      if (candidates.length === 0) return { kind: 'item_not_in_cart' as const };
+      if (candidates.length >= 2) return { kind: 'ambiguous' as const, candidates };
+
+      const line = candidates[0];
+      await tx.draft_order_item.delete({ where: { id: line.id } });
+      const agg = await tx.draft_order_item.aggregate({
+        where: { draft_order_id: draft.id },
+        _sum: { total_price: true },
+      });
+      const newTotal = agg._sum.total_price ?? new Prisma.Decimal(0);
+      await tx.draft_order.update({
+        where: { id: draft.id },
+        data: { total_amount: newTotal },
+      });
+      const updatedItems = await tx.draft_order_item.findMany({
+        where: { draft_order_id: draft.id },
+        include: { menu_item: { select: { id: true, name: true } } },
+        orderBy: { id: 'asc' },
+      });
+      return { kind: 'removed' as const, line, newTotal, updatedItems };
+    };
+
+    const outcome =
+      typeof prisma.$transaction === 'function'
+        ? await prisma.$transaction((tx) => removeLine(tx, true))
+        : await removeLine(prisma, false);
+
+    if (outcome.kind === 'no_active_cart') {
       return toJson({ success: false, error: 'no_active_cart' });
     }
-
-    // Con variaciones, un producto puede ocupar dos líneas. Pedir por producto
-    // y borrar la primera que devuelva la query elimina una arbitraria: si hay
-    // ambigüedad se devuelven los candidatos, igual que `update_item_note`.
-    const candidates = await prisma.draft_order_item.findMany({
-      where: draftOrderItemId
-        ? { draft_order_id: draft.id, id: draftOrderItemId }
-        : { draft_order_id: draft.id, product_id: productId },
-      include: { menu_item: { select: { id: true, name: true } } },
-      orderBy: { id: 'asc' },
-    });
-
-    if (candidates.length === 0) {
+    if (outcome.kind === 'item_not_in_cart') {
       return toJson({ success: false, error: 'item_not_in_cart' });
     }
-
-    if (candidates.length >= 2) {
+    if (outcome.kind === 'ambiguous') {
+      const { candidates } = outcome;
       return toJson({
         success: false,
         error: 'ambiguous_lines',
@@ -2141,75 +2253,20 @@ export const removeCartItemTool = new DynamicStructuredTool<
       });
     }
 
-    const line = candidates[0];
+    const { line, newTotal, updatedItems } = outcome;
     const removedName = line.variation?.trim()
       ? `${line.menu_item?.name ?? 'Producto'} (${line.variation.trim()})`
       : line.menu_item?.name ?? 'Producto';
     const removedQty = line.quantity;
 
-    const stateRow = await prisma.conversation_state.findUnique({
-      where: { conversation_id: conversationId },
-      select: { metadata: true },
-    });
-    const metadata = normalizeMetadata(stateRow?.metadata);
-    // `pendingItemId` es el id de línea desde que existen variaciones; se
-    // acepta también el product_id para no invalidar una confirmación que el
-    // flujo de botones dejó pendiente antes del deploy.
-    const isConfirmed =
-      metadata.pendingAction === 'CONFIRM_REMOVE' &&
-      (metadata.pendingItemId === line.id || metadata.pendingItemId === line.product_id) &&
-      typeof metadata.pendingActionAt === 'string' &&
-      Date.now() - new Date(metadata.pendingActionAt).getTime() <= REMOVAL_CONFIRMATION_TTL_MS;
-
-    if (!isConfirmed) {
-      await patchConversationMetadata(conversationId, {
-        pendingAction: 'CONFIRM_REMOVE',
-        pendingItemId: line.id,
-        pendingItemName: removedName,
-        pendingActionAt: new Date().toISOString(),
-      });
-      return toJson({
-        success: false,
-        requiresConfirmation: true,
-        item: {
-          draftOrderItemId: line.id,
-          productId: line.product_id,
-          itemName: removedName,
-          quantity: removedQty,
-        },
-        message:
-          'Pedile confirmación explícita al cliente antes de eliminar. Volvé a llamar esta tool ' +
-          'con el mismo draftOrderItemId solo si el cliente confirma.',
-      });
+    if (conversationId) {
+      await omitConversationMetadataKeys(conversationId, [
+        'pendingAction',
+        'pendingItemId',
+        'pendingItemName',
+        'pendingActionAt',
+      ]);
     }
-
-    await omitConversationMetadataKeys(conversationId, [
-      'pendingAction',
-      'pendingItemId',
-      'pendingItemName',
-      'pendingActionAt',
-    ]);
-    await prisma.draft_order_item.delete({ where: { id: line.id } });
-
-    // Recalcular total
-    const agg = await prisma.draft_order_item.aggregate({
-      where: { draft_order_id: draft.id },
-      _sum: { total_price: true },
-    });
-    const newTotal = agg._sum.total_price ?? new Prisma.Decimal(0);
-    await prisma.draft_order.update({
-      where: { id: draft.id },
-      data: { total_amount: newTotal },
-    });
-    // Remover un ítem nunca crea un draft: touchSession ya renovó su
-    // expires_at al inicio del turno.
-
-    // Snapshot actualizado
-    const updatedItems = await prisma.draft_order_item.findMany({
-      where: { draft_order_id: draft.id },
-      include: { menu_item: { select: { id: true, name: true } } },
-      orderBy: { id: 'asc' },
-    });
 
     return toJson({
       success: true,
@@ -2307,6 +2364,8 @@ export const updateItemNoteTool = new DynamicStructuredTool<
   name: 'update_item_note',
   description:
     'Guarda (o reemplaza) la nota/instrucción especial de una o más líneas del carrito. ' +
+    'Para modificar o quitar "el de pollo", leé los ítems actuales en [ESTADO DEL CLIENTE] ' +
+    'y usá get_cart para obtener su ID exacto. ' +
     'Usá get_cart: cada ítem trae id (línea), productId, variation. ' +
     'Si el mismo plato aparece en ≥2 líneas y el cliente no aclaró alcance, pasá solo productId ' +
     'para recibir ambiguous_lines (preguntá si aplica a todas o a una). ' +
@@ -3252,6 +3311,14 @@ const presentCategorySchema = z.object({
     .string()
     .uuid()
     .describe('UUID de la categoría (campo id de get_categories, o el UUID de payload CATEGORY:{id}).'),
+  bodyText: z
+    .string()
+    .max(400)
+    .optional()
+    .describe(
+      'Intro breve del mensaje de lista, en el tono del turno (1–2 oraciones). ' +
+        'Si no la pasás, el sistema usa un texto neutro con el nombre de la categoría.'
+    ),
 });
 type PresentCategoryInput = z.infer<typeof presentCategorySchema>;
 
@@ -3263,13 +3330,18 @@ export const presentCategoryTool = new DynamicStructuredTool<
   description:
     'Muestra la lista interactiva de platillos de una categoría (igual que si el cliente tocara esa categoría). ' +
     'Usala cuando el cliente escribe el nombre de una categoría en texto libre. Primero get_categories para ' +
-    'obtener el categoryId. No listés los platos en texto: esta tool arma el mensaje completo.',
+    'obtener el categoryId. Pasá bodyText con una intro acorde al pedido del cliente (sin "excelente elección" genérico). ' +
+    'No listés los platos en texto: esta tool arma el mensaje completo.',
   schema: presentCategorySchema,
   func: async (input: PresentCategoryInput, _runManager, config?: RunnableConfig) => {
     const { conversationId } = getReactContext(config);
     const partyGate = await partySizeOrderingGateJson(conversationId);
     if (partyGate) return partyGate;
-    return toJson({ signal: 'present_category', categoryId: input.categoryId });
+    return toJson({
+      signal: 'present_category',
+      categoryId: input.categoryId,
+      bodyText: input.bodyText?.trim() || null,
+    });
   },
 });
 
@@ -3370,9 +3442,11 @@ export const presentProductCtaTool = new DynamicStructuredTool<
   name: 'present_product_cta',
   description:
     'Adjunta botones o una lista de productos a TU respuesta de texto (un solo mensaje). ' +
-    'Tras search_products/find_products_by_filter con count ≥ 2: primaryKind=SELECT_FROM_LIST y ' +
-    'productIds = los id del shortlist; tu texto es SOLO la intro (sin listar platos, porciones ni precios: ' +
-    'el sistema los pone en los atajos tipables). ' +
+    'SELECT_FROM_LIST es EXCLUSIVO de un solo plato ambiguo: una búsqueda (search_products o ' +
+    'find_products_by_filter) devolvió count ≥ 2 para ESE plato. productIds = esos ids; tu texto es SOLO ' +
+    'la intro (sin listar platos, porciones ni precios: el sistema los pone en los atajos). ' +
+    'Nunca agrupes en SELECT_FROM_LIST platos distintos que el cliente ya pidió juntos ' +
+    '("un arroz y un ají"): en ese caso add_cart_item una vez por plato. ' +
     'NO la uses si ya resolviste sin UI (nota, quitar ítem, cierre "¿algo más?").',
   schema: presentProductCtaSchema,
   func: async (input: PresentProductCtaInput, _runManager, config?: RunnableConfig) => {

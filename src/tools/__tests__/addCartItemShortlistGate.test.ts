@@ -1,5 +1,5 @@
 /**
- * Gate: search ≥2 → shortlistAwaitingChoice bloquea add en el mismo turno.
+ * Un shortlist de ≥2 ya no bloquea add_cart_item: si el modelo conoce el plato, lo suma.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -112,7 +112,7 @@ describe('add_cart_item — shortlistAwaitingChoice', () => {
     } as never);
   });
 
-  it('bloquea add si shortlistAwaitingChoice está activo', async () => {
+  it('suma el plato aunque shortlistAwaitingChoice esté activo', async () => {
     const meta = {
       peopleCount: 2,
       requestedPartySize: 2,
@@ -124,17 +124,26 @@ describe('add_cart_item — shortlistAwaitingChoice', () => {
     vi.mocked(prisma.conversation_state.findUnique).mockResolvedValue({
       metadata: meta,
     } as never);
+    vi.mocked(prisma.draft_order_item.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.draft_order_item.create).mockResolvedValue({
+      id: 'item-1',
+      quantity: 1,
+    } as never);
+    vi.mocked(prisma.draft_order_item.aggregate).mockResolvedValue({
+      _sum: { total_price: new Prisma.Decimal(100) },
+    } as never);
+    vi.mocked(prisma.draft_order_item.findMany).mockResolvedValue([] as never);
 
     const result = JSON.parse(
-      (await addCartItemTool.func({ productId: PRODUCT_ID }, undefined, CONFIG)) as string
+      (await addCartItemTool.func(
+        { productId: PRODUCT_ID, quantity: 1 },
+        undefined,
+        CONFIG
+      )) as string
     );
 
-    expect(result).toEqual(
-      expect.objectContaining({
-        success: false,
-        error: 'shortlist_selection_required',
-      })
-    );
-    expect(prisma.draft_order_item.create).not.toHaveBeenCalled();
+    expect(result.error).not.toBe('shortlist_selection_required');
+    expect(result.success).toBe(true);
+    expect(prisma.draft_order_item.create).toHaveBeenCalled();
   });
 });

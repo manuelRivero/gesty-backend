@@ -92,6 +92,24 @@ describe('needsAddQuantityConfirmation / isConfirmedAddQuantity', () => {
     ).toBe(false);
   });
 
+  it('quantity explícito de add_cart_item confirma sin match del mensaje', () => {
+    expect(
+      isConfirmedAddQuantity({
+        quantity: 2,
+        suggestedQuantity: 3,
+        explicitToolQuantity: true,
+        userMessage: 'quiero el adobo',
+      })
+    ).toBe(true);
+    expect(
+      isConfirmedAddQuantity({
+        quantity: 1,
+        suggestedQuantity: 2,
+        explicitToolQuantity: true,
+      })
+    ).toBe(true);
+  });
+
   it('mensaje del turno con unidades confirma aunque suggested ≥ 2', () => {
     expect(
       isConfirmedAddQuantity({

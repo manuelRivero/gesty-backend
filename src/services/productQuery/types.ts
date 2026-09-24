@@ -39,8 +39,8 @@ export type ConversationMetadata = {
   pendingQuestion?: string;
   candidateProductIds?: string[];
   /**
-   * True mientras el shortlist de este turno ReAct aún no tuvo respuesta del
-   * cliente: `add_cart_item` debe fallar con `shortlist_selection_required`.
+   * True si este turno ReAct abrió un shortlist de ≥2 platos.
+   * No bloquea `add_cart_item`: si el cliente ya nombró el plato, el modelo lo suma.
    * Se limpia al inicio del próximo `runHybridReactAgent`.
    */
   shortlistAwaitingChoice?: boolean;
@@ -128,11 +128,9 @@ export type ConversationMetadata = {
     createdAt: string;
   } | null;
   /**
-   * Confirmación pendiente sobre un ítem del carrito (`cart.service.ts`).
-   * `CONFIRM_REMOVE` es el Constraint de borde de `remove_cart_item`
-   * (ADR-0002): fuente única, compartida entre el flujo determinístico de
-   * botones y la Tool del agente híbrido — evita que ambos mantengan su
-   * propia copia de "qué ítem está pendiente de confirmación".
+   * Confirmación pendiente del flujo de botones (`cart.service.ts`).
+   * `remove_cart_item` ya no la usa: si el modelo llama la tool, borra en el acto
+   * y limpia estas claves si quedaron de un botón anterior.
    */
   pendingAction?: 'CONFIRM_REMOVE' | 'EDIT_CART';
   pendingItemId?: string;

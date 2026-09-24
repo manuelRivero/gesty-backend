@@ -80,10 +80,20 @@ export function buildSuggestionsThenManagementThenListBody(params: {
   return parts.join('\n');
 }
 
-/** Viñeta de atajo con palabra clave en negrita. */
-export function shortcutBullet(boldKey: string, rest = ''): string {
+/** Índices 0–4 del shortlist de platos. Fuera de rango se usa la viñeta. */
+const ORDINAL_EMOJI = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣'] as const;
+
+/**
+ * Atajo con palabra clave en negrita.
+ * `index` (cero-indexado) numera el shortlist de platos; sin index, viñeta `•`.
+ */
+export function shortcutBullet(boldKey: string, rest = '', index?: number): string {
   const key = stripWhatsAppBoldMarkers(boldKey);
   const suffix = rest.trim();
   if (!key) return '';
-  return suffix ? `• *${key}* ${suffix}` : `• *${key}*`;
+  const marker =
+    typeof index === 'number' && index >= 0 && index < ORDINAL_EMOJI.length
+      ? ORDINAL_EMOJI[index]
+      : '•';
+  return suffix ? `${marker} *${key}* ${suffix}` : `${marker} *${key}*`;
 }

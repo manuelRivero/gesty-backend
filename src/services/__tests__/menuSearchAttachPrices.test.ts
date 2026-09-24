@@ -79,4 +79,45 @@ describe('searchMenuItemsByKeyword price hydration', () => {
     expect(items[1]!.menu_item_price[0]?.amount.toString()).toBe('25000');
     expect(prisma.menu_item_price.findMany).toHaveBeenCalled();
   });
+
+  it('descarta vecinos por encima del umbral de distancia y no los devuelve', async () => {
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([
+      {
+        id: 'dessert-1',
+        name: 'Helado de lucuma',
+        description: null,
+        ingredients: null,
+        serves_people: 1,
+        is_available: true,
+        image: null,
+        variations: [],
+        distance: 0.58,
+        category_id: 'cat-d',
+        category_name: 'Postres',
+        category_tag: 'DESSERT',
+      },
+      {
+        id: 'dessert-2',
+        name: 'King kong',
+        description: null,
+        ingredients: null,
+        serves_people: 1,
+        is_available: true,
+        image: null,
+        variations: [],
+        distance: 0.61,
+        category_id: 'cat-d',
+        category_name: 'Postres',
+        category_tag: 'DESSERT',
+      },
+    ] as never);
+
+    const items = await MenuService.searchMenuItemsByKeyword({
+      businessId: 'biz-1',
+      keyword: 'unicornio glaseado con salsa de meteorito',
+    });
+
+    expect(items).toEqual([]);
+    expect(prisma.menu_item_price.findMany).not.toHaveBeenCalled();
+  });
 });

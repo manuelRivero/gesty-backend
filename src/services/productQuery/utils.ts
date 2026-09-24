@@ -7,6 +7,26 @@ import {
   stripWhatsAppBoldMarkers,
 } from '../../utils/whatsappBold';
 
+const WHATSAPP_INTERACTIVE_BODY_MAX = 1024;
+
+/**
+ * Antepone la prosa del modelo al cuerpo fijo (pitch / resumen).
+ * Si no entra en el límite de body de WhatsApp, se recorta la prosa y se conserva el texto fijo.
+ */
+export function prependLlmProse(body: string, llmProse?: string | null): string {
+  const prose = (llmProse ?? '')
+    .trim()
+    .replace(/^🤖\s*/u, '')
+    .trim();
+  if (!prose) return body;
+  const joiner = '\n\n';
+  const room = WHATSAPP_INTERACTIVE_BODY_MAX - joiner.length - body.length;
+  if (room < 1) return body.slice(0, WHATSAPP_INTERACTIVE_BODY_MAX);
+  const clipped = prose.length > room ? prose.slice(0, room).trimEnd() : prose;
+  if (!clipped) return body;
+  return `${clipped}${joiner}${body}`;
+}
+
 /** Formato estándar: 🤖, título en negrita + emoji, cuerpo. */
 export function formatBotUserMessage(
   boldTitle: string,

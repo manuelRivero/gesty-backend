@@ -69,7 +69,7 @@ describe('botPersonality', () => {
   it('hybrid incluye reglas operativas de tools', () => {
     const hybrid = buildHybridAgentSystemPrompt();
     expect(hybrid).toMatch(/search_products/i);
-    expect(hybrid).toMatch(/ANTI-MULTI-PRODUCTO/i);
+    expect(hybrid).toMatch(/PEDIDOS MÚLTIPLES PERMITIDOS/i);
     expect(hybrid).toMatch(/present_category/i);
     expect(hybrid).toMatch(/CATEGORÍA POR TEXTO LIBRE/i);
   });
@@ -92,11 +92,20 @@ describe('botPersonality', () => {
     expect(hybrid).toMatch(/autonomía del agente/i);
   });
 
-  it('hybrid: present_product_cta(ADD_ITEM) es oferta, no add hecho', () => {
+  it('hybrid: agregar se confirma en pasado; la pregunta queda para una recomendación', () => {
     const hybrid = buildHybridAgentSystemPrompt();
-    expect(hybrid).toMatch(/present_product_cta\(ADD_ITEM\) = OFERTA/i);
-    expect(hybrid).toMatch(/PROHIBIDO con esa tool:.*Sumé/i);
+    expect(hybrid).toMatch(/¡Listo! Agregado/i);
+    expect(hybrid).toMatch(/recomendación/i);
     expect(hybrid).toMatch(/Party size recién confirmado/i);
+    expect(hybrid).toMatch(/AUTONOMÍA DE COMPRA/i);
+  });
+
+  it('hybrid inyecta país derivado de la zona horaria del negocio', () => {
+    const hybrid = buildHybridAgentSystemPrompt(undefined, {
+      timezone: 'America/Lima',
+    });
+    expect(hybrid).toMatch(/UBICACIÓN Y CULTURA/i);
+    expect(hybrid).toMatch(/Perú \(America\/Lima\)/);
   });
 
   it('hybrid instruye a resolver Selección de producto pendiente contra candidatos', () => {
@@ -194,11 +203,27 @@ describe('botPersonality', () => {
     expect(prompt).toMatch(/No listes platos/i);
   });
 
-  it('hybrid ANTI-MULTI-PRODUCTO prohíbe listar platos/porciones/precios en prosa', () => {
+  it('hybrid pedidos múltiples: SELECT_FROM_LIST solo desambigua un plato', () => {
     const hybrid = buildHybridAgentSystemPrompt();
-    expect(hybrid).toMatch(/ANTI-MULTI-PRODUCTO/i);
-    expect(hybrid).toMatch(/PROHIBIDO en tu texto/i);
-    expect(hybrid).toMatch(/porciones y precio/i);
+    expect(hybrid).toMatch(/PEDIDOS MÚLTIPLES PERMITIDOS/i);
+    expect(hybrid).toMatch(/add_cart_item varias veces/i);
+    expect(hybrid).toMatch(/Nunca lo uses para agrupar platos distintos/i);
+    expect(hybrid).toMatch(/CANTIDADES EXPLÍCITAS/i);
+    expect(hybrid).toMatch(/LÉXICO LOCAL ARGENTINO/i);
+    expect(hybrid).toMatch(/FILTRO DE SALUD/i);
+    expect(hybrid).toMatch(/REGLA DE BORRADO/i);
+    expect(hybrid).toMatch(/REGLA ANTI-LOOPS/i);
+    expect(hybrid).toMatch(/ACCIÓN INMEDIATA/i);
+    expect(hybrid).toMatch(/NO HAS LLAMADO A LA TOOL CORRESPONDIENTE/i);
+  });
+
+  it('hybrid con checkout: cierre explícito gana al up-selling', () => {
+    const hybrid = buildHybridAgentSystemPrompt(undefined, {
+      checkoutDelegationEnabled: true,
+    });
+    expect(hybrid).toMatch(/REGLA DE CIERRE/i);
+    expect(hybrid).toMatch(/present_complement_suggestions/i);
+    expect(hybrid).toMatch(/start_checkout_session/i);
   });
 
   it('hybrid cola: plato → search_products(hint); sección → categoría, no recortar containsIngredient', () => {

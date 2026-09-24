@@ -114,15 +114,31 @@ describe('buildContextMessage', () => {
     expect(msg).not.toContain('Carrito');
   });
 
-  it('carrito con ítems: menciona "Carrito" con la cantidad', async () => {
+  it('carrito con ítems: menciona cantidad y nombres', async () => {
     findFirstMock.mockResolvedValue({
       id: 'draft-1',
       fulfillment_type: null,
       expires_at: null,
       _count: { draft_order_item: 2 },
+      draft_order_item: [
+        {
+          id: 'line-arroz',
+          product_id: 'prod-arroz',
+          quantity: 1,
+          menu_item: { id: 'prod-arroz', name: 'Arroz con pollo' },
+        },
+        {
+          id: 'line-aji',
+          product_id: 'prod-aji',
+          quantity: 1,
+          menu_item: { id: 'prod-aji', name: 'Ají de gallina' },
+        },
+      ],
     });
     const msg = await buildContextMessage(makeCtx());
-    expect(msg).toContain('- Carrito: 2 ítem(s) en carrito');
+    expect(msg).toContain(
+      '- Carrito: 2 ítem(s) - [1x Arroz con pollo (ProductID: prod-arroz, LineID: line-arroz), 1x Ají de gallina (ProductID: prod-aji, LineID: line-aji)]'
+    );
   });
 
   it('checkout activo sin ítems: menciona "Carrito" y "Sesión de checkout: activa"', async () => {
@@ -257,8 +273,9 @@ describe('buildContextMessage', () => {
       })
     );
     expect(msg).toContain('Selección de producto pendiente');
-    expect(msg).toContain('Lomo a la plancha');
-    expect(msg).toContain(idA);
+    expect(msg).toContain(`1. *Lomo a la plancha* (ID: ${idA})`);
+    expect(msg).toContain(`2. *Lomo al tajo* (ID: ${idB})`);
+    expect(msg).toContain('mapea DIRECTAMENTE al número');
     expect(msg).toContain('Consulta original del cliente');
     expect(msg).toContain('tienen lomo?');
     expect(msg).toContain('Pregunta de atributo que NOMBRA un candidato');

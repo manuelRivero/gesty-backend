@@ -118,7 +118,7 @@ describe.sequential.skipIf(!isE2eEnabled())(
           businessId,
           slotCount: prereq.slotCount,
           environmentNames,
-          nextSaturday: formatDMY(nextDateForWeekday('sábado')),
+          nextSaturday: formatDMY(nextDateForWeekday('sábado', 'America/Argentina/Buenos_Aires')),
         })
       );
     }, 90_000);
@@ -133,7 +133,7 @@ describe.sequential.skipIf(!isE2eEnabled())(
           generatedAt: new Date().toISOString(),
           businessId,
           environmentNames,
-          nextSaturday: formatDMY(nextDateForWeekday('sábado')),
+          nextSaturday: formatDMY(nextDateForWeekday('sábado', 'America/Argentina/Buenos_Aires')),
           turns: observations,
         };
         writeFileSync(reportPath, JSON.stringify(report, null, 2), 'utf8');
@@ -274,7 +274,7 @@ describe.sequential.skipIf(!isE2eEnabled())(
       const reset = await resetE2eCustomer();
       conversationId = reset.conversationId;
 
-      const saturday = formatDMY(nextDateForWeekday('sábado'));
+      const saturday = formatDMY(nextDateForWeekday('sábado', 'America/Argentina/Buenos_Aires'));
 
       // Arranque explícito de reserva
       const t1 = await runGraphTurn(
@@ -348,7 +348,7 @@ describe.sequential.skipIf(!isE2eEnabled())(
       const reset = await resetE2eCustomer();
       conversationId = reset.conversationId;
 
-      const saturday = formatDMY(nextDateForWeekday('sábado'));
+      const saturday = formatDMY(nextDateForWeekday('sábado', 'America/Argentina/Buenos_Aires'));
       const start = await runGraphTurn(
         graph,
         buildTextPayload(`Quiero reservar para ${saturday} a la noche, somos 10`)
@@ -427,7 +427,7 @@ describe.sequential.skipIf(!isE2eEnabled())(
       const reset = await resetE2eCustomer();
       conversationId = reset.conversationId;
 
-      const saturday = formatDMY(nextDateForWeekday('sábado'));
+      const saturday = formatDMY(nextDateForWeekday('sábado', 'America/Argentina/Buenos_Aires'));
       const start = await runGraphTurn(
         graph,
         buildTextPayload(`Quiero reservar mesa para el sábado ${saturday}`)
@@ -555,7 +555,7 @@ describe.sequential.skipIf(!isE2eEnabled())(
       );
       const { prisma } = await import('../src/lib/prisma');
 
-      const saturday = nextDateForWeekday('sábado');
+      const saturday = nextDateForWeekday('sábado', 'America/Argentina/Buenos_Aires');
       const slots = await prisma.$queryRaw<Array<{ id: string }>>`
         SELECT id FROM reservation_slot
         WHERE business_id = ${businessId}::uuid
@@ -633,7 +633,7 @@ describe.sequential.skipIf(!isE2eEnabled())(
       );
       const { prisma } = await import('../src/lib/prisma');
 
-      const saturday = nextDateForWeekday('sábado');
+      const saturday = nextDateForWeekday('sábado', 'America/Argentina/Buenos_Aires');
       const slots = await prisma.$queryRaw<Array<{ id: string }>>`
         SELECT id FROM reservation_slot
         WHERE business_id = ${businessId}::uuid

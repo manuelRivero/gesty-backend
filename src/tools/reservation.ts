@@ -22,6 +22,7 @@ import {
   findOverlappingReservationForTable,
   findReservationBlockAtStart,
 } from '../repositories/reservation.repository';
+import { findBusinessTimezone } from '../repositories/business.repository';
 import { buildDateTime, normalizeDate } from '../services/reservations/utils';
 import {
   DAY_NAMES_ES,
@@ -82,20 +83,21 @@ type DateGateFailure =
 
 function validateReservationDateGate(
   date: string,
+  timezone: string,
   weekday?: WeekdayEs
 ): { ok: true } | DateGateFailure {
   let parsed: Date;
   try {
-    parsed = startOfDay(normalizeDate(date));
+    parsed = startOfDay(normalizeDate(date, timezone));
   } catch {
     return { ok: false, error: 'invalid_date' };
   }
 
-  if (parsed < reservationToday()) {
+  if (parsed < reservationToday(timezone)) {
     return { ok: false, error: 'past_date' };
   }
 
-  const horizon = reservationToday();
+  const horizon = reservationToday(timezone);
   horizon.setDate(horizon.getDate() + RESERVATION_MAX_DAYS_AHEAD);
   if (parsed > horizon) {
     return { ok: false, error: 'too_far', maxDate: formatDMY(horizon) };
@@ -109,7 +111,7 @@ function validateReservationDateGate(
         error: 'weekday_mismatch',
         declaredWeekday: weekday,
         actualWeekday,
-        suggestedDate: formatDMY(nextDateForWeekday(weekday)),
+        suggestedDate: formatDMY(nextDateForWeekday(weekday, timezone)),
       };
     }
   }
@@ -157,8 +159,9 @@ export const saveReservationDateTool = new DynamicStructuredTool<
     _runManager,
     config?: RunnableConfig
   ) => {
-    const { conversationId } = getReactContext(config);
-    const gate = validateReservationDateGate(date, weekday);
+    const { conversationId, businessId } = getReactContext(config);
+    const timezone = await findBusinessTimezone(businessId);
+    const gate = validateReservationDateGate(date, timezone, weekday);
     if (!gate.ok) {
       const { ok: _ok, ...failure } = gate;
       return toJson({ saved: false, ...failure });
@@ -311,7 +314,8 @@ export const getActiveReservationTool = new DynamicStructuredTool<
   schema: getActiveReservationSchema,
   func: async (_input: GetActiveReservationInput, _runManager, config?: RunnableConfig) => {
     const { customerId, businessId } = getReactContext(config);
-    const startOfToday = reservationToday();
+    const timezone = await findBusinessTimezone(businessId);
+    const startOfToday = reservationToday(timezone);
     const reservation = await findAnyFutureOccupyingReservationForCustomer(
       customerId,
       startOfToday

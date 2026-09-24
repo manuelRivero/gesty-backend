@@ -33,6 +33,8 @@ import {
   applySwitchToReservationConfirm,
   applySwitchToReservationDecline,
   buildSwitchToReservationConfirmMessage,
+  clearPendingSwitchToReservation,
+  countActiveCartItems,
   extractSwitchToReservationPending,
   getPendingSwitchToReservation,
 } from '../../../services/switchToReservationConfirm.service';
@@ -623,43 +625,66 @@ export const nlpSubgraphNode = async (
 
   const metaPre = normalizeMetadata(workingConversationState?.metadata);
 
-  // Gate tipable: cancelar pedido para pasar a reserva (§3.11 — mismo efecto que botones)
+  // Gate tipable: cancelar pedido para pasar a reserva (§3.11 — mismo efecto que botones).
+  // Un pending sin ítems es fuga de estado: se limpia y el turno sigue al híbrido.
   if (getPendingSwitchToReservation(metaPre) && userMessage.trim()) {
-    const extraction = await extractSwitchToReservationPending(userMessage);
-    console.log(
-      JSON.stringify({
-        event: '[switch-to-reservation] confirm_tipable_extraction',
-        status: extraction.status,
-        confidence: extraction.confidence,
-        source: extraction.source,
-        conversationId: conversation.id,
-      })
-    );
+    const cartItems = await countActiveCartItems({
+      businessId: business.id,
+      customerPhone: customer.phone_number ?? ctx.to ?? '',
+    });
+    if (cartItems === 0) {
+      await clearPendingSwitchToReservation(conversation.id);
+      const dropPending = (row: { metadata?: unknown } | null | undefined): void => {
+        const metadata = row?.metadata;
+        if (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) {
+          delete (metadata as Record<string, unknown>).pending_switch_to_reservation;
+        }
+      };
+      dropPending(workingConversationState);
+      dropPending(enrichedBase.conversationState);
+      console.log(
+        JSON.stringify({
+          event: '[switch-to-reservation] stale_pending_cleared',
+          conversationId: conversation.id,
+        })
+      );
+    } else {
+      const extraction = await extractSwitchToReservationPending(userMessage);
+      console.log(
+        JSON.stringify({
+          event: '[switch-to-reservation] confirm_tipable_extraction',
+          status: extraction.status,
+          confidence: extraction.confidence,
+          source: extraction.source,
+          conversationId: conversation.id,
+        })
+      );
 
-    if (extraction.status === 'fulfilled' && extraction.value) {
-      if (extraction.value.confirmed) {
-        const opened = await openReservationAfterCartCancel(
-          state,
-          workingConversationState,
-          enrichedBase
-        );
+      if (extraction.status === 'fulfilled' && extraction.value) {
+        if (extraction.value.confirmed) {
+          const opened = await openReservationAfterCartCancel(
+            state,
+            workingConversationState,
+            enrichedBase
+          );
+          return {
+            handlerResult: opened.handlerResult,
+            workingConversationState: opened.workingConversationState,
+          };
+        }
         return {
-          handlerResult: opened.handlerResult,
-          workingConversationState: opened.workingConversationState,
+          handlerResult: await applySwitchToReservationDecline(conversation.id),
         };
       }
+
       return {
-        handlerResult: await applySwitchToReservationDecline(conversation.id),
+        handlerResult: {
+          content: buildSwitchToReservationConfirmMessage(),
+          isInteractive: true,
+          skipBodyHumanization: true,
+        },
       };
     }
-
-    return {
-      handlerResult: {
-        content: buildSwitchToReservationConfirmMessage(),
-        isInteractive: true,
-        skipBodyHumanization: true,
-      },
-    };
   }
 
   // Gate tipable: confirmación de pedido con negocio cerrado (§3.11 — mismo efecto que botones)

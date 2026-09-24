@@ -47,6 +47,7 @@ import {
 import {
   buildMetadataValue,
   normalizeMetadata,
+  prependLlmProse,
 } from './productQuery/utils';
 import { ConversationIntent } from "../types/conversationIntent";
 import { handleDraftOrder, handleDraftOrderItem } from "./order.service";
@@ -1078,11 +1079,13 @@ export const buildCartSummaryMessage = async (params: {
   customerId: string;
   currencyCode: string | null;
   businessStreetAddress: string | null;
+  llmProse?: string | null;
 }): Promise<WhatsAppListMessage> => {
-  const { businessId, customerPhone, conversationId, customerId, currencyCode, businessStreetAddress } = params;
+  const { businessId, customerPhone, conversationId, customerId, currencyCode, businessStreetAddress, llmProse } = params;
 
   const cartItems = await prisma.draft_order.findFirst({
     where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
+    orderBy: { created_at: 'desc' },
     include: {
       draft_order_item: {
         include: {
@@ -1097,7 +1100,7 @@ export const buildCartSummaryMessage = async (params: {
   if (!cartItems?.draft_order_item.length) {
     await syncOrderCoverageToConversationState(conversationId, businessId, customerPhone);
     return buildListMessageFromButtons(
-      EMPTY_CART_BOT_MESSAGE,
+      prependLlmProse(EMPTY_CART_BOT_MESSAGE, llmProse),
       [
         { title: 'Ver menú', payload: 'VIEW_MENU', description: 'Explorar platos disponibles', sectionTitle: 'Opciones' },
         { title: 'Hacer una consulta', payload: 'ASK_QUESTION', description: 'Resolver una duda', sectionTitle: 'Opciones' },
@@ -1210,7 +1213,10 @@ export const buildCartSummaryMessage = async (params: {
     type: 'list',
     header: { type: 'text', text: '🤖\n\n*Tu pedido actual* 🛒' },
     body: {
-      text: `${orderSectionsBlock}${guidanceMid}${totalLine}${deliveryLine}${shippingBlock}\n\n${shortcutsBody}`,
+      text: prependLlmProse(
+        `${orderSectionsBlock}${guidanceMid}${totalLine}${deliveryLine}${shippingBlock}\n\n${shortcutsBody}`,
+        llmProse
+      ),
     },
     footer: { text: 'Elegí o escribí' },
     action: {

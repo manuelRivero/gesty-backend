@@ -146,8 +146,8 @@ describe('buildHybridCtaInteractive', () => {
       const body = result!.content as string;
       expect(typeof body).toBe('string');
       expect(body).not.toMatch(/SELECT_PRODUCT/);
-      expect(body).toContain('• *Ceviche Clásico*\nración para: 2\nPrecio: $25.000');
-      expect(body).toContain('• *Ceviche Mixto*\nración para: 1\nPrecio: $11.000');
+      expect(body).toContain('1️⃣ *Ceviche Clásico*\nración para: 2\nPrecio: $25.000');
+      expect(body).toContain('2️⃣ *Ceviche Mixto*\nración para: 1\nPrecio: $11.000');
       // Sin footer WA, el cierre invita a escribir el nombre.
       expect(body).toContain(SELECT_FROM_LIST_CLOSING_LINE);
       expect(body).not.toMatch(/O elegí de la lista/i);
@@ -184,7 +184,7 @@ describe('buildHybridCtaInteractive', () => {
       const body = result!.content as string;
       expect(body).toMatch(/Perfecto/i);
       expect(body).not.toMatch(/1\.\s*\*Ceviche/);
-      expect(body).toContain('• *Ceviche Clásico*\nración para: 2\nPrecio: $25.000');
+      expect(body).toContain('1️⃣ *Ceviche Clásico*\nración para: 2\nPrecio: $25.000');
     });
 
     it('limita a 5 candidatos máximo', () => {
@@ -199,7 +199,7 @@ describe('buildHybridCtaInteractive', () => {
 
       const result = buildHybridCtaInteractive(TEXT, plan);
       const body = result!.content as string;
-      const bullets = body.split('\n').filter((l) => l.startsWith('• *'));
+      const bullets = body.split('\n').filter((l) => /^\d\uFE0F?\u20E3 \*/.test(l));
 
       expect(bullets.length).toBeLessThanOrEqual(5);
     });

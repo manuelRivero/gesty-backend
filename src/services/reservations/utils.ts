@@ -1,5 +1,6 @@
+import { findBusinessTimezone } from '../../repositories/business.repository';
 import { fetchReservationSlotsForBusinessDate } from '../../repositories/reservation.repository';
-import { reservationNow } from './clock';
+import { coerceIanaTimezone, reservationNow } from './clock';
 import type {
   EnvironmentPreferenceRow,
   ReservationSlot,
@@ -76,7 +77,7 @@ export function filterSlotsByTurnLead(
   return slots.filter((slot) => (turnMap.get(slot.id) ?? -1) > currentTurn);
 }
 
-export function normalizeDate(dateStr: string): Date {
+export function normalizeDate(dateStr: string, timezone?: string): Date {
   const parts = dateStr.split('/');
 
   if (parts.length < 2) {
@@ -87,7 +88,9 @@ export function normalizeDate(dateStr: string): Date {
   const month = Number(parts[1]) - 1;
 
   const year =
-    parts[2] !== undefined ? Number(parts[2]) : reservationNow().getFullYear();
+    parts[2] !== undefined
+      ? Number(parts[2])
+      : reservationNow(coerceIanaTimezone(timezone)).getFullYear();
 
   const date = new Date(year, month, day);
 
@@ -167,7 +170,7 @@ export async function getFirstAvailableTimeForDate(
 export async function getNextDateExample(
   businessId: string
 ): Promise<string> {
-  const now = reservationNow();
+  const now = reservationNow(await findBusinessTimezone(businessId));
   for (let offset = 0; offset < 30; offset += 1) {
     const date = new Date(now);
     date.setHours(0, 0, 0, 0);

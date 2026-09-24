@@ -72,6 +72,15 @@ npm run test:natural-conversations
 
 # Suite diagnóstica de reservas (producción) — NO entra en test:e2e
 npm run test:reservation-production
+
+# Suite diagnóstica de ataques al bot — NO entra en test:e2e
+npm run test:bot-attack
+
+# Grado 2: el cliente insiste después de la negativa
+npm run test:bot-attack-g2
+
+# Grado 3: continuidad, anáfora, RAG y colisión de dominios
+npm run test:bot-attack-g3
 ```
 
 Si faltan variables, los tests se **saltan** (no fallan) y un test documenta el motivo.
@@ -88,6 +97,9 @@ Si faltan variables, los tests se **saltan** (no fallan) y un test documenta el 
 | `language-variations.e2e.test.ts` | Fase 3: misma intención con formulaciones distintas de WhatsApp → mismo efecto |
 | `natural-conversations.e2e.test.ts` | Fase 4: micro-conversaciones multi-turno (corrección, interrupción, referencia, continuidad) |
 | `reservation-production.e2e.test.ts` | **Diagnóstica** (independiente): replay de reservas reales (Picado). Soft-asserts + log JSON. Requiere slots (`seed:reservation-slots`) y `RESERVATION_AGENT_ENABLED=true`. Reporte en `e2e/.last-reservation-production-report.json` |
+| `bot-attack.e2e.test.ts` | **Diagnóstica** (independiente): prosa hostil contra el bot (dominio reserva/pedido, plato inventado, variedad fantasma, pago inexistente, afirmaciones sueltas, pending abandonado, inyección). Mismo molde: hard = respondió; soft = Facts. Reporte en `e2e/.last-bot-attack-report.json` |
+| `bot-attack-g2.e2e.test.ts` | **Diagnóstica grado 2** (independiente): insiste después del rechazo (aceptar shortlist falso, variedad inventada, bitcoin con retiro ya elegido, confirmar carrito vacío, 999 unidades, reserva imposible, pedido+reserva juntos). Reporte en `e2e/.last-bot-attack-g2-report.json` |
+| `bot-attack-g3.e2e.test.ts` | **Diagnóstica grado 3** (independiente): ping-pong pedido/FAQ, anáfora y modificación tardía, slang de cantidad, reserva y pedido en el mismo mensaje. Hard = respondió; soft = Facts del carrito, checkout y exclusión de dominios. El copy queda en el reporte. Reporte en `e2e/.last-bot-attack-g3-report.json` |
 
 ## Helpers
 

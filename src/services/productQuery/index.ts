@@ -2,6 +2,7 @@ export { executeProductQuery } from './service';
 export type { ProductQueryServiceResult } from './types';
 export {
   formatBotUserMessage,
+  prependLlmProse,
   partySizeMetadataFields,
 } from './utils';
 export {

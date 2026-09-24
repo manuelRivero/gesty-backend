@@ -265,6 +265,25 @@ export const resetE2eCustomer = async (
     'temp_address',
     'awaiting_address',
     'pending_closed_add_item',
+    'pending_switch_to_reservation',
+    'pending_cancel_disambiguation',
+    'pendingQuestion',
+    'pendingComplementSelection',
+    'pendingOrderSelection',
+    'pendingOrderMessage',
+    'pendingOrderCandidateIds',
+    'pendingTipables',
+    'pendingOrderLines',
+    'pendingAction',
+    'pendingItemId',
+    'pendingItemName',
+    'pendingActionAt',
+    'pendingProductQueryQuantity',
+    'pending_address_action',
+    'pending_address_text',
+    'pending_address_lat',
+    'pending_address_lng',
+    'pending_address_zone_id',
     'pendingVariation',
     'pendingAddQuantity',
     'pendingItemNote',
@@ -277,7 +296,7 @@ export const resetE2eCustomer = async (
     current_intent: null,
   } as Parameters<typeof updateConversationState>[1]);
 
-  const draft = await prisma.draft_order.findFirst({
+  const drafts = await prisma.draft_order.findMany({
     where: {
       business_id: business.id,
       customer_phone: E2E_CUSTOMER_PHONE,
@@ -285,11 +304,19 @@ export const resetE2eCustomer = async (
     },
     select: { id: true },
   });
-  if (draft) {
-    await prisma.draft_order_item.deleteMany({ where: { draft_order_id: draft.id } });
-    await prisma.draft_order.update({
-      where: { id: draft.id },
-      data: { fulfillment_type: null, payment_method: null, total_amount: 0 },
+  if (drafts.length > 0) {
+    const draftIds = drafts.map((draft) => draft.id);
+    await prisma.draft_order_item.deleteMany({
+      where: { draft_order_id: { in: draftIds } },
+    });
+    await prisma.draft_order.updateMany({
+      where: { id: { in: draftIds } },
+      data: {
+        status: 'abandoned',
+        fulfillment_type: null,
+        payment_method: null,
+        total_amount: 0,
+      },
     });
   }
 
@@ -543,7 +570,7 @@ export type E2eDraftLine = {
   variation: string | null;
 };
 
-/** Misma lectura que carrito/checkout: `findFirst` active, sin orderBy. */
+/** Misma lectura que add_cart_item / get_cart: el draft active más reciente. */
 export const getActiveDraftSnapshot = async (
   businessId: string
 ): Promise<{ draftId: string | null; items: E2eDraftLine[] }> => {
@@ -554,6 +581,7 @@ export const getActiveDraftSnapshot = async (
       customer_phone: E2E_CUSTOMER_PHONE,
       status: 'active',
     },
+    orderBy: { created_at: 'desc' },
     select: {
       id: true,
       draft_order_item: {

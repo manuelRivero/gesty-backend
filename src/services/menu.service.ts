@@ -354,26 +354,18 @@ export class MenuService {
         distance: r.distance
       }))
     );
-  
-    // 3️⃣ Filtrar por umbral de similitud
-    const SIMILARITY_THRESHOLD = 0.5;
+
+    // Distancia coseno de pgvector (`<=>`): menor = más parecido.
+    // Sin hits bajo el umbral se devuelve [] — no los vecinos menos lejanos.
+    const MENU_SEARCH_DISTANCE_THRESHOLD = 0.5;
 
     const filtered = results.filter(
-      (r) => r.distance !== undefined && r.distance < SIMILARITY_THRESHOLD
+      (r) => r.distance !== undefined && r.distance < MENU_SEARCH_DISTANCE_THRESHOLD
     );
-    
-    let finalResults: MenuItemSearchResult[];
-
-    if (filtered.length > 0) {
-      finalResults = filtered;
-    } else {
-      // Fallback inteligente
-      finalResults = results.slice(0, 3);
-    }
 
     // El raw SQL de embeddings no joinea precio; sin esto search_products
     // deja price=null y el LLM suele copiar el monto de otro hit del shortlist.
-    return attachActivePrices(finalResults, businessId);
+    return attachActivePrices(filtered, businessId);
   }
   static async searchMenuItemsForOrder(params: {
     businessId: string;

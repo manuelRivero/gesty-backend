@@ -232,7 +232,8 @@ export const buildCategoryProductListMessage = async (
     business: BusinessType,
     conversation: ConversationType,
     categoryId: string,
-    page = 1
+    page = 1,
+    options?: { bodyText?: string | null }
 ): Promise<CategoryMessageResult> => {
 
     const category = await prisma.menu_category.findFirst({
@@ -305,7 +306,9 @@ export const buildCategoryProductListMessage = async (
     const safePage = Math.min(Math.max(page, 1), totalPages || 1);
     const currentPage = pages[safePage - 1];
 
-    const text = `Excelente eleccion! Estos son los platillos de ${category.name}. Selecciona uno para continuar.`;
+    const text =
+      options?.bodyText?.trim() ||
+      `Estos son los platillos de ${category.name}. Elegí uno para continuar.`;
 
     // Construir WhatsAppListMessage (NO enviar)
     const listMessage: WhatsAppListMessage = {

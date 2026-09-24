@@ -35,6 +35,10 @@ vi.mock('../ai/openai.service', () => ({
 vi.mock('../productQuery', () => ({
   formatBotUserMessage: (title: string, emoji: string, body: string) =>
     `${emoji} ${title}\n${body}`,
+  prependLlmProse: (body: string, llmProse?: string | null) => {
+    const prose = llmProse?.trim();
+    return prose ? `${prose}\n\n${body}` : body;
+  },
 }));
 
 import { recordOpportunitySurfaced } from '../intent/opportunities.service';
@@ -147,6 +151,22 @@ describe('buildComplementSuggestionsListMessage', () => {
     expect(mgmtIdx).toBeGreaterThan(flanIdx);
     expect(verIdx).toBeGreaterThan(mgmtIdx);
     expect(modIdx).toBeGreaterThan(verIdx);
+  });
+
+  it('antepone la prosa del modelo al pitch', () => {
+    const list = buildComplementSuggestionsListMessage({
+      title: 'Algo dulce',
+      titleEmoji: '🍰',
+      bodyPlain: 'Si querés un postre, mirá estas opciones.',
+      llmProse: 'Listo, sumé el ají.',
+      items: [{ id: 'p1', name: 'Flan', categoryName: 'Postres' }],
+    });
+
+    const body = list.body.text;
+    expect(body.indexOf('Listo, sumé el ají.')).toBeGreaterThan(-1);
+    expect(body.indexOf('Listo, sumé el ají.')).toBeLessThan(
+      body.indexOf('Si querés un postre, mirá estas opciones.')
+    );
   });
 });
 

@@ -14,7 +14,7 @@ import {
   updateConversationLastMessageAt,
 } from '../repositories';
 import type { business as Business } from '@prisma/client';
-import { formatBotUserMessage } from './productQuery';
+import { formatBotUserMessage, prependLlmProse } from './productQuery';
 import { buildComplementarySuggestionsWithLlm } from './ai/complementarySuggestion.ai.service';
 import {
   computeSuggestComplementPermission,
@@ -246,11 +246,13 @@ export function buildComplementSuggestionsListMessage(params: {
   titleEmoji: string;
   /** Texto principal bajo el título (pitch / total + pitch). */
   bodyPlain: string;
+  /** Prosa final del modelo: va arriba del pitch, dentro del body. */
+  llmProse?: string | null;
   items: ComplementSuggestionListItem[];
   /** Incluir Modificar / Finalizar además de Ver menú (post-add / señal híbrida). */
   includeManagementRows?: boolean;
 }): WhatsAppListMessage {
-  const { title, titleEmoji, bodyPlain, items, includeManagementRows = false } = params;
+  const { title, titleEmoji, bodyPlain, llmProse, items, includeManagementRows = false } = params;
 
   const suggestionBullets = items
     .map((row) => row.name.trim())
@@ -267,15 +269,22 @@ export function buildComplementSuggestionsListMessage(params: {
       ]
     : [shortcutBullet('Menú')];
 
-  const suggestionBody = formatBotUserMessage(
-    title,
-    titleEmoji,
+  const pitchIntro = bodyPlain.trim();
+  const managementBody = (intro: string) =>
     buildSuggestionsThenManagementThenListBody({
-      intro: bodyPlain.trim(),
+      intro,
       suggestionBullets,
       managementBullets,
-    })
+    });
+  const withProse = formatBotUserMessage(
+    title,
+    titleEmoji,
+    managementBody(prependLlmProse(pitchIntro, llmProse))
   );
+  const suggestionBody =
+    withProse.length <= 1024
+      ? withProse
+      : formatBotUserMessage(title, titleEmoji, managementBody(pitchIntro));
 
   const suggestionButtons = items.map((row) => ({
     title: truncateTitle(row.name),
@@ -462,8 +471,9 @@ export async function presentComplementSuggestionBundle(params: {
   };
   confirm?: ComplementAddConfirm | null;
   shippingBullet?: string;
+  llmProse?: string | null;
 }): Promise<WhatsAppListMessage | null> {
-  const { conversationId, metadata, bundle, confirm, shippingBullet } = params;
+  const { conversationId, metadata, bundle, confirm, shippingBullet, llmProse } = params;
   if (bundle.items.length === 0) return null;
 
   await persistComplementSuggestionSnapshot(conversationId, bundle.snapshot);
@@ -501,6 +511,7 @@ export async function presentComplementSuggestionBundle(params: {
     title,
     titleEmoji,
     bodyPlain,
+    llmProse,
     items: bundle.items,
     includeManagementRows: true,
   });
@@ -646,6 +657,7 @@ export async function tryPresentComplementSuggestions(params: {
   maxItems?: number;
   customerId?: string;
   fulfillmentType?: 'DELIVERY' | 'TAKE_AWAY' | null;
+  llmProse?: string | null;
 }): Promise<WhatsAppListMessage | null> {
   const {
     business,
@@ -657,6 +669,7 @@ export async function tryPresentComplementSuggestions(params: {
     maxItems = 5,
     customerId,
     fulfillmentType,
+    llmProse,
   } = params;
 
   if (!canSurfaceComplementOpportunity(metadata)) {
@@ -714,6 +727,7 @@ export async function tryPresentComplementSuggestions(params: {
       metadata,
       confirm,
       shippingBullet,
+      llmProse,
       bundle: {
         snapshot: bundle.snapshot,
         bridgeMessagePlain: bundle.bridgeMessagePlain,

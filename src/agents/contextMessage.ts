@@ -120,7 +120,11 @@ export async function buildPendingProductSelectionLines(
   );
   if (ids.length === 0) return [];
 
-  let labeled = ids.map((id) => `id:${id}`);
+  const labelCandidate = (id: string, index: number, name?: string | null): string => {
+    const n = index + 1;
+    return name ? `${n}. *${name}* (ID: ${id})` : `${n}. (ID: ${id})`;
+  };
+  let labeled = ids.map((id, index) => labelCandidate(id, index));
   if (businessId) {
     try {
       const rows = await prisma.menu_item.findMany({
@@ -128,12 +132,9 @@ export async function buildPendingProductSelectionLines(
         select: { id: true, name: true },
       });
       const byId = new Map(rows.map((r) => [r.id, r.name]));
-      labeled = ids.map((id) => {
-        const name = byId.get(id);
-        return name ? `*${name}* (productId: ${id})` : `productId: ${id}`;
-      });
+      labeled = ids.map((id, index) => labelCandidate(id, index, byId.get(id)));
     } catch {
-      labeled = ids.map((id) => `productId: ${id}`);
+      labeled = ids.map((id, index) => labelCandidate(id, index));
     }
   }
 
@@ -164,7 +165,7 @@ export async function buildPendingProductSelectionLines(
       : []),
     `- Candidatos (usá estos productId; no inventes otros): ${labeled.join(' | ')}.`,
     '- Elección con match claro: present_product_cta(ADD_ITEM) o add_cart_item con ese productId. ' +
-      'Incluye "dame N [nombre]", "sumá dos ají…", nombre parcial o ordinal. ' +
+      'Si el cliente usa ordinales ("el primero", "el 2"), mapea DIRECTAMENTE al número indicado en la lista de arriba. ' +
       'Elección ambigua: pedí aclaración nombrándolos.',
     '- Pregunta de atributo que NOMBRA un candidato ("el tacu tacu es picante?", "qué trae el lomo"): ' +
       'get_products_details_by_ids de ESE productId; respondé solo de ese plato. ' +
@@ -249,11 +250,20 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
           customer_phone: customerPhone,
           status: 'active',
         },
+        orderBy: { created_at: 'desc' },
         select: {
           id: true,
           fulfillment_type: true,
           expires_at: true,
           _count: { select: { draft_order_item: true } },
+          draft_order_item: {
+            select: {
+              id: true,
+              product_id: true,
+              quantity: true,
+              menu_item: { select: { id: true, name: true } },
+            },
+          },
         },
       });
       if (draft) {
@@ -262,7 +272,21 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
         draftExpiresAt = draft.expires_at;
         const count = draft._count.draft_order_item;
         hasItems = count > 0;
-        cartSummary = count > 0 ? `${count} ítem(s) en carrito` : 'carrito vacío';
+        const named = (draft.draft_order_item ?? [])
+          .map((line) => {
+            const name = line.menu_item?.name?.trim();
+            if (!name) return null;
+            const qty = line.quantity ?? 1;
+            const productId = line.menu_item?.id ?? line.product_id;
+            return `${qty}x ${name} (ProductID: ${productId}, LineID: ${line.id})`;
+          })
+          .filter((line): line is string => line != null);
+        cartSummary =
+          count > 0
+            ? named.length > 0
+              ? `${count} ítem(s) - [${named.join(', ')}]`
+              : `${count} ítem(s) en carrito`
+            : 'carrito vacío';
         fulfillmentType = draft.fulfillment_type
           ? `${draft.fulfillment_type} (solo checkout puede cambiarlo)`
           : null;

@@ -81,12 +81,17 @@ export type PresentProductCtaSignal = {
   secondaryLabel: string | null;
 };
 
-const buildAgent = (personalityId: string, personalityPrompt: string) => {
+const buildAgent = (
+  personalityId: string,
+  personalityPrompt: string,
+  timezone?: string | null
+) => {
   const checkoutDelegation = isCheckoutAgentEnabled();
   const reservationDelegation = isReservationAgentEnabled();
+  const cultureKey = timezone?.trim() || 'default';
   const cacheKey = `${personalityId}:${checkoutDelegation ? 'checkout' : 'main'}:${
     reservationDelegation ? 'reservation' : 'noreservation'
-  }`;
+  }:${cultureKey}`;
   let agent = cachedAgents.get(cacheKey);
   if (!agent) {
     const tools = [
@@ -95,12 +100,21 @@ const buildAgent = (personalityId: string, personalityPrompt: string) => {
       ...(checkoutDelegation ? [startCheckoutSessionTool] : []),
       ...(reservationDelegation ? [startReservationSessionTool] : []),
     ];
+    const llm = getReactReasonerLlm();
+    // Varios add_cart_item del mismo turno salen juntos. La escritura del
+    // carrito se serializa en la tool; acá el modelo puede emitirlas en paralelo.
+    // El mock de tests no implementa bindTools.
+    const llmForAgent =
+      typeof llm.bindTools === 'function'
+        ? llm.bindTools(tools, { parallel_tool_calls: true })
+        : llm;
     agent = createReactAgent({
-      llm: getReactReasonerLlm(),
+      llm: llmForAgent,
       tools,
       prompt: buildHybridAgentSystemPrompt(personalityPrompt, {
         checkoutDelegationEnabled: checkoutDelegation,
         reservationDelegationEnabled: reservationDelegation,
+        timezone,
       }),
     });
     cachedAgents.set(cacheKey, agent);
@@ -176,6 +190,7 @@ export interface HybridAgentSignals {
   complementProductId: string | null;
   /** Lista de platillos de una categoría (misma UX que botón CATEGORY). */
   presentCategoryId: string | null;
+  presentCategoryBody: string | null;
   presentAddressConfirmation: boolean;
   /** Texto normalizado de la última dirección dejada `in_coverage` por `stage_delivery_address` este turno. */
   stagedAddressText: string | null;
@@ -346,6 +361,7 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
     presentComplementSuggestions: false,
     complementProductId: null,
     presentCategoryId: null,
+    presentCategoryBody: null,
     presentAddressConfirmation: false,
     stagedAddressText: null,
     presentWelcomeOptions: false,
@@ -476,6 +492,10 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
         data.categoryId.length > 0
       ) {
         signals.presentCategoryId = data.categoryId;
+        signals.presentCategoryBody =
+          typeof data.bodyText === 'string' && data.bodyText.trim()
+            ? data.bodyText.trim()
+            : null;
       }
       if (data.signal === 'present_address_confirmation') {
         signals.presentAddressConfirmation = true;
@@ -700,7 +720,11 @@ export const runHybridReactAgent = async (
 
   const { id: personalityId, promptText } =
     await resolvePersonalityForBusiness(businessId);
-  const agent = buildAgent(personalityId, promptText);
+  const businessTimezone =
+    typeof ctx.business === 'object' && ctx.business
+      ? (ctx.business as { timezone?: string | null }).timezone
+      : null;
+  const agent = buildAgent(personalityId, promptText, businessTimezone);
 
   const customerId =
     typeof ctx.customer === 'object' && ctx.customer
@@ -753,6 +777,7 @@ export const runHybridReactAgent = async (
   });
 
   const agentMessages = (out as { messages?: unknown[] }).messages ?? [];
+  const llmProse = extractFinalText(out);
   logToolCallTrace(agentMessages, conversationId);
   const signals = extractHybridSignals(agentMessages);
   const metaAtTurnStart = normalizeMetadata(ctx.conversationState?.metadata);
@@ -924,6 +949,7 @@ export const runHybridReactAgent = async (
       const business = ctx.business as Parameters<typeof tryPresentComplementSuggestions>[0]['business'];
       const draft = await prisma.draft_order.findFirst({
         where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
+        orderBy: { created_at: 'desc' },
         select: {
           id: true,
           draft_order_item: {
@@ -947,6 +973,7 @@ export const runHybridReactAgent = async (
           lastAddedMenuItemId: lastProductId,
           maxItems: 5,
           customerId: (ctx.customer as { id: string }).id,
+          llmProse,
         });
         if (listMsg) {
           console.log(
@@ -1080,6 +1107,7 @@ export const runHybridReactAgent = async (
         customerId: customer.id,
         currencyCode: business.currency_code ?? null,
         businessStreetAddress: business.street_address ?? null,
+        llmProse,
       });
       console.log(JSON.stringify({ event: '[hybrid-agent] present_cart_signal', conversationId }));
       return { kind: 'response', handlerResult: markHybridResult({ content: cartMsg, isInteractive: true }) };
@@ -1119,7 +1147,8 @@ export const runHybridReactAgent = async (
         business,
         conversation,
         signals.presentCategoryId,
-        1
+        1,
+        { bodyText: signals.presentCategoryBody }
       );
       if (result.message) {
         console.log(
@@ -1179,7 +1208,7 @@ export const runHybridReactAgent = async (
     }
   }
 
-  const rawText = extractFinalText(out);
+  const rawText = llmProse;
   if (!rawText) return null;
 
   guardJsonRegression(rawText, ctx.conversationId);

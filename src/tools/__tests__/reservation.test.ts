@@ -14,6 +14,9 @@ vi.mock('../../lib/prisma', () => ({
     conversation_state: { findFirst: vi.fn() },
     reservation_slot: { findFirst: vi.fn() },
     draft_order: { findFirst: vi.fn() },
+    business: {
+      findUnique: vi.fn().mockResolvedValue({ timezone: 'America/Argentina/Buenos_Aires' }),
+    },
   },
 }));
 

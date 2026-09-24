@@ -96,13 +96,13 @@ export type SelectListBodyCandidate = {
 };
 
 /**
- * Intro del agente + opciones en negrita (atajos tipables).
+ * Intro del agente + opciones numeradas (atajos tipables).
  * Formato por candidato:
- *   • *Nombre*
+ *   1️⃣ *Nombre*
  *   ración para: 2
  *   Precio: $11.000
- * El shortlist se responde escribiendo el nombre: lo interpreta el ReAct con
- * `pendingProductSelection` en `[ESTADO DEL CLIENTE]`, no un handler de payload.
+ * El número coincide con el índice de `candidateProductIds` en el ledger.
+ * Lo interpreta el ReAct con `pendingProductSelection`, no un handler de payload.
  */
 export const buildSelectFromListBodyText = (
   intro: string,
@@ -111,18 +111,18 @@ export const buildSelectFromListBodyText = (
 ): string => {
   const bullets = candidates
     .slice(0, maxItems)
-    .map((c) => {
+    .map((c, index) => {
       const name = c.title.trim();
       if (!name) return '';
       const meta = c.description?.trim();
-      if (!meta) return shortcutBullet(name);
+      if (!meta) return shortcutBullet(name, '', index);
       // Body multilínea; acepta meta con \n o legacy " · ".
       const metaBlock = meta
         .split(/\n+| · /)
         .map((s) => s.trim())
         .filter(Boolean)
         .join('\n');
-      return `${shortcutBullet(name)}\n${metaBlock}`;
+      return `${shortcutBullet(name, '', index)}\n${metaBlock}`;
     })
     .filter(Boolean);
 

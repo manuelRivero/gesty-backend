@@ -30,7 +30,12 @@ vi.mock('../../lib/prisma', () => ({
     conversation_state: {
       findUnique: vi.fn(),
     },
+    $queryRaw: vi.fn(async () => [{ bot_enabled: true, orders_enabled: true }]),
   },
+}));
+
+vi.mock('../../services/ordersCapabilityGate.service', () => ({
+  assertCanOrder: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
 vi.mock('../../services/menu.service', () => ({
@@ -80,6 +85,7 @@ vi.mock('../../services/orderCompletionGoal.service', () => ({
 }));
 
 import { addCartItemTool } from '../index';
+import { setPendingAddQuantity, clearPendingAddQuantity } from '../../services/pendingAddQuantity.service';
 import { prisma } from '../../lib/prisma';
 
 const CONFIG = {
@@ -134,8 +140,11 @@ describe('add_cart_item — gate de variaciones (Fase 5)', () => {
         variations: ['Especial', 'Roquefort'],
       })
     );
+    expect(result.instruction).toMatch(/NO avances a cantidad/);
     expect(prisma.draft_order_item.create).not.toHaveBeenCalled();
     expect(prisma.draft_order_item.update).not.toHaveBeenCalled();
+    expect(setPendingAddQuantity).not.toHaveBeenCalled();
+    expect(clearPendingAddQuantity).toHaveBeenCalled();
   });
 
   it('con variation válida: escribe con la grafía canónica del catálogo', async () => {
@@ -169,7 +178,10 @@ describe('add_cart_item — gate de variaciones (Fase 5)', () => {
         variations: ['Especial', 'Roquefort'],
       })
     );
+    expect(result.instruction).toMatch(/NO avances a cantidad/);
     expect(prisma.draft_order_item.create).not.toHaveBeenCalled();
+    expect(setPendingAddQuantity).not.toHaveBeenCalled();
+    expect(clearPendingAddQuantity).toHaveBeenCalled();
   });
 
   it('dos variaciones distintas del mismo producto crean dos líneas', async () => {
