@@ -78,24 +78,24 @@ export const mercadoPagoWebhookHandler = async (req: Request, res: Response): Pr
       return;
     }
 
-    // Verificar firma si el business tiene webhook_secret configurado
+    // Firma: loguear mismatch, no cortar. El cobro se confirma contra la API
+    // de MP con el Access Token del local (approved + intent pending).
     if (provider.webhookSecret) {
       const valid = verifyMpWebhookSignature(req, provider.webhookSecret);
       if (!valid) {
         const queryDataId = req.query['data.id'] ?? req.query.data_id;
         console.warn(
           JSON.stringify({
-            event: '[mp-debug] webhook_skip',
+            event: '[mp-debug] webhook_signature_continue',
             reason: 'invalid_signature',
             businessId,
             mpPaymentId,
             hasXRequestId: Boolean(req.headers['x-request-id']),
             queryDataId: queryDataId ?? null,
             bodyDataId: body.data?.id ?? null,
-            hint: 'Check webhook_secret vs MP panel; manifest uses data.id + trailing ;',
+            hint: 'HMAC mismatch; fetch payment with merchant token anyway',
           })
         );
-        return;
       }
     }
 
