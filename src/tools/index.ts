@@ -416,6 +416,7 @@ export const getCartTool = new DynamicStructuredTool<
       orderBy: { created_at: 'desc' },
       include: {
         draft_order_item: {
+          orderBy: { id: 'asc' },
           include: { menu_item: { select: { id: true, name: true } } },
         },
       },
@@ -472,12 +473,17 @@ export const getCartTool = new DynamicStructuredTool<
     });
     const deliveryFeeKnown = deliveryLookupType === 'DELIVERY' && deliveryCtx.zoneId !== null;
 
+    const orderedItems = [...draft.draft_order_item].sort((a, b) =>
+      a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+    );
+
     return toJson({
       exists: true,
       draftOrderId: draft.id,
       expiresAt: draft.expires_at?.toISOString() ?? null,
       fulfillmentType: draft.fulfillment_type ?? null,
-      items: draft.draft_order_item.map((it) => ({
+      items: orderedItems.map((it, i) => ({
+        itemIndex: i + 1,
         id: it.id,
         productId: it.product_id,
         menuItemName: it.menu_item?.name ?? null,
@@ -1582,12 +1588,10 @@ const addCartItemSchema = z.object({
     .max(99)
     .optional()
     .describe(
-      'Cantidad FINAL que quedará en el carrito (set absoluto: no es un incremento). ' +
-        'Si el plato ya está, enviá el total nuevo, no la diferencia. ' +
-        'Cuando el cliente las dijo en ESTE mensaje, incluso en palabras: ' +
-        '"un"/"una" = 1, "dos" = 2, "un par" = 2 ("un arroz", "una bebida", "dos milanesas", "un par de causas"). ' +
-        'Pasalo siempre que haya número. NO uses el party size ni "para N personas". ' +
-        'INFERENCIA DE CANTIDAD: Extrae SIEMPRE la cantidad del contexto coloquial del cliente. Si dice "mandame uno" = 1. Si dice "un par" = 2. Envía ese número en el campo quantity para evitar que el sistema detenga el flujo pidiendo confirmaciones.'
+      'Cantidad inicial de un plato que todavía no está en el carrito. ' +
+        '"un"/"una" = 1, "dos" = 2, "un par" = 2. ' +
+        'Si el plato ya figura en [ESTADO DEL CLIENTE], no uses este campo para cambiarla: ' +
+        'update_cart_item_quantity con el itemIndex de esa línea y la cantidad FINAL.'
     ),
   variation: z
     .string()
@@ -1612,15 +1616,14 @@ export const addCartItemTool = new DynamicStructuredTool<
     '1. ESTRICTAMENTE PROHIBIDO usar esta herramienta para un plato si el usuario NO LO NOMBRÓ en su mensaje más reciente. ' +
     '2. ESTRICTAMENTE PROHIBIDO inventar un `productId`. Si no lo tienes en el historial, DEBES usar `search_products` primero. No asumas UUIDs. ' +
     '3. No intentes \'compensar\' o \'equilibrar\' el carrito por tu cuenta. Sé literal. ' +
-    'REGLA DE ESTADO ABSOLUTO: Esta tool NO suma ni incrementa, sino que DEFINE LA CANTIDAD FINAL (Set). ' +
-    'El valor que envíes en `quantity` será exactamente el número de unidades que quedarán en el carrito. ' +
-    '- Si el cliente no tiene el plato y pide 1, envía `quantity: 1`. ' +
-    '- Si el cliente ya tiene 1 plato en el [ESTADO DEL CLIENTE] y dice \'agregame otro\', debes calcular mentalmente el total y enviar `quantity: 2`. ' +
-    '- Si el cliente tiene 1 y dice \'hacemelo para 2 en vez de 1\', envía `quantity: 2`. ' +
-    'Al ser absoluta, puedes llamarla con seguridad: si envías `quantity: 2` varias veces, el carrito seguirá teniendo 2. NO intentes enviar solo la diferencia. ' +
-    'ANTI-BUCLE: Nunca llames a la misma herramienta para el mismo producto más de una vez en el mismo turno. Haz la llamada con la cantidad total y RESPONDE INMEDIATAMENTE al usuario con un mensaje de texto para finalizar tu turno. ' +
+    'Esta tool AGREGA un plato que todavía no está en el carrito. ' +
+    'quantity es la cantidad inicial de esa línea nueva: "quiero dos causas" y no está en el carrito → quantity 2. ' +
+    'Si el plato YA figura en [ESTADO DEL CLIENTE] y el cliente quiere otra cantidad ' +
+    '("hacemelo para 2", "agregame otro", "dejame una sola", "poné el arroz en 2"), ' +
+    'NO uses esta tool. Llamá update_cart_item_quantity con el itemIndex de esa línea y la cantidad FINAL. ' +
+    'ANTI-BUCLE: Nunca llames a la misma herramienta para el mismo producto más de una vez en el mismo turno. ' +
     'REGLA DE BORRADO: si pide sacar, borrar, quitar, eliminar o "no quiero" un plato que ya está en el carrito, ' +
-    'ESTÁ ESTRICTAMENTE PROHIBIDO usar esta tool. Usá remove_cart_item con el ProductID de [ESTADO DEL CLIENTE]. ' +
+    'ESTÁ ESTRICTAMENTE PROHIBIDO usar esta tool. Usá remove_cart_item con el itemIndex de la lista del carrito en [ESTADO DEL CLIENTE]. ' +
     'LÉXICO LOCAL ARGENTINO: "un par" (ej. "un par de empanadas", "un par de causas") es SIEMPRE quantity 2. ' +
     'Usá este tool cuando el cliente confirme que quiere agregar un plato en texto libre: ' +
     '"sí, agregalo", "quiero uno de eso", "ponelo", "dale", "sumá 2 pizzas", etc. ' +
@@ -1642,7 +1645,7 @@ export const addCartItemTool = new DynamicStructuredTool<
     '(aplicada = ya está en el total; desbloqueable = ofrecela en una línea). Nunca calcules descuentos. ' +
     'ACCIÓN INMEDIATA: EJECUTÁ add_cart_item en este turno, sin preguntar "¿te lo sumo?", si el cliente pide el plato o pregunta por disponibilidad para comerlo ya: "mandame", "quiero", "dame", "agregame", "¿tenés...?", "¿hay...?", "para picar", "al toque", "un par de". Si hay stock, eso es la orden. "¿Tenés un par de causas para picar?" = add_cart_item con quantity 2. PROHIBIDO responder solo "tengo 1, ¿la sumo?". ' +
     'LENGUAJE: Si el cliente pide "un par", asume siempre `quantity: 2`. ' +
-    'PERSISTENCIA AUTOMÁTICA: Los platos en el carrito NO se borran solos. Si el usuario pide modificar el \'Arroz\', usa esta tool SÓLO para el Arroz. TIENES ESTRICTAMENTE PROHIBIDO usar esta tool para \'mantener\' o \'reafirmar\' otros platos (ej. el Ají) que el usuario no pidió modificar. SÓLO toca lo que cambia. ' +
+    'PERSISTENCIA AUTOMÁTICA: Los platos en el carrito NO se borran solos. TIENES ESTRICTAMENTE PROHIBIDO usar esta tool para \'mantener\' o \'reafirmar\' otros platos que el usuario no pidió agregar. Si el plato ya está, cambiar cuántas unidades tiene es update_cart_item_quantity, no esta tool. ' +
     'CÓMO AÑADIR ALGO NUEVO: Si el cliente pide un plato nuevo (ej. \'Suspiro\') y NO tienes su `productId`, NO repitas las herramientas de los platos viejos. Llama a `search_products` INMEDIATAMENTE para buscar el nuevo plato. NUNCA inventes un ID.',
   schema: addCartItemSchema,
   func: async (
@@ -2100,29 +2103,203 @@ export const addCartItemTool = new DynamicStructuredTool<
 });
 
 // ---------------------------------------------------------------------------
+// update_cart_item_quantity
+// Cantidad FINAL de una línea ya existente. No agrega ni elimina.
+// ---------------------------------------------------------------------------
+
+const QUANTITY_INVALID_MESSAGE =
+  'Error: quantity tiene que ser un entero entre 1 y 99. Es la cantidad FINAL de esa línea, no una cantidad para sumar. Si la línea debe quedar en 2, pasá quantity: 2. No modifiqué el carrito.';
+
+const ITEM_INDEX_FOR_QUANTITY_MESSAGE =
+  'Error: No indicaste el itemIndex. Usá el número de la lista del carrito en [ESTADO DEL CLIENTE] (1, 2, 3…) y volvé a llamar update_cart_item_quantity con ese itemIndex y la cantidad FINAL. No pases id ni nombre.';
+
+const parseQuantityItemIndex = (raw: unknown): number | 'missing' | 'invalid' => {
+  if (raw == null || raw === '') return 'missing';
+  const n = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw.trim()) : NaN;
+  if (!Number.isInteger(n) || n < 1) return 'invalid';
+  return n;
+};
+
+const parseFinalQuantity = (raw: unknown): number | 'missing' | 'invalid' => {
+  if (raw == null || raw === '') return 'missing';
+  const n = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw.trim()) : NaN;
+  if (!Number.isInteger(n) || n < 1 || n > 99) return 'invalid';
+  return n;
+};
+
+const updateCartItemQuantitySchema = z.object({
+  itemIndex: z
+    .union([z.number(), z.string()])
+    .optional()
+    .describe(
+      'REQUERIDO. Número de línea del carrito (1, 2, 3…) tal como está en [ESTADO DEL CLIENTE]. ' +
+        'Es la línea cuya cantidad vas a fijar. No pases id, UUID ni nombre.'
+    ),
+  quantity: z
+    .union([z.number(), z.string()])
+    .optional()
+    .describe(
+      'REQUERIDO. Cantidad FINAL de esa línea. No es una cantidad para sumar. ' +
+        'Si la línea tiene 1 y el cliente quiere 2, quantity es 2, no 1 ni +1. ' +
+        '"hacemelo para 2", "dejame dos", "ponela en 2" → 2. "dejame una sola" → 1.'
+    ),
+});
+type UpdateCartItemQuantityInput = z.infer<typeof updateCartItemQuantitySchema>;
+
+export const updateCartItemQuantityTool = new DynamicStructuredTool<
+  typeof updateCartItemQuantitySchema,
+  UpdateCartItemQuantityInput
+>({
+  name: 'update_cart_item_quantity',
+  description:
+  'Fija la cantidad FINAL de una línea que YA existe en el carrito. No agrega un plato nuevo ni elimina la línea. ' +
+  'SOLO usá esta tool cuando el plato ya tenga una línea en el carrito. Si el plato no está en el carrito, usá add_cart_item. ' +
+  'quantity es la cantidad FINAL deseada. No es una cantidad para sumar ni restar. ' +
+  'Ejemplos: "al de pollo hacemelo para 2" → itemIndex del arroz/pollo, quantity 2. ' +
+  '"dejame dos", "dejame una sola", "poné el arroz en 2" → esa cantidad final. ' +
+  'Si el cliente pide aumentar o reducir la cantidad de un plato existente, calculá la cantidad FINAL. ' +
+  'Ejemplo: si tiene 1 y dice "agregame otro", quantity 2. Si tiene 3 y dice "sacame uno", quantity 2. ' +
+  'Si pedís quantity 2 y la línea ya está en 2, queda en 2. No se duplica. ' +
+  'El único identificador es itemIndex, el número de [ESTADO DEL CLIENTE]. ' +
+  'PROHIBIDO pasar ids, UUIDs, slugs o el nombre. Si no ves el número, llamá get_cart y usá items[].itemIndex. ' +
+  'No uses add_cart_item ni remove_cart_item para cambiar cuántas unidades tiene una línea existente. ' +
+  'Tras success: true, seguí followUp.nextAction (suele ser present_cart). No afirmes el cambio antes de success.',
+  schema: updateCartItemQuantitySchema,
+  func: async (
+    { itemIndex, quantity }: UpdateCartItemQuantityInput,
+    _runManager,
+    config?: RunnableConfig
+  ) => {
+    const parsedIndex = parseQuantityItemIndex(itemIndex);
+    const parsedQuantity = parseFinalQuantity(quantity);
+    if (parsedQuantity === 'missing' || parsedQuantity === 'invalid') {
+      return toJson({
+        success: false,
+        error: parsedQuantity === 'missing' ? 'quantity_required' : 'quantity_invalid',
+        message: QUANTITY_INVALID_MESSAGE,
+      });
+    }
+    if (parsedIndex === 'missing' || parsedIndex === 'invalid') {
+      return toJson({
+        success: false,
+        error: parsedIndex === 'missing' ? 'item_index_required' : 'item_index_invalid',
+        message: ITEM_INDEX_FOR_QUANTITY_MESSAGE,
+      });
+    }
+
+    const { businessId, customerPhone } = getReactContext(config);
+    const draft = await prisma.draft_order.findFirst({
+      where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
+      orderBy: { created_at: 'desc' },
+    });
+    if (!draft) {
+      return toJson({ success: false, error: 'no_active_cart' });
+    }
+
+    const cartLines = await prisma.draft_order_item.findMany({
+      where: { draft_order_id: draft.id },
+      include: { menu_item: { select: { name: true } } },
+      orderBy: { id: 'asc' },
+    });
+    const line = cartLines[parsedIndex - 1];
+    if (!line) {
+      const lines = cartLines.map((it, i) => ({
+        itemIndex: i + 1,
+        name: it.menu_item?.name ?? 'Producto',
+        variation: it.variation ?? null,
+        quantity: it.quantity,
+      }));
+      const validIndexes =
+        lines.length === 0
+          ? 'El carrito no tiene ítems.'
+          : `Índices válidos: ${lines.map((it) => `itemIndex ${it.itemIndex} = ${it.name}`).join(', ')}.`;
+      return toJson({
+        success: false,
+        error: 'invalid_item_index',
+        itemIndex: parsedIndex,
+        cartLineCount: cartLines.length,
+        lines,
+        message:
+          `Error: el itemIndex ${parsedIndex} está fuera de rango. ` +
+          `El carrito tiene ${cartLines.length} ítem(s). ${validIndexes} ` +
+          'No modifiqué el carrito. Volvé a llamar update_cart_item_quantity con el itemIndex de la lista.',
+      });
+    }
+
+    const itemName = line.variation?.trim()
+      ? `${line.menu_item?.name ?? 'Producto'} (${line.variation.trim()})`
+      : line.menu_item?.name ?? 'Producto';
+    const unitPrice = new Prisma.Decimal(line.unit_price);
+    await prisma.draft_order_item.update({
+      where: { id: line.id },
+      data: {
+        quantity: parsedQuantity,
+        total_price: unitPrice.mul(parsedQuantity),
+      },
+    });
+
+    const agg = await prisma.draft_order_item.aggregate({
+      where: { draft_order_id: draft.id },
+      _sum: { total_price: true },
+    });
+    const newTotal = agg._sum.total_price ?? new Prisma.Decimal(0);
+    await prisma.draft_order.update({
+      where: { id: draft.id },
+      data: { total_amount: newTotal },
+    });
+
+    const updatedItems = await prisma.draft_order_item.findMany({
+      where: { draft_order_id: draft.id },
+      include: { menu_item: { select: { name: true } } },
+      orderBy: { id: 'asc' },
+    });
+
+    return toJson({
+      success: true,
+      updated: { itemIndex: parsedIndex, itemName, quantity: parsedQuantity },
+      cart: {
+        total: newTotal.toString(),
+        itemCount: updatedItems.length,
+        items: updatedItems.map((it, i) => ({
+          itemIndex: i + 1,
+          name: it.menu_item?.name ?? null,
+          variation: it.variation ?? null,
+          quantity: it.quantity,
+          notes: it.notes ?? null,
+        })),
+      },
+      followUp: {
+        nextAction: 'present_cart',
+        instruction:
+          'Llamá present_cart para mostrar el pedido con la cantidad ya actualizada. ' +
+          'PROHIBIDO listar ítems o total en prosa.',
+      },
+    });
+  },
+});
+
+// ---------------------------------------------------------------------------
 // remove_cart_item
 // ---------------------------------------------------------------------------
 
-// ADR-0002: el Constraint "no eliminar sin confirmar" vive acá, en el borde
-// de la Tool — no en el prompt. La evidencia de confirmación es un pending
-// que se escribió en un llamado/turno anterior, nunca un flag que el modelo
-// pueda setear en el mismo schema (eso sería confiar en el llamador).
-//
+const ITEM_INDEX_REQUIRED_MESSAGE =
+  'Error: No indicaste el itemIndex. Usá el número de la lista del carrito en [ESTADO DEL CLIENTE] (1, 2, 3…) y volvé a llamar remove_cart_item solo con ese itemIndex. No pases id ni nombre.';
+
+/** El schema deja pasar el llamado vacío para que el handler responda y el modelo reintente. */
+const parseRemoveItemIndex = (raw: unknown): number | 'missing' | 'invalid' => {
+  if (raw == null || raw === '') return 'missing';
+  const n = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw.trim()) : NaN;
+  if (!Number.isInteger(n) || n < 1) return 'invalid';
+  return n;
+};
+
 const removeCartItemSchema = z.object({
-  productId: z
-    .string()
-    .uuid()
-    .describe(
-      'UUID del menu_item a remover. Obligatorio: leelo del carrito en [ESTADO DEL CLIENTE] ' +
-        '(ProductID) o de get_cart.items[].productId.'
-    ),
-  draftOrderItemId: z
-    .string()
-    .uuid()
+  itemIndex: z
+    .union([z.number(), z.string()])
     .optional()
     .describe(
-      'UUID de UNA línea del carrito (get_cart.items[].id o LineID del estado). ' +
-        'Usalo cuando el mismo plato aparece en varias líneas con variaciones distintas.'
+      'REQUERIDO. Número de línea del carrito (1, 2, 3…) tal como está en [ESTADO DEL CLIENTE]. ' +
+        'Es el único argumento: no pases id, UUID ni nombre del plato.'
     ),
 });
 type RemoveCartItemInput = z.infer<typeof removeCartItemSchema>;
@@ -2134,43 +2311,40 @@ export const removeCartItemTool = new DynamicStructuredTool<
   name: 'remove_cart_item',
   description:
     'Elimina completamente un producto del carrito activo del cliente. ' +
-    'REGLA DE BORRADO: si el usuario te pide explícitamente "sacar", "borrar", "quitar", "eliminar" o "no quiero" ' +
-    'un plato que ya está en el carrito, ESTÁ ESTRICTAMENTE PROHIBIDO usar add_cart_item. ' +
-    'Debés leer el [ESTADO DEL CLIENTE], extraer el ID exacto del plato mencionado, ' +
-    'y usar ÚNICAMENTE esta herramienta (remove_cart_item). ' +
-    'Usá este tool cuando el cliente pida quitar un ítem en texto libre: ' +
+    'Usá este tool cuando el cliente pida quitar, sacar o eliminar un ítem en texto libre: ' +
     '"quitá el pollo", "sacá la ensalada", "no quiero la pizza", "borralo", etc. ' +
-    'Para modificar o quitar "el de pollo", leé los ítems actuales en [ESTADO DEL CLIENTE] ' +
-    'y usá get_cart para obtener su ID exacto. ' +
-    'PARA ELIMINAR O REMOVER UN ÍTEM, ESTÁ PROHIBIDO USAR search_products. ' +
-    'Debés leer EXCLUSIVAMENTE la lista de ítems en [ESTADO DEL CLIENTE], encontrar el ID del ítem ' +
-    'que coincide con lo que pide el usuario, y enviarlo directamente a esta herramienta. ' +
-    'Si el id no está en el estado, get_cart; no busques el plato en el menú. ' +
-    'Antes de llamar necesitás el productId: si no lo tenés, llamá get_cart primero. ' +
-    'Si el mismo plato aparece en ≥2 líneas (variaciones distintas) y pasás solo productId, ' +
-    'devuelve ambiguous_lines con los candidatos: preguntale al cliente cuál y volvé a llamar ' +
-    'con draftOrderItemId. ' +
-    'Si el modelo llama esta tool, el cliente ya pidió borrar: elimina la línea en el acto. ' +
-    'No pidas una segunda confirmación ni vuelvas a llamar la tool en el mismo turno. ' +
-    'Si querés solo reducir la cantidad (no eliminar), usá add_cart_item con quantity negativo no es posible — ' +
-    'en ese caso confirmale al cliente que el ítem fue eliminado y que puede volver a agregarlo con la cantidad deseada. ' +
-    'Tras success: true, followUp.nextAction suele ser present_cart: llamá present_cart() (no listes el pedido en prosa). ' +
-    'Devuelve el estado actualizado del carrito. ' +
+    'itemIndex es OBLIGATORIO y debe corresponder exactamente al número de una línea ' +
+    'del carrito en [ESTADO DEL CLIENTE] (1, 2, 3…). ' +
+    'NO inventes itemIndex, UUIDs, slugs ni otros identificadores. ' +
+    'Si el cliente identifica el producto por nombre y el itemIndex no está en el contexto, ' +
+    'llamá primero a get_cart y usá items[].itemIndex. get_cart no es un paso obligatorio si el número ya está. ' +
+    'Una vez identificado un único ítem, llamá a remove_cart_item usando exclusivamente su itemIndex. ' +
+    'Dos variaciones del mismo plato son dos índices distintos: elegí el número, no hay ambiguous_lines. ' +
+    'La eliminación es directa y NO requiere confirmación previa. ' +
+    'No afirmes que eliminaste el producto hasta recibir success: true. ' +
+    'Si success: true, seguí followUp.nextAction y, si indica present_cart, llamá a present_cart(). ' +
+    'No listes el carrito en prosa. ' +
     'Solo elimina el ítem solicitado. BAJO NINGUNA CIRCUNSTANCIA intentes re-agregar o modificar los demás ítems del carrito usando `add_cart_item` para "compensar". Limítate a borrar lo que se pidió.',
   schema: removeCartItemSchema,
-  func: async (
-    { productId, draftOrderItemId }: RemoveCartItemInput,
-    _runManager,
-    config?: RunnableConfig
-  ) => {
+  func: async ({ itemIndex }: RemoveCartItemInput, _runManager, config?: RunnableConfig) => {
+    const parsedIndex = parseRemoveItemIndex(itemIndex);
+    if (parsedIndex === 'invalid' || parsedIndex === 'missing') {
+      return toJson({
+        success: false,
+        error: parsedIndex === 'invalid' ? 'item_index_invalid' : 'item_index_required',
+        message: ITEM_INDEX_REQUIRED_MESSAGE,
+      });
+    }
+    const numericIndex = parsedIndex;
+
     console.log(
       JSON.stringify({
         event: '[tool:start]',
         tool: 'remove_cart_item',
-        args: { productId, draftOrderItemId },
+        args: { itemIndex: numericIndex },
       })
     );
-    const { businessId, customerPhone, conversationId } = getReactContext(config);
+    const { businessId, customerPhone } = getReactContext(config);
 
     // Mismo lock que add_cart_item: el delete y el total se calculan sobre el
     // draft activo más reciente, sin lecturas paralelas de un total a medio borrar.
@@ -2189,21 +2363,14 @@ export const removeCartItemTool = new DynamicStructuredTool<
       });
       if (!draft) return { kind: 'no_active_cart' as const };
 
-      // Con variaciones, un producto puede ocupar dos líneas. Pedir por producto
-      // y borrar la primera que devuelva la query elimina una arbitraria: si hay
-      // ambigüedad se devuelven los candidatos, igual que `update_item_note`.
-      const candidates = await tx.draft_order_item.findMany({
-        where: draftOrderItemId
-          ? { draft_order_id: draft.id, id: draftOrderItemId }
-          : { draft_order_id: draft.id, product_id: productId },
+      const cartLines = await tx.draft_order_item.findMany({
+        where: { draft_order_id: draft.id },
         include: { menu_item: { select: { id: true, name: true } } },
         orderBy: { id: 'asc' },
       });
+      const line = cartLines[numericIndex - 1];
+      if (!line) return { kind: 'invalid_index' as const, cartLines };
 
-      if (candidates.length === 0) return { kind: 'item_not_in_cart' as const };
-      if (candidates.length >= 2) return { kind: 'ambiguous' as const, candidates };
-
-      const line = candidates[0];
       await tx.draft_order_item.delete({ where: { id: line.id } });
       const agg = await tx.draft_order_item.aggregate({
         where: { draft_order_id: draft.id },
@@ -2230,26 +2397,28 @@ export const removeCartItemTool = new DynamicStructuredTool<
     if (outcome.kind === 'no_active_cart') {
       return toJson({ success: false, error: 'no_active_cart' });
     }
-    if (outcome.kind === 'item_not_in_cart') {
-      return toJson({ success: false, error: 'item_not_in_cart' });
-    }
-    if (outcome.kind === 'ambiguous') {
-      const { candidates } = outcome;
+    if (outcome.kind === 'invalid_index') {
+      const { cartLines } = outcome;
+      const lines = cartLines.map((it, i) => ({
+        itemIndex: i + 1,
+        name: it.menu_item?.name ?? 'Producto',
+        variation: it.variation ?? null,
+        quantity: it.quantity,
+      }));
+      const validIndexes =
+        lines.length === 0
+          ? 'El carrito no tiene ítems.'
+          : `Índices válidos: ${lines.map((it) => `itemIndex ${it.itemIndex} = ${it.name}`).join(', ')}.`;
       return toJson({
         success: false,
-        error: 'ambiguous_lines',
-        productId,
-        productName: candidates[0]?.menu_item?.name ?? null,
-        candidates: candidates.map((it) => ({
-          draftOrderItemId: it.id,
-          productId: it.product_id,
-          name: it.menu_item?.name ?? 'Producto',
-          variation: it.variation ?? null,
-          quantity: it.quantity,
-        })),
-        hint:
-          'Ese plato está en varias líneas con variaciones distintas. Preguntale al cliente ' +
-          'cuál quiere sacar y volvé a llamar con draftOrderItemId.',
+        error: 'invalid_item_index',
+        itemIndex: numericIndex,
+        cartLineCount: cartLines.length,
+        lines,
+        message:
+          `Error: el itemIndex ${numericIndex} está fuera de rango. ` +
+          `El carrito tiene ${cartLines.length} ítem(s). ${validIndexes} ` +
+          'Volvé a llamar remove_cart_item con el itemIndex de la lista del carrito.',
       });
     }
 
@@ -2259,23 +2428,14 @@ export const removeCartItemTool = new DynamicStructuredTool<
       : line.menu_item?.name ?? 'Producto';
     const removedQty = line.quantity;
 
-    if (conversationId) {
-      await omitConversationMetadataKeys(conversationId, [
-        'pendingAction',
-        'pendingItemId',
-        'pendingItemName',
-        'pendingActionAt',
-      ]);
-    }
-
     return toJson({
       success: true,
       removed: { itemName: removedName, quantity: removedQty },
       cart: {
         total: newTotal.toString(),
         itemCount: updatedItems.length,
-        items: updatedItems.map((it) => ({
-          productId: it.product_id,
+        items: updatedItems.map((it, i) => ({
+          itemIndex: i + 1,
           name: it.menu_item?.name ?? null,
           quantity: it.quantity,
           notes: it.notes ?? null,
@@ -3679,6 +3839,7 @@ export const allReactTools = [
   getComplementarySuggestionsTool,
   getBusinessInfoTool,
   addCartItemTool,
+  updateCartItemQuantityTool,
   removeCartItemTool,
   updateItemNoteTool,
   startItemNoteTool,

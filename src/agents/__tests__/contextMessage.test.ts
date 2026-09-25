@@ -114,7 +114,7 @@ describe('buildContextMessage', () => {
     expect(msg).not.toContain('Carrito');
   });
 
-  it('carrito con ítems: menciona cantidad y nombres', async () => {
+  it('carrito con ítems: lista numerada con nombre y unidades, sin ProductID ni LineID', async () => {
     findFirstMock.mockResolvedValue({
       id: 'draft-1',
       fulfillment_type: null,
@@ -123,22 +123,24 @@ describe('buildContextMessage', () => {
       draft_order_item: [
         {
           id: 'line-arroz',
-          product_id: 'prod-arroz',
           quantity: 1,
-          menu_item: { id: 'prod-arroz', name: 'Arroz con pollo' },
+          variation: null,
+          menu_item: { name: 'Arroz con pollo' },
         },
         {
           id: 'line-aji',
-          product_id: 'prod-aji',
-          quantity: 1,
-          menu_item: { id: 'prod-aji', name: 'Ají de gallina' },
+          quantity: 2,
+          variation: 'suave',
+          menu_item: { name: 'Ají de gallina' },
         },
       ],
     });
     const msg = await buildContextMessage(makeCtx());
-    expect(msg).toContain(
-      '- Carrito: 2 ítem(s) - [1x Arroz con pollo (ProductID: prod-arroz, LineID: line-arroz), 1x Ají de gallina (ProductID: prod-aji, LineID: line-aji)]'
-    );
+    expect(msg).toContain('- Carrito:\n');
+    expect(msg).toContain('  1. Ají de gallina (suave), 2 unidades');
+    expect(msg).toContain('  2. Arroz con pollo, 1 unidad');
+    expect(msg).not.toContain('ProductID');
+    expect(msg).not.toContain('LineID');
   });
 
   it('checkout activo sin ítems: menciona "Carrito" y "Sesión de checkout: activa"', async () => {

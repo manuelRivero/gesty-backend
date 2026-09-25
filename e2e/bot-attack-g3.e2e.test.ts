@@ -78,6 +78,20 @@ const quantityTotal = (lines: NamedLine[]): number =>
 const lineMatching = (lines: NamedLine[], pattern: RegExp): NamedLine | undefined =>
   lines.find((line) => pattern.test(fold(line.name ?? '')));
 
+/** Pausa entre turnos/casos para no saturar TPM de gpt-4o (~30k/min). */
+const RATE_LIMIT_PAUSE_MS = Number(process.env.E2E_RATE_LIMIT_PAUSE_MS ?? 60_000);
+
+const pauseForRateLimit = async (reason: string): Promise<void> => {
+  console.log(
+    JSON.stringify({
+      event: '[e2e-bot-attack-g3] rate-limit-pause',
+      reason,
+      ms: RATE_LIMIT_PAUSE_MS,
+    })
+  );
+  await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_PAUSE_MS));
+};
+
 describe.sequential.skipIf(!isE2eEnabled())('bot attack grado 3 (diagnóstica)', () => {
   let graph: MainGraph;
   let businessId: string;
@@ -124,6 +138,10 @@ describe.sequential.skipIf(!isE2eEnabled())('bot attack grado 3 (diagnóstica)',
         })
       );
     }
+  }, 90_000);
+
+  beforeEach(async () => {
+    await pauseForRateLimit('before-case');
   }, 90_000);
 
   afterAll(async () => {
@@ -215,6 +233,9 @@ describe.sequential.skipIf(!isE2eEnabled())('bot attack grado 3 (diagnóstica)',
   const play = async (caseId: string, turns: string[]): Promise<TurnObservation[]> => {
     const played: TurnObservation[] = [];
     for (let i = 0; i < turns.length; i++) {
+      if (i > 0) {
+        await pauseForRateLimit(`before-turn-${caseId}-${i + 1}`);
+      }
       const state = await runGraphTurn(graph, buildTextPayload(turns[i]));
       expect(hasHandlerResponse(state.handlerResult)).toBe(true);
       played.push(

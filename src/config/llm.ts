@@ -20,6 +20,7 @@ import { env } from './env';
 let cachedDetector: ChatOpenAI | undefined;
 let cachedReasoner: ChatOpenAI | undefined;
 let cachedReactReasoner: ChatOpenAI | undefined;
+let cachedHybridReasoner: ChatOpenAI | undefined;
 let cachedSmallModel: ChatOpenAI | undefined;
 let cachedEmbeddings: OpenAIEmbeddings | undefined;
 
@@ -36,7 +37,7 @@ export const getIntentDetectorLlm = (): ChatOpenAI => {
   return cachedDetector;
 };
 
-/** `gpt-4o-mini` — ReAct (híbrido / checkout / onboarding / reserva). Mini baja TPM/costo vs 4o. */
+/** `gpt-4o-mini` — ReAct de sesión (checkout / onboarding / reserva / owner). Mini baja TPM/costo vs 4o. */
 export const getReactReasonerLlm = (): ChatOpenAI => {
   if (!cachedReactReasoner) {
     cachedReactReasoner = new ChatOpenAI({
@@ -48,6 +49,19 @@ export const getReactReasonerLlm = (): ChatOpenAI => {
     });
   }
   return cachedReactReasoner;
+};
+
+/** `gpt-4o` — ReAct del agente híbrido (menú / carrito / prosa principal). */
+export const getHybridReasonerLlm = (): ChatOpenAI => {
+  if (!cachedHybridReasoner) {
+    cachedHybridReasoner = new ChatOpenAI({
+      model: 'gpt-4o',
+      temperature: 0,
+      apiKey: env.OPENAI_API_KEY,
+      maxRetries: 2,
+    });
+  }
+  return cachedHybridReasoner;
 };
 
 /** `gpt-4o` `temperature: 0` — razonamiento más caro: `generateOrderResolution`, `generateOrderActionAnalysis`, `generateOrderExtraction`. */

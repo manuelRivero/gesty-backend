@@ -129,8 +129,7 @@ export type ConversationMetadata = {
   } | null;
   /**
    * Confirmación pendiente del flujo de botones (`cart.service.ts`).
-   * `remove_cart_item` ya no la usa: si el modelo llama la tool, borra en el acto
-   * y limpia estas claves si quedaron de un botón anterior.
+   * `remove_cart_item` no consulta ni escribe estas claves.
    */
   pendingAction?: 'CONFIRM_REMOVE' | 'EDIT_CART';
   pendingItemId?: string;

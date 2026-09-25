@@ -13,7 +13,7 @@
 
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { HumanMessage } from '@langchain/core/messages';
-import { getReactReasonerLlm } from '../config/llm';
+import { getHybridReasonerLlm } from '../config/llm';
 import { buildAgentHistoryMessages } from './conversationHistory';
 import { buildContextMessage } from './contextMessage';
 import { buildHybridAgentSystemPrompt } from '../prompts/botPersonality';
@@ -100,7 +100,7 @@ const buildAgent = (
       ...(checkoutDelegation ? [startCheckoutSessionTool] : []),
       ...(reservationDelegation ? [startReservationSessionTool] : []),
     ];
-    const llm = getReactReasonerLlm();
+    const llm = getHybridReasonerLlm();
     // Varios add_cart_item del mismo turno salen juntos. La escritura del
     // carrito se serializa en la tool; acá el modelo puede emitirlas en paralelo.
     // El mock de tests no implementa bindTools.
@@ -285,6 +285,7 @@ const TRACED_ARG_KEYS = [
   'lines',
   'productId',
   'productIds',
+  'itemIndex',
   'quantity',
   'variation',
   'categoryTag',
@@ -425,6 +426,9 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
       // no prosa inventada con total suelto. Honramos present_cart aunque el
       // modelo no haya llamado la tool de señal.
       if (m.name === 'remove_cart_item' && data.success === true) {
+        signals.presentCart = true;
+      }
+      if (m.name === 'update_cart_item_quantity' && data.success === true) {
         signals.presentCart = true;
       }
       if (

@@ -257,11 +257,12 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
           expires_at: true,
           _count: { select: { draft_order_item: true } },
           draft_order_item: {
+            orderBy: { id: 'asc' },
             select: {
               id: true,
-              product_id: true,
               quantity: true,
-              menu_item: { select: { id: true, name: true } },
+              variation: true,
+              menu_item: { select: { name: true } },
             },
           },
         },
@@ -270,23 +271,26 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
         hasActiveDraft = true;
         draftOrderId = draft.id;
         draftExpiresAt = draft.expires_at;
-        const count = draft._count.draft_order_item;
+        const lines = [...(draft.draft_order_item ?? [])].sort((a, b) =>
+          a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+        );
+        const count = lines.length > 0 ? lines.length : draft._count.draft_order_item;
         hasItems = count > 0;
-        const named = (draft.draft_order_item ?? [])
-          .map((line) => {
-            const name = line.menu_item?.name?.trim();
-            if (!name) return null;
-            const qty = line.quantity ?? 1;
-            const productId = line.menu_item?.id ?? line.product_id;
-            return `${qty}x ${name} (ProductID: ${productId}, LineID: ${line.id})`;
-          })
-          .filter((line): line is string => line != null);
         cartSummary =
-          count > 0
-            ? named.length > 0
-              ? `${count} ítem(s) - [${named.join(', ')}]`
-              : `${count} ítem(s) en carrito`
-            : 'carrito vacío';
+          lines.length > 0
+            ? lines
+                .map((line, index) => {
+                  const name = line.menu_item?.name?.trim() || 'Producto';
+                  const variation = line.variation?.trim();
+                  const label = variation ? `${name} (${variation})` : name;
+                  const qty = line.quantity;
+                  const units = qty === 1 ? 'unidad' : 'unidades';
+                  return `  ${index + 1}. ${label}, ${qty} ${units}`;
+                })
+                .join('\n')
+            : count > 0
+              ? `${count} ítem(s) en carrito`
+              : 'carrito vacío';
         fulfillmentType = draft.fulfillment_type
           ? `${draft.fulfillment_type} (solo checkout puede cambiarlo)`
           : null;
@@ -623,7 +627,9 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     `- Personas para el pedido: ${partySizeLine}`,
     ...partySizeJustConfirmedLines,
     hasItems || checkoutActive || offerStillAlive
-      ? `- Carrito: ${cartSummary ?? 'sin pedido activo'}`
+      ? cartSummary?.startsWith('  ')
+        ? `- Carrito:\n${cartSummary}`
+        : `- Carrito: ${cartSummary ?? 'sin pedido activo'}`
       : null,
     hasActiveDraft && fulfillmentType ? `- Tipo de entrega: ${fulfillmentType}` : null,
     checkoutActive ? '- Sesión de checkout: activa' : null,

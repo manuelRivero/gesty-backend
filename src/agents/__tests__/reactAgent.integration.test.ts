@@ -50,7 +50,7 @@ vi.mock('../../services/menu.service', () => ({
 }));
 
 vi.mock('../../config/llm', () => ({
-  getReactReasonerLlm: vi.fn(() => ({})),
+  getHybridReasonerLlm: vi.fn(() => ({})),
 }));
 
 vi.mock('../../services/botPersonality.service', async (importOriginal) => {
