@@ -537,15 +537,40 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
   return signals;
 };
 
-const extractFinalText = (result: unknown): string | null => {
-  if (typeof result !== 'object' || result === null) return null;
-  const messages = (result as { messages?: unknown }).messages;
-  if (!Array.isArray(messages) || messages.length === 0) return null;
-  const last = messages[messages.length - 1] as { content?: unknown };
-  if (typeof last.content === 'string') return last.content;
-  if (Array.isArray(last.content)) {
+/**
+ * Rol del mensaje del grafo. Los objetos planos `{ content }` de tests
+ * no tienen tipo: se tratan como prosa del asistente.
+ */
+const messageRole = (msg: unknown): 'tool' | 'human' | 'system' | 'assistant' => {
+  if (typeof msg !== 'object' || msg === null) return 'assistant';
+  const record = msg as {
+    tool_call_id?: unknown;
+    getType?: () => string;
+    _getType?: () => string;
+    type?: unknown;
+  };
+  if (typeof record.tool_call_id === 'string') return 'tool';
+  const typed =
+    typeof record.getType === 'function'
+      ? record.getType()
+      : typeof record._getType === 'function'
+        ? record._getType()
+        : typeof record.type === 'string'
+          ? record.type
+          : null;
+  if (typed === 'tool') return 'tool';
+  if (typed === 'human') return 'human';
+  if (typed === 'system') return 'system';
+  return 'assistant';
+};
+
+const readMessageContent = (msg: unknown): string | null => {
+  if (typeof msg !== 'object' || msg === null) return null;
+  const content = (msg as { content?: unknown }).content;
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
     return (
-      last.content
+      content
         .map((part) => {
           if (typeof part === 'string') return part;
           if (typeof part === 'object' && part && 'text' in part) {
@@ -558,6 +583,29 @@ const extractFinalText = (result: unknown): string | null => {
     );
   }
   return null;
+};
+
+/**
+ * Prosa del asistente en este turno. Los ToolMessage (incluida una señal
+ * `returnDirect`, que deja el resultado de la tool como último mensaje) son
+ * control del orquestador: `extractHybridSignals` ya los consume. No son
+ * texto para WhatsApp ni `llmProse` a anteponer en un body interactivo.
+ */
+const extractFinalText = (result: unknown): string | null => {
+  if (typeof result !== 'object' || result === null) return null;
+  const messages = (result as { messages?: unknown }).messages;
+  if (!Array.isArray(messages) || messages.length === 0) return null;
+
+  let index = messages.length - 1;
+  while (index >= 0 && messageRole(messages[index]) === 'tool') {
+    index -= 1;
+  }
+  if (index < 0) return null;
+
+  const candidate = messages[index];
+  const role = messageRole(candidate);
+  if (role === 'human' || role === 'system') return null;
+  return readMessageContent(candidate);
 };
 
 const ensureWhatsAppBotFormat = (text: string): string => {

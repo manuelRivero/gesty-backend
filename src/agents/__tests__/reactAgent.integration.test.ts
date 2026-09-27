@@ -104,7 +104,8 @@ import {
   buildHybridCtaInteractive,
   extractPrimaryProductId,
 } from '../../whatsappBuilders/hybridCta';
-import { patchConversationMetadata } from '../../repositories';
+import { findOrCreateConversationState, patchConversationMetadata } from '../../repositories';
+import * as complementSuggestions from '../../services/complementSuggestions.service';
 import { prisma } from '../../lib/prisma';
 import { buildCategoryProductListMessage } from '../../services/category.service';
 
@@ -558,5 +559,131 @@ describe('runHybridReactAgent', () => {
         },
       },
     });
+  });
+
+  it('señal present_complement_suggestions no llega al body de WhatsApp y sí dispara la lista', async () => {
+    const productId = '22a68a14-1111-4111-8111-111111111111';
+    const signalPayload = {
+      signal: 'present_complement_suggestions',
+      productId,
+    };
+    const listBody = '¡Listo! Agregué 1 Arroz con leche.';
+    const present = vi
+      .spyOn(complementSuggestions, 'tryPresentComplementSuggestions')
+      .mockResolvedValue({
+        type: 'list',
+        header: { type: 'text', text: '🤖\n\n*Para completar* 🍽️' },
+        body: { text: listBody },
+        footer: { text: 'Elegí o escribí' },
+        action: { button: 'Ver sugerencias', sections: [] },
+      });
+
+    vi.mocked(findOrCreateConversationState).mockResolvedValue({ metadata: {} } as never);
+    vi.mocked(prisma.draft_order.findFirst).mockResolvedValue({
+      id: 'draft-1',
+      draft_order_item: [{ product_id: productId }],
+    } as never);
+    vi.mocked(createReactAgent).mockReturnValue({
+      invoke: vi.fn().mockResolvedValue({
+        messages: [
+          {
+            getType: () => 'human',
+            content: 'ctx interno que no debe salir al cliente',
+          },
+          {
+            getType: () => 'ai',
+            content: '',
+            tool_calls: [{ name: 'present_complement_suggestions' }],
+          },
+          {
+            getType: () => 'tool',
+            tool_call_id: 'tc-add-1',
+            name: 'add_cart_item',
+            content: JSON.stringify({ success: true }),
+          },
+          {
+            getType: () => 'tool',
+            tool_call_id: 'tc-comp-1',
+            name: 'present_complement_suggestions',
+            content: JSON.stringify(signalPayload),
+          },
+        ],
+      }),
+    } as any);
+
+    const result = unwrap(await runHybridReactAgent(makeCtx() as any));
+    const visible = JSON.stringify(result?.content ?? '');
+
+    expect(present).toHaveBeenCalledOnce();
+    expect(present.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        lastAddedMenuItemId: productId,
+        draftOrderId: 'draft-1',
+      })
+    );
+    expect(present.mock.calls[0][0].llmProse ?? '').not.toContain('present_complement_suggestions');
+    expect(present.mock.calls[0][0].llmProse ?? '').not.toContain(productId);
+    expect(present.mock.calls[0][0].llmProse ?? '').not.toContain('ctx interno');
+    expect(result?.isInteractive).toBe(true);
+    expect(visible).toContain(listBody);
+    expect(visible).not.toContain('present_complement_suggestions');
+    expect(visible).not.toContain('signal');
+    expect(visible).not.toContain(productId);
+    expect(visible).not.toContain('productId');
+    present.mockRestore();
+  });
+
+  it('la prosa del asistente posterior a una tool sigue llegando a WhatsApp', async () => {
+    const userFacing = '¡Listo! Agregué 1 Arroz con leche.';
+    vi.mocked(createReactAgent).mockReturnValue({
+      invoke: vi.fn().mockResolvedValue({
+        messages: [
+          {
+            tool_call_id: 'tc-info-1',
+            name: 'get_business_hours',
+            content: JSON.stringify({
+              success: true,
+              message: userFacing,
+              internalTrace: 'HORARIO_INTERNO_NO_VISIBLE',
+            }),
+          },
+          { content: userFacing },
+        ],
+      }),
+    } as any);
+
+    const result = unwrap(await runHybridReactAgent(makeCtx() as any));
+    const visible = JSON.stringify(result?.content ?? '');
+
+    expect(result?.isInteractive).toBe(false);
+    expect(visible).toContain(userFacing);
+    expect(visible).not.toContain('HORARIO_INTERNO_NO_VISIBLE');
+    expect(visible).not.toContain('get_business_hours');
+  });
+
+  it('askMessage de un gate de tool llega al usuario y el JSON de control no', async () => {
+    const askMessage = '¿Cuántas unidades de arroz con leche querés?';
+    vi.mocked(createReactAgent).mockReturnValue({
+      invoke: vi.fn().mockResolvedValue({
+        messages: [
+          {
+            tool_call_id: 'tc-qty-1',
+            name: 'add_cart_item',
+            content: JSON.stringify({
+              success: false,
+              error: 'quantity_required',
+              askMessage,
+            }),
+          },
+        ],
+      }),
+    } as any);
+
+    const result = unwrap(await runHybridReactAgent(makeCtx() as any));
+    const visible = JSON.stringify(result?.content ?? '');
+
+    expect(visible).toContain(askMessage);
+    expect(visible).not.toContain('quantity_required');
+    expect(visible).not.toContain('success');
   });
 });
