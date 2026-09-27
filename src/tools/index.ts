@@ -100,9 +100,9 @@ import {
   type OrderLine,
 } from '../services/pendingOrderLines.service';
 import {
-  isConfirmedAddQuantity,
   needsAddQuantityConfirmation,
   suggestAddQuantity,
+  userMessageStatesUnitQuantity,
 } from '../services/addQuantitySuggestion';
 import {
   getOrderCompletionLedger,
@@ -1852,6 +1852,18 @@ export const addCartItemTool = new DynamicStructuredTool<
     let partySize: number | null = null;
     let pendingReply = false;
     let orderLine: OrderLine | null = null;
+    // Cantidad ya resuelta en el turno anterior y guardada en la variación
+    // pendiente. El mensaje de este turno es la variedad, no las unidades.
+    let variationQtyCarry = false;
+    const modelQty =
+      typeof quantity === 'number' && Number.isInteger(quantity) && quantity >= 1
+        ? Math.min(99, quantity)
+        : null;
+    // "dos ceviches" afirma unidades. "para dos personas" / "somos dos" no:
+    // stripPartySizePhrases las saca antes de mirar el número.
+    const statedUnits =
+      modelQty != null &&
+      userMessageStatesUnitQuantity(userMessage ?? null, modelQty);
     if (conversationId) {
       const partyGate = await partySizeOrderingGateJson(
         conversationId,
@@ -1948,6 +1960,15 @@ export const addCartItemTool = new DynamicStructuredTool<
         turnStartedAt,
       });
       orderLine = resolveOrderLineForProduct(getPendingOrderLines(meta), item.name);
+      // Turno siguiente de variación: el mensaje es la variedad. El número ya
+      // resuelto quedó en el ledger y se reusa si el modelo lo reenvía igual.
+      const pendingVar = meta.pendingVariation;
+      variationQtyCarry =
+        modelQty != null &&
+        pendingVar != null &&
+        typeof pendingVar === 'object' &&
+        pendingVar.productId === productId &&
+        pendingVar.quantity === modelQty;
     }
 
     const { suggestedQuantity } = suggestAddQuantity({
@@ -1958,19 +1979,41 @@ export const addCartItemTool = new DynamicStructuredTool<
     // (Fact de sesión, no un número que el modelo pudo copiar del party size en
     // un retry): cuenta como cantidad dicha por el cliente. Si en este turno
     // manda otra (corrección: "mejor 3 papas"), gana la del turno.
+    //
+    // El entero de add_cart_item NO es unidades por el hecho de ser un número.
+    // Cuenta como unidades si el mensaje las afirma (userMessageStatesUnitQuantity,
+    // que descarta "para N personas" / "somos N"), si es respuesta al ask, o si
+    // ya quedó fijada en la variación pendiente. Si no, manda la cobertura
+    // ceil(party/serves): "para dos" con ración 2 escribe 1, no el 2 del modelo.
     const lineQuantity = orderLine?.requestedQuantity ?? null;
-    const qtyConfirmed =
-      lineQuantity != null ||
-      isConfirmedAddQuantity({
-        quantity: quantity ?? null,
-        suggestedQuantity,
-        pendingReply,
-        userMessage: userMessage ?? null,
-        explicitToolQuantity: typeof quantity === 'number' && quantity >= 1,
-      });
-    const qty = qtyConfirmed
-      ? Math.min(99, Math.max(1, Math.floor(quantity ?? lineQuantity ?? 1)))
-      : 1;
+    const unitsFromClient =
+      pendingReply || statedUnits || variationQtyCarry;
+    const qty = lineQuantity != null
+      ? Math.min(99, Math.max(1, Math.floor(modelQty ?? lineQuantity)))
+      : unitsFromClient && modelQty != null
+        ? modelQty
+        : suggestedQuantity;
+    const willAskQuantity =
+      lineQuantity == null &&
+      !unitsFromClient &&
+      needsAddQuantityConfirmation({ suggestedQuantity, partySize });
+    if (
+      modelQty != null &&
+      !unitsFromClient &&
+      lineQuantity == null &&
+      modelQty !== qty
+    ) {
+      console.log(
+        JSON.stringify({
+          event: '[add_cart_item] quantity_not_units',
+          conversationId,
+          quantityArg: modelQty,
+          writtenOrSuggested: willAskQuantity ? null : qty,
+          suggestedQuantity,
+          partySize,
+        })
+      );
+    }
     if (lineQuantity != null && quantity != null && quantity !== lineQuantity) {
       console.log(
         JSON.stringify({
@@ -1983,7 +2026,7 @@ export const addCartItemTool = new DynamicStructuredTool<
       );
     }
     // Placeholder para variation_required (aún no confirmamos cantidad).
-    const qtyForVariationPending = qtyConfirmed ? qty : suggestedQuantity;
+    const qtyForVariationPending = willAskQuantity ? suggestedQuantity : qty;
 
     // D5 — el agente híbrido no adivina la variación: la tool lo obliga a
     // preguntar. Se resuelve ANTES de cantidad y de tocar draft_order_item.
@@ -2042,12 +2085,8 @@ export const addCartItemTool = new DynamicStructuredTool<
       });
     }
 
-    // D7 — cantidad: si party sugiere ≥2 y el cliente no dio número, no escribir.
-    if (
-      !qtyConfirmed &&
-      conversationId &&
-      needsAddQuantityConfirmation({ suggestedQuantity, partySize })
-    ) {
+    // D7 — cantidad: si la cobertura sugiere ≥2 y el mensaje no afirmó unidades, no escribir.
+    if (willAskQuantity && conversationId) {
       if (quantity != null) {
         console.log(
           JSON.stringify({

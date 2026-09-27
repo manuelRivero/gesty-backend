@@ -147,9 +147,10 @@ export function userMessageStatesUnitQuantity(
 /**
  * Qty del payload/tool cuenta como confirmada por el cliente (no abrir pending).
  *
- * `explicitToolQuantity`: el argumento `quantity` de `add_cart_item` confirma
- * solo. El modelo ya extrajo las unidades; no hace falta que el texto matchee
- * `userMessageStatesUnitQuantity`.
+ * `explicitToolQuantity`: el llamador ya verificó que el número son unidades,
+ * no personas. `add_cart_item` no lo setea por recibir un entero: usa
+ * `userMessageStatesUnitQuantity` (descarta "para N personas" / "somos N")
+ * y, si el mensaje no afirma unidades, escribe la cobertura o pregunta.
  *
  * Sin ese flag (botón/CTA), suggested ≥ 2 no se confirma con el número pelado
  * (el `:1` del CTA es “sumar”, no “una unidad”). Confirma:
