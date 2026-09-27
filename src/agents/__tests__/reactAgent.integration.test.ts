@@ -686,4 +686,254 @@ describe('runHybridReactAgent', () => {
     expect(visible).not.toContain('quantity_required');
     expect(visible).not.toContain('success');
   });
+
+  const listFor = (marker: string) => ({
+    type: 'list' as const,
+    header: { type: 'text' as const, text: marker },
+    body: { text: marker },
+    footer: { text: 'Elige un platillo' },
+    action: { button: 'Ver platillos', sections: [] },
+  });
+
+  const presentationCount = (result: { followUps?: unknown[] } | null) =>
+    1 + (result?.followUps?.length ?? 0);
+
+  const assertNoPresentationSignal = (result: unknown) => {
+    const visible = JSON.stringify(result ?? '');
+    expect(visible).not.toContain('present_category');
+    expect(visible).not.toContain('present_product_cta');
+    expect(visible).not.toContain('"signal"');
+  };
+
+  it('present_category(A) luego present_category(B) conserva ambas, en el orden de tool_calls', async () => {
+    const categoryA = 'e61a490b-72d1-4a88-be5a-97e31ea1ec1c';
+    const categoryB = 'a7f6a71e-1574-41d9-bf3a-b3b411dc25af';
+    vi.mocked(createReactAgent).mockReturnValue({
+      invoke: vi.fn().mockResolvedValue({
+        messages: [
+          {
+            content: '',
+            tool_calls: [
+              { id: 'tc-a', name: 'present_category', args: { categoryId: categoryA } },
+              { id: 'tc-b', name: 'present_category', args: { categoryId: categoryB } },
+            ],
+          },
+          {
+            tool_call_id: 'tc-b',
+            name: 'present_category',
+            content: JSON.stringify({
+              signal: 'present_category',
+              categoryId: categoryB,
+              bodyText: 'Bebidas',
+            }),
+          },
+          {
+            tool_call_id: 'tc-a',
+            name: 'present_category',
+            content: JSON.stringify({
+              signal: 'present_category',
+              categoryId: categoryA,
+              bodyText: 'Postres',
+            }),
+          },
+        ],
+      }),
+    } as any);
+    vi.mocked(buildCategoryProductListMessage).mockImplementation(
+      async (_business, _conversation, categoryId) => ({
+        message: listFor(String(categoryId)),
+        conversationUpdated: true,
+      })
+    );
+
+    const result = unwrap(await runHybridReactAgent(makeCtx() as any));
+
+    expect(buildCategoryProductListMessage).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      expect.anything(),
+      categoryA,
+      1,
+      { bodyText: 'Postres' }
+    );
+    expect(buildCategoryProductListMessage).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.anything(),
+      categoryB,
+      1,
+      { bodyText: 'Bebidas' }
+    );
+    expect(result!.isInteractive).toBe(true);
+    expect(result!.content).toMatchObject({ header: { text: categoryA } });
+    expect(result!.followUps).toEqual([
+      { type: 'list', listMessage: listFor(categoryB) },
+    ]);
+    expect(presentationCount(result)).toBe(2);
+    expect(buildCategoryProductListMessage).toHaveBeenCalledTimes(2);
+    assertNoPresentationSignal(result);
+  });
+
+  it('ceviche + postre + bebidas: CTA y dos categorías, en el orden de tool_calls', async () => {
+    const cevicheA = '742df439-a245-4414-8f30-289ab8097cac';
+    const cevicheB = 'caae2144-8aef-40d8-a85b-aaa45e12a7f9';
+    const postresId = 'e61a490b-72d1-4a88-be5a-97e31ea1ec1c';
+    const bebidasId = 'a7f6a71e-1574-41d9-bf3a-b3b411dc25af';
+    const intro = '🤖\n\n*Opciones* 🍽️\n\nElegí el ceviche.';
+
+    vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
+    vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
+    vi.mocked(prisma.menu_item.findMany).mockResolvedValue([
+      { id: cevicheA, name: 'Ceviche clásico', description: null, menu_item_price: [{ amount: 11 }] },
+      { id: cevicheB, name: 'Ceviche mixto', description: null, menu_item_price: [{ amount: 13 }] },
+    ] as any);
+    vi.mocked(extractPrimaryProductId).mockReturnValue(null);
+    vi.mocked(buildHybridCtaInteractive).mockReturnValue({
+      content: listFor('ceviche-cta'),
+      isInteractive: true,
+    });
+    vi.mocked(buildCategoryProductListMessage).mockImplementation(
+      async (_business, _conversation, categoryId) => ({
+        message: listFor(String(categoryId)),
+        conversationUpdated: true,
+      })
+    );
+    vi.mocked(createReactAgent).mockReturnValue({
+      invoke: vi.fn().mockResolvedValue({
+        messages: [
+          {
+            content: intro,
+            tool_calls: [
+              {
+                id: 'tc-cta',
+                name: 'present_product_cta',
+                args: { primaryKind: 'SELECT_FROM_LIST', productIds: [cevicheA, cevicheB] },
+              },
+              { id: 'tc-postres', name: 'present_category', args: { categoryId: postresId } },
+              { id: 'tc-bebidas', name: 'present_category', args: { categoryId: bebidasId } },
+            ],
+          },
+          {
+            tool_call_id: 'tc-bebidas',
+            name: 'present_category',
+            content: JSON.stringify({
+              signal: 'present_category',
+              categoryId: bebidasId,
+              bodyText: 'Y aquí están las bebidas frías.',
+            }),
+          },
+          {
+            tool_call_id: 'tc-cta',
+            name: 'present_product_cta',
+            content: JSON.stringify({
+              signal: 'present_product_cta',
+              primaryKind: 'SELECT_FROM_LIST',
+              productIds: [cevicheA, cevicheB],
+            }),
+          },
+          {
+            tool_call_id: 'tc-postres',
+            name: 'present_category',
+            content: JSON.stringify({
+              signal: 'present_category',
+              categoryId: postresId,
+              bodyText: 'Postres',
+            }),
+          },
+        ],
+      }),
+    } as any);
+
+    const result = unwrap(
+      await runHybridReactAgent(
+        makeCtx({ message: { text: { body: 'ceviche postre y bebidas' }, type: 'text' } }) as any
+      )
+    );
+
+    expect(buildHybridCtaInteractive).toHaveBeenCalledOnce();
+    const planArg = vi.mocked(buildHybridCtaInteractive).mock.calls[0][1];
+    expect(planArg.primary.kind).toBe('SELECT_FROM_LIST');
+    if (planArg.primary.kind === 'SELECT_FROM_LIST') {
+      expect(planArg.primary.candidates.map((c) => c.productId)).toEqual([cevicheA, cevicheB]);
+    }
+    expect(buildCategoryProductListMessage).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      expect.anything(),
+      postresId,
+      1,
+      { bodyText: 'Postres' }
+    );
+    expect(buildCategoryProductListMessage).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.anything(),
+      bebidasId,
+      1,
+      { bodyText: 'Y aquí están las bebidas frías.' }
+    );
+    expect(result!.content).toMatchObject({ header: { text: 'ceviche-cta' } });
+    expect(result!.followUps).toEqual([
+      { type: 'list', listMessage: listFor(postresId) },
+      { type: 'list', listMessage: listFor(bebidasId) },
+    ]);
+    expect(presentationCount(result)).toBe(3);
+    expect(buildHybridCtaInteractive).toHaveBeenCalledTimes(1);
+    expect(buildCategoryProductListMessage).toHaveBeenCalledTimes(2);
+    assertNoPresentationSignal(result);
+  });
+
+  it('una sola present_category sigue siendo un mensaje, sin followUps ni JSON de señal', async () => {
+    const categoryId = '33333333-3333-3333-3333-333333333333';
+    vi.mocked(createReactAgent).mockReturnValue({
+      invoke: vi.fn().mockResolvedValue({
+        messages: [
+          {
+            tool_call_id: 'tc-cat-1',
+            name: 'present_category',
+            content: JSON.stringify({ signal: 'present_category', categoryId }),
+          },
+        ],
+      }),
+    } as any);
+    vi.mocked(buildCategoryProductListMessage).mockResolvedValue({
+      message: listFor('solo-categoria'),
+      conversationUpdated: true,
+    });
+
+    const result = unwrap(await runHybridReactAgent(makeCtx() as any));
+
+    expect(result!.isInteractive).toBe(true);
+    expect(result!.content).toMatchObject({ header: { text: 'solo-categoria' } });
+    expect(result!.followUps).toBeUndefined();
+    expect(presentationCount(result)).toBe(1);
+    expect(buildHybridCtaInteractive).not.toHaveBeenCalled();
+    assertNoPresentationSignal(result);
+  });
+
+  it('una sola present_product_cta sigue siendo un mensaje, sin followUps ni JSON de señal', async () => {
+    vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
+    vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
+    vi.mocked(createReactAgent).mockReturnValue({
+      invoke: makeAgentInvokeWithPresentCta(BOT_TEXT, {
+        primaryKind: 'ADD_ITEM',
+        productId: 'prod-1',
+        productHint: 'ceviche',
+        quantity: 1,
+      }),
+    } as any);
+    vi.mocked(buildHybridCtaInteractive).mockReturnValue({
+      content: { type: 'interactive', interactive: { body: { text: 'Sumar ceviche' } } },
+      isInteractive: true,
+    });
+
+    const result = unwrap(await runHybridReactAgent(makeCtx() as any));
+
+    expect(result!.isInteractive).toBe(true);
+    expect(result!.followUps).toBeUndefined();
+    expect(presentationCount(result)).toBe(1);
+    expect(buildHybridCtaInteractive).toHaveBeenCalledOnce();
+    expect(buildCategoryProductListMessage).not.toHaveBeenCalled();
+    assertNoPresentationSignal(result);
+  });
 });

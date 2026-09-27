@@ -24,7 +24,15 @@ import {
 import { buildHybridAgentSystemPrompt } from '../prompts/botPersonality';
 import { resolvePersonalityForBusiness } from '../services/botPersonality.service';
 import { allReactTools } from '../tools';
-import type { EnrichedContext, HandlerResult } from '../controllers/webhook/types';
+import type {
+  EnrichedContext,
+  HandlerFollowUp,
+  HandlerResult,
+} from '../controllers/webhook/types';
+import type {
+  WhatsAppInteractiveMessage,
+  WhatsAppListMessage,
+} from '../domain/intent/whatsappTemplates';
 import { formatBotUserMessage } from '../services/productQuery/utils';
 import { normalizeWhatsAppBoldMarkers } from '../utils/whatsappBold';
 
@@ -86,6 +94,18 @@ export type PresentProductCtaSignal = {
   secondaryKind: CtaPlannerRaw['secondaryKind'];
   secondaryLabel: string | null;
 };
+
+/** Una presentación pedida en este turno. El orden del array es el de tool_calls. */
+export type PresentationCommand =
+  | {
+      type: 'category';
+      categoryId: string;
+      bodyText: string | null;
+    }
+  | {
+      type: 'product_cta';
+      cta: PresentProductCtaSignal;
+    };
 
 const buildAgent = (
   personalityId: string,
@@ -204,6 +224,11 @@ export interface HybridAgentSignals {
   welcomeBodyText: string | null;
   /** CTA de producto pedido explícitamente por el agente (tool present_product_cta). */
   presentProductCta: PresentProductCtaSignal | null;
+  /**
+   * Presentaciones de este turno (`present_category`, `present_product_cta`)
+   * en el orden de `tool_calls` del AIMessage. Varias no se pisan.
+   */
+  presentationCommands: PresentationCommand[];
   /** True si add_cart_item devolvió success en este turno (no reabrir shortlist). */
   cartAddSucceeded: boolean;
   /** Producto del último add_cart_item exitoso de este turno. */
@@ -381,6 +406,7 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
     presentWelcomeOptions: false,
     welcomeBodyText: null,
     presentProductCta: null,
+    presentationCommands: [],
     cartAddSucceeded: false,
     lastAddedProductId: null,
     cartMutatedThisTurn: false,
@@ -392,6 +418,8 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
     itemNoteItemNames: [],
     itemNoteText: null,
   };
+
+  const stagedPresentations: Array<{ toolCallId: string; command: PresentationCommand }> = [];
 
   for (const msg of messages) {
     if (typeof msg !== 'object' || msg === null) continue;
@@ -521,11 +549,17 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
         typeof data.categoryId === 'string' &&
         data.categoryId.length > 0
       ) {
-        signals.presentCategoryId = data.categoryId;
-        signals.presentCategoryBody =
-          typeof data.bodyText === 'string' && data.bodyText.trim()
-            ? data.bodyText.trim()
-            : null;
+        stagedPresentations.push({
+          toolCallId: m.tool_call_id,
+          command: {
+            type: 'category',
+            categoryId: data.categoryId,
+            bodyText:
+              typeof data.bodyText === 'string' && data.bodyText.trim()
+                ? data.bodyText.trim()
+                : null,
+          },
+        });
       }
       if (data.signal === 'present_address_confirmation') {
         signals.presentAddressConfirmation = true;
@@ -539,14 +573,66 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
       }
       if (data.signal === 'present_product_cta') {
         const parsed = parsePresentProductCtaSignal(data);
-        if (parsed) signals.presentProductCta = parsed;
+        if (parsed) {
+          stagedPresentations.push({
+            toolCallId: m.tool_call_id,
+            command: { type: 'product_cta', cta: parsed },
+          });
+        }
       }
     } catch {
       /* ignorar mensajes no-JSON */
     }
   }
 
+  signals.presentationCommands = alignPresentationCommands(messages, stagedPresentations);
+  for (const command of signals.presentationCommands) {
+    if (command.type === 'category') {
+      signals.presentCategoryId = command.categoryId;
+      signals.presentCategoryBody = command.bodyText;
+    } else {
+      signals.presentProductCta = command.cta;
+    }
+  }
+
   return signals;
+};
+
+/**
+ * Orden de presentaciones = orden de `tool_calls` en cada AIMessage.
+ * Los ToolMessage pueden llegar en otro orden (Promise.all); el id los reubica.
+ * Sin `tool_calls` (tests y lotes ya ordenados), se conserva el orden de los ToolMessage.
+ */
+const alignPresentationCommands = (
+  messages: unknown[],
+  staged: Array<{ toolCallId: string; command: PresentationCommand }>
+): PresentationCommand[] => {
+  const byId = new Map(staged.map((item) => [item.toolCallId, item.command]));
+  const ordered: PresentationCommand[] = [];
+  const used = new Set<string>();
+
+  for (const msg of messages) {
+    if (typeof msg !== 'object' || msg === null) continue;
+    const calls = (msg as { tool_calls?: unknown }).tool_calls;
+    if (!Array.isArray(calls)) continue;
+    for (const call of calls) {
+      if (typeof call !== 'object' || call === null) continue;
+      const id = (call as { id?: unknown }).id;
+      if (typeof id !== 'string' || used.has(id)) continue;
+      const command = byId.get(id);
+      if (!command) continue;
+      ordered.push(command);
+      used.add(id);
+    }
+  }
+
+  for (const item of staged) {
+    if (used.has(item.toolCallId)) continue;
+    ordered.push(item.command);
+    used.add(item.toolCallId);
+  }
+
+  return ordered;
 };
 
 /**
@@ -770,6 +856,240 @@ const emitHybridCtaResult = async (params: {
   );
 
   return handlerResult;
+};
+
+const handlerResultToFollowUp = (result: HandlerResult): HandlerFollowUp | null => {
+  if (!result.isInteractive && typeof result.content === 'string') {
+    return { type: 'text', message: result.content };
+  }
+  if (result.isInteractive && result.content && typeof result.content === 'object') {
+    const typed = result.content as { type?: string };
+    if (typed.type === 'list') {
+      return { type: 'list', listMessage: result.content as WhatsAppListMessage };
+    }
+    if (typed.type === 'interactive') {
+      return { type: 'interactive', message: result.content as WhatsAppInteractiveMessage };
+    }
+  }
+  return null;
+};
+
+/** Primera presentación = content. El resto, en el mismo orden, = followUps. */
+const packPresentationResults = (parts: HandlerResult[]): HandlerResult | null => {
+  if (parts.length === 0) return null;
+  const [first, ...rest] = parts;
+  const followUps: HandlerFollowUp[] = [];
+  for (const part of rest) {
+    const follow = handlerResultToFollowUp(part);
+    if (!follow) {
+      console.error(
+        JSON.stringify({
+          event: '[hybrid-agent] presentation_follow_up_unmapped',
+        })
+      );
+      continue;
+    }
+    followUps.push(follow);
+  }
+  return markHybridResult({
+    content: first.content,
+    isInteractive: first.isInteractive,
+    ...(followUps.length > 0 ? { followUps } : {}),
+  });
+};
+
+type PresentationBuildCtx = {
+  ctx: EnrichedContext;
+  businessId: string;
+  conversationId: string;
+  formattedText: string;
+  userMessage: string;
+  detectedProductName: string | null;
+  detectionQuantity: number | null;
+  lastReferencedProductId: string | null;
+};
+
+const materializeCategoryPresentation = async (
+  command: Extract<PresentationCommand, { type: 'category' }>,
+  buildCtx: PresentationBuildCtx
+): Promise<HandlerResult | null> => {
+  try {
+    const business = buildCtx.ctx.business as Parameters<typeof buildCategoryProductListMessage>[0];
+    const conversation = buildCtx.ctx.conversation as Parameters<
+      typeof buildCategoryProductListMessage
+    >[1];
+    const result = await buildCategoryProductListMessage(
+      business,
+      conversation,
+      command.categoryId,
+      1,
+      { bodyText: command.bodyText }
+    );
+    if (result.message) {
+      console.log(
+        JSON.stringify({
+          event: '[hybrid-agent] present_category_signal',
+          categoryId: command.categoryId,
+          conversationId: buildCtx.conversationId,
+        })
+      );
+      return { content: result.message, isInteractive: true };
+    }
+    if (result.errorMessage) {
+      return {
+        content: ensureWhatsAppBotFormat(result.errorMessage),
+        isInteractive: false,
+      };
+    }
+  } catch (err) {
+    console.error('[hybrid-agent] present_category failed, falling through', err);
+  }
+  return null;
+};
+
+const materializeProductCtaPresentation = async (
+  ctaReq: PresentProductCtaSignal,
+  buildCtx: PresentationBuildCtx
+): Promise<HandlerResult | null> => {
+  const {
+    businessId,
+    conversationId,
+    formattedText,
+    userMessage,
+    detectedProductName,
+    detectionQuantity,
+    lastReferencedProductId,
+  } = buildCtx;
+
+  let resolvedPlan: CtaPlan | null = null;
+
+  if (
+    ctaReq.primaryKind === 'SELECT_FROM_LIST' &&
+    ctaReq.productIds &&
+    ctaReq.productIds.length >= 2
+  ) {
+    resolvedPlan = await buildSelectFromListPlanFromIds({
+      productIds: ctaReq.productIds,
+      businessId,
+      bodyText: formattedText,
+      secondaryLabel: ctaReq.secondaryLabel,
+      productHint: ctaReq.productHint,
+    });
+  }
+
+  if (ctaReq.primaryKind === 'ADD_ITEM' && ctaReq.productId) {
+    try {
+      const row = await prisma.menu_item.findFirst({
+        where: { id: ctaReq.productId, business_id: businessId, is_available: true },
+        select: { id: true, name: true },
+      });
+      if (row) {
+        resolvedPlan = {
+          productHint: ctaReq.productHint ?? row.name,
+          primary: {
+            kind: 'ADD_ITEM',
+            productId: row.id,
+            quantity: ctaReq.quantity,
+            label: (ctaReq.primaryLabel ?? defaultPrimaryLabel('ADD_ITEM')).slice(0, 20),
+          },
+          secondary: {
+            kind: ctaReq.secondaryKind === 'VIEW_MENU' ? 'VIEW_MENU' : 'VIEW_FEATURED',
+            label: (
+              ctaReq.secondaryLabel ??
+              (ctaReq.secondaryKind === 'VIEW_MENU' ? 'Ver menú' : 'Ver destacados')
+            ).slice(0, 20),
+          },
+        };
+      }
+    } catch (err) {
+      console.error('[hybrid-cta] productId lookup failed:', err);
+    }
+  }
+
+  if (!resolvedPlan) {
+    const plannerRaw: CtaPlannerRaw = {
+      shouldShowCta: true,
+      productHint: ctaReq.productHint,
+      productHints: ctaReq.productHints,
+      primaryKind: ctaReq.primaryKind,
+      primaryLabel: ctaReq.primaryLabel ?? defaultPrimaryLabel(ctaReq.primaryKind),
+      secondaryKind:
+        ctaReq.secondaryKind ??
+        (ctaReq.primaryKind === 'ADD_ITEM' ? 'VIEW_FEATURED' : null),
+      secondaryLabel:
+        ctaReq.secondaryLabel ??
+        (ctaReq.secondaryKind === 'VIEW_MENU' ? 'Ver menú' : 'Ver destacados'),
+    };
+
+    resolvedPlan = await resolveCta({
+      plannerRaw,
+      businessId,
+      lastReferencedProductId,
+      detectedProductName: detectedProductName ?? ctaReq.productHint,
+      botResponseText: formattedText,
+      detectionQuantity: detectionQuantity ?? ctaReq.quantity,
+      userMessage,
+    });
+  }
+
+  if (resolvedPlan) {
+    const handlerResult = await emitHybridCtaResult({
+      conversationId,
+      userMessage,
+      formattedText,
+      resolvedPlan,
+      source: 'agent_tool',
+      productHintForOffer: ctaReq.productHint ?? detectedProductName,
+    });
+    if (handlerResult) return handlerResult;
+  }
+
+  console.log(
+    JSON.stringify({
+      event: '[hybrid-cta] cta_skipped',
+      reason: 'agent_tool_build_failed',
+      conversationId,
+    })
+  );
+  return null;
+};
+
+const composeOrderedPresentations = async (
+  commands: PresentationCommand[],
+  buildCtx: PresentationBuildCtx,
+  options: { ctaFeatureOn: boolean; cartAddSucceeded: boolean }
+): Promise<HandlerResult | null> => {
+  const parts: HandlerResult[] = [];
+  for (const command of commands) {
+    if (command.type === 'product_cta') {
+      if (options.cartAddSucceeded) {
+        console.log(
+          JSON.stringify({
+            event: '[hybrid-cta] cta_skipped',
+            reason: 'cart_add_same_turn',
+            conversationId: buildCtx.conversationId,
+          })
+        );
+        continue;
+      }
+      if (!options.ctaFeatureOn) {
+        console.log(
+          JSON.stringify({
+            event: '[hybrid-cta] cta_skipped',
+            reason: 'feature_off',
+            conversationId: buildCtx.conversationId,
+          })
+        );
+        continue;
+      }
+      const built = await materializeProductCtaPresentation(command.cta, buildCtx);
+      if (built) parts.push(built);
+      continue;
+    }
+    const built = await materializeCategoryPresentation(command, buildCtx);
+    if (built) parts.push(built);
+  }
+  return packPresentationResults(parts);
 };
 
 // ---------------------------------------------------------------------------
@@ -1265,41 +1585,38 @@ export const runHybridReactAgent = async (
     };
   }
 
-  if (signals.presentCategoryId) {
-    try {
-      const business = ctx.business as Parameters<typeof buildCategoryProductListMessage>[0];
-      const conversation = ctx.conversation as Parameters<typeof buildCategoryProductListMessage>[1];
-      const result = await buildCategoryProductListMessage(
-        business,
-        conversation,
-        signals.presentCategoryId,
-        1,
-        { bodyText: signals.presentCategoryBody }
-      );
-      if (result.message) {
-        console.log(
-          JSON.stringify({
-            event: '[hybrid-agent] present_category_signal',
-            categoryId: signals.presentCategoryId,
-            conversationId,
-          })
-        );
-        return {
-          kind: 'response',
-          handlerResult: markHybridResult({ content: result.message, isInteractive: true }),
-        };
+  // Varias presentaciones del turno (categoría y/o CTA) salen en el orden de
+  // tool_calls: la primera es el mensaje, el resto followUps. Un CTA solo sigue
+  // más abajo, después del saludo, para no cambiar ese caso.
+  const deferSingleProductCta =
+    signals.presentationCommands.length === 1 &&
+    signals.presentationCommands[0]?.type === 'product_cta';
+
+  if (!deferSingleProductCta && signals.presentationCommands.length > 0) {
+    const ctaFeatureOnEarly =
+      isHybridCtaEnabled() && isHybridCtaEnabledForBusiness(businessId);
+    const presentationProse = llmProse?.trim() ? ensureWhatsAppBotFormat(llmProse) : '';
+    const packed = await composeOrderedPresentations(
+      signals.presentationCommands,
+      {
+        ctx,
+        businessId,
+        conversationId,
+        formattedText: presentationProse,
+        userMessage: ctx.message?.text?.body ?? '',
+        detectedProductName: ctx.detection?.detectedProductName ?? null,
+        detectionQuantity: ctx.detection?.quantity ?? null,
+        lastReferencedProductId:
+          (ctx.conversation as { lastReferencedProductId?: string | null })
+            .lastReferencedProductId ?? null,
+      },
+      {
+        ctaFeatureOn: ctaFeatureOnEarly,
+        cartAddSucceeded: signals.cartAddSucceeded,
       }
-      if (result.errorMessage) {
-        return {
-          kind: 'response',
-          handlerResult: markHybridResult({
-            content: ensureWhatsAppBotFormat(result.errorMessage),
-            isInteractive: false,
-          }),
-        };
-      }
-    } catch (err) {
-      console.error('[hybrid-agent] present_category failed, falling through', err);
+    );
+    if (packed) {
+      return { kind: 'response', handlerResult: packed };
     }
   }
 
@@ -1346,107 +1663,34 @@ export const runHybridReactAgent = async (
   const ctaFeatureOn =
     isHybridCtaEnabled() && isHybridCtaEnabledForBusiness(businessId);
 
-  // CTA / lista: preferido si el agente pidió present_product_cta.
+  // Un solo present_product_cta: mismo camino de antes (intro = prosa del modelo).
   // Si ya sumó al carrito en este turno, no reabrir shortlist (evita «Sumé» + lista).
-  if (signals.presentProductCta && ctaFeatureOn && !signals.cartAddSucceeded) {
-    const ctaReq = signals.presentProductCta;
-    const lastReferencedProductId =
-      (ctx.conversation as { lastReferencedProductId?: string | null }).lastReferencedProductId ??
-      null;
-
-    let resolvedPlan: CtaPlan | null = null;
-
-    if (
-      ctaReq.primaryKind === 'SELECT_FROM_LIST' &&
-      ctaReq.productIds &&
-      ctaReq.productIds.length >= 2
-    ) {
-      resolvedPlan = await buildSelectFromListPlanFromIds({
-        productIds: ctaReq.productIds,
-        businessId,
-        bodyText: formattedText,
-        secondaryLabel: ctaReq.secondaryLabel,
-        productHint: ctaReq.productHint,
-      });
+  if (
+    deferSingleProductCta &&
+    signals.presentProductCta &&
+    ctaFeatureOn &&
+    !signals.cartAddSucceeded
+  ) {
+    const handlerResult = await materializeProductCtaPresentation(signals.presentProductCta, {
+      ctx,
+      businessId,
+      conversationId,
+      formattedText,
+      userMessage,
+      detectedProductName,
+      detectionQuantity: ctx.detection?.quantity ?? null,
+      lastReferencedProductId:
+        (ctx.conversation as { lastReferencedProductId?: string | null }).lastReferencedProductId ??
+        null,
+    });
+    if (handlerResult) {
+      return { kind: 'response', handlerResult: markHybridResult(handlerResult) };
     }
-
-    if (ctaReq.primaryKind === 'ADD_ITEM' && ctaReq.productId) {
-      try {
-        const row = await prisma.menu_item.findFirst({
-          where: { id: ctaReq.productId, business_id: businessId, is_available: true },
-          select: { id: true, name: true },
-        });
-        if (row) {
-          resolvedPlan = {
-            productHint: ctaReq.productHint ?? row.name,
-            primary: {
-              kind: 'ADD_ITEM',
-              productId: row.id,
-              quantity: ctaReq.quantity,
-              label: (ctaReq.primaryLabel ?? defaultPrimaryLabel('ADD_ITEM')).slice(0, 20),
-            },
-            secondary: {
-              kind: ctaReq.secondaryKind === 'VIEW_MENU' ? 'VIEW_MENU' : 'VIEW_FEATURED',
-              label: (
-                ctaReq.secondaryLabel ??
-                (ctaReq.secondaryKind === 'VIEW_MENU' ? 'Ver menú' : 'Ver destacados')
-              ).slice(0, 20),
-            },
-          };
-        }
-      } catch (err) {
-        console.error('[hybrid-cta] productId lookup failed:', err);
-      }
-    }
-
-    if (!resolvedPlan) {
-      const plannerRaw: CtaPlannerRaw = {
-        shouldShowCta: true,
-        productHint: ctaReq.productHint,
-        productHints: ctaReq.productHints,
-        primaryKind: ctaReq.primaryKind,
-        primaryLabel: ctaReq.primaryLabel ?? defaultPrimaryLabel(ctaReq.primaryKind),
-        secondaryKind:
-          ctaReq.secondaryKind ??
-          (ctaReq.primaryKind === 'ADD_ITEM' ? 'VIEW_FEATURED' : null),
-        secondaryLabel:
-          ctaReq.secondaryLabel ??
-          (ctaReq.secondaryKind === 'VIEW_MENU' ? 'Ver menú' : 'Ver destacados'),
-      };
-
-      resolvedPlan = await resolveCta({
-        plannerRaw,
-        businessId,
-        lastReferencedProductId,
-        detectedProductName: detectedProductName ?? ctaReq.productHint,
-        botResponseText: formattedText,
-        detectionQuantity: ctx.detection?.quantity ?? ctaReq.quantity,
-        userMessage,
-      });
-    }
-
-    if (resolvedPlan) {
-      const handlerResult = await emitHybridCtaResult({
-        conversationId,
-        userMessage,
-        formattedText,
-        resolvedPlan,
-        source: 'agent_tool',
-        productHintForOffer: ctaReq.productHint ?? detectedProductName,
-      });
-      if (handlerResult) {
-        return { kind: 'response', handlerResult: markHybridResult(handlerResult) };
-      }
-    }
-
-    console.log(
-      JSON.stringify({
-        event: '[hybrid-cta] cta_skipped',
-        reason: 'agent_tool_build_failed',
-        conversationId,
-      })
-    );
-  } else if (signals.presentProductCta && signals.cartAddSucceeded) {
+  } else if (
+    deferSingleProductCta &&
+    signals.presentProductCta &&
+    signals.cartAddSucceeded
+  ) {
     console.log(
       JSON.stringify({
         event: '[hybrid-cta] cta_skipped',
@@ -1454,7 +1698,7 @@ export const runHybridReactAgent = async (
         conversationId,
       })
     );
-  } else if (signals.presentProductCta) {
+  } else if (deferSingleProductCta && signals.presentProductCta) {
     console.log(
       JSON.stringify({
         event: '[hybrid-cta] cta_skipped',
