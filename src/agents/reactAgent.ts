@@ -52,6 +52,7 @@ import { buildCartSummaryMessage } from '../services/cart.service';
 import { buildCancelOrderMessage, buildCancelDisambiguationMessage } from '../services/order.service';
 import {
   presentItemNoteSuccessList,
+  productIdPersistedForComplement,
   tryPresentComplementSuggestions,
 } from '../services/complementSuggestions.service';
 import { buildCategoryProductListMessage } from '../services/category.service';
@@ -205,6 +206,8 @@ export interface HybridAgentSignals {
   presentProductCta: PresentProductCtaSignal | null;
   /** True si add_cart_item devolvió success en este turno (no reabrir shortlist). */
   cartAddSucceeded: boolean;
+  /** Producto del último add_cart_item exitoso de este turno. */
+  lastAddedProductId: string | null;
   /**
    * add, update de cantidad o remove con success en este turno.
    * Checkout pedido en el mismo turno no se delega: el carrito se presenta primero.
@@ -379,6 +382,7 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
     welcomeBodyText: null,
     presentProductCta: null,
     cartAddSucceeded: false,
+    lastAddedProductId: null,
     cartMutatedThisTurn: false,
     cartAddPendingGate: false,
     cartAddPendingAskMessage: null,
@@ -412,6 +416,14 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
       };
       if (m.name === 'add_cart_item' && data.success === true) {
         signals.cartAddSucceeded = true;
+        const added = data.added;
+        if (
+          added &&
+          typeof added === 'object' &&
+          typeof (added as { productId?: unknown }).productId === 'string'
+        ) {
+          signals.lastAddedProductId = (added as { productId: string }).productId;
+        }
       }
       if (toolMessageMutatedCart(m.name, data.success)) {
         signals.cartMutatedThisTurn = true;
@@ -1073,10 +1085,10 @@ export const runHybridReactAgent = async (
           },
         },
       });
-      const lastProductId =
-        signals.complementProductId ??
-        draft?.draft_order_item[0]?.product_id ??
-        null;
+      const lastProductId = productIdPersistedForComplement({
+        lastAddedProductId: signals.lastAddedProductId,
+        draftProductId: draft?.draft_order_item[0]?.product_id ?? null,
+      });
       if (draft && lastProductId) {
         const state = await findOrCreateConversationState(conversationId);
         const listMsg = await tryPresentComplementSuggestions({

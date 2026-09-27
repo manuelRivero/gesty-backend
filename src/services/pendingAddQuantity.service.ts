@@ -209,6 +209,7 @@ export const buildPendingAddQuantityContextLines = (
       `"solo una", "las tres", etc.) y llamá add_cart_item(productId, quantity=<n>` +
       (pending.variation ? `, variation="${pending.variation}"` : '') +
       `). Si cancela ("cancelar", "no", "mejor no"): clear_pending_add_quantity() y confirmá en texto breve. ` +
+      `Este turno es SOLO esa cantidad: PROHIBIDO add_cart_item de otro productId y PROHIBIDO encadenar otras líneas de la cola hasta un add exitoso de este producto o una cancelación explícita. ` +
       `NO asumas la sugerencia sin confirmación. NO ofrezcas complementos hasta un add exitoso.`,
   ];
 };

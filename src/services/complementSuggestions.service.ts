@@ -184,6 +184,14 @@ export type ComplementAddConfirm = {
   totalAmount: string | number;
 };
 
+/** Título post-add. El productId lo decide el alta que sí se persistió, no el del modelo. */
+export function productIdPersistedForComplement(params: {
+  lastAddedProductId: string | null;
+  draftProductId: string | null;
+}): string | null {
+  return params.lastAddedProductId ?? params.draftProductId;
+}
+
 export function buildComplementConfirmTitle(params: {
   itemName: string;
   quantity: number;

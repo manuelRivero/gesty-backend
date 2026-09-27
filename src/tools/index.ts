@@ -150,6 +150,32 @@ const toJson = (data: unknown): string => {
   }
 };
 
+/**
+ * Producto de pendingAddQuantity visto en este turno.
+ * Queda anotado en el acto, antes de cualquier await, y sobrevive al clear
+ * del alta correcta: un add paralelo de otro producto no escribe el carrito.
+ */
+const exclusiveAddProductByTurn = new Map<string, string>();
+
+const noteExclusiveAddProductForTurn = (params: {
+  conversationId: string;
+  turnStartedAt?: string | null;
+  productId: string;
+}): void => {
+  exclusiveAddProductByTurn.set(
+    `${params.conversationId}:${params.turnStartedAt ?? ''}`,
+    params.productId
+  );
+};
+
+const exclusiveAddProductForTurn = (params: {
+  conversationId: string;
+  turnStartedAt?: string | null;
+}): string | null =>
+  exclusiveAddProductByTurn.get(
+    `${params.conversationId}:${params.turnStartedAt ?? ''}`
+  ) ?? null;
+
 const PRODUCT_SHORTLIST_MAX_LIMIT = 12;
 
 /** Gate duro: sin personas no shortlist/add (salvo FAQ reserva / checkout / abandono). */
@@ -1731,6 +1757,53 @@ export const createPaymentLinkTool = new DynamicStructuredTool<
 // add_cart_item
 // ---------------------------------------------------------------------------
 
+const pendingQuantityOtherProductJson = (params: {
+  pendingProductId: string;
+  pendingProductName?: string | null;
+  suggestedQuantity?: number | null;
+}) =>
+  toJson({
+    success: false,
+    error: 'pending_quantity_other_product',
+    pending: true,
+    pendingProductId: params.pendingProductId,
+    ...(params.pendingProductName ? { pendingProductName: params.pendingProductName } : {}),
+    ...(params.suggestedQuantity != null
+      ? { suggestedQuantity: params.suggestedQuantity }
+      : {}),
+    instruction:
+      'Hay una cantidad pendiente de otro producto' +
+      (params.pendingProductName ? ` (*${params.pendingProductName}*)` : '') +
+      `. Este alta NO se escribió y el carrito no cambió. ` +
+      `Llamá add_cart_item SOLO con productId ${params.pendingProductId}. ` +
+      'PROHIBIDO present_complement_suggestions de este plato. NO digas que lo sumaste.',
+  });
+
+const blockOtherPendingQuantityProduct = (params: {
+  requestedProductId: string;
+  pending: {
+    productId: string;
+    productName: string;
+    suggestedQuantity: number;
+  } | null;
+  exclusiveProductId: string | null;
+}): string | null => {
+  const { requestedProductId, pending, exclusiveProductId } = params;
+  if (pending && pending.productId !== requestedProductId) {
+    return pendingQuantityOtherProductJson({
+      pendingProductId: pending.productId,
+      pendingProductName: pending.productName,
+      suggestedQuantity: pending.suggestedQuantity,
+    });
+  }
+  if (exclusiveProductId && exclusiveProductId !== requestedProductId) {
+    return pendingQuantityOtherProductJson({
+      pendingProductId: exclusiveProductId,
+    });
+  }
+  return null;
+};
+
 const addCartItemSchema = z.object({
   productId: z
     .string()
@@ -1953,6 +2026,32 @@ export const addCartItemTool = new DynamicStructuredTool<
 
       partySize = getRequestedPartySize(meta) ?? null;
       const pendingQty = getPendingAddQuantity(meta);
+      if (pendingQty) {
+        noteExclusiveAddProductForTurn({
+          conversationId,
+          turnStartedAt,
+          productId: pendingQty.productId,
+        });
+      }
+      const blocked = blockOtherPendingQuantityProduct({
+        requestedProductId: productId,
+        pending: pendingQty,
+        exclusiveProductId: exclusiveAddProductForTurn({
+          conversationId,
+          turnStartedAt,
+        }),
+      });
+      if (blocked) {
+        console.log(
+          JSON.stringify({
+            event: '[add_cart_item] pending_quantity_other_product',
+            conversationId,
+            productId,
+            pendingProductId: pendingQty?.productId ?? null,
+          })
+        );
+        return blocked;
+      }
       pendingReply = isPendingAddQuantityReply({
         pending: pendingQty,
         productId,
@@ -2211,6 +2310,37 @@ export const addCartItemTool = new DynamicStructuredTool<
       return { draft: row, newQty: lineQty, newTotal: total, createdDraft };
     };
 
+    if (conversationId) {
+      const latest = await findOrCreateConversationState(conversationId);
+      const latestPending = getPendingAddQuantity(latest.metadata);
+      if (latestPending) {
+        noteExclusiveAddProductForTurn({
+          conversationId,
+          turnStartedAt,
+          productId: latestPending.productId,
+        });
+      }
+      const blockedBeforeWrite = blockOtherPendingQuantityProduct({
+        requestedProductId: productId,
+        pending: latestPending,
+        exclusiveProductId: exclusiveAddProductForTurn({
+          conversationId,
+          turnStartedAt,
+        }),
+      });
+      if (blockedBeforeWrite) {
+        console.log(
+          JSON.stringify({
+            event: '[add_cart_item] pending_quantity_other_product',
+            conversationId,
+            productId,
+            phase: 'before_write',
+          })
+        );
+        return blockedBeforeWrite;
+      }
+    }
+
     const { draft, newQty, newTotal, createdDraft } =
       typeof prisma.$transaction === 'function'
         ? await prisma.$transaction((tx) => writeCartLine(tx, true))
@@ -2295,6 +2425,7 @@ export const addCartItemTool = new DynamicStructuredTool<
     return toJson({
       success: true,
       added: {
+        productId,
         itemName: item.name,
         variation: resolvedVariation,
         quantity: qty,

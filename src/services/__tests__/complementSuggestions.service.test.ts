@@ -55,9 +55,32 @@ import {
   presentComplementSuggestionBundle,
   presentItemNoteSuccessList,
   tryPresentComplementSuggestions,
+  productIdPersistedForComplement,
+  buildComplementConfirmTitle,
 } from '../complementSuggestions.service';
 
 describe('canSurfaceComplementOpportunity', () => {
+  it('el cierre usa el producto persistido, no el id que eligió el modelo', () => {
+    expect(
+      productIdPersistedForComplement({
+        lastAddedProductId: 'jugo',
+        draftProductId: 'ceviche',
+      })
+    ).toBe('jugo');
+    expect(
+      productIdPersistedForComplement({
+        lastAddedProductId: null,
+        draftProductId: 'jugo',
+      })
+    ).toBe('jugo');
+    const title = buildComplementConfirmTitle({
+      itemName: 'Jugo de pina',
+      quantity: 2,
+    });
+    expect(title).toContain('Jugo de pina');
+    expect(title).not.toContain('Ceviche');
+  });
+
   it('true con ledger vacío', () => {
     expect(canSurfaceComplementOpportunity({})).toBe(true);
   });
