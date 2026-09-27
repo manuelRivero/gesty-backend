@@ -23,6 +23,12 @@ vi.mock('../../services/menu.service', () => ({
   },
 }));
 
+vi.mock('../../repositories/conversationState.repository', () => ({
+  patchConversationMetadata: (...args: unknown[]) => patchConversationMetadata(...args),
+  omitConversationMetadataKeys: (...args: unknown[]) =>
+    omitConversationMetadataKeys(...args),
+}));
+
 vi.mock('../../repositories', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../repositories')>();
   return {
@@ -142,5 +148,54 @@ describe('search_products count 0 y cola de pedido', () => {
     expect(result.lineClosed).toBeUndefined();
     expect(result.instruction).toMatch(/Turno de reserva/);
     expect(patchConversationMetadata).not.toHaveBeenCalled();
+  });
+});
+
+describe('search_products — dos nombres para el mismo keyword', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    patchConversationMetadata.mockResolvedValue(undefined);
+    omitConversationMetadataKeys.mockResolvedValue(undefined);
+    findOrCreateConversationState.mockResolvedValue({
+      metadata: { peopleCount: 3 },
+    });
+  });
+
+  it('pide la lista solo con los platos que se llaman como la búsqueda y no suma vecinos', async () => {
+    searchMenuItemsByKeyword.mockResolvedValue([
+      { id: 'cev-1', name: 'Ceviche Clásico', serves_people: 2 },
+      { id: 'cev-2', name: 'Ceviche clasico con variaciones', serves_people: 1 },
+      { id: 'tir-1', name: 'Tiradito de pescado', serves_people: 1 },
+    ]);
+
+    const result = JSON.parse((await callSearch('ceviche')) as string);
+
+    expect(result.ambiguousProductIds).toEqual(['cev-1', 'cev-2']);
+    expect(result.instruction).toMatch(/present_product_cta\(SELECT_FROM_LIST\)/);
+    expect(result.instruction).toMatch(/PROHIBIDO add_cart_item/);
+    expect(result.items.map((item: { id: string }) => item.id)).toEqual([
+      'cev-1',
+      'cev-2',
+      'tir-1',
+    ]);
+    expect(patchConversationMetadata).toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({
+        candidateProductIds: ['cev-1', 'cev-2'],
+        pendingQuestion: 'ceviche',
+      })
+    );
+  });
+
+  it('un solo nombre coincidente no arma la lista de ambigüedad', async () => {
+    searchMenuItemsByKeyword.mockResolvedValue([
+      { id: 'cev-1', name: 'Ceviche Clásico', serves_people: 2 },
+      { id: 'tir-1', name: 'Tiradito de pescado', serves_people: 1 },
+    ]);
+
+    const result = JSON.parse((await callSearch('ceviche')) as string);
+
+    expect(result.ambiguousProductIds).toBeUndefined();
+    expect(result.instruction).toMatch(/platos exactos/);
   });
 });

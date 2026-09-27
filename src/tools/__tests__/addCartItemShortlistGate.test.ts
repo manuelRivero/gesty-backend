@@ -8,7 +8,7 @@ import { Prisma } from '@prisma/client';
 vi.mock('../../lib/prisma', () => ({
   prisma: {
     draft_order: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
-    menu_item: { findFirst: vi.fn() },
+    menu_item: { findFirst: vi.fn(), findMany: vi.fn() },
     draft_order_item: {
       findFirst: vi.fn(),
       create: vi.fn(),
@@ -145,5 +145,35 @@ describe('add_cart_item — shortlistAwaitingChoice', () => {
     expect(result.error).not.toBe('shortlist_selection_required');
     expect(result.success).toBe(true);
     expect(prisma.draft_order_item.create).toHaveBeenCalled();
+  });
+
+  it('rechaza el alta si dos nombres coinciden con la búsqueda', async () => {
+    const otherId = '22222222-2222-2222-2222-222222222222';
+    const meta = {
+      peopleCount: 2,
+      requestedPartySize: 2,
+      shortlistAwaitingChoice: true,
+      pendingProductSelection: true,
+      pendingQuestion: 'ceviche',
+      candidateProductIds: [PRODUCT_ID, otherId],
+    };
+    findOrCreateConversationState.mockResolvedValue({ metadata: meta });
+    vi.mocked(prisma.menu_item.findMany).mockResolvedValue([
+      { id: PRODUCT_ID, name: 'Ceviche Clásico' },
+      { id: otherId, name: 'Ceviche clasico con variaciones' },
+    ] as never);
+
+    const result = JSON.parse(
+      (await addCartItemTool.func(
+        { productId: PRODUCT_ID, quantity: 1 },
+        undefined,
+        CONFIG
+      )) as string
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('ambiguous_product_name');
+    expect(result.productIds).toEqual([PRODUCT_ID, otherId]);
+    expect(prisma.draft_order_item.create).not.toHaveBeenCalled();
   });
 });

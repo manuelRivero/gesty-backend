@@ -235,6 +235,65 @@ const SHORTLIST_CHOICE_INSTRUCTION =
   'Si encontrás los platos exactos que el cliente pidió, usá add_cart_item directamente con sus IDs. ' +
   'Solo usá present_product_cta(SELECT_FROM_LIST) si el pedido fue realmente ambiguo y necesitás que el cliente elija.';
 
+const NAME_MATCH_STOPWORDS = new Set([
+  'de',
+  'del',
+  'la',
+  'las',
+  'el',
+  'los',
+  'un',
+  'una',
+  'con',
+  'sin',
+  'al',
+  'a',
+  'y',
+  'en',
+  'para',
+  'por',
+]);
+
+/** Tokens del keyword o del nombre: sin acentos, sin artículos, singular simple. */
+const nameMatchTokens = (value: string): Set<string> => {
+  const tokens = value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((token) => token.length >= 3 && !NAME_MATCH_STOPWORDS.has(token))
+    .map((token) => (token.endsWith('s') && token.length > 3 ? token.slice(0, -1) : token));
+  return new Set(tokens);
+};
+
+/**
+ * Platos cuyo nombre contiene todas las palabras de la búsqueda.
+ * "ceviche" matchea "Ceviche Clásico" y "Ceviche con variaciones"; no matchea un tiradito cercano.
+ */
+export const productIdsMatchingSearchKeyword = (
+  keyword: string,
+  items: Array<{ id: string; name?: string | null }>
+): string[] => {
+  const keywordTokens = nameMatchTokens(keyword);
+  if (keywordTokens.size === 0) return [];
+  return items
+    .filter((item) => {
+      const nameTokens = nameMatchTokens(item.name ?? '');
+      for (const token of keywordTokens) {
+        if (!nameTokens.has(token)) return false;
+      }
+      return true;
+    })
+    .map((item) => item.id);
+};
+
+const nameAmbiguousInstruction = (productIds: string[]): string =>
+  `Hay ${productIds.length} platos cuyo nombre coincide con la búsqueda y ninguno es el nombre pedido. ` +
+  'No hay un plato exacto. PROHIBIDO add_cart_item. ' +
+  `Llamá present_product_cta(SELECT_FROM_LIST) con productIds: ${productIds.join(', ')}. ` +
+  'Intro corta, sin listar platos, porciones ni precios.';
+
 /** Shortlist en turno de reserva: es un dato de menú, no un paso de pedido. */
 const RESERVATION_MENU_DATA_INSTRUCTION =
   'Turno de reserva: respondé la consulta con estos datos (nombre, ración, precio) y cerrá. ' +
@@ -316,10 +375,12 @@ export const searchProductsTool = new DynamicStructuredTool<
     if (partyGate) return partyGate;
     const items = await MenuService.searchMenuItemsByKeyword({ businessId, keyword });
     const shortlisted = items.slice(0, PRODUCT_SHORTLIST_MAX_LIMIT);
+    const nameMatchIds = productIdsMatchingSearchKeyword(keyword, shortlisted);
+    const nameAmbiguous = !reservationTurn && nameMatchIds.length >= 2;
     if (!reservationTurn) {
       await markShortlistAwaitingChoice(
         conversationId,
-        shortlisted.map((i) => i.id),
+        nameAmbiguous ? nameMatchIds : shortlisted.map((i) => i.id),
         keyword
       );
     }
@@ -360,9 +421,14 @@ export const searchProductsTool = new DynamicStructuredTool<
                 ? searchMissInstruction(lineClosed)
                 : SEARCH_NOT_FOUND_INSTRUCTION,
             }
-          : shortlisted.length >= 2
-            ? { instruction: SHORTLIST_CHOICE_INSTRUCTION }
-            : {}),
+          : nameAmbiguous
+            ? {
+                instruction: nameAmbiguousInstruction(nameMatchIds),
+                ambiguousProductIds: nameMatchIds,
+              }
+            : shortlisted.length >= 2
+              ? { instruction: SHORTLIST_CHOICE_INSTRUCTION }
+              : {}),
       items: shortlisted.map((item) =>
         toShortlistItem({
           ...item,
@@ -1786,6 +1852,36 @@ export const addCartItemTool = new DynamicStructuredTool<
               'llamá mark_complement_refused() y present_cart (o confirmá el pedido breve). ' +
               'PROHIBIDO add_cart_item sin que el cliente nombre un candidato. ' +
               'Si quiere uno de la lista, pedí que lo nombre.',
+          });
+        }
+      }
+
+      const pendingQuestion = meta.pendingQuestion?.trim();
+      if (
+        meta.shortlistAwaitingChoice === true &&
+        pendingQuestion &&
+        complementCandidates.length >= 2 &&
+        complementCandidates.includes(productId)
+      ) {
+        const rows = await prisma.menu_item.findMany({
+          where: { id: { in: complementCandidates }, business_id: businessId },
+          select: { id: true, name: true },
+        });
+        const matched = productIdsMatchingSearchKeyword(pendingQuestion, rows);
+        if (matched.length >= 2 && matched.includes(productId)) {
+          console.log(
+            JSON.stringify({
+              event: '[add_cart_item] ambiguous_product_name',
+              conversationId,
+              productId,
+            })
+          );
+          return toJson({
+            success: false,
+            error: 'ambiguous_product_name',
+            pending: true,
+            productIds: matched,
+            instruction: nameAmbiguousInstruction(matched),
           });
         }
       }
