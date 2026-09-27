@@ -12,6 +12,7 @@ import {
   normalizeOrderLineInput,
   ORDER_LINES_MAX,
   parsePendingOrderLines,
+  resolveMissedSearchOrderLine,
   resolveOrderLineForProduct,
   ingredientFilterCarvesDishHint,
   buildOrderLineSearchInstruction,
@@ -165,6 +166,25 @@ describe('pendingOrderLines.service', () => {
       expect(ingredientFilterCarvesDishHint('papas a la huancaína', 'maní')).toBe(false);
       expect(ingredientFilterCarvesDishHint('papas a la huancaína', null)).toBe(false);
       expect(ingredientFilterCarvesDishHint('papas a la huancaína', '  ')).toBe(false);
+    });
+
+    it('resolveMissedSearchOrderLine cierra el hint cubierto y no un recorte ni otro plato', () => {
+      const pending = basePending();
+      expect(resolveMissedSearchOrderLine(pending, 'lomo saltado')?.id).toBe('l1');
+      expect(resolveMissedSearchOrderLine(pending, 'lomo')).toBeNull();
+      expect(resolveMissedSearchOrderLine(pending, 'ceviche')?.id).toBe('l2');
+      expect(resolveMissedSearchOrderLine(pending, 'papa')).toBeNull();
+      expect(resolveMissedSearchOrderLine(null, 'lomo')).toBeNull();
+    });
+
+    it('resolveMissedSearchOrderLine con empate prefiere la línea activa', () => {
+      const pending = basePending({
+        lines: [
+          { id: 'q', hint: 'lomo', requestedQuantity: null, status: 'queued' },
+          { id: 'a', hint: 'lomo', requestedQuantity: null, status: 'active' },
+        ],
+      });
+      expect(resolveMissedSearchOrderLine(pending, 'lomo')?.id).toBe('a');
     });
 
     it('buildOrderLineSearchInstruction nombra vectorial para plato y categoría para sección', () => {

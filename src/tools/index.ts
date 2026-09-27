@@ -94,6 +94,7 @@ import {
   ingredientFilterCarvesDishHint,
   buildOrderLineSearchInstruction,
   ORDER_LINES_MAX,
+  resolveMissedSearchOrderLine,
   resolveOrderLineForProduct,
   setPendingOrderLines,
   type OrderLine,
@@ -195,22 +196,39 @@ const reservationSessionRequiredFromMeta = (
  */
 const readOrderingTurnScope = async (
   conversationId: string
-): Promise<{ partyGate: string | null; reservationTurn: boolean }> => {
+): Promise<{ partyGate: string | null; reservationTurn: boolean; metadata: unknown }> => {
   const state = await findOrCreateConversationState(conversationId);
   return {
     partyGate: isPartySizeMissingForOrderingTools(state.metadata)
       ? toJson(PARTY_SIZE_REQUIRED_TOOL_PAYLOAD)
       : null,
     reservationTurn: isReservationFaqMode(state.metadata),
+    metadata: state.metadata,
   };
 };
 
 /** Búsqueda semántica sin ningún hit bajo el umbral de distancia. */
 const SEARCH_NOT_FOUND_INSTRUCTION =
   'Ningún plato de la carta está cerca de esta búsqueda (count 0). ' +
-  'Decile al cliente que no lo tenemos. ' +
+  'Decile al cliente que no lo tenemos, una sola vez en este mensaje. ' +
+  'En turnos siguientes no vuelvas a nombrar ese plato salvo que el cliente lo pida de nuevo. ' +
   'PROHIBIDO present_product_cta, PROHIBIDO ofrecer otros platos como si fueran ese pedido, ' +
   'y PROHIBIDO decir que hay opciones de la palabra que buscó.';
+
+const searchMissInstruction = (closed: {
+  hint: string;
+  queueFollowUp: { instruction: string } | null;
+}): string => {
+  const once =
+    `La línea "${closed.hint}" ya se canceló (lineClosed). ` +
+    `Decilo en ESTE mensaje, una sola vez. ` +
+    `En turnos siguientes no vuelvas a nombrar "${closed.hint}" salvo que el cliente lo pida de nuevo. ` +
+    'PROHIBIDO cancel_order_line de esa línea y PROHIBIDO volver a buscarla.';
+  if (closed.queueFollowUp) {
+    return `${SEARCH_NOT_FOUND_INSTRUCTION} ${once} ${closed.queueFollowUp.instruction}`;
+  }
+  return `${SEARCH_NOT_FOUND_INSTRUCTION} ${once} No quedan otras líneas de la cola.`;
+};
 
 /** Shortlist en turno de pedido: agregar si el plato está claro; listar solo si es ambiguo. */
 const SHORTLIST_CHOICE_INSTRUCTION =
@@ -294,7 +312,7 @@ export const searchProductsTool = new DynamicStructuredTool<
   func: async ({ keyword }: SearchProductsInput, _runManager, config?: RunnableConfig) => {
     console.log(JSON.stringify({ event: '[tool:start]', tool: 'search_products', args: { keyword } }));
     const { businessId, conversationId } = getReactContext(config);
-    const { partyGate, reservationTurn } = await readOrderingTurnScope(conversationId);
+    const { partyGate, reservationTurn, metadata } = await readOrderingTurnScope(conversationId);
     if (partyGate) return partyGate;
     const items = await MenuService.searchMenuItemsByKeyword({ businessId, keyword });
     const shortlisted = items.slice(0, PRODUCT_SHORTLIST_MAX_LIMIT);
@@ -305,14 +323,43 @@ export const searchProductsTool = new DynamicStructuredTool<
         keyword
       );
     }
+    const missedLine =
+      !reservationTurn && shortlisted.length === 0
+        ? resolveMissedSearchOrderLine(getPendingOrderLines(metadata), keyword)
+        : null;
+    let lineClosed: { hint: string; queueFollowUp: { instruction: string } | null } | null =
+      null;
+    if (missedLine && conversationId) {
+      const nextPending = await cancelOrderLine({
+        conversationId,
+        metadata,
+        lineId: missedLine.id,
+      });
+      lineClosed = {
+        hint: missedLine.hint,
+        queueFollowUp: nextPending ? buildOrderLinesContinueOrCancelHint(nextPending) : null,
+      };
+    }
     return toJson({
       count: shortlisted.length,
       totalMatches: items.length,
       hasMore: items.length > shortlisted.length,
+      ...(lineClosed
+        ? {
+            lineClosed: { hint: lineClosed.hint },
+            ...(lineClosed.queueFollowUp
+              ? { queueFollowUp: lineClosed.queueFollowUp }
+              : { queueEmpty: true }),
+          }
+        : {}),
       ...(reservationTurn
         ? { instruction: RESERVATION_MENU_DATA_INSTRUCTION }
         : shortlisted.length === 0
-          ? { instruction: SEARCH_NOT_FOUND_INSTRUCTION }
+          ? {
+              instruction: lineClosed
+                ? searchMissInstruction(lineClosed)
+                : SEARCH_NOT_FOUND_INSTRUCTION,
+            }
           : shortlisted.length >= 2
             ? { instruction: SHORTLIST_CHOICE_INSTRUCTION }
             : {}),

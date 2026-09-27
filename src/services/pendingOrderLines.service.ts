@@ -197,6 +197,47 @@ export const buildOrderLineSearchInstruction = (hint: string): string =>
  * Sin solapamiento de tokens devuelve null: mejor caer al flujo de hoy que
  * aplicar la cantidad de otra línea.
  */
+/**
+ * Línea abierta que esta búsqueda (count 0) ya agotó.
+ *
+ * Valida el keyword de `search_products` contra el hint de la cola: no mira
+ * el mensaje del cliente. Cubre el plato entero (cada token del hint está en
+ * el keyword). Un recorte ("papa" contra "papas a la huancaína") no cierra
+ * la línea: esa búsqueda no fue del plato.
+ */
+export const resolveMissedSearchOrderLine = (
+  pending: PendingOrderLines | null,
+  keyword: string
+): OrderLine | null => {
+  if (!pending) return null;
+  const keywordTokens = dishTokens(keyword);
+  if (keywordTokens.size === 0) return null;
+
+  const open = pending.lines.filter(
+    (l) => l.status === 'queued' || l.status === 'active'
+  );
+
+  let best: { line: OrderLine; score: number } | null = null;
+  for (const line of open) {
+    if (ingredientFilterCarvesDishHint(line.hint, keyword)) continue;
+    const hintTokens = dishTokens(line.hint);
+    if (hintTokens.size === 0) continue;
+    let covered = 0;
+    for (const token of hintTokens) {
+      if (keywordTokens.has(token)) covered += 1;
+    }
+    if (covered !== hintTokens.size) continue;
+    const prefer =
+      !best ||
+      covered > best.score ||
+      (covered === best.score &&
+        line.status === 'active' &&
+        best.line.status !== 'active');
+    if (prefer) best = { line, score: covered };
+  }
+  return best?.line ?? null;
+};
+
 export const resolveOrderLineForProduct = (
   pending: PendingOrderLines | null,
   productName: string

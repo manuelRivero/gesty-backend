@@ -229,6 +229,8 @@ describe('botPersonality', () => {
   it('hybrid cola: plato → search_products(hint); sección → categoría, no recortar containsIngredient', () => {
     const hybrid = buildHybridAgentSystemPrompt();
     expect(hybrid).toMatch(/search_products\(keyword=<hint exacto>/i);
+    expect(hybrid).toMatch(/lineClosed/);
+    expect(hybrid).toMatch(/una sola vez/i);
     expect(hybrid).toMatch(/containsIngredient.*papas a la huancaína/i);
     expect(hybrid).toMatch(/algo de beber/i);
     expect(hybrid).toMatch(/present_category/i);
