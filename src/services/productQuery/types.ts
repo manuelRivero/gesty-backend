@@ -145,12 +145,14 @@ export type ConversationMetadata = {
   peopleCount?: number;
   /**
    * Comida que una tool de pedido ya traía cuando faltaban las personas.
-   * Prosa en [ESTADO DEL CLIENTE]; se borra al guardar el número.
+   * Sobrevive a save_party_size. Se borra al pasar a la cola o al carrito,
+   * al cancelar, o cuando un lookup de otro turno la reemplaza.
    */
   pendingPartySizeOrder?: {
     source: 'plan' | 'lookup';
     summary: string;
     setAt: string;
+    turnStartedAt?: string | null;
   } | null;
   /** @deprecated Lectura legacy; preferir requestedPartySize. */
   pendingProductQueryQuantity?: number;

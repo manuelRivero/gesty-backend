@@ -10,6 +10,7 @@ import { getIntentCatalogEntry, type IntentCandidate } from '../domain/intent/fa
 import { computeCatalogPermission, type IntentLedgerEntry } from './intent/activeIntent.service';
 import { patchIntentLedgerEntry } from './intentLedger.repository';
 import {
+  findOrCreateConversationState,
   omitConversationMetadataKeys,
   patchConversationMetadata,
 } from '../repositories';
@@ -66,7 +67,8 @@ export const PARTY_SIZE_REQUIRED_TOOL_PAYLOAD = {
 /**
  * Comida que la tool de pedido ya traía cuando el gate de personas la frenó.
  * `plan` (plan_order_lines) gana sobre búsquedas del mismo turno.
- * Una línea de prosa en [ESTADO DEL CLIENTE]; se borra en save_party_size.
+ * Una línea de prosa en [ESTADO DEL CLIENTE]. save_party_size no la borra:
+ * se va al pasar a la cola o al carrito, al cancelar, o si un lookup de otro turno la reemplaza.
  */
 export const PENDING_PARTY_SIZE_ORDER_KEY = 'pendingPartySizeOrder' as const;
 
@@ -78,6 +80,8 @@ export type PendingPartySizeOrder = {
   source: PartySizeBlockedFoodSource;
   summary: string;
   setAt: string;
+  /** Inicio del turno ReAct que escribió este pending. Cruza turnos, no el texto. */
+  turnStartedAt?: string | null;
 };
 
 const collapseFoodText = (value: string): string => value.replace(/\s+/g, ' ').trim();
@@ -95,7 +99,12 @@ export const getPendingPartySizeOrder = (
   if (raw.source !== 'plan' && raw.source !== 'lookup') return null;
   if (typeof raw.summary !== 'string' || !raw.summary.trim()) return null;
   if (typeof raw.setAt !== 'string' || !raw.setAt) return null;
-  return { source: raw.source, summary: raw.summary.trim(), setAt: raw.setAt };
+  return {
+    source: raw.source,
+    summary: raw.summary.trim(),
+    setAt: raw.setAt,
+    ...(typeof raw.turnStartedAt === 'string' ? { turnStartedAt: raw.turnStartedAt } : {}),
+  };
 };
 
 /** Arma el resumen de plan_order_lines / filtro / add. No mira el mensaje del cliente. */
@@ -145,20 +154,36 @@ export const summarizeBlockedAdd = (input: {
   return variation ? `${qty}${name} (${variation})` : `${qty}${name}`;
 };
 
+const samePartySizeTurn = (
+  current: PendingPartySizeOrder,
+  incomingTurn: string | null | undefined
+): boolean => {
+  if (!incomingTurn || !current.turnStartedAt) return true;
+  return current.turnStartedAt === incomingTurn;
+};
+
 /**
- * plan pisa lo ya guardado. lookup se suma si todavía no está.
- * Un lookup no pisa un plan: la cola ya trae todos los platos.
+ * plan pisa lo ya guardado. lookup del mismo turno se suma.
+ * Un lookup no pisa un plan. Un lookup de otro turno reemplaza un lookup viejo.
  */
 export const mergePartySizeBlockedFood = (
   current: PendingPartySizeOrder | null,
-  incoming: { source: PartySizeBlockedFoodSource; summary: string }
+  incoming: {
+    source: PartySizeBlockedFoodSource;
+    summary: string;
+    turnStartedAt?: string | null;
+  }
 ): PendingPartySizeOrder | null => {
   const piece = clipFoodSummary(collapseFoodText(incoming.summary));
   if (!piece) return current;
-  if (current?.source === 'plan' && incoming.source === 'lookup') return current;
   const setAt = new Date().toISOString();
+  const turnStartedAt = incoming.turnStartedAt ?? null;
   if (incoming.source === 'plan' || !current) {
-    return { source: incoming.source, summary: piece, setAt };
+    return { source: incoming.source, summary: piece, setAt, turnStartedAt };
+  }
+  if (current.source === 'plan') return current;
+  if (!samePartySizeTurn(current, turnStartedAt)) {
+    return { source: 'lookup', summary: piece, setAt, turnStartedAt };
   }
   const parts = current.summary.split(', ').map((part) => part.toLowerCase());
   if (parts.includes(piece.toLowerCase())) return current;
@@ -166,6 +191,7 @@ export const mergePartySizeBlockedFood = (
     source: 'lookup',
     summary: clipFoodSummary(`${current.summary}, ${piece}`),
     setAt: current.setAt,
+    turnStartedAt: current.turnStartedAt ?? null,
   };
 };
 
@@ -184,30 +210,67 @@ export const partySizeRequiredPayload = (heldOrder?: string | null) => {
 export const buildPendingPartySizeOrderContextLines = (metadata: unknown): string[] => {
   const pending = getPendingPartySizeOrder(metadata);
   if (!pending) return [];
+  const resume =
+    'Retomalo (si hay varios platos, plan_order_lines; si no, search_products o add_cart_item). ' +
+    'No lo trates como ya sumado.';
+  if (getRequestedPartySize(normalizeMetadata(metadata)) != null) {
+    return [
+      `- Pedido en espera (personas ya guardadas): ${pending.summary}. ${resume}`,
+    ];
+  }
   return [
     `- Pedido en espera del número: ${pending.summary}. ` +
-      'Preguntá las personas; cuando save_party_size guarde el número, retomá ese pedido ' +
-      '(si hay varios platos, plan_order_lines; si no, search_products o add_cart_item). ' +
-      'No lo trates como ya sumado.',
+      `Preguntá las personas; cuando save_party_size guarde el número, ${resume}`,
   ];
+};
+
+/**
+ * Cola por conversación. Las tools en paralelo leen, fusionan y escriben
+ * una detrás de la otra, releyendo la fila, en este proceso.
+ * No es un lock global ni cambia patchConversationMetadata.
+ */
+const rememberQueues = new Map<string, Promise<unknown>>();
+
+const enqueuePartySizeRemember = <T>(
+  conversationId: string,
+  task: () => Promise<T>
+): Promise<T> => {
+  const previous = rememberQueues.get(conversationId) ?? Promise.resolve();
+  const run = previous.then(task, task);
+  rememberQueues.set(conversationId, run);
+  void run.finally(() => {
+    if (rememberQueues.get(conversationId) === run) {
+      rememberQueues.delete(conversationId);
+    }
+  });
+  return run;
 };
 
 export const rememberPartySizeBlockedFood = async (
   conversationId: string,
-  metadata: unknown,
-  incoming: { source: PartySizeBlockedFoodSource; summary: string }
-): Promise<string | null> => {
-  const current = getPendingPartySizeOrder(metadata);
-  const next = mergePartySizeBlockedFood(current, incoming);
-  if (!next) return current?.summary ?? null;
-  if (current && current.summary === next.summary && current.source === next.source) {
-    return current.summary;
-  }
-  await patchConversationMetadata(conversationId, {
-    pendingPartySizeOrder: next,
+  incoming: { source: PartySizeBlockedFoodSource; summary: string },
+  turnStartedAt?: string | null
+): Promise<string | null> =>
+  enqueuePartySizeRemember(conversationId, async () => {
+    const state = await findOrCreateConversationState(conversationId);
+    const current = getPendingPartySizeOrder(state.metadata);
+    const next = mergePartySizeBlockedFood(current, {
+      ...incoming,
+      turnStartedAt,
+    });
+    if (!next) return current?.summary ?? null;
+    if (
+      current &&
+      current.summary === next.summary &&
+      current.source === next.source
+    ) {
+      return current.summary;
+    }
+    await patchConversationMetadata(conversationId, {
+      pendingPartySizeOrder: next,
+    });
+    return next.summary;
   });
-  return next.summary;
-};
 
 export const clearPendingPartySizeOrder = async (
   conversationId: string

@@ -156,24 +156,27 @@ const PRODUCT_SHORTLIST_MAX_LIMIT = 12;
 const rejectMissingPartySize = async (
   conversationId: string,
   metadata: unknown,
-  food?: { source: PartySizeBlockedFoodSource; summary: string } | null
+  food?: { source: PartySizeBlockedFoodSource; summary: string } | null,
+  turnStartedAt?: string | null
 ): Promise<string | null> => {
   if (!isPartySizeMissingForOrderingTools(metadata)) return null;
   const held = food?.summary.trim()
-    ? await rememberPartySizeBlockedFood(conversationId, metadata, {
-        source: food.source,
-        summary: food.summary,
-      })
+    ? await rememberPartySizeBlockedFood(
+        conversationId,
+        { source: food.source, summary: food.summary },
+        turnStartedAt
+      )
     : (getPendingPartySizeOrder(metadata)?.summary ?? null);
   return toJson(partySizeRequiredPayload(held));
 };
 
 const partySizeOrderingGateJson = async (
   conversationId: string,
-  food?: { source: PartySizeBlockedFoodSource; summary: string } | null
+  food?: { source: PartySizeBlockedFoodSource; summary: string } | null,
+  turnStartedAt?: string | null
 ): Promise<string | null> => {
   const state = await findOrCreateConversationState(conversationId);
-  return rejectMissingPartySize(conversationId, state.metadata, food);
+  return rejectMissingPartySize(conversationId, state.metadata, food, turnStartedAt);
 };
 
 /**
@@ -389,12 +392,14 @@ export const searchProductsTool = new DynamicStructuredTool<
   schema: searchProductsSchema,
   func: async ({ keyword }: SearchProductsInput, _runManager, config?: RunnableConfig) => {
     console.log(JSON.stringify({ event: '[tool:start]', tool: 'search_products', args: { keyword } }));
-    const { businessId, conversationId } = getReactContext(config);
+    const { businessId, conversationId, turnStartedAt } = getReactContext(config);
     const { reservationTurn, metadata } = await readOrderingTurnScope(conversationId);
-    const partyHeld = await rejectMissingPartySize(conversationId, metadata, {
-      source: 'lookup',
-      summary: keyword,
-    });
+    const partyHeld = await rejectMissingPartySize(
+      conversationId,
+      metadata,
+      { source: 'lookup', summary: keyword },
+      turnStartedAt
+    );
     if (partyHeld) return partyHeld;
     const items = await MenuService.searchMenuItemsByKeyword({ businessId, keyword });
     const shortlisted = items.slice(0, PRODUCT_SHORTLIST_MAX_LIMIT);
@@ -1002,17 +1007,22 @@ export const findProductsByFilterTool = new DynamicStructuredTool<
     _runManager,
     config?: RunnableConfig
   ) => {
-    const { businessId, conversationId } = getReactContext(config);
+    const { businessId, conversationId, turnStartedAt } = getReactContext(config);
     const { reservationTurn, metadata } = await readOrderingTurnScope(conversationId);
-    const partyHeld = await rejectMissingPartySize(conversationId, metadata, {
-      source: 'lookup',
-      summary: summarizeBlockedFilter({
-        categoryTag,
-        containsIngredient,
-        excludesIngredient,
-        minServesPeople,
-      }),
-    });
+    const partyHeld = await rejectMissingPartySize(
+      conversationId,
+      metadata,
+      {
+        source: 'lookup',
+        summary: summarizeBlockedFilter({
+          categoryTag,
+          containsIngredient,
+          excludesIngredient,
+          minServesPeople,
+        }),
+      },
+      turnStartedAt
+    );
     if (partyHeld) return partyHeld;
 
     const ingredientContainsEarly = containsIngredient?.trim();
@@ -1843,14 +1853,18 @@ export const addCartItemTool = new DynamicStructuredTool<
     let pendingReply = false;
     let orderLine: OrderLine | null = null;
     if (conversationId) {
-      const partyGate = await partySizeOrderingGateJson(conversationId, {
-        source: 'lookup',
-        summary: summarizeBlockedAdd({
-          name: item.name,
-          quantity,
-          variation,
-        }),
-      });
+      const partyGate = await partySizeOrderingGateJson(
+        conversationId,
+        {
+          source: 'lookup',
+          summary: summarizeBlockedAdd({
+            name: item.name,
+            quantity,
+            variation,
+          }),
+        },
+        turnStartedAt
+      );
       if (partyGate) return partyGate;
 
       const state = await findOrCreateConversationState(conversationId);
@@ -2176,6 +2190,7 @@ export const addCartItemTool = new DynamicStructuredTool<
     if (conversationId) {
       await clearPendingVariation(conversationId);
       await clearPendingAddQuantity(conversationId);
+      await clearPendingPartySizeOrder(conversationId);
       await clearLastOffer(conversationId);
       await omitConversationMetadataKeys(conversationId, [
         ...PENDING_PRODUCT_SELECTION_KEYS,
@@ -2960,7 +2975,6 @@ export const savePartySizeTool = new DynamicStructuredTool<
     const state = await findOrCreateConversationState(conversationId);
     const held = getPendingPartySizeOrder(state.metadata);
     await patchConversationMetadata(conversationId, partySizeMetadataFields(count));
-    if (held) await clearPendingPartySizeOrder(conversationId);
     return toJson({
       success: true,
       partySize: count,
@@ -3494,20 +3508,26 @@ export const planOrderLinesTool = new DynamicStructuredTool<
     _runManager,
     config?: RunnableConfig
   ) => {
-    const { conversationId } = getReactContext(config);
+    const { conversationId, turnStartedAt } = getReactContext(config);
     if (!conversationId) {
       return toJson({ success: false, error: 'no_conversation' });
     }
-    const partyGate = await partySizeOrderingGateJson(conversationId, {
-      source: 'plan',
-      summary: summarizeBlockedOrderLines(lines),
-    });
+    const partyGate = await partySizeOrderingGateJson(
+      conversationId,
+      {
+        source: 'plan',
+        summary: summarizeBlockedOrderLines(lines),
+      },
+      turnStartedAt
+    );
     if (partyGate) return partyGate;
     const pending = await setPendingOrderLines({
       conversationId,
       lines,
       sourceMessage: lines.map((l) => l.hint).join(', '),
     });
+    // La cola ya es la representación persistente de esa comida.
+    await clearPendingPartySizeOrder(conversationId);
     // Multi-línea pisa la ola de complemento: la cola manda; sin soft-gate ni
     // otra opportunity hasta vaciar pendingOrderLines.
     await omitConversationMetadataKeys(conversationId, [

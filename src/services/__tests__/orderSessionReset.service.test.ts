@@ -38,6 +38,11 @@ describe('clearOrderSessionAfterCancel', () => {
     vi.mocked(prisma.conversation_state.findUnique).mockResolvedValue({
       metadata: {
         peopleCountResume: { userMessage: 'ceviche', detection: { intent: 'PRODUCT_QUERY' } },
+        pendingPartySizeOrder: {
+          source: 'plan',
+          summary: '1× ceviche',
+          setAt: '2026-09-27T00:00:00.000Z',
+        },
         awaitingPartySize: true,
         checkout_active: true,
         lastOffer: { kind: 'ADD_ITEM', productId: 'p1', productName: 'X', suggestedQuantity: 1, offeredAt: '', source: 'hybrid_cta' },

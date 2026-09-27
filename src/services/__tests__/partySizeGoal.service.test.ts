@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('../../repositories', () => ({
   patchConversationMetadata: vi.fn(),
   omitConversationMetadataKeys: vi.fn(),
+  findOrCreateConversationState: vi.fn(),
 }));
 
 vi.mock('../../lib/prisma', () => ({
@@ -38,7 +39,7 @@ import {
   rankActiveIntent,
 } from '../intent/activeIntent.service';
 import { getIntentCatalogEntry } from '../../domain/intent/family';
-import { patchConversationMetadata } from '../../repositories';
+import { findOrCreateConversationState, patchConversationMetadata } from '../../repositories';
 
 const EMPTY_LEDGER: PartySizeGoalLedger = {
   abandonment: false,
@@ -320,6 +321,30 @@ describe('pedido en espera del número', () => {
     expect(lookupAfterPlan?.source).toBe('plan');
   });
 
+  it('un lookup de otro turno reemplaza al anterior y no se suma', () => {
+    const previous = {
+      ...parked,
+      turnStartedAt: 'turn-1',
+    };
+    const next = mergePartySizeBlockedFood(previous, {
+      source: 'lookup',
+      summary: 'pizza',
+      turnStartedAt: 'turn-2',
+    });
+    expect(next?.source).toBe('lookup');
+    expect(next?.summary).toBe('pizza');
+  });
+
+  it('con personas ya guardadas la línea sigue trayendo el pedido', () => {
+    const lines = buildPendingPartySizeOrderContextLines({
+      peopleCount: 3,
+      requestedPartySize: 3,
+      pendingPartySizeOrder: { ...parked, summary: '1× ceviche' },
+    });
+    expect(lines.join('\n')).toMatch(/Pedido en espera \(personas ya guardadas\): 1× ceviche/);
+    expect(lines.join('\n')).toMatch(/plan_order_lines/);
+  });
+
   it('no duplica la misma búsqueda y no escribe vacío', () => {
     expect(
       mergePartySizeBlockedFood(parked, { source: 'lookup', summary: 'ceviche' })
@@ -335,18 +360,20 @@ describe('pedido en espera del número', () => {
     expect(lines.join('\n')).toMatch(/save_party_size/);
 
     const payload = partySizeRequiredPayload('ceviche, lomo');
-    expect(payload.heldOrder).toBe('ceviche, lomo');
+    expect('heldOrder' in payload && payload.heldOrder).toBe('ceviche, lomo');
     expect(payload.instruction).toMatch(/Pedido en espera: ceviche, lomo/);
     expect(partySizeRequiredPayload(null).instruction).not.toMatch(/Pedido en espera:/);
   });
 
-  it('remember persiste el resumen fusionado', async () => {
+  it('remember persiste el resumen fusionado releyendo la fila', async () => {
+    vi.mocked(findOrCreateConversationState).mockResolvedValue({
+      metadata: { pendingPartySizeOrder: parked },
+    } as never);
     vi.mocked(patchConversationMetadata).mockResolvedValue({} as never);
-    const summary = await rememberPartySizeBlockedFood(
-      'conv-1',
-      { pendingPartySizeOrder: parked },
-      { source: 'lookup', summary: 'lomo' }
-    );
+    const summary = await rememberPartySizeBlockedFood('conv-1', {
+      source: 'lookup',
+      summary: 'lomo',
+    });
     expect(summary).toBe('ceviche, lomo');
     expect(patchConversationMetadata).toHaveBeenCalledWith(
       'conv-1',
