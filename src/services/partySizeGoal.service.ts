@@ -9,6 +9,10 @@
 import { getIntentCatalogEntry, type IntentCandidate } from '../domain/intent/family';
 import { computeCatalogPermission, type IntentLedgerEntry } from './intent/activeIntent.service';
 import { patchIntentLedgerEntry } from './intentLedger.repository';
+import {
+  omitConversationMetadataKeys,
+  patchConversationMetadata,
+} from '../repositories';
 import type { ConversationMetadata } from './productQuery/types';
 import { getRequestedPartySize, normalizeMetadata } from './productQuery/utils';
 import {
@@ -57,6 +61,158 @@ export const PARTY_SIZE_REQUIRED_TOOL_PAYLOAD = {
     'Preguntá el número (1–99) con el título *¿Para cuántas personas?*, ' +
     'llamá save_party_size cuando lo diga, y recién después continuá con shortlist / add. ' +
     'NO busques productos ni digas que ya sumaste.',
+};
+
+/**
+ * Comida que la tool de pedido ya traía cuando el gate de personas la frenó.
+ * `plan` (plan_order_lines) gana sobre búsquedas del mismo turno.
+ * Una línea de prosa en [ESTADO DEL CLIENTE]; se borra en save_party_size.
+ */
+export const PENDING_PARTY_SIZE_ORDER_KEY = 'pendingPartySizeOrder' as const;
+
+const PENDING_PARTY_SIZE_ORDER_MAX = 240;
+
+export type PartySizeBlockedFoodSource = 'plan' | 'lookup';
+
+export type PendingPartySizeOrder = {
+  source: PartySizeBlockedFoodSource;
+  summary: string;
+  setAt: string;
+};
+
+const collapseFoodText = (value: string): string => value.replace(/\s+/g, ' ').trim();
+
+const clipFoodSummary = (value: string): string =>
+  value.length <= PENDING_PARTY_SIZE_ORDER_MAX
+    ? value
+    : value.slice(0, PENDING_PARTY_SIZE_ORDER_MAX).trim();
+
+export const getPendingPartySizeOrder = (
+  metadata: unknown
+): PendingPartySizeOrder | null => {
+  const raw = normalizeMetadata(metadata).pendingPartySizeOrder;
+  if (!raw || typeof raw !== 'object') return null;
+  if (raw.source !== 'plan' && raw.source !== 'lookup') return null;
+  if (typeof raw.summary !== 'string' || !raw.summary.trim()) return null;
+  if (typeof raw.setAt !== 'string' || !raw.setAt) return null;
+  return { source: raw.source, summary: raw.summary.trim(), setAt: raw.setAt };
+};
+
+/** Arma el resumen de plan_order_lines / filtro / add. No mira el mensaje del cliente. */
+export const summarizeBlockedOrderLines = (
+  lines: Array<{ hint: string; requestedQuantity?: number | null }>
+): string =>
+  lines
+    .map((line) => {
+      const hint = collapseFoodText(line.hint ?? '');
+      if (!hint) return '';
+      return line.requestedQuantity != null && line.requestedQuantity > 0
+        ? `${line.requestedQuantity}× ${hint}`
+        : hint;
+    })
+    .filter(Boolean)
+    .join(', ');
+
+export const summarizeBlockedFilter = (input: {
+  categoryTag?: string | null;
+  containsIngredient?: string | null;
+  excludesIngredient?: string | null;
+  minServesPeople?: number | null;
+}): string => {
+  const bits: string[] = [];
+  const tag = input.categoryTag?.trim();
+  if (tag) bits.push(tag);
+  const ingredient = collapseFoodText(input.containsIngredient ?? '');
+  if (ingredient) bits.push(ingredient);
+  const excluded = collapseFoodText(input.excludesIngredient ?? '');
+  if (excluded) bits.push(`sin ${excluded}`);
+  if (input.minServesPeople != null && input.minServesPeople > 0) {
+    bits.push(`ración para ${input.minServesPeople}`);
+  }
+  return bits.join(', ');
+};
+
+export const summarizeBlockedAdd = (input: {
+  name: string;
+  quantity?: number | null;
+  variation?: string | null;
+}): string => {
+  const name = collapseFoodText(input.name ?? '');
+  if (!name) return '';
+  const qty =
+    input.quantity != null && input.quantity > 0 ? `${input.quantity}× ` : '';
+  const variation = collapseFoodText(input.variation ?? '');
+  return variation ? `${qty}${name} (${variation})` : `${qty}${name}`;
+};
+
+/**
+ * plan pisa lo ya guardado. lookup se suma si todavía no está.
+ * Un lookup no pisa un plan: la cola ya trae todos los platos.
+ */
+export const mergePartySizeBlockedFood = (
+  current: PendingPartySizeOrder | null,
+  incoming: { source: PartySizeBlockedFoodSource; summary: string }
+): PendingPartySizeOrder | null => {
+  const piece = clipFoodSummary(collapseFoodText(incoming.summary));
+  if (!piece) return current;
+  if (current?.source === 'plan' && incoming.source === 'lookup') return current;
+  const setAt = new Date().toISOString();
+  if (incoming.source === 'plan' || !current) {
+    return { source: incoming.source, summary: piece, setAt };
+  }
+  const parts = current.summary.split(', ').map((part) => part.toLowerCase());
+  if (parts.includes(piece.toLowerCase())) return current;
+  return {
+    source: 'lookup',
+    summary: clipFoodSummary(`${current.summary}, ${piece}`),
+    setAt: current.setAt,
+  };
+};
+
+export const partySizeRequiredPayload = (heldOrder?: string | null) => {
+  const held = heldOrder?.trim();
+  if (!held) return PARTY_SIZE_REQUIRED_TOOL_PAYLOAD;
+  return {
+    ...PARTY_SIZE_REQUIRED_TOOL_PAYLOAD,
+    heldOrder: held,
+    instruction:
+      `${PARTY_SIZE_REQUIRED_TOOL_PAYLOAD.instruction} ` +
+      `Pedido en espera: ${held}. Nombralo al pedir el número; no lo des por sumado.`,
+  };
+};
+
+export const buildPendingPartySizeOrderContextLines = (metadata: unknown): string[] => {
+  const pending = getPendingPartySizeOrder(metadata);
+  if (!pending) return [];
+  return [
+    `- Pedido en espera del número: ${pending.summary}. ` +
+      'Preguntá las personas; cuando save_party_size guarde el número, retomá ese pedido ' +
+      '(si hay varios platos, plan_order_lines; si no, search_products o add_cart_item). ' +
+      'No lo trates como ya sumado.',
+  ];
+};
+
+export const rememberPartySizeBlockedFood = async (
+  conversationId: string,
+  metadata: unknown,
+  incoming: { source: PartySizeBlockedFoodSource; summary: string }
+): Promise<string | null> => {
+  const current = getPendingPartySizeOrder(metadata);
+  const next = mergePartySizeBlockedFood(current, incoming);
+  if (!next) return current?.summary ?? null;
+  if (current && current.summary === next.summary && current.source === next.source) {
+    return current.summary;
+  }
+  await patchConversationMetadata(conversationId, {
+    pendingPartySizeOrder: next,
+  });
+  return next.summary;
+};
+
+export const clearPendingPartySizeOrder = async (
+  conversationId: string
+): Promise<void> => {
+  await omitConversationMetadataKeys(conversationId, [PENDING_PARTY_SIZE_ORDER_KEY]);
 };
 
 /**

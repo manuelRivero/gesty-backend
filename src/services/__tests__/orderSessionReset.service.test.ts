@@ -77,6 +77,7 @@ describe('clearOrderSessionAfterCancel', () => {
         'pendingOrderSelection',
         'pendingOrderCandidateIds',
         'pendingOrderLines',
+        'pendingPartySizeOrder',
         'pendingTipables',
         'lastCtaPayload',
       ])

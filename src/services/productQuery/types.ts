@@ -143,6 +143,15 @@ export type ConversationMetadata = {
   requestedPartySize?: number;
   /** Alias explícito de personas (mismo valor que requestedPartySize cuando aplica). */
   peopleCount?: number;
+  /**
+   * Comida que una tool de pedido ya traía cuando faltaban las personas.
+   * Prosa en [ESTADO DEL CLIENTE]; se borra al guardar el número.
+   */
+  pendingPartySizeOrder?: {
+    source: 'plan' | 'lookup';
+    summary: string;
+    setAt: string;
+  } | null;
   /** @deprecated Lectura legacy; preferir requestedPartySize. */
   pendingProductQueryQuantity?: number;
   /**

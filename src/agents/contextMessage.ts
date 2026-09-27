@@ -40,6 +40,7 @@ import {
 } from '../services/intent/opportunities.service';
 import {
   blocksOrderPartySizeForReservationDomain,
+  buildPendingPartySizeOrderContextLines,
   derivePartySizeGoalCandidate,
   isFoodRelatedPartySizeSignal,
   recordPartySizeGoalSurfaced,
@@ -662,6 +663,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     ...buildWelcomeEligibleContextLines(meta),
     `- Personas para el pedido: ${partySizeLine}`,
     ...partySizeJustConfirmedLines,
+    ...buildPendingPartySizeOrderContextLines(meta),
     hasItems || checkoutActive || offerStillAlive
       ? cartSummary?.startsWith('  ')
         ? `- Carrito:\n${cartSummary}`

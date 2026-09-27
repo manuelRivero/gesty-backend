@@ -7,6 +7,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../../repositories', () => ({
   patchConversationMetadata: vi.fn(),
+  omitConversationMetadataKeys: vi.fn(),
 }));
 
 vi.mock('../../lib/prisma', () => ({
@@ -24,6 +25,10 @@ import {
   getPartySizeGoalLedger,
   isFoodRelatedPartySizeSignal,
   isPartySizeMissingForOrderingTools,
+  mergePartySizeBlockedFood,
+  partySizeRequiredPayload,
+  buildPendingPartySizeOrderContextLines,
+  rememberPartySizeBlockedFood,
   PARTY_SIZE_GOAL_TYPE,
   type PartySizeGoalLedger,
 } from '../partySizeGoal.service';
@@ -282,5 +287,75 @@ describe('ranker: OBTENER_PERSONAS_DEL_PEDIDO gana a COMPLETAR_PEDIDO', () => {
         EMPTY_LEDGER
       ).open
     ).toBe(true);
+  });
+});
+
+describe('pedido en espera del número', () => {
+  const parked = {
+    source: 'lookup' as const,
+    summary: 'ceviche',
+    setAt: '2026-09-27T00:00:00.000Z',
+  };
+
+  it('suma búsquedas y deja que plan_order_lines las reemplace', () => {
+    const two = mergePartySizeBlockedFood(parked, {
+      source: 'lookup',
+      summary: 'lomo',
+    });
+    expect(two?.summary).toBe('ceviche, lomo');
+    expect(two?.source).toBe('lookup');
+
+    const planned = mergePartySizeBlockedFood(two, {
+      source: 'plan',
+      summary: '1× ceviche, 1× lomo',
+    });
+    expect(planned?.source).toBe('plan');
+    expect(planned?.summary).toBe('1× ceviche, 1× lomo');
+
+    const lookupAfterPlan = mergePartySizeBlockedFood(planned, {
+      source: 'lookup',
+      summary: 'papa',
+    });
+    expect(lookupAfterPlan?.summary).toBe('1× ceviche, 1× lomo');
+    expect(lookupAfterPlan?.source).toBe('plan');
+  });
+
+  it('no duplica la misma búsqueda y no escribe vacío', () => {
+    expect(
+      mergePartySizeBlockedFood(parked, { source: 'lookup', summary: 'ceviche' })
+    ).toBe(parked);
+    expect(mergePartySizeBlockedFood(null, { source: 'lookup', summary: '   ' })).toBeNull();
+  });
+
+  it('la línea de estado nombra el pedido y el payload de la tool también', () => {
+    const lines = buildPendingPartySizeOrderContextLines({
+      pendingPartySizeOrder: parked,
+    });
+    expect(lines.join('\n')).toMatch(/Pedido en espera del número: ceviche/);
+    expect(lines.join('\n')).toMatch(/save_party_size/);
+
+    const payload = partySizeRequiredPayload('ceviche, lomo');
+    expect(payload.heldOrder).toBe('ceviche, lomo');
+    expect(payload.instruction).toMatch(/Pedido en espera: ceviche, lomo/);
+    expect(partySizeRequiredPayload(null).instruction).not.toMatch(/Pedido en espera:/);
+  });
+
+  it('remember persiste el resumen fusionado', async () => {
+    vi.mocked(patchConversationMetadata).mockResolvedValue({} as never);
+    const summary = await rememberPartySizeBlockedFood(
+      'conv-1',
+      { pendingPartySizeOrder: parked },
+      { source: 'lookup', summary: 'lomo' }
+    );
+    expect(summary).toBe('ceviche, lomo');
+    expect(patchConversationMetadata).toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({
+        pendingPartySizeOrder: expect.objectContaining({
+          source: 'lookup',
+          summary: 'ceviche, lomo',
+        }),
+      })
+    );
   });
 });

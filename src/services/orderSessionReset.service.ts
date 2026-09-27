@@ -22,6 +22,7 @@ import { maybeClearConversationCanvas } from './conversationCanvas.service';
 const ORDER_SESSION_OMIT_KEYS = [
   // Shortlist / selección de producto
   'peopleCountResume',
+  'pendingPartySizeOrder',
   'pendingProductSelection',
   'pendingQuestion',
   'candidateProductIds',

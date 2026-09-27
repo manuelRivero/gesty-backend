@@ -111,7 +111,14 @@ import {
 } from '../services/orderCompletionGoal.service';
 import {
   isPartySizeMissingForOrderingTools,
-  PARTY_SIZE_REQUIRED_TOOL_PAYLOAD,
+  partySizeRequiredPayload,
+  rememberPartySizeBlockedFood,
+  getPendingPartySizeOrder,
+  clearPendingPartySizeOrder,
+  summarizeBlockedOrderLines,
+  summarizeBlockedFilter,
+  summarizeBlockedAdd,
+  type PartySizeBlockedFoodSource,
 } from '../services/partySizeGoal.service';
 import {
   getReservationCompletionLedger,
@@ -146,12 +153,27 @@ const toJson = (data: unknown): string => {
 const PRODUCT_SHORTLIST_MAX_LIMIT = 12;
 
 /** Gate duro: sin personas no shortlist/add (salvo FAQ reserva / checkout / abandono). */
+const rejectMissingPartySize = async (
+  conversationId: string,
+  metadata: unknown,
+  food?: { source: PartySizeBlockedFoodSource; summary: string } | null
+): Promise<string | null> => {
+  if (!isPartySizeMissingForOrderingTools(metadata)) return null;
+  const held = food?.summary.trim()
+    ? await rememberPartySizeBlockedFood(conversationId, metadata, {
+        source: food.source,
+        summary: food.summary,
+      })
+    : (getPendingPartySizeOrder(metadata)?.summary ?? null);
+  return toJson(partySizeRequiredPayload(held));
+};
+
 const partySizeOrderingGateJson = async (
-  conversationId: string
+  conversationId: string,
+  food?: { source: PartySizeBlockedFoodSource; summary: string } | null
 ): Promise<string | null> => {
   const state = await findOrCreateConversationState(conversationId);
-  if (!isPartySizeMissingForOrderingTools(state.metadata)) return null;
-  return toJson(PARTY_SIZE_REQUIRED_TOOL_PAYLOAD);
+  return rejectMissingPartySize(conversationId, state.metadata, food);
 };
 
 /**
@@ -196,12 +218,9 @@ const reservationSessionRequiredFromMeta = (
  */
 const readOrderingTurnScope = async (
   conversationId: string
-): Promise<{ partyGate: string | null; reservationTurn: boolean; metadata: unknown }> => {
+): Promise<{ reservationTurn: boolean; metadata: unknown }> => {
   const state = await findOrCreateConversationState(conversationId);
   return {
-    partyGate: isPartySizeMissingForOrderingTools(state.metadata)
-      ? toJson(PARTY_SIZE_REQUIRED_TOOL_PAYLOAD)
-      : null,
     reservationTurn: isReservationFaqMode(state.metadata),
     metadata: state.metadata,
   };
@@ -371,8 +390,12 @@ export const searchProductsTool = new DynamicStructuredTool<
   func: async ({ keyword }: SearchProductsInput, _runManager, config?: RunnableConfig) => {
     console.log(JSON.stringify({ event: '[tool:start]', tool: 'search_products', args: { keyword } }));
     const { businessId, conversationId } = getReactContext(config);
-    const { partyGate, reservationTurn, metadata } = await readOrderingTurnScope(conversationId);
-    if (partyGate) return partyGate;
+    const { reservationTurn, metadata } = await readOrderingTurnScope(conversationId);
+    const partyHeld = await rejectMissingPartySize(conversationId, metadata, {
+      source: 'lookup',
+      summary: keyword,
+    });
+    if (partyHeld) return partyHeld;
     const items = await MenuService.searchMenuItemsByKeyword({ businessId, keyword });
     const shortlisted = items.slice(0, PRODUCT_SHORTLIST_MAX_LIMIT);
     const nameMatchIds = productIdsMatchingSearchKeyword(keyword, shortlisted);
@@ -980,8 +1003,17 @@ export const findProductsByFilterTool = new DynamicStructuredTool<
     config?: RunnableConfig
   ) => {
     const { businessId, conversationId } = getReactContext(config);
-    const { partyGate, reservationTurn } = await readOrderingTurnScope(conversationId);
-    if (partyGate) return partyGate;
+    const { reservationTurn, metadata } = await readOrderingTurnScope(conversationId);
+    const partyHeld = await rejectMissingPartySize(conversationId, metadata, {
+      source: 'lookup',
+      summary: summarizeBlockedFilter({
+        categoryTag,
+        containsIngredient,
+        excludesIngredient,
+        minServesPeople,
+      }),
+    });
+    if (partyHeld) return partyHeld;
 
     const ingredientContainsEarly = containsIngredient?.trim();
     if (ingredientContainsEarly) {
@@ -1811,7 +1843,14 @@ export const addCartItemTool = new DynamicStructuredTool<
     let pendingReply = false;
     let orderLine: OrderLine | null = null;
     if (conversationId) {
-      const partyGate = await partySizeOrderingGateJson(conversationId);
+      const partyGate = await partySizeOrderingGateJson(conversationId, {
+        source: 'lookup',
+        summary: summarizeBlockedAdd({
+          name: item.name,
+          quantity,
+          variation,
+        }),
+      });
       if (partyGate) return partyGate;
 
       const state = await findOrCreateConversationState(conversationId);
@@ -2918,15 +2957,23 @@ export const savePartySizeTool = new DynamicStructuredTool<
   schema: savePartySizeSchema,
   func: async ({ count }: SavePartySizeInput, _runManager, config?: RunnableConfig) => {
     const { conversationId } = getReactContext(config);
+    const state = await findOrCreateConversationState(conversationId);
+    const held = getPendingPartySizeOrder(state.metadata);
     await patchConversationMetadata(conversationId, partySizeMetadataFields(count));
+    if (held) await clearPendingPartySizeOrder(conversationId);
     return toJson({
       success: true,
       partySize: count,
+      ...(held ? { heldOrder: held.summary } : {}),
       followUp: {
-        instruction:
-          'Si no hay plato/shortlist pendiente: invitá a tipar el nombre de un plato ' +
-          '(lo buscás) o a ver el menú/categoría. Preferí present_product_cta(VIEW_MENU). ' +
-          'PROHIBIDO listar todas las categorías en prosa.',
+        instruction: held
+          ? 'Personas guardadas. Retomá ahora el pedido en espera: ' +
+            `${held.summary}. Si son varios platos, plan_order_lines; si es uno, ` +
+            'search_products o add_cart_item. PROHIBIDO present_product_cta(VIEW_MENU) ' +
+            'como si no hubiera un pedido.'
+          : 'Si no hay plato/shortlist pendiente: invitá a tipar el nombre de un plato ' +
+            '(lo buscás) o a ver el menú/categoría. Preferí present_product_cta(VIEW_MENU). ' +
+            'PROHIBIDO listar todas las categorías en prosa.',
       },
     });
   },
@@ -3451,7 +3498,10 @@ export const planOrderLinesTool = new DynamicStructuredTool<
     if (!conversationId) {
       return toJson({ success: false, error: 'no_conversation' });
     }
-    const partyGate = await partySizeOrderingGateJson(conversationId);
+    const partyGate = await partySizeOrderingGateJson(conversationId, {
+      source: 'plan',
+      summary: summarizeBlockedOrderLines(lines),
+    });
     if (partyGate) return partyGate;
     const pending = await setPendingOrderLines({
       conversationId,
