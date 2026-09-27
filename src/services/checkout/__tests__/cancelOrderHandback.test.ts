@@ -1,22 +1,26 @@
 import { describe, it, expect } from 'vitest';
-import { isCancelOrderHandback } from '../cancelOrderHandback';
+import {
+  isCancelOrderHandback,
+  isStructuredOrderCancel,
+} from '../cancelOrderHandback';
 
 describe('isCancelOrderHandback', () => {
-  it('detecta reason tipico del prompt de checkout', () => {
+  it('un reason que habla de cancelar no es wipe', () => {
     expect(
       isCancelOrderHandback({
         reason: 'el cliente quiere cancelar el pedido',
       })
-    ).toBe(true);
+    ).toBe(false);
   });
 
-  it('detecta tipable del usuario', () => {
-    expect(isCancelOrderHandback({ userMessage: 'Cancelar pedido' })).toBe(true);
-    expect(isCancelOrderHandback({ userMessage: 'cancelá todo' })).toBe(true);
-    expect(isCancelOrderHandback({ userMessage: 'borrá el carrito' })).toBe(true);
+  it('el texto del usuario no es wipe', () => {
+    expect(isCancelOrderHandback({ userMessage: 'Cancelar pedido' })).toBe(false);
+    expect(isCancelOrderHandback({ userMessage: 'cancelá todo' })).toBe(false);
+    expect(isCancelOrderHandback({ userMessage: 'borrá el carrito' })).toBe(false);
+    expect(isCancelOrderHandback({ userMessage: 'sacá la provoleta' })).toBe(false);
   });
 
-  it('no confunde handback de editar / menú', () => {
+  it('handback de editar / menú tampoco borra', () => {
     expect(
       isCancelOrderHandback({
         reason: 'el cliente quiere agregar ítems',
@@ -28,5 +32,13 @@ describe('isCancelOrderHandback', () => {
         reason: 'el cliente quiere ver el menú',
       })
     ).toBe(false);
+  });
+});
+
+describe('isStructuredOrderCancel', () => {
+  it('solo la señal cancel_order autoriza el wipe', () => {
+    expect(isStructuredOrderCancel('cancel_order')).toBe(true);
+    expect(isStructuredOrderCancel('handback_to_main')).toBe(false);
+    expect(isStructuredOrderCancel(undefined)).toBe(false);
   });
 });

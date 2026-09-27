@@ -64,7 +64,6 @@ import {
   logCheckoutGoal,
 } from '../../../services/checkout/checkoutGoal.service';
 import { buildOrderConfirmationMessage } from '../../../services/checkout/orderConfirmationMessage';
-import { isCancelOrderHandback } from '../../../services/checkout/cancelOrderHandback';
 import { buildCancelOrderMessage } from '../../../services/order.service';
 import { resolveDomainCancelCommand } from '../../../services/domainCancelCommand.service';
 import { clearReservationSessionAfterCancel } from '../../../services/reservationSessionReset.service';
@@ -507,51 +506,46 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
     };
   }
 
-  if (signals.handback) {
-    const userMessage = handbackState?.webhookContext?.message?.text?.body?.trim() ?? '';
-    // Cancelar pedido en checkout = mismo efecto que CANCEL_ORDER (wipe carrito +
-    // sesión de pedido). No dejar el wipe al ReAct del híbrido.
-    if (
-      isCancelOrderHandback({
-        reason: signals.handbackReason,
-        userMessage,
+  if (signals.cancelOrder) {
+    const conversation = enrichedCtx.conversation as conversation;
+    console.log(
+      JSON.stringify({
+        event: '[checkout-agent] cancel_order_signal',
+        conversationId,
+        target: signals.cancelOrderTarget,
       })
-    ) {
-      const conversation = enrichedCtx.conversation as conversation;
-      console.log(
-        JSON.stringify({
-          event: '[checkout-agent] handback_cancel_order_wipe',
-          reason: signals.handbackReason,
-          conversationId,
-        })
-      );
-      const result = await buildCancelOrderMessage(
-        conversation,
-        businessId,
-        customerPhone
-      );
-      if (result) {
-        if (typeof result === 'string') {
-          return {
-            content: result,
-            isInteractive: false,
-            skipBodyHumanization: true,
-          };
-        }
+    );
+    const result = await buildCancelOrderMessage(
+      conversation,
+      businessId,
+      customerPhone,
+      { target: signals.cancelOrderTarget ?? undefined }
+    );
+    if (result) {
+      if (typeof result === 'string') {
         return {
           content: result,
-          isInteractive: true,
+          isInteractive: false,
           skipBodyHumanization: true,
         };
       }
-      await clearCheckoutSession(conversationId);
       return {
-        content:
-          '🤖\n\n*Pedido cancelado* ❌\n\nTu pedido fue cancelado. Cuando quieras, armamos uno nuevo.',
-        isInteractive: false,
+        content: result,
+        isInteractive: true,
         skipBodyHumanization: true,
       };
     }
+    await clearCheckoutSession(conversationId);
+    return {
+      content:
+        '🤖\n\n*Pedido cancelado* ❌\n\nTu pedido fue cancelado. Cuando quieras, armamos uno nuevo.',
+      isInteractive: false,
+      skipBodyHumanization: true,
+    };
+  }
+
+  if (signals.handback) {
+    const userMessage = handbackState?.webhookContext?.message?.text?.body?.trim() ?? '';
 
     await clearCheckoutSession(conversationId);
     console.log(

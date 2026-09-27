@@ -16,6 +16,11 @@ import { HumanMessage } from '@langchain/core/messages';
 import { getHybridReasonerLlm } from '../config/llm';
 import { buildAgentHistoryMessages } from './conversationHistory';
 import { buildContextMessage } from './contextMessage';
+import {
+  applyCheckoutTurnGate,
+  CHECKOUT_EMPTY_CART_MESSAGE,
+  toolMessageMutatedCart,
+} from './checkoutTurnPolicy';
 import { buildHybridAgentSystemPrompt } from '../prompts/botPersonality';
 import { resolvePersonalityForBusiness } from '../services/botPersonality.service';
 import { allReactTools } from '../tools';
@@ -201,6 +206,11 @@ export interface HybridAgentSignals {
   /** True si add_cart_item devolvió success en este turno (no reabrir shortlist). */
   cartAddSucceeded: boolean;
   /**
+   * add, update de cantidad o remove con success en este turno.
+   * Checkout pedido en el mismo turno no se delega: el carrito se presenta primero.
+   */
+  cartMutatedThisTurn: boolean;
+  /**
    * add_cart_item falló con pending tipable (cantidad/variación): no honrar
    * present_complement / present_cart de cierre; preferí askMessage.
    */
@@ -369,6 +379,7 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
     welcomeBodyText: null,
     presentProductCta: null,
     cartAddSucceeded: false,
+    cartMutatedThisTurn: false,
     cartAddPendingGate: false,
     cartAddPendingAskMessage: null,
     cartAddComplementBlocked: false,
@@ -401,6 +412,9 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
       };
       if (m.name === 'add_cart_item' && data.success === true) {
         signals.cartAddSucceeded = true;
+      }
+      if (toolMessageMutatedCart(m.name, data.success)) {
+        signals.cartMutatedThisTurn = true;
       }
       if (m.name === 'update_item_note' && data.success === true) {
         signals.itemNoteSaved = true;
@@ -768,7 +782,7 @@ export const runHybridReactAgent = async (
   const turnStartedAt = new Date().toISOString();
   const userMessageForTools = ctx.message?.text?.body ?? '';
   const out = await agent.invoke(inputs, {
-    recursionLimit: 8,
+    recursionLimit: 9,
     configurable: {
       businessId,
       customerId,
@@ -876,18 +890,66 @@ export const runHybridReactAgent = async (
   }
 
   if (signals.startCheckoutSession) {
-    console.log(
-      JSON.stringify({
-        event: '[hybrid-agent] delegate_to_checkout',
-        reason: signals.startCheckoutReason,
-        conversationId,
-      })
-    );
-    await clearWelcomeEligible(conversationId).catch(() => undefined);
-    return {
-      kind: 'delegate_checkout',
-      reason: signals.startCheckoutReason,
-    };
+    const decision = await applyCheckoutTurnGate({
+      startCheckoutSession: true,
+      startCheckoutReason: signals.startCheckoutReason,
+      cartMutatedThisTurn: signals.cartMutatedThisTurn,
+      readDraftHasItems: async () => {
+        const draft = await prisma.draft_order.findFirst({
+          where: {
+            business_id: businessId,
+            customer_phone: customerPhone,
+            status: 'active',
+          },
+          select: { draft_order_item: { select: { id: true }, take: 1 } },
+        });
+        return Boolean(draft && draft.draft_order_item.length > 0);
+      },
+    });
+    if (decision.type === 'delegate') {
+      console.log(
+        JSON.stringify({
+          event: '[hybrid-agent] delegate_to_checkout',
+          reason: signals.startCheckoutReason,
+          conversationId,
+        })
+      );
+      await clearWelcomeEligible(conversationId).catch(() => undefined);
+      return {
+        kind: 'delegate_checkout',
+        reason: decision.reason,
+      };
+    }
+    if (decision.type === 'empty_cart') {
+      console.log(
+        JSON.stringify({
+          event: '[hybrid-agent] start_checkout_empty_cart',
+          conversationId,
+        })
+      );
+      return {
+        kind: 'response',
+        handlerResult: markHybridResult({
+          content: formatBotUserMessage(
+            'Tu pedido está vacío',
+            '🛒',
+            CHECKOUT_EMPTY_CART_MESSAGE
+          ),
+          isInteractive: false,
+        }),
+      };
+    }
+    if (decision.type === 'defer_present_cart') {
+      signals.presentCart = true;
+      signals.startCheckoutSession = false;
+      console.log(
+        JSON.stringify({
+          event: '[hybrid-agent] checkout_deferred_cart_mutation',
+          conversationId,
+          draftHasItems: decision.draftHasItems,
+        })
+      );
+    }
   }
 
   if (signals.askCancelCartForReservation) {

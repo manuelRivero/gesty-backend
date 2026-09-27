@@ -78,7 +78,7 @@ const quantityTotal = (lines: NamedLine[]): number =>
 const lineMatching = (lines: NamedLine[], pattern: RegExp): NamedLine | undefined =>
   lines.find((line) => pattern.test(fold(line.name ?? '')));
 
-/** Pausa entre turnos/casos para no saturar TPM de gpt-4o (~30k/min). */
+/** Pausa entre turnos/casos para no saturar TPM del híbrido (gpt-4o-mini). */
 const RATE_LIMIT_PAUSE_MS = Number(process.env.E2E_RATE_LIMIT_PAUSE_MS ?? 60_000);
 
 const pauseForRateLimit = async (reason: string): Promise<void> => {

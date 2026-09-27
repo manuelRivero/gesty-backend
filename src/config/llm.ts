@@ -51,11 +51,11 @@ export const getReactReasonerLlm = (): ChatOpenAI => {
   return cachedReactReasoner;
 };
 
-/** `gpt-4o` — ReAct del agente híbrido (menú / carrito / prosa principal). */
+/** `gpt-4o-mini` — ReAct del agente híbrido (menú / carrito / prosa principal). */
 export const getHybridReasonerLlm = (): ChatOpenAI => {
   if (!cachedHybridReasoner) {
     cachedHybridReasoner = new ChatOpenAI({
-      model: 'gpt-4o',
+      model: 'gpt-4o-mini',
       temperature: 0,
       apiKey: env.OPENAI_API_KEY,
       maxRetries: 2,

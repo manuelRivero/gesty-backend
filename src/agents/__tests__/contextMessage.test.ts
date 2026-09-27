@@ -326,6 +326,47 @@ describe('buildContextMessage', () => {
     expect(msg).toContain('Ola de complemento viva');
     expect(msg).toMatch(/DOS O MÁS candidatos/i);
     expect(msg).toContain('plan_order_lines');
+    expect(msg).toContain('search_products');
+    expect(msg).not.toContain('no inventes otros');
+    expect(msg).not.toContain('Fuera del shortlist');
+    expect(msg).not.toContain('NO busques ni abras otra categoría');
+  });
+
+  it('shortlist de búsqueda: sigue prohibiendo buscar afuera', async () => {
+    findFirstMock.mockResolvedValue(null);
+    const msg = await buildContextMessage(
+      makeCtx({
+        userMsg: 'otra cerveza',
+        metadata: {
+          pendingProductSelection: true,
+          shortlistAwaitingChoice: false,
+          pendingQuestion: 'cuál cerveza?',
+          candidateProductIds: ['prod-stella', 'prod-quilmes'],
+        },
+      })
+    );
+    expect(msg).toContain('Fuera del shortlist');
+    expect(msg).toContain('NO busques ni abras otra categoría');
+    expect(msg).toContain('no inventes otros');
+    expect(msg).not.toContain('Ola de complemento viva');
+  });
+
+  it('shortlistAwaitingChoice gana a la ola: la búsqueda queda cerrada', async () => {
+    findFirstMock.mockResolvedValue(null);
+    const msg = await buildContextMessage(
+      makeCtx({
+        userMsg: 'otra cerveza',
+        metadata: {
+          pendingProductSelection: true,
+          pendingComplementSelection: true,
+          shortlistAwaitingChoice: true,
+          candidateProductIds: ['prod-stella', 'prod-quilmes'],
+        },
+      })
+    );
+    expect(msg).toContain('Fuera del shortlist');
+    expect(msg).toContain('NO busques ni abras otra categoría');
+    expect(msg).not.toContain('search_products con lo que pidió');
   });
 
   it('pendingItemNote: prioriza nota y bloquea complementos en contexto', async () => {

@@ -17,10 +17,12 @@ import { buildAgentHistoryMessages } from './conversationHistory';
 import { buildCheckoutAgentSystemPrompt } from '../prompts/botPersonality';
 import { resolvePersonalityForBusiness } from '../services/botPersonality.service';
 import {
+  cancelOrderTool,
   getCartTool,
   saveCustomerNameTool,
   saveDeliveryAddressTool,
 } from '../tools';
+import { isStructuredOrderCancel } from '../services/checkout/cancelOrderHandback';
 import { allCheckoutTools, loadLiveCheckoutFacts } from '../tools/checkout';
 import type { EnrichedContext } from '../controllers/webhook/types';
 import { formatBotUserMessage, normalizeMetadata } from '../services/productQuery/utils';
@@ -57,7 +59,13 @@ const buildAgent = (personalityId: string, personalityPrompt: string) => {
   if (!agent) {
     agent = createReactAgent({
       llm: getReactReasonerLlm(),
-      tools: [...allCheckoutTools, getCartTool, saveCustomerNameTool, saveDeliveryAddressTool],
+      tools: [
+        ...allCheckoutTools,
+        cancelOrderTool,
+        getCartTool,
+        saveCustomerNameTool,
+        saveDeliveryAddressTool,
+      ],
       prompt: buildCheckoutAgentSystemPrompt(personalityPrompt),
     });
     cachedAgents.set(cacheKey, agent);
@@ -334,12 +342,15 @@ export interface CheckoutAgentSignals {
   delegateToMainReason: string | null;
   handback: boolean;
   handbackReason: string | null;
+  /** Señal `cancel_order`. El reason de handback no borra el pedido. */
+  cancelOrder: boolean;
+  cancelOrderTarget: 'draft' | 'order' | null;
   paymentMethod: 'cash' | 'online' | 'transfer' | null;
   /** `null` = no se resolvió este turno; `true`/`false` = el cliente confirmó o canceló el pedido. */
   orderConfirmationResolved: boolean | null;
 }
 
-const extractSignals = (messages: unknown[]): CheckoutAgentSignals => {
+export const extractCheckoutAgentSignals = (messages: unknown[]): CheckoutAgentSignals => {
   const signals: CheckoutAgentSignals = {
     presentFulfillmentOptions: false,
     presentPaymentOptions: false,
@@ -347,6 +358,8 @@ const extractSignals = (messages: unknown[]): CheckoutAgentSignals => {
     delegateToMainReason: null,
     handback: false,
     handbackReason: null,
+    cancelOrder: false,
+    cancelOrderTarget: null,
     paymentMethod: null,
     orderConfirmationResolved: null,
   };
@@ -363,6 +376,7 @@ const extractSignals = (messages: unknown[]): CheckoutAgentSignals => {
       const data = JSON.parse(rawContent) as {
         signal?: string;
         reason?: string;
+        target?: string;
         paymentMethod?: string;
         confirmed?: boolean;
       };
@@ -391,6 +405,12 @@ const extractSignals = (messages: unknown[]): CheckoutAgentSignals => {
       if (data.signal === 'handback_to_main') {
         signals.handback = true;
         signals.handbackReason = data.reason ?? null;
+      }
+      if (isStructuredOrderCancel(data.signal)) {
+        signals.cancelOrder = true;
+        if (data.target === 'draft' || data.target === 'order') {
+          signals.cancelOrderTarget = data.target;
+        }
       }
     } catch {
       /* ignorar mensajes no-JSON */
@@ -490,7 +510,7 @@ export const runCheckoutAgent = async (
 
   const rawText = extractFinalText(out);
   const agentMessages = (out as { messages?: unknown[] }).messages ?? [];
-  const signals = extractSignals(agentMessages);
+  const signals = extractCheckoutAgentSignals(agentMessages);
 
   const text = rawText
     ? rawText.startsWith('🤖')

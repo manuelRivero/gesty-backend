@@ -571,7 +571,7 @@ export const startCheckoutSessionTool = new DynamicStructuredTool<
         args: { reason },
       })
     );
-    const { businessId, customerPhone } = getReactContext(config);
+    const { businessId } = getReactContext(config);
 
     const ordersGate = await assertCanOrder(businessId);
     if (!ordersGate.ok) {
@@ -599,27 +599,6 @@ export const startCheckoutSessionTool = new DynamicStructuredTool<
           'Detente e informa al usuario que el local está cerrado.'
         );
       }
-    }
-
-    const draft = await prisma.draft_order.findFirst({
-      where: {
-        business_id: businessId,
-        customer_phone: customerPhone,
-        status: 'active',
-      },
-      select: {
-        draft_order_item: { select: { id: true }, take: 1 },
-      },
-    });
-
-    if (!draft || draft.draft_order_item.length === 0) {
-      return toJson({
-        success: false,
-        error: 'empty_cart',
-        message: 'El carrito está vacío; no se puede iniciar checkout.',
-        instruction:
-          'Instrucción crítica: NO VUELVAS a llamar a start_checkout_session en este turno. Detente e informá al usuario que primero tiene que elegir platos.',
-      });
     }
 
     return toJson({ signal: 'start_checkout_session', reason });

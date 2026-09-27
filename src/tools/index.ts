@@ -2912,6 +2912,7 @@ export const presentAddressConfirmationTool = new DynamicStructuredTool<
     'Solo llamar después de que esa tool devolvió status "in_coverage". ' +
     'El sistema construye los botones; no describas la dirección en texto ni pidas confirmación verbal.',
   schema: presentAddressConfirmationSchema,
+  returnDirect: true,
   func: async (_input: PresentAddressConfirmationInput, _runManager, config?: RunnableConfig) => {
     getReactContext(config); // validar contexto
     return toJson({ signal: 'present_address_confirmation' });
@@ -3036,6 +3037,7 @@ export const presentCartTool = new DynamicStructuredTool<
     'o tras remove_cart_item con success: true (pedido actualizado con el detalle completo). ' +
     'No describas el carrito en texto: esta tool construye el mensaje interactivo completo.',
   schema: presentCartSchema,
+  returnDirect: true,
   func: async (_input: PresentCartInput, _runManager, config?: RunnableConfig) => {
     getReactContext(config); // validar contexto
     return toJson({ signal: 'present_cart' });
@@ -3069,6 +3071,7 @@ export const cancelOrderTool = new DynamicStructuredTool<
     'Si hay carrito Y pedido confirmado a la vez, omití target para que el sistema pregunte cuál. ' +
     'Si [ESTADO DEL CLIENTE] pide elegir carrito vs pedido, llamá con target draft u order.',
   schema: cancelOrderSchema,
+  returnDirect: true,
   func: async ({ target }: CancelOrderInput, _runManager, config?: RunnableConfig) => {
     getReactContext(config);
     return toJson({
@@ -3104,6 +3107,7 @@ export const presentComplementSuggestionsTool = new DynamicStructuredTool<
     'No la combines con present_cart en el mismo turno. ' +
     'El runtime omite la lista si el cliente ya rechazó, está en cooldown, o no hay huecos.',
   schema: presentComplementSuggestionsSchema,
+  returnDirect: true,
   func: async (
     { productId }: PresentComplementSuggestionsInput,
     _runManager,
@@ -3493,6 +3497,7 @@ export const presentCategoryTool = new DynamicStructuredTool<
     'obtener el categoryId. Pasá bodyText con una intro acorde al pedido del cliente (sin "excelente elección" genérico). ' +
     'No listés los platos en texto: esta tool arma el mensaje completo.',
   schema: presentCategorySchema,
+  returnDirect: true,
   func: async (input: PresentCategoryInput, _runManager, config?: RunnableConfig) => {
     const { conversationId } = getReactContext(config);
     const partyGate = await partySizeOrderingGateJson(conversationId);
@@ -3531,6 +3536,7 @@ export const presentWelcomeOptionsTool = new DynamicStructuredTool<
     'específico — el objetivo es empujarlo activamente hacia armar un pedido o reservar, no solo ' +
     'preguntar "¿en qué te ayudo?" y esperar.',
   schema: presentWelcomeOptionsSchema,
+  returnDirect: true,
   func: async ({ bodyText }: PresentWelcomeOptionsInput, _runManager, config?: RunnableConfig) => {
     getReactContext(config); // validar contexto
     return toJson({ signal: 'present_welcome_options', bodyText });
@@ -3802,6 +3808,7 @@ export const requestHumanSupportTool = new DynamicStructuredTool<
     'Tras llamarla el bot deja de responder hasta que un asesor retome: NO agregues más preguntas. ' +
     'No la uses para consultas que podés resolver con tus otras tools (menú, precios, horarios, pedido).',
   schema: requestHumanSupportSchema,
+  returnDirect: true,
   func: async (
     { reason }: RequestHumanSupportInput,
     _runManager,

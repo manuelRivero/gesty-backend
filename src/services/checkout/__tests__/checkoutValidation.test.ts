@@ -10,6 +10,8 @@ const baseSignals = (): CheckoutAgentSignals => ({
   delegateToMainReason: null,
   handback: false,
   handbackReason: null,
+  cancelOrder: false,
+  cancelOrderTarget: null,
   paymentMethod: null,
   orderConfirmationResolved: null,
 });

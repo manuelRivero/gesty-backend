@@ -107,6 +107,7 @@ export async function buildPendingProductSelectionLines(
     pendingComplementSelection?: boolean;
     pendingQuestion?: string;
     candidateProductIds?: string[];
+    shortlistAwaitingChoice?: boolean;
     pendingTipables?: {
       management?: TipableManagementAction[];
     } | null;
@@ -142,45 +143,80 @@ export async function buildPendingProductSelectionLines(
     Boolean(getPendingItemNote(meta)) ||
     (meta.pendingTipables?.management ?? []).includes('ITEM_NOTE');
   const isComplementOla = meta.pendingComplementSelection === true;
+  // shortlistAwaitingChoice dura solo el turno en que se abrió la búsqueda.
+  // En el turno siguiente el shortlist de búsqueda sigue en pendingProductSelection
+  // sin la ola de complemento. La ola también prende pendingProductSelection,
+  // y no restringe búsquedas nuevas.
+  const lockSearchOutside =
+    meta.shortlistAwaitingChoice === true || !isComplementOla;
 
-  const lines = [
-    ...(noteTakesPriority
-      ? [
-          '- PRIORIDAD NOTA: tipable ITEM_NOTE o pendingItemNote activo — ' +
-            'NO fuerces add_cart_item del shortlist; resolvé la nota ' +
-            '(start_item_note / update_item_note / clear_pending_item_note).',
-        ]
-      : []),
-    '- Selección de producto pendiente: el turno anterior ofreció elegir entre varios platos. ' +
-      'El mensaje puede ser (a) una elección de cuál quiere, o (b) una pregunta de atributo sobre uno o varios candidatos.',
-    ...(isComplementOla
-      ? [
-          '- Ola de complemento viva: si el mensaje nombra UN solo candidato → add_cart_item ' +
-            '(o CTA) con ese productId. Si nombra DOS O MÁS candidatos distintos de la lista ' +
-            '(ej. "1 adobo y 1 ají"): plan_order_lines(lines) ANTES de cualquier add — misma cola ' +
-            'que PEDIDO MULTI-LÍNEA; después trabajá solo la línea activa. ' +
-            'Rechazo blando ("estoy bien así", "así está bien", "nada más", "solo eso", "no gracias"): ' +
-            'mark_complement_refused() y present_cart — PROHIBIDO inventar add_cart_item.',
-        ]
-      : []),
-    `- Candidatos (usá estos productId; no inventes otros): ${labeled.join(' | ')}.`,
-    '- Elección con match claro: present_product_cta(ADD_ITEM) o add_cart_item con ese productId. ' +
-      'Si el cliente usa ordinales ("el primero", "el 2"), mapea DIRECTAMENTE al número indicado en la lista de arriba. ' +
-      'Elección ambigua: pedí aclaración nombrándolos.',
+  const noteLines = noteTakesPriority
+    ? [
+        '- PRIORIDAD NOTA: tipable ITEM_NOTE o pendingItemNote activo — ' +
+          'NO fuerces add_cart_item del shortlist; resolvé la nota ' +
+          '(start_item_note / update_item_note / clear_pending_item_note).',
+      ]
+    : [];
+  const attributeLines = [
     '- Pregunta de atributo que NOMBRA un candidato ("el tacu tacu es picante?", "qué trae el lomo"): ' +
       'get_products_details_by_ids de ESE productId; respondé solo de ese plato. ' +
       'NO preguntes "¿sobre cuál?" ni relistes el resto del shortlist.',
     '- Pregunta de atributo SIN nombrar cuál ("qué trae?"): los candidatos son el foco; resumí o preguntá a cuál de esa lista.',
-    '- Fuera del shortlist (pide un plato/variedad que NO matchea ningún candidato): ' +
-      'NO busques ni abras otra categoría en este turno. Aclará que entre estas opciones no está; ' +
-      'preguntá si quiere que busques en el menú o si prefiere elegir de la lista. Solo con OK explícito buscá fuera.',
-    '- PRIORIDAD vs tipables de gestión: si el mensaje nombra o pide un candidato ' +
-      '("dame dos ají…", "el de gallina", "sumá 2"), esa elección GANA: add_cart_item / CTA. ' +
-      'PROHIBIDO present_cart solo porque coexisten tipables VIEW_CART / modificar / menú. ' +
-      'Gestión tipable (menú, ver pedido, modificar, finalizar) o nota de preparación ("poca sal") ' +
-      'solo si el mensaje es claramente eso SIN pedir un plato de la lista. ' +
-      'Pedir otro plato distinto a los candidatos = fuera del shortlist (arriba).',
   ];
+
+  const lines = lockSearchOutside
+    ? [
+        ...noteLines,
+        '- Selección de producto pendiente: el turno anterior ofreció elegir entre varios platos. ' +
+          'El mensaje puede ser (a) una elección de cuál quiere, o (b) una pregunta de atributo sobre uno o varios candidatos.',
+        ...(isComplementOla
+          ? [
+              '- Ola de complemento viva: si el mensaje nombra UN solo candidato → add_cart_item ' +
+                '(o CTA) con ese productId. Si nombra DOS O MÁS candidatos distintos de la lista ' +
+                '(ej. "1 adobo y 1 ají"): plan_order_lines(lines) ANTES de cualquier add — misma cola ' +
+                'que PEDIDO MULTI-LÍNEA; después trabajá solo la línea activa. ' +
+                'Rechazo blando ("estoy bien así", "así está bien", "nada más", "solo eso", "no gracias"): ' +
+                'mark_complement_refused() y present_cart — PROHIBIDO inventar add_cart_item.',
+            ]
+          : []),
+        `- Candidatos (usá estos productId; no inventes otros): ${labeled.join(' | ')}.`,
+        '- Elección con match claro: present_product_cta(ADD_ITEM) o add_cart_item con ese productId. ' +
+          'Si el cliente usa ordinales ("el primero", "el 2"), mapea DIRECTAMENTE al número indicado en la lista de arriba. ' +
+          'Elección ambigua: pedí aclaración nombrándolos.',
+        ...attributeLines,
+        '- Fuera del shortlist (pide un plato/variedad que NO matchea ningún candidato): ' +
+          'NO busques ni abras otra categoría en este turno. Aclará que entre estas opciones no está; ' +
+          'preguntá si quiere que busques en el menú o si prefiere elegir de la lista. Solo con OK explícito buscá fuera.',
+        '- PRIORIDAD vs tipables de gestión: si el mensaje nombra o pide un candidato ' +
+          '("dame dos ají…", "el de gallina", "sumá 2"), esa elección GANA: add_cart_item / CTA. ' +
+          'PROHIBIDO present_cart solo porque coexisten tipables VIEW_CART / modificar / menú. ' +
+          'Gestión tipable (menú, ver pedido, modificar, finalizar) o nota de preparación ("poca sal") ' +
+          'solo si el mensaje es claramente eso SIN pedir un plato de la lista. ' +
+          'Pedir otro plato distinto a los candidatos = fuera del shortlist (arriba).',
+      ]
+    : [
+        ...noteLines,
+        '- Ola de complemento viva: estos candidatos se pueden elegir, y no cierran el menú. ' +
+          'Si el mensaje nombra UN solo candidato → add_cart_item (o CTA) con ese productId. ' +
+          'Si nombra DOS O MÁS candidatos distintos de la lista (ej. "1 adobo y 1 ají"): ' +
+          'plan_order_lines(lines) ANTES de cualquier add — misma cola que PEDIDO MULTI-LÍNEA; ' +
+          'después trabajá solo la línea activa. ' +
+          'Rechazo blando ("estoy bien así", "así está bien", "nada más", "solo eso", "no gracias"): ' +
+          'mark_complement_refused() y present_cart — PROHIBIDO inventar add_cart_item.',
+        `- Candidatos de la ola: ${labeled.join(' | ')}.`,
+        '- Elección de la ola: present_product_cta(ADD_ITEM) o add_cart_item con ese productId. ' +
+          'Si el cliente usa ordinales ("el primero", "la segunda", "el 2"), mapea DIRECTAMENTE al número indicado arriba. ' +
+          'Elección ambigua entre estos candidatos: pedí aclaración nombrándolos.',
+        ...attributeLines,
+        '- Pedido de un plato que no es uno de estos candidatos: search_products con lo que pidió. ' +
+          'Si la búsqueda lo identifica, add_cart_item con el id de esa búsqueda. ' +
+          'PROHIBIDO usar un productId de esta ola para un plato que el mensaje no nombró. ' +
+          'La ola sigue disponible para una elección posterior; no hace falta mark_complement_refused para buscar.',
+        '- PRIORIDAD vs tipables de gestión: si el mensaje nombra un candidato de la ola, ' +
+          'esa elección GANA: add_cart_item / CTA. ' +
+          'PROHIBIDO present_cart solo porque coexisten tipables VIEW_CART / modificar / menú. ' +
+          'Gestión tipable o nota de preparación solo si el mensaje es claramente eso SIN pedir un plato.',
+      ];
   const q = meta.pendingQuestion?.trim();
   if (q) {
     lines.push(`- Consulta original del cliente (contexto): "${q.slice(0, 200)}".`);
