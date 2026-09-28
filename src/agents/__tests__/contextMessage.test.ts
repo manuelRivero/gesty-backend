@@ -173,6 +173,62 @@ describe('buildContextMessage', () => {
     expect(msg).toContain('prod-1');
   });
 
+  it('pedido HumanIntent ACTIVE sin party size deriva el Goal blocking de personas', async () => {
+    findFirstMock.mockResolvedValue(null);
+    const msg = await buildContextMessage(makeCtx({
+      metadata: {
+        humanIntentState: {
+          version: 1,
+          revision: 1,
+          nextSequence: 2,
+          processedMessageIds: [],
+          records: [{
+            id: 'intent-order',
+            sequence: 1,
+            goal: 'PEDIR',
+            request: {},
+            status: 'ACTIVE',
+            blockers: [],
+            createdAt: '2026-09-28T00:00:00.000Z',
+            updatedAt: '2026-09-28T00:00:00.000Z',
+          }],
+        },
+      },
+    }));
+
+    expect(msg).toContain('OBTENER_PERSONAS_DEL_PEDIDO');
+    expect(msg).toContain('Personas para el pedido: no informado');
+  });
+
+  it('pedido HumanIntent ACTIVE con peopleCount conocido no deriva el Goal de personas', async () => {
+    findFirstMock.mockResolvedValue(null);
+    const msg = await buildContextMessage(makeCtx({
+      metadata: {
+        peopleCount: 2,
+        requestedPartySize: 2,
+        humanIntentState: {
+          version: 1,
+          revision: 1,
+          nextSequence: 2,
+          processedMessageIds: [],
+          records: [{
+            id: 'intent-order',
+            sequence: 1,
+            goal: 'PEDIR',
+            request: { products: ['milanesa'] },
+            status: 'ACTIVE',
+            blockers: [],
+            createdAt: '2026-09-28T00:00:00.000Z',
+            updatedAt: '2026-09-28T00:00:00.000Z',
+          }],
+        },
+      },
+    }));
+
+    expect(msg).not.toContain('OBTENER_PERSONAS_DEL_PEDIDO');
+    expect(msg).toContain('Personas para el pedido: 2');
+  });
+
   it('oferta activa con party size: menciona Oferta activa', async () => {
     findFirstMock.mockResolvedValue(null);
     const msg = await buildContextMessage(

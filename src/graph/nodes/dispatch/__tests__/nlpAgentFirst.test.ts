@@ -245,6 +245,58 @@ describe('nlpSubgraphNode — agent-first', () => {
     expect(update.handlerResult?.content).toMatch(/no me quedó claro/i);
   });
 
+  it('party-size Goal activo deja que ReAct resuelva una respuesta aunque preflight falle cerrado', async () => {
+    const activeOrder = {
+      id: 'intent-order',
+      sequence: 1,
+      goal: 'PEDIR',
+      request: {},
+      status: 'ACTIVE',
+      blockers: [],
+      createdAt: '2026-09-28T00:00:00.000Z',
+      updatedAt: '2026-09-28T00:00:00.000Z',
+    };
+    lifecycleMock.state.records = [activeOrder];
+    lifecycleMock.metadata = { humanIntentState: lifecycleMock.state };
+    vi.mocked(runHumanIntentPreflight).mockResolvedValueOnce({ decision: 'AMBIGUOUS' });
+
+    const update = await nlpSubgraphNode(nlpState('Para 3'));
+
+    expect(runHumanIntentPreflight).toHaveBeenCalledWith(expect.objectContaining({
+      context: expect.objectContaining({ activeBlockingGoal: 'OBTENER_PERSONAS_DEL_PEDIDO' }),
+    }));
+    expect(applyHumanIntentTurnDecision).not.toHaveBeenCalled();
+    expect(runHybridReactAgent).toHaveBeenCalledOnce();
+    expect(update.handlerResult?.content).toBe('respuesta híbrida');
+    expect(lifecycleMock.state.records).toEqual([activeOrder]);
+  });
+
+  it.each([
+    ['party size conocido', { peopleCount: 2, requestedPartySize: 2 }, true],
+    ['sin pedido activo', {}, false],
+  ])('no cede un AMBIGUOUS al Goal de party size cuando no está abierto (%s)', async (_caseName, metadata, withActiveOrder) => {
+    if (withActiveOrder) {
+      lifecycleMock.state.records = [{
+        id: 'intent-order',
+        sequence: 1,
+        goal: 'PEDIR',
+        request: { products: ['milanesa'] },
+        status: 'ACTIVE',
+        blockers: [],
+        createdAt: '2026-09-28T00:00:00.000Z',
+        updatedAt: '2026-09-28T00:00:00.000Z',
+      }];
+    }
+    lifecycleMock.metadata = { ...metadata, humanIntentState: lifecycleMock.state };
+    vi.mocked(runHumanIntentPreflight).mockResolvedValueOnce({ decision: 'AMBIGUOUS' });
+
+    const update = await nlpSubgraphNode(nlpState('Para 3', metadata));
+
+    expect(runHybridReactAgent).not.toHaveBeenCalled();
+    expect(update.handlerResult?.content).toMatch(/no me quedó claro/i);
+    expect(applyHumanIntentTurnDecision).not.toHaveBeenCalled();
+  });
+
   it('solo pasa candidatos como referencias cuando el CTA consta como mostrado', async () => {
     const candidateId = '44444444-4444-4444-8444-444444444444';
     vi.mocked(prisma.menu_item.findMany).mockResolvedValueOnce([

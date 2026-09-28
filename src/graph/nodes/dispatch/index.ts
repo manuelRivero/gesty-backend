@@ -45,6 +45,12 @@ import {
   getRequestedPartySize,
   normalizeMetadata,
 } from '../../../services/productQuery/utils';
+import {
+  blocksOrderPartySizeForReservationDomain,
+  derivePartySizeGoal,
+  getPartySizeGoalLedger,
+  isFoodRelatedPartySizeSignal,
+} from '../../../services/partySizeGoal.service';
 import { patchConversationMetadata, findOrCreateConversationState, omitConversationMetadataKeys } from '../../../repositories';
 import { isCheckoutAgentEnabled, isReservationAgentEnabled } from '../../../config/env';
 import { reservationAgentNode } from '../reservation';
@@ -727,28 +733,50 @@ export const nlpSubgraphNode = async (
       const pending = intentState.records
         .filter((intent) => intent.status === 'PENDING')
         .sort((a, b) => a.sequence - b.sequence);
+      const partySizeGoalActive = derivePartySizeGoal(
+        {
+          partySize: getRequestedPartySize(metadataBeforePreflight) ?? null,
+          foodRelatedSignal:
+            active?.goal === 'PEDIR' ||
+            isFoodRelatedPartySizeSignal({
+              metadata: metadataBeforePreflight,
+              lastReferencedProductId:
+                (conversation as { lastReferencedProductId?: string | null })
+                  .lastReferencedProductId ?? null,
+            }),
+          checkoutActive: metadataBeforePreflight.checkout_active === true,
+          reservationDomainActive: blocksOrderPartySizeForReservationDomain(
+            metadataBeforePreflight
+          ),
+        },
+        getPartySizeGoalLedger(metadataBeforePreflight)
+      ).open;
       const decision = await runHumanIntentPreflight({
         turn: { messageId, text: userMessage },
         context: {
           recentTurns,
           ...(lastAssistantQuestion ? { lastAssistantQuestion } : {}),
           visibleReferences,
+          ...(partySizeGoalActive
+            ? { activeBlockingGoal: 'OBTENER_PERSONAS_DEL_PEDIDO' as const }
+            : {}),
         },
         state: { revision: intentState.revision, active, pending },
       });
 
       if (decision.decision === 'AMBIGUOUS') {
-        console.log(
-          JSON.stringify({ event: '[human-intent-preflight] ambiguous', conversationId: conversation.id })
-        );
-        return {
-          handlerResult: humanIntentClarificationResult(),
-          detection: NLP_AGENT_FIRST_DETECTION,
-          dataCollectionDelegated: true,
-        };
-      }
-
-      if (decision.decision === 'NO_INTENT') {
+        if (!partySizeGoalActive) {
+          console.log(
+            JSON.stringify({ event: '[human-intent-preflight] ambiguous', conversationId: conversation.id })
+          );
+          return {
+            handlerResult: humanIntentClarificationResult(),
+            detection: NLP_AGENT_FIRST_DETECTION,
+            dataCollectionDelegated: true,
+          };
+        }
+        allowLegacyFallback = false;
+      } else if (decision.decision === 'NO_INTENT') {
         allowLegacyFallback = true;
       } else {
         const applied = await applyHumanIntentTurnDecision({

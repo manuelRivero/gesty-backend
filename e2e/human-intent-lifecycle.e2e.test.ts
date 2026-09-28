@@ -328,7 +328,11 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
     const turn2 = trace.turns[1];
     const turn3 = trace.turns[2];
     const turn4 = trace.turns[3];
+    const originalOrderId = trace.turns[0].humanIntentAfter.active[0]?.id;
     assertLifecycleInvariant(trace, 2, 'INV-9', decisionName(turn2) === 'CONTINUE_ACTIVE', 'respuesta party-size continúa ACTIVE', compactValue(turn2.preflight));
+    assertLifecycleInvariant(trace, 2, 'INV-9', turn2.humanIntentAfter.active.some((intent) => intent.id === originalOrderId && intent.goal === 'PEDIR'), 'party size conserva el PEDIR ACTIVE original', compactValue(turn2.humanIntentAfter));
+    assertLifecycleInvariant(trace, 2, 'INV-9', turn2.humanIntentAfter.records.filter((intent) => intent.goal === 'PEDIR' && (intent.status === 'ACTIVE' || intent.status === 'PENDING')).length === 1, 'party size no crea otra HumanIntent PEDIR', compactValue(turn2.humanIntentAfter));
+    assertLifecycleInvariant(trace, 2, 'INV-9', turn2.toolCalls.some((call) => call.name === 'save_party_size' && (call.args as { count?: number })?.count === 3), 'save_party_size persiste count=3', compactValue(turn2.toolCalls));
     assertLifecycleInvariant(trace, 3, 'INV-6', turn3.humanIntentAfter.active.some((intent) => intent.goal === 'PEDIR' && intentText(intent).includes('ceviche')), 'ACTIVE PEDIR/ceviche', compactValue(turn3.humanIntentAfter));
     assertLifecycleInvariant(trace, 3, 'INV-6', turn3.humanIntentAfter.pending.filter((intent) => intent.goal === 'EXPLORAR').length >= 2, 'PENDING postres y bebidas', compactValue(turn3.humanIntentAfter));
     assertLifecycleInvariant(trace, 3, 'INV-6', !turn3.humanIntentAfter.pending.some((intent) => intent.goal === 'PEDIR'), 'sin PEDIR duplicada en PENDING', compactValue(turn3.humanIntentAfter));

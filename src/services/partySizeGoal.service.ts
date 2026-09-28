@@ -25,6 +25,20 @@ export const PARTY_SIZE_GOAL_TYPE = 'OBTENER_PERSONAS_DEL_PEDIDO' as const;
 /** Key histórica en intentLedger (Opportunity ambient C.3). */
 export const PARTY_SIZE_GOAL_LEGACY_TYPE = 'RECOLECTAR_PARTY_SIZE' as const;
 
+export const hasActivePedirHumanIntent = (metadata: unknown): boolean => {
+  const rawState = (
+    normalizeMetadata(metadata) as ConversationMetadata & { humanIntentState?: unknown }
+  ).humanIntentState;
+  if (!rawState || typeof rawState !== 'object' || Array.isArray(rawState)) return false;
+  const records = (rawState as { records?: unknown }).records;
+  return Array.isArray(records) && records.some((record) =>
+    typeof record === 'object' &&
+    record !== null &&
+    (record as { goal?: unknown }).goal === 'PEDIR' &&
+    (record as { status?: unknown }).status === 'ACTIVE'
+  );
+};
+
 /**
  * Intents NLP como feature de apertura (Fase A — deuda documentada).
  * Prohibido inyectar el intent como hint al agente.

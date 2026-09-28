@@ -42,6 +42,7 @@ import {
   blocksOrderPartySizeForReservationDomain,
   buildPendingPartySizeOrderContextLines,
   derivePartySizeGoalCandidate,
+  hasActivePedirHumanIntent,
   isFoodRelatedPartySizeSignal,
   recordPartySizeGoalSurfaced,
   resolvePartySizeLedgerEntry,
@@ -482,7 +483,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
 
   const hasAddress = ctx.hasAddress === true;
 
-  const foodRelatedSignal = isFoodRelatedPartySizeSignal({
+  const foodRelatedSignal = hasActivePedirHumanIntent(meta) || isFoodRelatedPartySizeSignal({
     detectionIntent: detection?.intent ?? null,
     metadata: meta,
     lastReferencedProductId:

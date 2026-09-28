@@ -28,6 +28,7 @@ export interface HumanIntentPreflightInput {
       kind: 'product' | 'category' | 'cart_item' | 'reservation';
       label: string;
     }>;
+    activeBlockingGoal?: 'OBTENER_PERSONAS_DEL_PEDIDO';
   };
   state: {
     revision: number;

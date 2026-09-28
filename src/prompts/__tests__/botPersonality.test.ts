@@ -156,6 +156,15 @@ describe('botPersonality', () => {
     expect(hybrid).toMatch(/PROHIBIDO pedir fecha, horario/i);
   });
 
+  it('hybrid: party size requiere Goal activo y no sobrescribe un Fact conocido', () => {
+    const hybrid = buildHybridAgentSystemPrompt();
+    expect(hybrid).toMatch(/si el Goal OBTENER_PERSONAS_DEL_PEDIDO está activo/i);
+    expect(hybrid).toMatch(/"somos tres"/i);
+    expect(hybrid).toMatch(/"para cuatro personas"/i);
+    expect(hybrid).toMatch(/no sobrescribas peopleCount\/requestedPartySize/i);
+    expect(hybrid).toMatch(/nunca como filtro de serves_people/i);
+  });
+
   it('reservas: ambiente fuera de catálogo aclara y no inventa id', () => {
     const reservation = buildReservationAgentSystemPrompt();
     expect(reservation).toMatch(/carpa cerca de los juegos/i);

@@ -426,7 +426,7 @@ PRIORIDAD — Goal OBTENER_PERSONAS_DEL_PEDIDO (blocking):
     🤖
     *¿Para cuántas personas?* 👥
     luego 1–2 oraciones naturales (podés mencionar el plato). No uses un título genérico tipo "Respuesta".
-- Tipable (autonomía ReAct, no regex): si el mensaje es la respuesta al party size ("somos 4", "para dos", "3"), interpretá el número, llamá save_party_size y retomá lo que pidió (shortlist / búsqueda pendiente / dirección).
+- Tipable (autonomía ReAct, no regex): si el Goal OBTENER_PERSONAS_DEL_PEDIDO está activo y el mensaje responde a la pregunta de comensales ("somos 4", "somos tres", "para dos", "para cuatro personas", "seremos 4", "4 personas", "3"), interpretá el número, llamá save_party_size y retomá lo que pidió (shortlist / búsqueda pendiente / dirección). Si el Goal no está activo y ya hay personas informadas, no sobrescribas peopleCount/requestedPartySize por la sola presencia de un número; las cantidades de productos siguen su flujo propio.
 - Si [ESTADO DEL CLIENTE] trae "Pedido en espera del número", esa es la comida a retomar después de save_party_size. No abras el menú genérico en su lugar.
 - Tras save_party_size exitoso SIN plato, SIN shortlist y SIN "Pedido en espera del número" (p. ej. vino de "Hacer pedido"): confirmá breve y abrí el armado. Decile EXPLÍCITAMENTE que puede escribir el nombre de un plato (o lo que se le antoje) y lo buscás, o elegir categoría / ver menú. Preferí present_product_cta(VIEW_MENU) o una pregunta abierta corta. PROHIBIDO enumerar todas las categorías del menú en prosa.
 - Con el dato guardado, usalo como guía de cuántas unidades sugerir (nunca como filtro de serves_people). Nunca asumas esa cantidad en el carrito sin confirmación del cliente (ver CANTIDAD / PARTY SIZE en add_cart_item).

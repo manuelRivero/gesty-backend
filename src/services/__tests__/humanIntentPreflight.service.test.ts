@@ -298,6 +298,34 @@ describe('Human Intent Preflight', () => {
     await expect(runHumanIntentPreflight(requestInput)).resolves.toEqual(decision);
   });
 
+  it('continúa ACTIVE sin blocker cuando responde al Goal blocking de party size', async () => {
+    const requestInput = input({
+      turn: { messageId: 'wamid.party-size-goal', text: 'Para 3' },
+      context: {
+        recentTurns: [{ role: 'assistant', text: '¿Para cuántas personas?' }],
+        lastAssistantQuestion: '¿Para cuántas personas?',
+        visibleReferences: [],
+        activeBlockingGoal: 'OBTENER_PERSONAS_DEL_PEDIDO',
+      },
+      state: {
+        revision: 3,
+        active: { ...active, request: {}, blockers: [] },
+        pending: [],
+      },
+    });
+    const decision = {
+      decision: 'CONTINUE_ACTIVE',
+      intentId: ACTIVE_ID,
+      answeredBlockerIds: [],
+    };
+    invokeMock.mockResolvedValue(decision);
+
+    await expect(runHumanIntentPreflight(requestInput)).resolves.toEqual(decision);
+    expect((invokeMock.mock.calls[0][0] as Array<{ content: string }>)[1].content)
+      .toContain('activeBlockingGoal');
+    expect(HUMAN_INTENT_PREFLIGHT_SYSTEM_PROMPT).toContain('No crees otro HumanIntent');
+  });
+
   it('falla cerrado si CONTINUE_ACTIVE usa un intentId PENDING como blocker', async () => {
     invokeMock.mockResolvedValue({
       decision: 'CONTINUE_ACTIVE',

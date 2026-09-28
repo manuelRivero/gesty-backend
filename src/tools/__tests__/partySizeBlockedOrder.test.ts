@@ -109,6 +109,7 @@ describe('pedido en espera cuando falta el número', () => {
     expect(saved.success).toBe(true);
     expect(saved.heldOrder).toBe('1× ceviche');
     expect(metadata.peopleCount).toBe(3);
+    expect(metadata.requestedPartySize).toBe(3);
     expect(metadata.pendingPartySizeOrder).toMatchObject({ summary: '1× ceviche' });
   });
 
