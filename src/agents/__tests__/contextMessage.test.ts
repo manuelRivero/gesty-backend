@@ -401,6 +401,53 @@ describe('buildContextMessage', () => {
     expect(menuFindManyMock).not.toHaveBeenCalled();
   });
 
+  it('expone HumanIntent ACTIVE, blockers y PENDING en orden sin ejecutarlos', async () => {
+    findFirstMock.mockResolvedValue(null);
+    const msg = await buildContextMessage(
+      makeCtx({
+        metadata: {
+          humanIntentState: {
+            version: 1,
+            revision: 4,
+            nextSequence: 4,
+            processedMessageIds: [],
+            records: [
+              {
+                id: 'intent-1',
+                sequence: 1,
+                goal: 'PEDIR',
+                request: { products: ['ceviche'] },
+                status: 'ACTIVE',
+                blockers: [{ id: 'blocker-1', code: 'PARTY_SIZE_REQUIRED' }],
+              },
+              {
+                id: 'intent-2',
+                sequence: 2,
+                goal: 'EXPLORAR',
+                request: { category: 'postres' },
+                status: 'PENDING',
+                blockers: [],
+              },
+              {
+                id: 'intent-3',
+                sequence: 3,
+                goal: 'EXPLORAR',
+                request: { category: 'bebidas' },
+                status: 'PENDING',
+                blockers: [],
+              },
+            ],
+          },
+        },
+      })
+    );
+
+    expect(msg).toContain('ACTIVE (intent-1): PEDIR');
+    expect(msg).toContain('Blockers de ACTIVE: PARTY_SIZE_REQUIRED');
+    expect(msg).toContain('1. EXPLORAR: {"category":"postres"} | 2. EXPLORAR: {"category":"bebidas"}');
+    expect(msg).toContain('No ejecutes tools ni presentes opciones por una intención PENDING');
+  });
+
   it('turno frío sin party size: la línea queda en el dato, sin imperativo', async () => {
     findFirstMock.mockResolvedValue(null);
     const msg = await buildContextMessage(

@@ -4,9 +4,20 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const lifecycleMock = vi.hoisted(() => ({
+  state: {
+    version: 1 as const,
+    revision: 0,
+    nextSequence: 1,
+    processedMessageIds: [] as string[],
+    records: [] as Array<Record<string, unknown>>,
+  },
+  metadata: {} as Record<string, unknown>,
+}));
+
 vi.mock('../../../../lib/prisma', () => ({
   prisma: {
-    menu_item: { findFirst: vi.fn() },
+    menu_item: { findFirst: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
     draft_order: { findFirst: vi.fn().mockResolvedValue(null) },
   },
 }));
@@ -25,7 +36,11 @@ vi.mock('../../../../controllers/webhook/dispachers', () => ({
 vi.mock('../../../../repositories', () => ({
   patchConversationMetadata: vi.fn().mockResolvedValue(undefined),
   omitConversationMetadataKeys: vi.fn().mockResolvedValue(undefined),
-  findOrCreateConversationState: vi.fn(async () => ({ metadata: {} })),
+  findOrCreateConversationState: vi.fn(async () => ({ metadata: lifecycleMock.metadata })),
+}));
+
+vi.mock('../../../../agents/conversationHistory', () => ({
+  buildAgentHistoryMessages: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock('../../../../repositories/conversationState.repository', () => ({
@@ -48,6 +63,24 @@ vi.mock('../../../../services/ai/detection.service', () => ({
 
 vi.mock('../../../../agents/reactAgent', () => ({
   runHybridReactAgent: vi.fn(),
+}));
+
+vi.mock('../../../../services/humanIntentState.service', () => ({
+  getHumanIntentState: vi.fn(async () => lifecycleMock.state),
+  applyHumanIntentTurnDecision: vi.fn(async ({ messageId }: { messageId: string }) => {
+    const nextState = {
+      ...lifecycleMock.state,
+      revision: lifecycleMock.state.revision + 1,
+      processedMessageIds: [...lifecycleMock.state.processedMessageIds, messageId],
+    };
+    lifecycleMock.state = nextState;
+    lifecycleMock.metadata = { ...lifecycleMock.metadata, humanIntentState: nextState };
+    return { status: 'applied', state: nextState };
+  }),
+}));
+
+vi.mock('../../../../services/humanIntentPreflight.service', () => ({
+  runHumanIntentPreflight: vi.fn().mockResolvedValue({ action: 'NO_INTENT' }),
 }));
 
 vi.mock('../../../../services/order.service', () => ({
@@ -82,6 +115,13 @@ vi.mock('../../../../config/env', () => ({
 import { interactiveSubgraphNode, nlpSubgraphNode } from '../index';
 import { detectIntentWithConfidence } from '../../../../services/ai/detection.service';
 import { runHybridReactAgent } from '../../../../agents/reactAgent';
+import { buildAgentHistoryMessages } from '../../../../agents/conversationHistory';
+import {
+  applyHumanIntentTurnDecision,
+  getHumanIntentState,
+} from '../../../../services/humanIntentState.service';
+import { runHumanIntentPreflight } from '../../../../services/humanIntentPreflight.service';
+import { prisma } from '../../../../lib/prisma';
 import { dispatchIntent, dispatchInteractive } from '../../../../controllers/webhook/dispachers';
 import { patchConversationMetadata } from '../../../../repositories';
 import { patchConversationMetadata as patchConversationMetadataDirect } from '../../../../repositories/conversationState.repository';
@@ -99,7 +139,7 @@ import { clearReservationSessionAfterCancel } from '../../../../services/reserva
 const nlpState = (message: string, metadata: Record<string, unknown> = {}): AgentState =>
   ({
     webhookContext: {
-      message: { text: { body: message }, type: 'text' },
+      message: { id: `wamid-${message}`, text: { body: message }, type: 'text' },
       to: '54911',
     },
     enrichedCtx: {
@@ -108,7 +148,7 @@ const nlpState = (message: string, metadata: Record<string, unknown> = {}): Agen
       conversation: { id: 'conv-1' },
       business: { id: 'biz-1' },
       customer: { phone_number: '54911' },
-      message: { text: { body: message }, type: 'text' },
+      message: { id: `wamid-${message}`, text: { body: message }, type: 'text' },
       to: '54911',
     },
     conversation: { id: 'conv-1', lastReferencedProductId: null },
@@ -125,6 +165,14 @@ const nlpState = (message: string, metadata: Record<string, unknown> = {}): Agen
 describe('nlpSubgraphNode — agent-first', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    lifecycleMock.state = {
+      version: 1,
+      revision: 0,
+      nextSequence: 1,
+      processedMessageIds: [],
+      records: [],
+    };
+    lifecycleMock.metadata = {};
     vi.mocked(isCheckoutAgentEnabled).mockReturnValue(false);
     vi.mocked(isReservationAgentEnabled).mockReturnValue(false);
     vi.mocked(runHybridReactAgent).mockResolvedValue({
@@ -146,6 +194,115 @@ describe('nlpSubgraphNode — agent-first', () => {
       expect(update.detection?.intent).toBe(ConversationIntent.UNKNOWN);
     }
   );
+
+  it('aplica NEW_INTENT antes de ReAct y pasa el estado actualizado al agente', async () => {
+    const decision = {
+      action: 'NEW_INTENT' as const,
+      intents: [{ goal: 'PEDIR' as const, request: { products: ['ceviche'] } }],
+    };
+    const active = {
+      id: 'intent-ceviche',
+      sequence: 1,
+      goal: 'PEDIR',
+      request: { products: ['ceviche'] },
+      status: 'ACTIVE',
+      blockers: [],
+    };
+    vi.mocked(runHumanIntentPreflight).mockResolvedValueOnce(decision);
+    vi.mocked(applyHumanIntentTurnDecision).mockImplementationOnce(async ({ messageId }) => {
+      const state = {
+        ...lifecycleMock.state,
+        revision: lifecycleMock.state.revision + 1,
+        processedMessageIds: [messageId],
+        records: [active],
+      };
+      lifecycleMock.state = state;
+      lifecycleMock.metadata = { humanIntentState: state };
+      return { status: 'applied', state };
+    });
+
+    const update = await nlpSubgraphNode(nlpState('Quiero ceviche'));
+
+    expect(runHumanIntentPreflight.mock.invocationCallOrder[0]).toBeLessThan(
+      applyHumanIntentTurnDecision.mock.invocationCallOrder[0]
+    );
+    expect(applyHumanIntentTurnDecision.mock.invocationCallOrder[0]).toBeLessThan(
+      runHybridReactAgent.mock.invocationCallOrder[0]
+    );
+    const hybridContext = vi.mocked(runHybridReactAgent).mock.calls[0][0];
+    expect(hybridContext.conversationState.metadata.humanIntentState.records).toEqual([active]);
+    expect(update.handlerResult?.content).toBe('respuesta híbrida');
+  });
+
+  it('AMBIGUOUS no entra a ReAct ni al fallback legacy', async () => {
+    vi.mocked(runHumanIntentPreflight).mockResolvedValueOnce({ action: 'AMBIGUOUS' });
+
+    const update = await nlpSubgraphNode(nlpState('¿Ese?'));
+
+    expect(applyHumanIntentTurnDecision).not.toHaveBeenCalled();
+    expect(runHybridReactAgent).not.toHaveBeenCalled();
+    expect(dispatchIntent).not.toHaveBeenCalled();
+    expect(update.handlerResult?.content).toMatch(/no me quedó claro/i);
+  });
+
+  it('solo pasa candidatos como referencias cuando el CTA consta como mostrado', async () => {
+    const candidateId = '44444444-4444-4444-8444-444444444444';
+    vi.mocked(prisma.menu_item.findMany).mockResolvedValueOnce([
+      { id: candidateId, name: 'Ceviche' },
+    ] as never);
+    lifecycleMock.metadata = {
+      pendingProductSelection: true,
+      candidateProductIds: [candidateId],
+    };
+    await nlpSubgraphNode(nlpState('Dame ese.'));
+    expect(vi.mocked(runHumanIntentPreflight).mock.calls[0][0].context.visibleReferences).toEqual([]);
+
+    lifecycleMock.state = {
+      version: 1,
+      revision: 0,
+      nextSequence: 1,
+      processedMessageIds: [],
+      records: [],
+    };
+    lifecycleMock.metadata = {
+      lastCtaShownAt: '2026-09-27T00:00:00.000Z',
+      pendingProductSelection: true,
+      candidateProductIds: [candidateId],
+    };
+    vi.mocked(prisma.menu_item.findMany).mockResolvedValueOnce([
+      { id: candidateId, name: 'Ceviche' },
+    ] as never);
+    await nlpSubgraphNode(nlpState('Dame ese.'));
+    expect(vi.mocked(runHumanIntentPreflight).mock.calls[1][0].context.visibleReferences)
+      .toEqual([{ id: candidateId, kind: 'product', label: 'Ceviche' }]);
+  });
+
+  it('revision obsoleta no entra a ReAct ni al fallback legacy', async () => {
+    vi.mocked(runHumanIntentPreflight).mockResolvedValueOnce({ action: 'NO_INTENT' });
+    vi.mocked(applyHumanIntentTurnDecision).mockResolvedValueOnce({
+      status: 'stale',
+      state: lifecycleMock.state,
+    });
+
+    await nlpSubgraphNode(nlpState('hola'));
+
+    expect(runHybridReactAgent).not.toHaveBeenCalled();
+    expect(dispatchIntent).not.toHaveBeenCalled();
+  });
+
+  it('messageId duplicado no entra a ReAct y evita persistir una segunda respuesta', async () => {
+    vi.mocked(runHumanIntentPreflight).mockResolvedValueOnce({ action: 'NO_INTENT' });
+    vi.mocked(applyHumanIntentTurnDecision).mockResolvedValueOnce({
+      status: 'duplicate',
+      state: lifecycleMock.state,
+    });
+
+    const update = await nlpSubgraphNode(nlpState('hola'));
+
+    expect(runHybridReactAgent).not.toHaveBeenCalled();
+    expect(dispatchIntent).not.toHaveBeenCalled();
+    expect(update.skipAIPersistence).toBe(true);
+  });
 
   it('no plantea confirmación de intent: el híbrido desambigua en prosa', async () => {
     await nlpSubgraphNode(nlpState('hola'));
@@ -290,7 +447,7 @@ describe('interactiveSubgraphNode — botones', () => {
     const state = {
       webhookContext: {
         payloadId: 'ORDER_FOOD',
-        message: { type: 'interactive', interactive: {} },
+        message: { id: 'wamid-order-food', type: 'interactive', interactive: {} },
       },
       enrichedCtx: {
         payloadId: 'ORDER_FOOD',
@@ -298,7 +455,7 @@ describe('interactiveSubgraphNode — botones', () => {
         conversation: { id: 'conv-1' },
         business: { id: 'biz-1' },
         customer: { phone_number: '54911' },
-        message: { type: 'interactive', interactive: {} },
+        message: { id: 'wamid-order-food', type: 'interactive', interactive: {} },
         to: '54911',
       },
       conversation: { id: 'conv-1', lastReferencedProductId: null },

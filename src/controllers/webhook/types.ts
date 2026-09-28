@@ -79,6 +79,8 @@ export interface EnrichedContext extends WebhookContext {
    * la consulta de comida. No se persiste en conversation metadata.
    */
   partySizeJustConfirmed?: number;
+  /** Revision del HumanIntentState usada solo en llamadas ReAct posteriores al preflight NLP. */
+  humanIntentGateRevision?: number;
 }
 
 export type HandlerFollowUp =

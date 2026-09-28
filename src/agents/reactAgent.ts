@@ -12,6 +12,7 @@
  */
 
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
+import { HumanIntentToolNode } from './humanIntentToolNode';
 import { HumanMessage } from '@langchain/core/messages';
 import { getHybridReasonerLlm } from '../config/llm';
 import { buildAgentHistoryMessages } from './conversationHistory';
@@ -136,7 +137,7 @@ const buildAgent = (
         : llm;
     agent = createReactAgent({
       llm: llmForAgent,
-      tools,
+      tools: new HumanIntentToolNode(tools),
       prompt: buildHybridAgentSystemPrompt(personalityPrompt, {
         checkoutDelegationEnabled: checkoutDelegation,
         reservationDelegationEnabled: reservationDelegation,
@@ -1171,6 +1172,9 @@ export const runHybridReactAgent = async (
       conversationStartedAt,
       turnStartedAt,
       userMessage: userMessageForTools,
+      ...(typeof ctx.humanIntentGateRevision === 'number'
+        ? { humanIntentGateRevision: ctx.humanIntentGateRevision }
+        : {}),
     },
   });
 

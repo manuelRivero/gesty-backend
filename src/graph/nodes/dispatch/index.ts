@@ -49,7 +49,13 @@ import { patchConversationMetadata, findOrCreateConversationState, omitConversat
 import { isCheckoutAgentEnabled, isReservationAgentEnabled } from '../../../config/env';
 import { reservationAgentNode } from '../reservation';
 import { runHybridReactAgent } from '../../../agents/reactAgent';
+import { buildAgentHistoryMessages } from '../../../agents/conversationHistory';
 import type { HybridAgentRunResult } from '../../../agents/reactAgent';
+import {
+  applyHumanIntentTurnDecision,
+  getHumanIntentState,
+} from '../../../services/humanIntentState.service';
+import { runHumanIntentPreflight } from '../../../services/humanIntentPreflight.service';
 import {
   activateCheckoutSessionIfCartHasItems,
   applyDefaultFulfillmentIfSingleOption,
@@ -354,7 +360,8 @@ const isOpenAiRateLimitError = (err: unknown): boolean => {
 const dispatchOrHybrid = async (
   enrichedCtx: EnrichedContext,
   checkoutHandoff?: CheckoutHandoffParams,
-  reservationHandoff?: ReservationHandoff
+  reservationHandoff?: ReservationHandoff,
+  allowLegacyFallback = true
 ): Promise<HandlerResult | null> => {
   try {
     const hybrid = await runHybridReactAgent(enrichedCtx);
@@ -388,8 +395,71 @@ const dispatchOrHybrid = async (
         isInteractive: false,
       };
     }
+    if (!allowLegacyFallback) return null;
   }
   return dispatchIntent(enrichedCtx);
+};
+
+const humanIntentClarificationResult = (): HandlerResult => ({
+  content: formatBotUserMessage(
+    'Una aclaración',
+    '🤔',
+    'No me quedó claro qué querés hacer. ¿Querés continuar con la tarea actual o empezar otra?'
+  ),
+  isInteractive: false,
+  skipBodyHumanization: true,
+});
+
+const asPreflightTurn = (
+  message: { getType?: () => string; content?: unknown }
+): { role: 'user' | 'assistant'; text: string } | null => {
+  const role = message.getType?.();
+  if (role !== 'human' && role !== 'ai') return null;
+  const text = typeof message.content === 'string'
+    ? message.content
+    : Array.isArray(message.content)
+      ? message.content
+          .map((part) =>
+            typeof part === 'object' && part !== null && 'text' in part
+              ? String((part as { text?: unknown }).text ?? '')
+              : ''
+          )
+          .join('')
+      : '';
+  if (!text.trim()) return null;
+  return { role: role === 'human' ? 'user' : 'assistant', text: text.trim() };
+};
+
+const loadVisibleProductReferences = async (
+  metadata: unknown,
+  businessId: string
+): Promise<Array<{ id: string; kind: 'product'; label: string }>> => {
+  const meta = normalizeMetadata(metadata);
+  if (typeof meta.lastCtaShownAt !== 'string') return [];
+  const ids = [
+    ...(meta.pendingProductSelection && Array.isArray(meta.candidateProductIds)
+      ? meta.candidateProductIds
+      : []),
+    ...(typeof meta.lastCtaShownAt === 'string' && typeof meta.lastCtaProductId === 'string'
+      ? [meta.lastCtaProductId]
+      : []),
+  ].filter((id): id is string => typeof id === 'string' && id.length > 0);
+  const uniqueIds = [...new Set(ids)].slice(0, 12);
+  if (uniqueIds.length === 0) return [];
+  try {
+    const rows = await prisma.menu_item.findMany({
+      where: { id: { in: uniqueIds }, business_id: businessId },
+      select: { id: true, name: true },
+    });
+    const byId = new Map(rows.map((row) => [row.id, row.name]));
+    return uniqueIds.flatMap((id) => {
+      const label = byId.get(id);
+      return label ? [{ id, kind: 'product' as const, label }] : [];
+    });
+  } catch (error) {
+    console.error('[human-intent-preflight] visible references unavailable:', error);
+    return [];
+  }
 };
 
 /**
@@ -584,6 +654,7 @@ export const nlpSubgraphNode = async (
   let workingConversationState = state.workingConversationState;
   const business = state.business!;
   const customer = state.customer!;
+  let allowLegacyFallback = true;
 
   console.log(
     JSON.stringify({
@@ -608,6 +679,118 @@ export const nlpSubgraphNode = async (
     : undefined;
 
   const userMessage = ctx.message?.text?.body || '';
+  const metadataBeforePreflight = normalizeMetadata(
+    workingConversationState?.metadata ?? enrichedBase.conversationState?.metadata
+  );
+  const preflightOwnedByPendingGate =
+    (userMessage.trim() && Boolean(getPendingSwitchToReservation(metadataBeforePreflight))) ||
+    Boolean(
+      userMessage.trim() &&
+      state.businessClosedButOperating &&
+      state.businessConfig?.orders_when_closed &&
+      metadataBeforePreflight.pending_closed_add_item
+    );
+
+  if (userMessage.trim() && !preflightOwnedByPendingGate) {
+    const messageId = typeof ctx.message?.id === 'string' ? ctx.message.id.trim() : '';
+    if (!messageId) {
+      return {
+        handlerResult: humanIntentClarificationResult(),
+        detection: NLP_AGENT_FIRST_DETECTION,
+        dataCollectionDelegated: true,
+      };
+    }
+
+    try {
+      const freshConversationState = await findOrCreateConversationState(conversation.id);
+      const intentState = await getHumanIntentState(conversation.id);
+      const history = await buildAgentHistoryMessages({
+        conversationId: conversation.id,
+        startedAt:
+          typeof conversation.started_at === 'object'
+            ? conversation.started_at
+            : null,
+        currentMessageId: messageId,
+        limit: 6,
+      });
+      const recentTurns = history
+        .map(asPreflightTurn)
+        .filter((turn): turn is NonNullable<typeof turn> => turn !== null);
+      const lastAssistantQuestion = [...recentTurns]
+        .reverse()
+        .find((turn) => turn.role === 'assistant')?.text;
+      const visibleReferences = await loadVisibleProductReferences(
+        freshConversationState.metadata,
+        business.id
+      );
+      const active = intentState.records.find((intent) => intent.status === 'ACTIVE') ?? null;
+      const pending = intentState.records
+        .filter((intent) => intent.status === 'PENDING')
+        .sort((a, b) => a.sequence - b.sequence);
+      const decision = await runHumanIntentPreflight({
+        turn: { messageId, text: userMessage },
+        context: {
+          recentTurns,
+          ...(lastAssistantQuestion ? { lastAssistantQuestion } : {}),
+          visibleReferences,
+        },
+        state: { revision: intentState.revision, active, pending },
+      });
+
+      if (decision.action === 'AMBIGUOUS') {
+        console.log(
+          JSON.stringify({ event: '[human-intent-preflight] ambiguous', conversationId: conversation.id })
+        );
+        return {
+          handlerResult: humanIntentClarificationResult(),
+          detection: NLP_AGENT_FIRST_DETECTION,
+          dataCollectionDelegated: true,
+        };
+      }
+
+      const applied = await applyHumanIntentTurnDecision({
+        conversationId: conversation.id,
+        messageId,
+        expectedRevision: intentState.revision,
+        decision,
+      });
+      if (applied.status === 'duplicate') return { skipAIPersistence: true };
+      if (applied.status !== 'applied') {
+        console.log(
+          JSON.stringify({
+            event: '[human-intent-preflight] transition_rejected',
+            status: applied.status,
+            conversationId: conversation.id,
+          })
+        );
+        return {
+          handlerResult: humanIntentClarificationResult(),
+          detection: NLP_AGENT_FIRST_DETECTION,
+          dataCollectionDelegated: true,
+        };
+      }
+
+      workingConversationState = await findOrCreateConversationState(conversation.id);
+      enrichedBase.conversationState = workingConversationState;
+      enrichedBase.humanIntentGateRevision = applied.state.revision;
+      allowLegacyFallback = decision.action === 'NO_INTENT';
+      console.log(
+        JSON.stringify({
+          event: '[human-intent-preflight] applied',
+          action: decision.action,
+          conversationId: conversation.id,
+          revision: applied.state.revision,
+        })
+      );
+    } catch (error) {
+      console.error('[human-intent-preflight] failed closed:', error);
+      return {
+        handlerResult: humanIntentClarificationResult(),
+        detection: NLP_AGENT_FIRST_DETECTION,
+        dataCollectionDelegated: true,
+      };
+    }
+  }
 
   if (userMessage.trim() && enrichedBase.conversationState) {
     const meta = normalizeMetadata(enrichedBase.conversationState.metadata);
@@ -801,7 +984,12 @@ export const nlpSubgraphNode = async (
       }
     : undefined;
 
-  const result = await dispatchOrHybrid(enrichedCtx, checkoutHandoff, reservationHandoff);
+  const result = await dispatchOrHybrid(
+    enrichedCtx,
+    checkoutHandoff,
+    reservationHandoff,
+    allowLegacyFallback
+  );
   if (checkoutHandoff || reservationDelegated) {
     workingConversationState = await findOrCreateConversationState(conversation.id);
   }

@@ -6,9 +6,10 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('@langchain/langgraph/prebuilt', () => ({
-  createReactAgent: vi.fn(),
-}));
+vi.mock('@langchain/langgraph/prebuilt', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@langchain/langgraph/prebuilt')>();
+  return { ...actual, createReactAgent: vi.fn() };
+});
 
 vi.mock('../../config/env', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../config/env')>();
@@ -108,6 +109,7 @@ import { findOrCreateConversationState, patchConversationMetadata } from '../../
 import * as complementSuggestions from '../../services/complementSuggestions.service';
 import { prisma } from '../../lib/prisma';
 import { buildCategoryProductListMessage } from '../../services/category.service';
+import { HumanIntentToolNode } from '../humanIntentToolNode';
 
 const BOT_TEXT = '🤖\n\n*Ceviche Clásico* 🐟\n\nEs levemente picante.';
 
@@ -204,6 +206,32 @@ describe('runHybridReactAgent', () => {
     expect(typeof result!.content).toBe('string');
     expect(planCta).not.toHaveBeenCalled();
     expect(buildHybridCtaInteractive).not.toHaveBeenCalled();
+  });
+
+  it('instala el gate central y propaga la revision solo cuando viene del preflight', async () => {
+    await runHybridReactAgent(
+      makeCtx({
+        conversationState: {
+          metadata: {
+            humanIntentState: {
+              version: 1,
+              revision: 7,
+              nextSequence: 2,
+              processedMessageIds: ['wamid-1'],
+              records: [],
+            },
+          },
+        },
+        humanIntentGateRevision: 7,
+      }) as any
+    );
+
+    const args = vi.mocked(createReactAgent).mock.calls[0][0];
+    expect(args.tools).toBeInstanceOf(HumanIntentToolNode);
+    const agent = vi.mocked(createReactAgent).mock.results[0].value as unknown as {
+      invoke: ReturnType<typeof vi.fn>;
+    };
+    expect(agent.invoke.mock.calls[0][1].configurable.humanIntentGateRevision).toBe(7);
   });
 
   it('present_product_cta ADD_ITEM con productId → interactive sin planCta', async () => {

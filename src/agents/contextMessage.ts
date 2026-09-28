@@ -256,6 +256,62 @@ export function buildPendingTipablesManagementLines(meta: {
   ];
 }
 
+export const buildHumanIntentContextLines = (metadata: unknown): string[] => {
+  if (typeof metadata !== 'object' || metadata === null || Array.isArray(metadata)) return [];
+  const rawState = (metadata as Record<string, unknown>).humanIntentState;
+  if (typeof rawState !== 'object' || rawState === null || Array.isArray(rawState)) return [];
+  const records = (rawState as { records?: unknown }).records;
+  if (!Array.isArray(records)) return [];
+
+  const open = records.filter(
+    (record): record is {
+      id: string;
+      sequence: number;
+      goal: string;
+      request: Record<string, unknown>;
+      status: string;
+      blockers?: Array<{ code?: string; details?: unknown }>;
+    } =>
+      typeof record === 'object' &&
+      record !== null &&
+      typeof (record as { id?: unknown }).id === 'string' &&
+      typeof (record as { sequence?: unknown }).sequence === 'number' &&
+      typeof (record as { goal?: unknown }).goal === 'string' &&
+      typeof (record as { status?: unknown }).status === 'string' &&
+      typeof (record as { request?: unknown }).request === 'object' &&
+      (record as { request?: unknown }).request !== null
+  );
+  const active = open.find((record) => record.status === 'ACTIVE');
+  const pending = open
+    .filter((record) => record.status === 'PENDING')
+    .sort((a, b) => a.sequence - b.sequence);
+  if (!active && pending.length === 0) return [];
+
+  const describe = (record: (typeof open)[number]): string =>
+    `${record.goal}: ${JSON.stringify(record.request).slice(0, 600)}`;
+  return [
+    '[HUMAN INTENT STATE]',
+    active
+      ? `- ACTIVE (${active.id}): ${describe(active)}`
+      : '- No hay una intención ACTIVE.',
+    ...(active?.blockers?.length
+      ? [
+          `- Blockers de ACTIVE: ${active.blockers
+            .map((blocker) => `${blocker.code ?? 'BLOCKER'} ${JSON.stringify(blocker.details ?? {})}`)
+            .join('; ')}`,
+        ]
+      : []),
+    ...(pending.length
+      ? [
+          `- PENDING, en orden y solo para turnos futuros: ${pending
+            .map((record, index) => `${index + 1}. ${describe(record)}`)
+            .join(' | ')}`,
+        ]
+      : []),
+    '- En este turno operá únicamente sobre ACTIVE. No ejecutes tools ni presentes opciones por una intención PENDING.',
+  ];
+};
+
 export const buildContextMessage = async (ctx: EnrichedContext): Promise<string> => {
   const userMsg = ctx.message?.text?.body ?? '';
   const meta = normalizeMetadata(ctx.conversationState?.metadata);
@@ -654,6 +710,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
   );
 
   const lines = [
+    ...buildHumanIntentContextLines(meta),
     ...buildDomainStateContextLines({
       metadata: meta,
       hasCartItems: hasItems,
