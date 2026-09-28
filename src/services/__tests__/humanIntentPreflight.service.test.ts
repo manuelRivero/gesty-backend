@@ -43,6 +43,12 @@ const pending = {
   updatedAt: '2026-09-27T00:01:00.000Z',
 };
 
+const pendingBeverages = {
+  ...pending,
+  id: '55555555-5555-4555-8555-555555555555',
+  request: { category: 'bebidas' },
+};
+
 const input = (overrides: Partial<HumanIntentPreflightInput> = {}): HumanIntentPreflightInput => ({
   turn: { messageId: 'wamid.current', text: 'Para tres.' },
   context: {
@@ -188,6 +194,124 @@ describe('Human Intent Preflight', () => {
     expect(HUMAN_INTENT_PREFLIGHT_SYSTEM_PROMPT).toContain(
       '{"decision":"CANCEL","intentId":"<ID_PENDING>"}'
     );
+  });
+
+  it('distingue retomar PENDING de continuar ACTIVE en el contrato', () => {
+    expect(HUMAN_INTENT_PREFLIGHT_SYSTEM_PROMPT).toContain(
+      'answeredBlockerIds solo puede contener IDs que aparezcan en state.active.blockers'
+    );
+    expect(HUMAN_INTENT_PREFLIGHT_SYSTEM_PROMPT).toContain(
+      'si el mensaje expresa un objetivo nuevo distinto y no hay un PENDING compatible, usa NEW_INTENT'
+    );
+    expect(HUMAN_INTENT_PREFLIGHT_SYSTEM_PROMPT).toContain(
+      '{"decision":"RESUME_PENDING","intentId":"<ID_PENDING_POSTRES>"}'
+    );
+    expect(HUMAN_INTENT_PREFLIGHT_SYSTEM_PROMPT).toContain(
+      '{"decision":"RESUME_PENDING","intentId":"<ID_PENDING_BEBIDAS>"}'
+    );
+    expect(HUMAN_INTENT_PREFLIGHT_SYSTEM_PROMPT).toContain('¿Qué tienen de postre?');
+  });
+
+  it('ordena crear EXPLORAR/postres como NEW_INTENT sin pending compatible', async () => {
+    const requestInput = input({
+      turn: { messageId: 'wamid.new-desserts', text: '¿Qué postres tienen?' },
+      state: { revision: 2, active: { ...active, request: { products: ['milanesa'] }, blockers: [] }, pending: [] },
+    });
+    const decision = {
+      decision: 'NEW_INTENT',
+      intents: [{ goal: 'EXPLORAR', request: { category: 'postres' } }],
+    };
+    invokeMock.mockResolvedValue(decision);
+
+    await expect(runHumanIntentPreflight(requestInput)).resolves.toEqual(decision);
+    expect(validateHumanIntentTurnDecision(decision, requestInput)).toEqual(decision);
+  });
+
+  it('no reutiliza un pending incompatible y crea EXPLORAR/postres', async () => {
+    const requestInput = input({
+      turn: { messageId: 'wamid.new-desserts-with-drinks-pending', text: '¿Qué postres tienen?' },
+      state: {
+        revision: 3,
+        active: { ...active, blockers: [] },
+        pending: [pendingBeverages],
+      },
+    });
+    const decision = {
+      decision: 'NEW_INTENT',
+      intents: [{ goal: 'EXPLORAR', request: { category: 'postres' } }],
+    };
+    invokeMock.mockResolvedValue(decision);
+
+    await expect(runHumanIntentPreflight(requestInput)).resolves.toEqual(decision);
+    expect(validateHumanIntentTurnDecision(decision, requestInput)).toEqual(decision);
+  });
+
+  it('rechaza un RESUME_PENDING inventado cuando no hay pending compatible', async () => {
+    const requestInput = input({
+      turn: { messageId: 'wamid.invalid-pending', text: '¿Qué postres tienen?' },
+      state: { revision: 2, active: { ...active, blockers: [] }, pending: [] },
+    });
+    const inventedResume = { decision: 'RESUME_PENDING', intentId: '<ID_PENDING>' };
+    invokeMock.mockResolvedValue(inventedResume);
+
+    await expect(runHumanIntentPreflight(requestInput)).resolves.toEqual({ decision: 'AMBIGUOUS' });
+    expect(validateHumanIntentTurnDecision(inventedResume, requestInput)).toBeNull();
+    expect(HUMAN_INTENT_PREFLIGHT_SYSTEM_PROMPT).toContain(
+      'Nunca devuelvas los placeholders literales <ID_PENDING>, <pending-id> o <some-id>'
+    );
+  });
+
+  it.each([
+    ['¿Qué postres tienen?', [pending], PENDING_ID],
+    ['¿Qué postres tienen?', [pending, pendingBeverages], PENDING_ID],
+    ['¿Y qué bebidas tienen?', [pending, pendingBeverages], pendingBeverages.id],
+  ])('retoma exclusivamente la intención PENDING correspondiente: %s', async (text, pendingIntents, expectedId) => {
+    const requestInput = input({
+      turn: { messageId: `wamid.resume-${expectedId}`, text },
+      state: {
+        revision: 3,
+        active: { ...active, request: { products: ['milanesa'] }, blockers: [] },
+        pending: pendingIntents,
+      },
+    });
+    const decision = { decision: 'RESUME_PENDING', intentId: expectedId };
+    invokeMock.mockResolvedValue(decision);
+
+    await expect(runHumanIntentPreflight(requestInput)).resolves.toEqual(decision);
+    const prompt = (invokeMock.mock.calls[0][0] as Array<{ content: string }>)[1].content;
+    expect(prompt).toContain(expectedId);
+    expect(prompt).toContain(text);
+  });
+
+  it('continúa ACTIVE y devuelve solo el blocker respondido cuando hay PENDING', async () => {
+    const requestInput = input({
+      turn: { messageId: 'wamid.party-size', text: 'Para dos personas' },
+      state: { revision: 3, active, pending: [pending] },
+    });
+    const decision = {
+      decision: 'CONTINUE_ACTIVE',
+      intentId: ACTIVE_ID,
+      answeredBlockerIds: [BLOCKER_ID],
+    };
+    invokeMock.mockResolvedValue(decision);
+
+    await expect(runHumanIntentPreflight(requestInput)).resolves.toEqual(decision);
+  });
+
+  it('falla cerrado si CONTINUE_ACTIVE usa un intentId PENDING como blocker', async () => {
+    invokeMock.mockResolvedValue({
+      decision: 'CONTINUE_ACTIVE',
+      intentId: ACTIVE_ID,
+      answeredBlockerIds: [PENDING_ID],
+    });
+
+    await expect(runHumanIntentPreflight(input())).resolves.toEqual({ decision: 'AMBIGUOUS' });
+    expect(
+      validateHumanIntentTurnDecision(
+        { decision: 'CONTINUE_ACTIVE', intentId: ACTIVE_ID, answeredBlockerIds: [PENDING_ID] },
+        input()
+      )
+    ).toBeNull();
   });
 
   it('REPLACE solo acepta la intención ACTIVE', () => {

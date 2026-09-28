@@ -14,9 +14,9 @@ Goals permitidos:
 - SOPORTE_HUMANO: solicitar hablar con una persona.
 
 Decisiones:
-- CONTINUE_ACTIVE cuando responde a la intención ACTIVE, incluida una respuesta a uno de sus blockers. Usa solo el intentId ACTIVE y answeredBlockerIds existentes.
+- CONTINUE_ACTIVE solo cuando el mensaje continúa trabajando sobre el objetivo actualmente ACTIVE, incluida una respuesta a uno de sus blockers. Usa el intentId exacto ACTIVE. answeredBlockerIds solo puede contener IDs que aparezcan en state.active.blockers y que el mensaje responda; si no responde blockers, usa []. Nunca pongas en answeredBlockerIds un intentId PENDING, otro intentId, ni IDs de productos, categorías u otras entidades.
 - NEW_INTENT cuando aparece un objetivo humano independiente. Puede contener varios objetivos realmente distintos en el orden expresado. Siempre devuelve intents como array; cada elemento tiene goal y request. request nunca va en la raíz. Varios productos para añadir dentro de un mismo pedido suelen ser un solo PEDIR con una lista de productos en request; no los dividas solo por aparecer varios nombres.
-- RESUME_PENDING cuando el usuario retoma inequívocamente una intención PENDING. Devuelve su ID exacto; no la dupliques.
+- RESUME_PENDING únicamente cuando state.pending contiene una intención cuyo goal/request corresponde claramente al objetivo del mensaje. Devuelve exactamente el intentId de ese registro; nunca inventes, completes ni uses placeholders como IDs. La existencia de una intención ACTIVE no obliga a continuarla: si el mensaje expresa un objetivo nuevo distinto y no hay un PENDING compatible, usa NEW_INTENT. Un PENDING de otro objetivo no cuenta como compatible. Si el mensaje retoma claramente un PENDING, elige RESUME_PENDING en vez de CONTINUE_ACTIVE o NEW_INTENT. Si hay varios PENDING compatibles sin una selección clara, devuelve AMBIGUOUS.
 - CANCEL y CANCELAR_COMPRA representan objetivos distintos:
   - CANCEL significa abandonar una HumanIntent ya existente, no cancelar la compra. Requiere el intentId exacto de una intención ACTIVE o PENDING que el usuario esté abandonando explícitamente. Usa CANCEL solo si el mensaje identifica esa intención existente; por ejemplo, “Olvidá lo de los postres” cuando PENDING es EXPLORAR de postres.
   - CANCELAR_COMPRA es un objetivo nuevo: cancelar un carrito o pedido real. Frases como “Cancelar pedido”, “Quiero cancelar el pedido” y “Cancelá la compra” se clasifican como NEW_INTENT con goal CANCELAR_COMPRA, aunque haya una intención PEDIR abierta. No uses CANCEL para ellas.
@@ -32,6 +32,26 @@ NO_INTENT:
 CONTINUE_ACTIVE (reemplaza los placeholders por IDs existentes de la entrada):
 {"decision":"CONTINUE_ACTIVE","intentId":"<ID_ACTIVE>","answeredBlockerIds":["<ID_BLOCKER>"]}
 
+Si ACTIVE es PEDIR milanesa con blocker <ID_BLOCKER>, PENDING es EXPLORAR postres y el usuario dice "Para dos personas", continúa ACTIVE y usa solo el blocker real:
+{"decision":"CONTINUE_ACTIVE","intentId":"<ID_ACTIVE>","answeredBlockerIds":["<ID_BLOCKER>"]}
+
+Si ACTIVE es PEDIR milanesa sin blockers, PENDING es EXPLORAR postres y el usuario pregunta "¿Qué postres tienen?", retoma la intención PENDING. No uses el ID PENDING como blocker ni continúes el pedido:
+{"decision":"RESUME_PENDING","intentId":"<ID_PENDING_POSTRES>"}
+
+Si ACTIVE es PEDIR milanesa y no hay PENDING, el usuario pregunta "¿Qué postres tienen?". Es un objetivo nuevo, no CONTINUE_ACTIVE ni RESUME_PENDING:
+{"decision":"NEW_INTENT","intents":[{"goal":"EXPLORAR","request":{"category":"postres"}}]}
+
+Si ACTIVE es PEDIR y el único PENDING es EXPLORAR bebidas, pero el usuario pregunta "¿Qué postres tienen?", bebidas no es compatible. Crea la intención nueva de explorar postres:
+{"decision":"NEW_INTENT","intents":[{"goal":"EXPLORAR","request":{"category":"postres"}}]}
+
+Si ACTIVE es PEDIR ceviche y hay dos PENDING, EXPLORAR postres (<ID_PENDING_POSTRES>) y EXPLORAR bebidas (<ID_PENDING_BEBIDAS>), elige exclusivamente la categoría consultada:
+Usuario: "¿Qué postres tienen?"
+{"decision":"RESUME_PENDING","intentId":"<ID_PENDING_POSTRES>"}
+Usuario: "¿Y qué bebidas tienen?"
+{"decision":"RESUME_PENDING","intentId":"<ID_PENDING_BEBIDAS>"}
+
+Con PENDING EXPLORAR postres, "Mostrame los postres", "Quiero ver los postres" y "¿Qué tienen de postre?" retoman esa misma intención con RESUME_PENDING y su ID exacto.
+
 NEW_INTENT con un objetivo. Para "Quiero hacer un pedido", request vacío es válido:
 {"decision":"NEW_INTENT","intents":[{"goal":"PEDIR","request":{}}]}
 
@@ -40,6 +60,8 @@ NEW_INTENT con varios objetivos para "Ceviche, postre y bebidas":
 
 RESUME_PENDING (usa el ID PENDING exacto de la entrada):
 {"decision":"RESUME_PENDING","intentId":"<ID_PENDING>"}
+
+No devuelvas RESUME_PENDING si no hay una intención PENDING compatible con el mensaje. Nunca devuelvas los placeholders literales <ID_PENDING>, <pending-id> o <some-id>; usa solamente el intentId real de un registro en state.pending.
 
 CANCEL (usa el ID abierto exacto de la entrada):
 {"decision":"CANCEL","intentId":"<ID_OPEN>"}
