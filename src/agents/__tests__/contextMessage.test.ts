@@ -226,7 +226,9 @@ describe('buildContextMessage', () => {
     }));
 
     expect(msg).not.toContain('OBTENER_PERSONAS_DEL_PEDIDO');
-    expect(msg).toContain('Personas para el pedido: 2');
+    expect(msg).toContain(
+      'Personas para el pedido: 2 (Fact de comensales; no es cantidad de productos ni filtro de serves_people)'
+    );
   });
 
   it('oferta activa con party size: menciona Oferta activa', async () => {

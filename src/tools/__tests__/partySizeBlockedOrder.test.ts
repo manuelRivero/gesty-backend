@@ -113,6 +113,16 @@ describe('pedido en espera cuando falta el número', () => {
     expect(metadata.pendingPartySizeOrder).toMatchObject({ summary: '1× ceviche' });
   });
 
+  it('save_party_size sin count rechaza la llamada sin producir efectos', async () => {
+    const result = JSON.parse(
+      (await savePartySizeTool.func({} as never, undefined, TURN_2)) as string
+    );
+
+    expect(result).toEqual({ success: false, error: 'count_required', missing: 'count' });
+    expect(patchConversationMetadata).not.toHaveBeenCalled();
+    expect(metadata.peopleCount).toBeUndefined();
+  });
+
   it('después de guardar el número el estado sigue mostrando el pedido sin historial', () => {
     const lines = buildPendingPartySizeOrderContextLines({
       peopleCount: 3,
@@ -206,6 +216,22 @@ describe('pedido en espera cuando falta el número', () => {
     expect(planned.success).toBe(true);
     expect(metadata.pendingOrderLines).toBeTruthy();
     expect(metadata.pendingPartySizeOrder).toBeUndefined();
+  });
+
+  it('plan_order_lines deja sin cantidad las líneas no cuantificadas aunque haya party size', async () => {
+    metadata = { peopleCount: 3, requestedPartySize: 3 };
+    const lines = [{ hint: 'papas a la huancaína' }, { hint: 'ceviche' }];
+
+    const planned = JSON.parse(
+      (await planOrderLinesTool.func({ lines }, undefined, TURN_2)) as string
+    );
+
+    expect(planned.success).toBe(true);
+    expect(metadata.peopleCount).toBe(3);
+    expect(
+      (metadata.pendingOrderLines as { lines: Array<{ requestedQuantity: number | null }> }).lines
+        .map((line) => line.requestedQuantity)
+    ).toEqual([1, 1]);
   });
 
   it('una búsqueda con resultados no consume el pending', async () => {

@@ -192,6 +192,16 @@ describe('add_cart_item — unidades vs cobertura', () => {
     expect(writtenQty()).toBe(2);
   });
 
+  it('unidades explícitas: "Quiero 3 papas" conserva quantity 3', async () => {
+    findOrCreateConversationState.mockResolvedValue({ metadata: partyMeta(3) });
+
+    const result = JSON.parse((await add('Quiero 3 papas', 3)) as string);
+
+    expect(result.success).toBe(true);
+    expect(result.added.quantity).toBe(3);
+    expect(writtenQty()).toBe(3);
+  });
+
   it('unidades explícitas ganan a la cobertura: "dos ceviches para dos personas"', async () => {
     findOrCreateConversationState.mockResolvedValue({ metadata: partyMeta(2) });
 

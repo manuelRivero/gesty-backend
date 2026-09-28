@@ -162,7 +162,13 @@ describe('botPersonality', () => {
     expect(hybrid).toMatch(/"somos tres"/i);
     expect(hybrid).toMatch(/"para cuatro personas"/i);
     expect(hybrid).toMatch(/no sobrescribas peopleCount\/requestedPartySize/i);
-    expect(hybrid).toMatch(/nunca como filtro de serves_people/i);
+    expect(hybrid).toMatch(/nunca lo uses como filtro de serves_people/i);
+  });
+
+  it('hybrid separa el Fact de comensales de las cantidades por producto', () => {
+    const hybrid = buildHybridAgentSystemPrompt();
+    expect(hybrid).toMatch(/nunca copies peopleCount\/requestedPartySize a quantity o requestedQuantity/i);
+    expect(hybrid).toMatch(/independientemente del Fact de comensales/i);
   });
 
   it('reservas: ambiente fuera de catálogo aclara y no inventa id', () => {

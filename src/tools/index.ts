@@ -3124,7 +3124,7 @@ const savePartySizeSchema = z.object({
     .int()
     .min(1)
     .max(99)
-    .describe('Número de personas que van a comer (1–99).'),
+    .describe('Número de personas que van a comer (1–99); no es cantidad de productos.'),
 });
 type SavePartySizeInput = z.infer<typeof savePartySizeSchema>;
 
@@ -3137,10 +3137,15 @@ export const savePartySizeTool = new DynamicStructuredTool<
     'Guarda el número de personas para el pedido actual. ' +
     'Llamá este tool cuando el cliente indique cuántas personas van a comer, en cualquier forma: ' +
     '"somos 4", "para mí y mi pareja" (→ 2), "para tres personas", "éramos 6", etc. ' +
-    'Interpretá el número vos antes de llamar el tool. ' +
-    'Una vez guardado, el sistema usa el dato para sugerir cantidades adecuadas.',
+    'Interpretá el número vos antes de llamar el tool. Este Fact describe comensales; ' +
+    'nunca lo conviertas en quantity/requestedQuantity ni en cantidad de una línea.',
   schema: savePartySizeSchema,
-  func: async ({ count }: SavePartySizeInput, _runManager, config?: RunnableConfig) => {
+  func: async (input: SavePartySizeInput, _runManager, config?: RunnableConfig) => {
+    const parsed = savePartySizeSchema.safeParse(input);
+    if (!parsed.success) {
+      return toJson({ success: false, error: 'count_required', missing: 'count' });
+    }
+    const { count } = parsed.data;
     const { conversationId } = getReactContext(config);
     const state = await findOrCreateConversationState(conversationId);
     const held = getPendingPartySizeOrder(state.metadata);
@@ -3641,11 +3646,12 @@ const planOrderLinesSchema = z.object({
           .max(99)
           .optional()
           .describe(
-            'Unidades que el cliente pidió para ESTA línea en el mismo mensaje. ' +
+            'Unidades que el cliente pidió explícitamente para ESTA línea de producto. ' +
               '"3 lomos" → { hint: "lomo saltado", requestedQuantity: 3 }. ' +
               '"1 ceviche" → { hint: "ceviche", requestedQuantity: 1 }. ' +
-              'Omití solo si no dijo número ("quiero ceviche", "una bebida"). ' +
-              'Mandarlo mal obliga al bot a preguntar cuántas personas comen: el dato importa.'
+              'Omití si no indicó unidades para esa línea ("quiero ceviche", "una bebida"); ' +
+              'la línea comienza con 1 unidad. ' +
+              'Un número de comensales ("para 3", "somos 3") nunca es cantidad de esta línea.'
           ),
       })
     )
@@ -3667,7 +3673,9 @@ export const planOrderLinesTool = new DynamicStructuredTool<
     '(ej. "quiero 3 lomos, 2 ceviches y una bebida" → 3 líneas). También si hay ola de complemento ' +
     'viva y nombra 2+ candidatos de esa lista ("1 adobo y 1 ají"): misma tool; cierra la ola y abre cola. ' +
     'NO uses esta tool si es un solo plato (aunque pida varias unidades del mismo, ej. "2 pizzas" es 1 línea, ' +
-    'no la necesitás). Llamala UNA sola vez por mensaje, ANTES de resolver ningún producto. Después de ' +
+    'no la necesitás). requestedQuantity solo contiene unidades explícitas de cada producto; si se omite, ' +
+    'la línea comienza con 1 unidad. El número de personas del pedido nunca se copia a las líneas. ' +
+    'Llamala UNA sola vez por mensaje, ANTES de resolver ningún producto. Después de ' +
     'llamarla, trabajá SOLO la línea activa: si el hint nombra un plato, search_products(keyword=hint entero); ' +
     'si es sección/rol ("algo de beber", "postre"), get_categories + present_category o ' +
     'find_products_by_filter(categoryTag). PROHIBIDO containsIngredient recortando un nombre de plato. ' +
@@ -3678,6 +3686,10 @@ export const planOrderLinesTool = new DynamicStructuredTool<
     _runManager,
     config?: RunnableConfig
   ) => {
+    const plannedLines = lines.map((line) => ({
+      ...line,
+      requestedQuantity: line.requestedQuantity ?? 1,
+    }));
     const { conversationId, turnStartedAt } = getReactContext(config);
     if (!conversationId) {
       return toJson({ success: false, error: 'no_conversation' });
@@ -3686,15 +3698,15 @@ export const planOrderLinesTool = new DynamicStructuredTool<
       conversationId,
       {
         source: 'plan',
-        summary: summarizeBlockedOrderLines(lines),
+        summary: summarizeBlockedOrderLines(plannedLines),
       },
       turnStartedAt
     );
     if (partyGate) return partyGate;
     const pending = await setPendingOrderLines({
       conversationId,
-      lines,
-      sourceMessage: lines.map((l) => l.hint).join(', '),
+      lines: plannedLines,
+      sourceMessage: plannedLines.map((l) => l.hint).join(', '),
     });
     // La cola ya es la representación persistente de esa comida.
     await clearPendingPartySizeOrder(conversationId);

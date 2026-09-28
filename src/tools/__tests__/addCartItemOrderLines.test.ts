@@ -188,6 +188,23 @@ describe('add_cart_item — cola de pedido y cantidad por línea', () => {
     );
   });
 
+  it('peopleCount 3 y quantity explícita 2 mantienen ambos Facts separados', async () => {
+    const metadata = metadataWithQueue({ partySize: 3, requestedQuantity: 2 });
+    findOrCreateConversationState.mockResolvedValue({ metadata });
+    vi.mocked(prisma.conversation_state.findUnique).mockResolvedValue({
+      metadata,
+    } as never);
+
+    const result = JSON.parse((await callTool({ productId: PRODUCT_ID })) as string);
+
+    expect(result.success).toBe(true);
+    expect(metadata.peopleCount).toBe(3);
+    expect(result.added.quantity).toBe(2);
+    expect(prisma.draft_order_item.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ quantity: 2 }) })
+    );
+  });
+
   it('línea con cantidad: igual exige party size si falta el Fact de personas', async () => {
     const noParty = metadataWithQueue();
     findOrCreateConversationState.mockResolvedValue({ metadata: noParty });

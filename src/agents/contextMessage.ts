@@ -456,7 +456,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     : reservationsOnly
       ? 'no aplica (este local no toma pedidos)'
       : partySize
-        ? `${partySize} (guía de cantidad a pedir, NO filtro de serves_people)`
+        ? `${partySize} (Fact de comensales; no es cantidad de productos ni filtro de serves_people)`
         : coldDomainTurn
           ? 'no informado'
           : isWelcomeEligible(meta)
