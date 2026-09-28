@@ -47,6 +47,7 @@ const PENDING = {
   createdAt: '2026-09-27T00:00:00.000Z',
   updatedAt: '2026-09-27T00:00:00.000Z',
 };
+const PRODUCT_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 
 const state = (records: Array<Record<string, unknown>> = [ACTIVE, PENDING], revision = 7) => ({
   version: 1 as const,
@@ -70,6 +71,17 @@ const makeTool = (name: string, effect: ReturnType<typeof vi.fn>) =>
       keyword: z.string().optional(),
       categoryId: z.string().optional(),
     }),
+    func: async () => {
+      await effect();
+      return JSON.stringify({ success: true });
+    },
+  });
+
+const makeAddCartItemTool = (effect: ReturnType<typeof vi.fn>) =>
+  new DynamicStructuredTool({
+    name: 'add_cart_item',
+    description: 'test tool',
+    schema: z.object({ productId: z.string().uuid() }),
     func: async () => {
       await effect();
       return JSON.stringify({ success: true });
@@ -112,6 +124,50 @@ describe('HumanIntentToolNode', () => {
     );
     const message = result.messages[0] as ToolMessage;
 
+    expect(effect).not.toHaveBeenCalled();
+    expect(message.status).toBe('error');
+    expect(JSON.parse(String(message.content))).toMatchObject({
+      error: HUMAN_INTENT_TOOL_DENIED,
+      pendingIntentId: PENDING.id,
+    });
+  });
+
+  it('no consulta Prisma para un productId que el schema rechazará', async () => {
+    const effect = vi.fn();
+    const node = new HumanIntentToolNode([makeAddCartItemTool(effect)]);
+
+    const result = await node.invoke(
+      { messages: [toolCall('add_cart_item', { productId: 'ceviche' })] },
+      config()
+    );
+    const message = result.messages[0] as ToolMessage;
+
+    expect(itemFindFirstMock).not.toHaveBeenCalled();
+    expect(effect).not.toHaveBeenCalled();
+    expect(message.status).toBe('error');
+    expect(String(message.content)).not.toContain('invalid input syntax for type uuid');
+  });
+
+  it('conserva la autorización del gate para un productId UUID válido', async () => {
+    getStateMock.mockResolvedValue(
+      state([
+        { ...ACTIVE, request: { products: ['lomo'] } },
+        { ...PENDING, request: { products: ['ceviche'] } },
+      ])
+    );
+    const effect = vi.fn();
+    const node = new HumanIntentToolNode([makeAddCartItemTool(effect)]);
+
+    const result = await node.invoke(
+      { messages: [toolCall('add_cart_item', { productId: PRODUCT_ID })] },
+      config()
+    );
+    const message = result.messages[0] as ToolMessage;
+
+    expect(itemFindFirstMock).toHaveBeenCalledWith({
+      where: { id: PRODUCT_ID, business_id: 'biz-1' },
+      select: { name: true },
+    });
     expect(effect).not.toHaveBeenCalled();
     expect(message.status).toBe('error');
     expect(JSON.parse(String(message.content))).toMatchObject({

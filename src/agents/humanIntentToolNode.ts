@@ -2,8 +2,11 @@ import { ToolMessage } from '@langchain/core/messages';
 import type { ToolCall } from '@langchain/core/messages/tool';
 import type { RunnableConfig } from '@langchain/core/runnables';
 import { ToolNode } from '@langchain/langgraph/prebuilt';
+import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { getHumanIntentState, type HumanIntentRecord } from '../services/humanIntentState.service';
+
+const uuidSchema = z.string().uuid();
 
 const normalizeTarget = (value: string): string =>
   value
@@ -97,7 +100,7 @@ const toolTargets = async (
       const nameValue = typeof args.productName === 'string' ? args.productName : null;
       if (nameValue) return [nameValue];
       const id = typeof args.productId === 'string' ? args.productId : null;
-      if (!id) return null;
+      if (!id || !uuidSchema.safeParse(id).success) return null;
       const productName = await resolveMenuItemName(businessId, id);
       return productName ? [productName] : null;
     }
