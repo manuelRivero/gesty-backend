@@ -232,6 +232,10 @@ export interface HybridAgentSignals {
   presentationCommands: PresentationCommand[];
   /** True si add_cart_item devolvió success en este turno (no reabrir shortlist). */
   cartAddSucceeded: boolean;
+  /** Un add fallido no puede quedar cubierto por prosa afirmativa del LLM. */
+  cartAddFailed: boolean;
+  /** Effects exitosos observados en ToolMessages de este turno. */
+  successfulEffectCount: number;
   /** Producto del último add_cart_item exitoso de este turno. */
   lastAddedProductId: string | null;
   /**
@@ -362,8 +366,37 @@ const summarizeToolArgs = (args: unknown): Record<string, unknown> => {
  */
 const logToolCallTrace = (messages: unknown[], conversationId: string | undefined): void => {
   const calls: Array<{ tool: string; args: Record<string, unknown> }> = [];
+  const results: Array<{
+    tool: string;
+    success: boolean | null;
+    effect: Record<string, unknown> | null;
+    error: string | null;
+  }> = [];
   for (const msg of messages) {
     if (typeof msg !== 'object' || msg === null) continue;
+    const m = msg as Record<string, unknown>;
+
+    if (typeof m.name === 'string') {
+      const rawContent = typeof m.content === 'string' ? m.content : null;
+      if (rawContent) {
+        try {
+          const data = JSON.parse(rawContent) as Record<string, unknown>;
+          const effect =
+            typeof data.effect === 'object' && data.effect !== null
+              ? (data.effect as Record<string, unknown>)
+              : null;
+          results.push({
+            tool: m.name,
+            success: typeof data.success === 'boolean' ? data.success : null,
+            effect,
+            error: typeof data.error === 'string' ? data.error : null,
+          });
+        } catch {
+          results.push({ tool: m.name, success: null, effect: null, error: null });
+        }
+      }
+    }
+
     const raw = (msg as Record<string, unknown>).tool_calls;
     if (!Array.isArray(raw)) continue;
     for (const call of raw) {
@@ -380,6 +413,7 @@ const logToolCallTrace = (messages: unknown[], conversationId: string | undefine
       conversationId,
       toolCount: calls.length,
       calls,
+      results,
     })
   );
 };
@@ -409,6 +443,8 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
     presentProductCta: null,
     presentationCommands: [],
     cartAddSucceeded: false,
+      cartAddFailed: false,
+    successfulEffectCount: 0,
     lastAddedProductId: null,
     cartMutatedThisTurn: false,
     cartAddPendingGate: false,
@@ -443,7 +479,7 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
         error?: string;
         askMessage?: string;
       };
-      if (m.name === 'add_cart_item' && data.success === true) {
+            if (m.name === 'add_cart_item' && data.success === true) {
         signals.cartAddSucceeded = true;
         const added = data.added;
         if (
@@ -453,6 +489,16 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
         ) {
           signals.lastAddedProductId = (added as { productId: string }).productId;
         }
+      }
+      if (m.name === 'add_cart_item' && data.success !== true) {
+        signals.cartAddFailed = true;
+      }
+      if (
+        data.success === true &&
+        typeof data.effect === 'object' &&
+        data.effect !== null
+      ) {
+        signals.successfulEffectCount += 1;
       }
       if (toolMessageMutatedCart(m.name, data.success)) {
         signals.cartMutatedThisTurn = true;
@@ -1423,7 +1469,7 @@ export const runHybridReactAgent = async (
           lastAddedMenuItemId: lastProductId,
           maxItems: 5,
           customerId: (ctx.customer as { id: string }).id,
-          llmProse,
+          llmProse: signals.cartMutatedThisTurn ? null : llmProse,
         });
         if (listMsg) {
           console.log(
@@ -1585,6 +1631,52 @@ export const runHybridReactAgent = async (
         content: ensureWhatsAppBotFormat(signals.cartAddPendingAskMessage),
         isInteractive: false,
         skipBodyHumanization: true,
+      }),
+    };
+  }
+
+  // Una escritura exitosa tiene precedencia sobre la prosa del modelo: el
+  // resumen lee el draft persistido y evita confirmar cantidades del request.
+  if (signals.cartMutatedThisTurn) {
+    try {
+      const business = ctx.business as { id: string; currency_code?: string | null; street_address?: string | null };
+      const customer = ctx.customer as { id: string };
+      const cartMsg = await buildCartSummaryMessage({
+        businessId,
+        customerPhone,
+        conversationId,
+        customerId: customer.id,
+        currencyCode: business.currency_code ?? null,
+        businessStreetAddress: business.street_address ?? null,
+        llmProse: null,
+      });
+      console.log(JSON.stringify({ event: '[hybrid-agent] post_effect_cart_summary', conversationId }));
+      return { kind: 'response', handlerResult: markHybridResult({ content: cartMsg, isInteractive: true }) };
+    } catch (err) {
+      console.error('[hybrid-agent] post-effect cart summary failed, falling through', err);
+    }
+  }
+
+  if (signals.cartAddFailed && !signals.cartAddSucceeded) {
+    return {
+      kind: 'response',
+      handlerResult: markHybridResult({
+        content: formatBotUserMessage(
+          'No pude confirmar el agregado',
+          '⚠️',
+          'La tool no confirmó que el producto se haya agregado al pedido.'
+        ),
+        isInteractive: false,
+      }),
+    };
+  }
+
+  if (signals.successfulEffectCount > 0) {
+    return {
+      kind: 'response',
+      handlerResult: markHybridResult({
+        content: formatBotUserMessage('Listo', '✅', 'El cambio quedó guardado.'),
+        isInteractive: false,
       }),
     };
   }

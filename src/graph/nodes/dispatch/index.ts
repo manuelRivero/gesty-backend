@@ -77,6 +77,7 @@ import type { AgentState, AgentStateUpdate } from '../../state';
 import { resolveDomainCancelCommand } from '../../../services/domainCancelCommand.service';
 import { buildCancelOrderMessage } from '../../../services/order.service';
 import { clearReservationSessionAfterCancel } from '../../../services/reservationSessionReset.service';
+import { buildCartSummaryMessage } from '../../../services/cart.service';
 
 /** Stub para EnrichedContext / CTAs que aún leen detection. El híbrido busca con tools. */
 const NLP_AGENT_FIRST_DETECTION: IntentDetectionResult = {
@@ -363,12 +364,74 @@ const isOpenAiRateLimitError = (err: unknown): boolean => {
   return typeof e.message === 'string' && /rate.?limit/i.test(e.message);
 };
 
+const readActiveCartFingerprint = async (params: {
+  businessId: string;
+  customerPhone: string;
+}): Promise<string | null> => {
+  try {
+    const draft = await prisma.draft_order.findFirst({
+      where: {
+        business_id: params.businessId,
+        customer_phone: params.customerPhone,
+        status: 'active',
+      },
+      orderBy: { created_at: 'desc' },
+      select: {
+        id: true,
+        draft_order_item: {
+          orderBy: { id: 'asc' },
+          select: { id: true, product_id: true, quantity: true, variation: true, notes: true },
+        },
+      },
+    });
+    if (!draft) return null;
+    return JSON.stringify({
+      id: draft.id,
+      items: draft.draft_order_item,
+    });
+  } catch {
+    return null;
+  }
+};
+
+const buildPostEffectCartResult = async (
+  enrichedCtx: EnrichedContext
+): Promise<HandlerResult | null> => {
+  const business = enrichedCtx.business as { id?: string; currency_code?: string | null; street_address?: string | null } | null;
+  const customer = enrichedCtx.customer as { id?: string; phone_number?: string | null } | null;
+  if (!business?.id || !customer?.id) return null;
+  const customerPhone = customer.phone_number ?? enrichedCtx.to;
+  try {
+    const cart = await buildCartSummaryMessage({
+      businessId: business.id,
+      customerPhone,
+      conversationId: enrichedCtx.conversationId,
+      customerId: customer.id,
+      currencyCode: business.currency_code ?? null,
+      businessStreetAddress: business.street_address ?? null,
+      llmProse: null,
+    });
+    return {
+      content: cart,
+      isInteractive: true,
+      skipBodyHumanization: true,
+    };
+  } catch (error) {
+    console.error('[nlp] post-effect cart recovery failed:', error);
+    return null;
+  }
+};
+
 const dispatchOrHybrid = async (
   enrichedCtx: EnrichedContext,
   checkoutHandoff?: CheckoutHandoffParams,
   reservationHandoff?: ReservationHandoff,
   allowLegacyFallback = true
 ): Promise<HandlerResult | null> => {
+  const cartBefore = await readActiveCartFingerprint({
+    businessId: enrichedCtx.business?.id ?? '',
+    customerPhone: enrichedCtx.customer?.phone_number ?? enrichedCtx.to,
+  });
   try {
     const hybrid = await runHybridReactAgent(enrichedCtx);
     console.log(
@@ -390,7 +453,23 @@ const dispatchOrHybrid = async (
     );
     if (result) return result;
   } catch (err) {
-    console.error('[hybrid-agent] failed, falling back to dispatchIntent', err);
+    console.error('[hybrid-agent] failed, checking post-effect recovery', err);
+    const cartAfter = await readActiveCartFingerprint({
+      businessId: enrichedCtx.business?.id ?? '',
+      customerPhone: enrichedCtx.customer?.phone_number ?? enrichedCtx.to,
+    });
+    if (cartBefore !== cartAfter && cartAfter !== null) {
+      const postEffectResult = await buildPostEffectCartResult(enrichedCtx);
+      if (postEffectResult) {
+        console.log(
+          JSON.stringify({
+            event: '[nlp] post_effect_recovery',
+            conversationId: enrichedCtx.conversation?.id,
+          })
+        );
+        return postEffectResult;
+      }
+    }
     if (isOpenAiRateLimitError(err)) {
       return {
         content: formatBotUserMessage(

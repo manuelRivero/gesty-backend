@@ -95,6 +95,16 @@ vi.mock('../../services/category.service', async (importOriginal) => {
   };
 });
 
+vi.mock('../../services/cart.service', () => ({
+  buildCartSummaryMessage: vi.fn().mockResolvedValue({
+    type: 'list',
+    header: { type: 'text', text: '🤖\n\n*Tu pedido actual* 🛒' },
+    body: { text: '*Platos principales*\n1× Papas a la huancaína' },
+    footer: { text: 'Elegí o escribí' },
+    action: { button: 'Ver opciones', sections: [] },
+  }),
+}));
+
 import { runHybridReactAgent, resetAgentCacheForTesting } from '../reactAgent';
 import type { HybridAgentRunResult } from '../reactAgent';
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
@@ -110,6 +120,7 @@ import * as complementSuggestions from '../../services/complementSuggestions.ser
 import { prisma } from '../../lib/prisma';
 import { buildCategoryProductListMessage } from '../../services/category.service';
 import { HumanIntentToolNode } from '../humanIntentToolNode';
+import { buildCartSummaryMessage } from '../../services/cart.service';
 
 const BOT_TEXT = '🤖\n\n*Ceviche Clásico* 🐟\n\nEs levemente picante.';
 
@@ -206,6 +217,59 @@ describe('runHybridReactAgent', () => {
     expect(typeof result!.content).toBe('string');
     expect(planCta).not.toHaveBeenCalled();
     expect(buildHybridCtaInteractive).not.toHaveBeenCalled();
+  });
+
+  it('usa la cantidad persistida y no la prosa del modelo después de un add exitoso', async () => {
+    vi.mocked(createReactAgent).mockReturnValue({
+      invoke: vi.fn().mockResolvedValue({
+        messages: [
+          {
+            tool_call_id: 'tc-add',
+            name: 'add_cart_item',
+            content: JSON.stringify({
+              success: true,
+              effect: { kind: 'cart_item_persisted', reference: 'papa-1' },
+              added: { productId: 'papa-1', quantity: 1 },
+            }),
+          },
+          { content: 'Te confirmo dos papas a la huancaína.' },
+        ],
+      }),
+    } as any);
+
+    const result = unwrap(await runHybridReactAgent(makeCtx() as any));
+
+    expect(result?.isInteractive).toBe(true);
+    expect(result?.content).toMatchObject({
+      body: { text: expect.stringContaining('1× Papas a la huancaína') },
+    });
+    expect(result?.content).not.toMatchObject({
+      body: { text: expect.stringContaining('dos papas') },
+    });
+    expect(buildCartSummaryMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ llmProse: null })
+    );
+  });
+
+  it('no afirma agregado cuando add_cart_item no devuelve success', async () => {
+    vi.mocked(createReactAgent).mockReturnValue({
+      invoke: vi.fn().mockResolvedValue({
+        messages: [
+          {
+            tool_call_id: 'tc-add',
+            name: 'add_cart_item',
+            content: JSON.stringify({ success: false, error: 'product_not_found' }),
+          },
+          { content: 'Listo, te agregué dos papas.' },
+        ],
+      }),
+    } as any);
+
+    const result = unwrap(await runHybridReactAgent(makeCtx() as any));
+
+    expect(result?.content).toMatch(/no pude confirmar/i);
+    expect(result?.content).not.toMatch(/(sumé|agregué|tenés|te confirmo)/i);
+    expect(buildCartSummaryMessage).not.toHaveBeenCalled();
   });
 
   it('instala el gate central y propaga la revision solo cuando viene del preflight', async () => {

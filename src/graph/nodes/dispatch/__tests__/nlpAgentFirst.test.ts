@@ -87,6 +87,16 @@ vi.mock('../../../../services/order.service', () => ({
   buildCancelOrderMessage: vi.fn().mockResolvedValue('pedido wipe'),
 }));
 
+vi.mock('../../../../services/cart.service', () => ({
+  buildCartSummaryMessage: vi.fn().mockResolvedValue({
+    type: 'list',
+    header: { type: 'text', text: '🤖\n\n*Tu pedido actual* 🛒' },
+    body: { text: '1× Papas a la huancaína' },
+    footer: { text: 'Elegí o escribí' },
+    action: { button: 'Ver opciones', sections: [] },
+  }),
+}));
+
 vi.mock('../../../../services/reservationSessionReset.service', () => ({
   clearReservationSessionAfterCancel: vi.fn().mockResolvedValue(undefined),
 }));
@@ -135,6 +145,7 @@ import { ConversationIntent } from '../../../../types/conversationIntent';
 import type { AgentState } from '../../../state';
 import { buildCancelOrderMessage } from '../../../../services/order.service';
 import { clearReservationSessionAfterCancel } from '../../../../services/reservationSessionReset.service';
+import { buildCartSummaryMessage } from '../../../../services/cart.service';
 
 const nlpState = (message: string, metadata: Record<string, unknown> = {}): AgentState =>
   ({
@@ -147,7 +158,7 @@ const nlpState = (message: string, metadata: Record<string, unknown> = {}): Agen
       conversationState: { metadata },
       conversation: { id: 'conv-1' },
       business: { id: 'biz-1' },
-      customer: { phone_number: '54911' },
+      customer: { id: 'cust-1', phone_number: '54911' },
       message: { id: `wamid-${message}`, text: { body: message }, type: 'text' },
       to: '54911',
     },
@@ -429,6 +440,29 @@ describe('nlpSubgraphNode — agent-first', () => {
 
     expect(reservationAgentNode).not.toHaveBeenCalled();
     expect(dispatchIntent).toHaveBeenCalled();
+  });
+
+  it('recupera el carrito persistido si ReAct falla después de escribir y evita UNKNOWN fallback', async () => {
+    vi.mocked(runHybridReactAgent).mockRejectedValue(new Error('post-tool model failure'));
+    vi.mocked(prisma.draft_order.findFirst)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: 'draft-1',
+        draft_order_item: [
+          { id: 'line-1', product_id: 'papa-1', quantity: 1, variation: null, notes: null },
+        ],
+      } as never);
+
+    const update = await nlpSubgraphNode(nlpState('un ceviche y unas papas'));
+
+    expect(dispatchIntent).not.toHaveBeenCalled();
+    expect(buildCartSummaryMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ llmProse: null })
+    );
+    expect(update.handlerResult?.isInteractive).toBe(true);
+    expect(update.handlerResult?.content).toMatchObject({
+      body: { text: expect.stringContaining('1× Papas') },
+    });
   });
 
   it('cambiar dirección + señal start_address_edit_session abre onboarding (mismo efecto que EDIT_ADDRESS)', async () => {
