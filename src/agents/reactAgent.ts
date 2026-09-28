@@ -1163,7 +1163,7 @@ export const runHybridReactAgent = async (
   const turnStartedAt = new Date().toISOString();
   const userMessageForTools = ctx.message?.text?.body ?? '';
   const out = await agent.invoke(inputs, {
-    recursionLimit: 9,
+    recursionLimit: 12,
     configurable: {
       businessId,
       customerId,
