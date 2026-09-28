@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getIntentDetectorLlm } from '../config/llm';
 import {
   HUMAN_GOALS,
+  mergeEquivalentPedirRequest,
   type HumanGoal,
   type HumanIntentRecord,
 } from './humanIntentState.service';
@@ -166,6 +167,14 @@ export const validateHumanIntentTurnDecision = (
           (intent) =>
             intent.goal === proposal.goal &&
             canonicalJson(intent.request) === canonicalJson(proposal.request)
+        ) &&
+        !(
+          proposal.goal === 'PEDIR' &&
+          open.some(
+            (intent) =>
+              intent.goal === 'PEDIR' &&
+              mergeEquivalentPedirRequest(intent.request, proposal.request) !== null
+          )
         )
       ) {
         return null;

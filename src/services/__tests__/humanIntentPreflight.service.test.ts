@@ -130,6 +130,25 @@ describe('Human Intent Preflight', () => {
     expect(validateHumanIntentTurnDecision(decision, input())).toEqual(decision);
   });
 
+  it('acepta reutilizar un PEDIR equivalente y no confunde productos distintos', () => {
+    const sameOrder = {
+      decision: 'NEW_INTENT',
+      intents: [{ goal: 'PEDIR', request: { products: ['ceviche'] } }],
+    };
+    const additionalItem = {
+      decision: 'NEW_INTENT',
+      intents: [{ goal: 'PEDIR', request: { products: ['ceviche', 'papas'] } }],
+    };
+    const differentOrder = {
+      decision: 'NEW_INTENT',
+      intents: [{ goal: 'PEDIR', request: { products: ['milanesa'] } }],
+    };
+
+    expect(validateHumanIntentTurnDecision(sameOrder, input())).toEqual(sameOrder);
+    expect(validateHumanIntentTurnDecision(additionalItem, input())).toEqual(additionalItem);
+    expect(validateHumanIntentTurnDecision(differentOrder, input())).toEqual(differentOrder);
+  });
+
   it('RESUME_PENDING solo acepta un ID de la lista PENDING', () => {
     expect(validateHumanIntentTurnDecision({ decision: 'RESUME_PENDING', intentId: PENDING_ID }, input()))
       .toEqual({ decision: 'RESUME_PENDING', intentId: PENDING_ID });

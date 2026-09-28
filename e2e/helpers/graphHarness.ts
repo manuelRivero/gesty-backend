@@ -1,4 +1,5 @@
 import type { AgentState } from '../../src/graph/state';
+import type { RunnableConfig } from '@langchain/core/runnables';
 import type {
   HandlerResult,
   WhatsAppWebhookPayload,
@@ -175,7 +176,10 @@ export const looksLikeMenuResume = (
 };
 
 export type MainGraph = {
-  invoke: (input: { webhookPayload: WhatsAppWebhookPayload }) => Promise<AgentState>;
+  invoke: (
+    input: { webhookPayload: WhatsAppWebhookPayload },
+    config?: RunnableConfig
+  ) => Promise<AgentState>;
 };
 
 export const loadMainGraph = async (): Promise<MainGraph> => {

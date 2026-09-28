@@ -69,6 +69,7 @@ npm run test:agent-history
 npm run test:agent-gates
 npm run test:language-variations
 npm run test:natural-conversations
+npm run test:human-intent-lifecycle
 
 # Suite diagnóstica de reservas (producción) — NO entra en test:e2e
 npm run test:reservation-production
@@ -96,6 +97,7 @@ Si faltan variables, los tests se **saltan** (no fallan) y un test documenta el 
 | `agent-gates.e2e.test.ts` | Fase 2: variación, cantidad, local cerrado, carrito vacío, Order |
 | `language-variations.e2e.test.ts` | Fase 3: misma intención con formulaciones distintas de WhatsApp → mismo efecto |
 | `natural-conversations.e2e.test.ts` | Fase 4: micro-conversaciones multi-turno (corrección, interrupción, referencia, continuidad) |
+| `human-intent-lifecycle.e2e.test.ts` | Lifecycle de `HumanIntentState`: active/pending, blockers, resolve/promote, replace y trace JSON en `e2e/.last-human-intent-lifecycle-report.json` |
 | `reservation-production.e2e.test.ts` | **Diagnóstica** (independiente): replay de reservas reales (Picado). Soft-asserts + log JSON. Requiere slots (`seed:reservation-slots`) y `RESERVATION_AGENT_ENABLED=true`. Reporte en `e2e/.last-reservation-production-report.json` |
 | `bot-attack.e2e.test.ts` | **Diagnóstica** (independiente): prosa hostil contra el bot (dominio reserva/pedido, plato inventado, variedad fantasma, pago inexistente, afirmaciones sueltas, pending abandonado, inyección). Mismo molde: hard = respondió; soft = Facts. Reporte en `e2e/.last-bot-attack-report.json` |
 | `bot-attack-g2.e2e.test.ts` | **Diagnóstica grado 2** (independiente): insiste después del rechazo (aceptar shortlist falso, variedad inventada, bitcoin con retiro ya elegido, confirmar carrito vacío, 999 unidades, reserva imposible, pedido+reserva juntos). Reporte en `e2e/.last-bot-attack-g2-report.json` |

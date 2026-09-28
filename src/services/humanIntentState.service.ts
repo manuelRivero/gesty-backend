@@ -323,6 +323,42 @@ const canonicalJson = (value: unknown): string => {
   return JSON.stringify(value) ?? 'null';
 };
 
+export const mergeEquivalentPedirRequest = (
+  existing: Record<string, unknown>,
+  incoming: Record<string, unknown>
+): Record<string, unknown> | null => {
+  if (canonicalJson(existing) === canonicalJson(incoming)) return { ...existing };
+  if (Object.keys(existing).length === 0) return cloneJsonObject(incoming, 'Intent request');
+  if (Object.keys(incoming).length === 0) return { ...existing };
+
+  const existingProducts = existing.products;
+  const incomingProducts = incoming.products;
+  if (
+    !Array.isArray(existingProducts) ||
+    !Array.isArray(incomingProducts) ||
+    !existingProducts.every((product) => typeof product === 'string') ||
+    !incomingProducts.every((product) => typeof product === 'string')
+  ) {
+    return null;
+  }
+
+  const { products: _existingProducts, ...existingDetails } = existing;
+  const { products: _incomingProducts, ...incomingDetails } = incoming;
+  if (canonicalJson(existingDetails) !== canonicalJson(incomingDetails)) return null;
+
+  const existingSet = new Set(existingProducts as string[]);
+  const incomingSet = new Set(incomingProducts as string[]);
+  const isSubset = (subset: Set<string>, superset: Set<string>): boolean =>
+    [...subset].every((product) => superset.has(product));
+  if (!isSubset(existingSet, incomingSet) && !isSubset(incomingSet, existingSet)) return null;
+
+  return {
+    ...existing,
+    ...incoming,
+    products: [...new Set([...existingProducts, ...incomingProducts])],
+  };
+};
+
 const assertHumanGoal = (value: string): value is HumanGoal =>
   (HUMAN_GOALS as readonly string[]).includes(value);
 
@@ -382,27 +418,49 @@ export const applyHumanIntentTurnDecision = (params: {
           const key = `${proposal.goal}:${canonicalJson(proposal.request)}`;
           if (seen.has(key)) throw new HumanIntentStateError('NEW_INTENT contains duplicate goals');
           seen.add(key);
-          if (state.records.some(
-            (record) =>
-              (record.status === 'ACTIVE' || record.status === 'PENDING') &&
-              record.goal === proposal.goal &&
-              canonicalJson(record.request) === canonicalJson(proposal.request)
-          )) {
-            throw new HumanIntentStateError('NEW_INTENT duplicates an existing open intent');
-          }
         }
-        if (currentIndex >= 0) {
+
+        const candidateIndices = [
+          ...(currentIndex >= 0 ? [currentIndex] : []),
+          ...state.records.map((_, index) => index).filter((index) => index !== currentIndex),
+        ];
+        const matchedProposalIndices = new Set<number>();
+        const matchedIntentIndices = new Set<number>();
+        for (const [proposalIndex, proposal] of proposals.entries()) {
+          if (proposal.goal !== 'PEDIR') continue;
+          const matchingIndex = candidateIndices.find((index) => {
+            const record = state.records[index];
+            return (
+              (record.status === 'ACTIVE' || record.status === 'PENDING') &&
+              record.goal === 'PEDIR' &&
+              mergeEquivalentPedirRequest(record.request, proposal.request) !== null
+            );
+          });
+          if (matchingIndex === undefined) continue;
+
+          const record = state.records[matchingIndex];
+          const mergedRequest = mergeEquivalentPedirRequest(record.request, proposal.request)!;
+          if (canonicalJson(record.request) !== canonicalJson(mergedRequest)) {
+            state.records[matchingIndex] = { ...record, request: mergedRequest, updatedAt: now };
+          }
+          matchedProposalIndices.add(proposalIndex);
+          matchedIntentIndices.add(matchingIndex);
+        }
+
+        const additions = proposals.filter((_, index) => !matchedProposalIndices.has(index));
+        const currentMatched = currentIndex >= 0 && matchedIntentIndices.has(currentIndex);
+        if (additions.length > 0 && currentIndex >= 0 && !currentMatched) {
           state.records[currentIndex] = {
             ...state.records[currentIndex],
             status: 'PENDING',
             updatedAt: now,
           };
         }
-        for (const [index, proposal] of proposals.entries()) {
+        for (const [index, proposal] of additions.entries()) {
           const intent = newRecord(
             state,
             { ...proposal, sourceMessageId: messageId },
-            index === 0 ? 'ACTIVE' : 'PENDING',
+            currentMatched || index > 0 ? 'PENDING' : 'ACTIVE',
             now
           );
           state.nextSequence += 1;
