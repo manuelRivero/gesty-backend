@@ -425,7 +425,7 @@ export const searchProductsTool = new DynamicStructuredTool<
     'FILTRO MÉDICO/DIETARIO: Eres un experto gastronómico. Si el cliente tiene restricciones (ej. "enfermo", "sin picante", "nada frito"), debes filtrar los resultados devueltos por la búsqueda usando tu conocimiento general. Si la búsqueda te devuelve un "Ceviche" pero el cliente no puede comer picante/ácido, DESCÁRTALO internamente y ofrécele solo las opciones suaves devueltas (ej. sopas, caldos, ensaladas).',
   schema: searchProductsSchema,
   func: async ({ keyword }: SearchProductsInput, _runManager, config?: RunnableConfig) => {
-    console.log(JSON.stringify({ event: '[tool:start]', tool: 'search_products', args: { keyword } }));
+    console.debug(JSON.stringify({ event: '[tool:start]', tool: 'search_products', args: { keyword } }));
     const { businessId, conversationId, turnStartedAt } = getReactContext(config);
     const { reservationTurn, metadata } = await readOrderingTurnScope(conversationId);
     const partyHeld = await rejectMissingPartySize(
@@ -1889,7 +1889,7 @@ export const addCartItemTool = new DynamicStructuredTool<
     _runManager,
     config?: RunnableConfig
   ) => {
-    console.log(
+    console.debug(
       JSON.stringify({
         event: '[tool:start]',
         tool: 'add_cart_item',
@@ -1978,7 +1978,7 @@ export const addCartItemTool = new DynamicStructuredTool<
         });
         const names = rows.map((r) => r.name).filter(Boolean);
         if (!userMessageSelectsCandidate(userMessage ?? null, names)) {
-          console.log(
+          console.debug(
             JSON.stringify({
               event: '[add_cart_item] complement_selection_required',
               conversationId,
@@ -2015,7 +2015,7 @@ export const addCartItemTool = new DynamicStructuredTool<
         });
         const matched = productIdsMatchingSearchKeyword(pendingQuestion, rows);
         if (matched.length >= 2 && matched.includes(productId)) {
-          console.log(
+          console.debug(
             JSON.stringify({
               event: '[add_cart_item] ambiguous_product_name',
               conversationId,
@@ -2050,7 +2050,7 @@ export const addCartItemTool = new DynamicStructuredTool<
         }),
       });
       if (blocked) {
-        console.log(
+        console.debug(
           JSON.stringify({
             event: '[add_cart_item] pending_quantity_other_product',
             conversationId,
@@ -2110,7 +2110,7 @@ export const addCartItemTool = new DynamicStructuredTool<
       lineQuantity == null &&
       modelQty !== qty
     ) {
-      console.log(
+      console.debug(
         JSON.stringify({
           event: '[add_cart_item] quantity_not_units',
           conversationId,
@@ -2122,7 +2122,7 @@ export const addCartItemTool = new DynamicStructuredTool<
       );
     }
     if (lineQuantity != null && quantity != null && quantity !== lineQuantity) {
-      console.log(
+      console.debug(
         JSON.stringify({
           event: '[add_cart_item] order_line_quantity_overridden',
           conversationId,
@@ -2195,7 +2195,7 @@ export const addCartItemTool = new DynamicStructuredTool<
     // D7 — cantidad: si la cobertura sugiere ≥2 y el mensaje no afirmó unidades, no escribir.
     if (willAskQuantity && conversationId) {
       if (quantity != null) {
-        console.log(
+        console.debug(
           JSON.stringify({
             event: '[add_cart_item] quantity_not_confirmed',
             conversationId,
@@ -2337,7 +2337,7 @@ export const addCartItemTool = new DynamicStructuredTool<
         }),
       });
       if (blockedBeforeWrite) {
-        console.log(
+        console.debug(
           JSON.stringify({
             event: '[add_cart_item] pending_quantity_other_product',
             conversationId,
@@ -2714,7 +2714,7 @@ export const removeCartItemTool = new DynamicStructuredTool<
     }
     const numericIndex = parsedIndex;
 
-    console.log(
+    console.debug(
       JSON.stringify({
         event: '[tool:start]',
         tool: 'remove_cart_item',

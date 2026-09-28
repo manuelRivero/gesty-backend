@@ -41,6 +41,7 @@ export interface WebhookContext {
   to: string;
   message: any;
   value: any;
+  turnId?: string;
   payloadId?: string;
 }
 

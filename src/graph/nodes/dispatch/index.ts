@@ -279,7 +279,7 @@ const openReservationAfterCartCancel = async (
     enrichedBase,
     refreshed
   );
-  console.log(
+  console.debug(
     JSON.stringify({
       event: '[switch-to-reservation] open_reservation_fresh_entry',
       conversationId: conversation.id,
@@ -305,7 +305,7 @@ const resolveAddressEditHandoff = async (
   enrichedCtx: EnrichedContext
 ): Promise<HandlerResult | null> => {
   const result = await new EditAddressHandler().execute(enrichedCtx);
-  console.log(
+  console.debug(
     JSON.stringify({
       event: '[nlp] delegate_address_edit',
       conversationId: enrichedCtx.conversation?.id,
@@ -432,57 +432,82 @@ const dispatchOrHybrid = async (
     businessId: enrichedCtx.business?.id ?? '',
     customerPhone: enrichedCtx.customer?.phone_number ?? enrichedCtx.to,
   });
+  let hybridError: unknown = null;
   try {
     const hybrid = await runHybridReactAgent(enrichedCtx);
-    console.log(
-      JSON.stringify({
-        event: '[nlp] agent_first_react',
-        nlp_agent_first: true,
-        conversationId: enrichedCtx.conversation?.id,
-        hybrid_kind: hybrid?.kind ?? null,
-        checkout_delegated: hybrid?.kind === 'delegate_checkout',
-        reservation_delegated: hybrid?.kind === 'delegate_reservation',
-        address_edit_delegated: hybrid?.kind === 'delegate_address_edit',
-      })
-    );
+    console.log(JSON.stringify({
+      event: '[react]',
+      turnId: enrichedCtx.turnId,
+      kind: hybrid?.kind ?? null,
+    }));
     const result = await unwrapHybridRun(
       hybrid,
       enrichedCtx,
       checkoutHandoff,
       reservationHandoff
     );
-    if (result) return result;
+    if (result) {
+      console.log(JSON.stringify({
+        event: '[response]',
+        turnId: enrichedCtx.turnId,
+        kind: hybrid?.kind === 'response' ? 'react' : hybrid?.kind,
+      }));
+      return result;
+    }
   } catch (err) {
-    console.error('[hybrid-agent] failed, checking post-effect recovery', err);
-    const cartAfter = await readActiveCartFingerprint({
-      businessId: enrichedCtx.business?.id ?? '',
-      customerPhone: enrichedCtx.customer?.phone_number ?? enrichedCtx.to,
-    });
-    if (cartBefore !== cartAfter && cartAfter !== null) {
-      const postEffectResult = await buildPostEffectCartResult(enrichedCtx);
-      if (postEffectResult) {
-        console.log(
-          JSON.stringify({
-            event: '[nlp] post_effect_recovery',
-            conversationId: enrichedCtx.conversation?.id,
-          })
-        );
-        return postEffectResult;
-      }
-    }
-    if (isOpenAiRateLimitError(err)) {
-      return {
-        content: formatBotUserMessage(
-          'Un momento',
-          '⏳',
-          'Estoy un poco demorado. ¿Me reenviás el mensaje en unos segundos?'
-        ),
-        isInteractive: false,
-      };
-    }
-    if (!allowLegacyFallback) return null;
+    hybridError = err;
+    console.error('[error]', JSON.stringify({
+      event: 'hybrid_react_failed',
+      turnId: enrichedCtx.turnId,
+      message: err instanceof Error ? err.message : String(err),
+    }));
   }
-  return dispatchIntent(enrichedCtx);
+
+  const cartAfter = await readActiveCartFingerprint({
+    businessId: enrichedCtx.business?.id ?? '',
+    customerPhone: enrichedCtx.customer?.phone_number ?? enrichedCtx.to,
+  });
+  if (cartBefore !== cartAfter) {
+    const postEffectResult = await buildPostEffectCartResult(enrichedCtx);
+    if (postEffectResult) {
+      console.log(JSON.stringify({
+        event: '[response]',
+        turnId: enrichedCtx.turnId,
+        kind: 'post_effect',
+      }));
+      return postEffectResult;
+    }
+    return {
+      content: formatBotUserMessage(
+        'No pude confirmar el pedido',
+        '⚠️',
+        'Tuve un problema al consultar el estado actualizado del pedido. ¿Me das un momento y lo reviso?'
+      ),
+      isInteractive: false,
+      skipBodyHumanization: true,
+    };
+  }
+
+  if (hybridError && isOpenAiRateLimitError(hybridError)) {
+    return {
+      content: formatBotUserMessage(
+        'Un momento',
+        '⏳',
+        'Estoy un poco demorado. ¿Me reenviás el mensaje en unos segundos?'
+      ),
+      isInteractive: false,
+    };
+  }
+  if (!allowLegacyFallback) return null;
+  const fallbackResult = await dispatchIntent(enrichedCtx);
+  if (fallbackResult) {
+    console.log(JSON.stringify({
+      event: '[response]',
+      turnId: enrichedCtx.turnId,
+      kind: 'fallback',
+    }));
+  }
+  return fallbackResult;
 };
 
 const humanIntentClarificationResult = (): HandlerResult => ({
@@ -741,7 +766,7 @@ export const nlpSubgraphNode = async (
   const customer = state.customer!;
   let allowLegacyFallback = true;
 
-  console.log(
+  console.debug(
     JSON.stringify({
       event: '[nlp] agent_first',
       nlp_agent_first: true,
@@ -764,6 +789,12 @@ export const nlpSubgraphNode = async (
     : undefined;
 
   const userMessage = ctx.message?.text?.body || '';
+  console.log(JSON.stringify({
+    event: '[turn]',
+    turnId: ctx.turnId,
+    conversationId: conversation.id,
+    user: userMessage.slice(0, 80),
+  }));
   const metadataBeforePreflight = normalizeMetadata(
     workingConversationState?.metadata ?? enrichedBase.conversationState?.metadata
   );
@@ -842,6 +873,19 @@ export const nlpSubgraphNode = async (
         },
         state: { revision: intentState.revision, active, pending },
       });
+      console.log(JSON.stringify({
+        event: '[preflight]',
+        turnId: ctx.turnId,
+        decision: decision.decision,
+        active: active?.goal ?? null,
+        pending: pending.length,
+      }));
+      console.log(JSON.stringify({
+        event: '[intent]',
+        turnId: ctx.turnId,
+        active: active?.goal ?? null,
+        intentId: active?.id ?? null,
+      }));
 
       if (decision.decision === 'AMBIGUOUS') {
         if (!partySizeGoalActive) {

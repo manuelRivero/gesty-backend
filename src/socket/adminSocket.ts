@@ -78,12 +78,12 @@ function parseCorsOrigins(): string[] | boolean {
  */
 export function attachAdminSocket(httpServer: HttpServer): Server {
   if (io) {
-    console.warn(`${LOG} attachAdminSocket: ya inicializado (idempotente)`);
+    console.debug(`${LOG} attachAdminSocket: ya inicializado (idempotente)`);
     return io;
   }
 
   const corsOrigins = parseCorsOrigins();
-  console.log(
+  console.debug(
     `${LOG} inicializando path=/socket.io corsOrigin=${JSON.stringify(corsOrigins)} cookieName=${ACCESS_COOKIE_NAME}`
   );
 
@@ -105,7 +105,7 @@ export function attachAdminSocket(httpServer: HttpServer): Server {
     const xfProto = socket.handshake.headers["x-forwarded-proto"];
     const host = socket.handshake.headers.host;
     if (!token) {
-      console.warn(
+      console.debug(
         `${LOG} handshake rechazado: sin token socket.id=${socket.id} ${handshakeDebug(socket)} transport=${socket.conn.transport.name} host=${host ?? "?"} x-forwarded-proto=${xfProto ?? "?"}`
       );
       next(new Error("UNAUTHORIZED"));
@@ -116,14 +116,14 @@ export function attachAdminSocket(httpServer: HttpServer): Server {
       socket.data.userId = payload.userId;
       socket.data.businessId = payload.businessId;
       socket.data.role = payload.role;
-      console.log(
+      console.debug(
         `${LOG} handshake ok socket.id=${socket.id} userId=${payload.userId} businessId=${payload.businessId} role=${payload.role}`
       );
       next();
     } catch (e) {
       const name = e instanceof Error ? e.name : "Error";
       const msg = e instanceof Error ? e.message : String(e);
-      console.warn(
+      console.debug(
         `${LOG} handshake rechazado: JWT inválido socket.id=${socket.id} ${handshakeDebug(socket)} err=${name} ${msg}`
       );
       next(new Error("UNAUTHORIZED"));
@@ -135,17 +135,17 @@ export function attachAdminSocket(httpServer: HttpServer): Server {
     const role = socket.data.role as BusinessUserRole | undefined;
     if (!businessId) {
       if (role === "SUPER_ADMIN") {
-        console.log(
+        console.debug(
           `${LOG} conexión SUPER_ADMIN sin tenant (sin sala admin) socket.id=${socket.id}`
         );
         return;
       }
-      console.warn(`${LOG} connection sin businessId, desconectando socket.id=${socket.id}`);
+      console.debug(`${LOG} connection sin businessId, desconectando socket.id=${socket.id}`);
       socket.disconnect(true);
       return;
     }
     if (!role || !ADMIN_NOTIFICATION_ROLES.has(role)) {
-      console.warn(
+      console.debug(
         `${LOG} conexión sin permiso para notificaciones admin socket.id=${socket.id} businessId=${businessId} role=${role ?? "?"}`
       );
       socket.disconnect(true);
@@ -154,7 +154,7 @@ export function attachAdminSocket(httpServer: HttpServer): Server {
     const room = adminRoom(businessId);
     void Promise.resolve(socket.join(room)).then(() => {
       const size = roomSize(io!, room);
-      console.log(
+      console.debug(
         `${LOG} cliente admin en sala socket.id=${socket.id} room=${room} role=${role} roomSize=${size} transport=${socket.conn.transport.name}`
       );
     });
@@ -202,7 +202,7 @@ function emitAdminReservationChannel(
   const before = roomSize(io, room);
   io.to(room).emit("admin:reservation", body);
   const after = roomSize(io, room);
-  console.log(
+  console.debug(
     `${LOG} emit admin:reservation type=${body.type} room=${room} socketsEnSala=${before} (tras emit=${after})`
   );
 }
@@ -317,7 +317,7 @@ function emitAdminOrderChannel(
   const before = roomSize(io, room);
   io.to(room).emit("admin:order", body);
   const after = roomSize(io, room);
-  console.log(
+  console.debug(
     `${LOG} emit admin:order type=${body.type} room=${room} socketsEnSala=${before} (tras emit=${after})`
   );
 }
@@ -513,7 +513,7 @@ function emitAdminWhatsappChannel(
   const before = roomSize(io, room);
   io.to(room).emit("admin:whatsapp", body);
   const after = roomSize(io, room);
-  console.log(
+  console.debug(
     `${LOG} emit admin:whatsapp type=${body.type} room=${room} socketsEnSala=${before} (tras emit=${after})`
   );
 }
@@ -685,7 +685,7 @@ export function emitAdminConversationSentimentUpdated(
     updatedAt: new Date().toISOString(),
   };
   io.to(room).emit("admin:conversation_sentiment", body);
-  console.log(
+  console.debug(
     `${LOG} emit admin:conversation_sentiment sentiment=${payload.sentiment} room=${room} conversationId=${payload.conversationId}`
   );
 }

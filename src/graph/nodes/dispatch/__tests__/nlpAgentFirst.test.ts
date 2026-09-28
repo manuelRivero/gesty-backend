@@ -356,6 +356,26 @@ describe('nlpSubgraphNode — agent-first', () => {
     expect(update.handlerResult?.content).toBe('respuesta híbrida');
   });
 
+  it('emite hitos INFO correlacionados por turnId sin logs de infraestructura', async () => {
+    const info = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const state = nlpState('Hola buenas');
+    (state.webhookContext as { turnId?: string }).turnId = 'turn-1234';
+    (state.enrichedCtx as { turnId?: string }).turnId = 'turn-1234';
+
+    try {
+      await nlpSubgraphNode(state);
+      const output = info.mock.calls.flat().filter((value) => typeof value === 'string').join('\n');
+
+      for (const event of ['[turn]', '[preflight]', '[intent]', '[react]', '[response]']) {
+        expect(output).toContain(`"event":"${event}"`);
+      }
+      expect(output).toContain('"turnId":"turn-1234"');
+      expect(output).not.toMatch(/WhatsAppTyping|adminSocket|status event/);
+    } finally {
+      info.mockRestore();
+    }
+  });
+
   it('no plantea confirmación de intent: el híbrido desambigua en prosa', async () => {
     await nlpSubgraphNode(nlpState('hola'));
 
@@ -462,6 +482,38 @@ describe('nlpSubgraphNode — agent-first', () => {
     expect(update.handlerResult?.isInteractive).toBe(true);
     expect(update.handlerResult?.content).toMatchObject({
       body: { text: expect.stringContaining('1× Papas') },
+    });
+  });
+
+  it('recupera desde draft_order si ReAct termina null tras una mutación y evita UNKNOWN fallback', async () => {
+    vi.mocked(runHybridReactAgent).mockResolvedValue(null);
+    vi.mocked(prisma.draft_order.findFirst)
+      .mockResolvedValueOnce({
+        id: 'draft-1',
+        draft_order_item: [],
+      } as never)
+      .mockResolvedValueOnce({
+        id: 'draft-1',
+        draft_order_item: [
+          { id: 'line-1', product_id: 'papa-1', quantity: 3, variation: null, notes: null },
+        ],
+      } as never);
+    vi.mocked(buildCartSummaryMessage).mockResolvedValueOnce({
+      type: 'list',
+      header: { type: 'text', text: '🤖\n\n*Tu pedido actual* 🛒' },
+      body: { text: '3× Papa' },
+      footer: { text: 'Elegí o escribí' },
+      action: { button: 'Ver opciones', sections: [] },
+    } as never);
+
+    const update = await nlpSubgraphNode(nlpState('Y ahora ?'));
+
+    expect(dispatchIntent).not.toHaveBeenCalled();
+    expect(buildCartSummaryMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ llmProse: null })
+    );
+    expect(update.handlerResult?.content).toMatchObject({
+      body: { text: '3× Papa' },
     });
   });
 

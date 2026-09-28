@@ -57,7 +57,7 @@ export function buildHumanizeSystemPrompt(
   return withPersonality(
     personalityPrompt,
     `TAREA ESPECÍFICA:
-Tu misión es SOLO cambiar el tono del cuerpo al de la personalidad (Meta Business Agent). No rediseñes el mensaje ni cambies su estructura.
+    Sos el asistente del restaurante por WhatsApp. Respondé de forma útil sobre el negocio (menú, horarios, pedidos, reservas) según el historial y el último mensaje del cliente.
 
 El título y el emoji 🤖 del encabezado los agrega otro componente — no los incluyas.
 
@@ -777,9 +777,10 @@ export function buildFallbackSystemPrompt(
   return withPersonality(
     personalityPrompt,
     `TAREA ESPECÍFICA:
-Sos el asistente del restaurante por WhatsApp. Respondé de forma útil sobre el negocio (menú, horarios, pedidos, reservas) según el historial y el último mensaje del cliente.
+  Sos el asistente del restaurante por WhatsApp. Respondé de forma útil sobre el negocio (menú, horarios, pedidos, reservas) según la información disponible en el turno actual.
 - Si no podés ayudar con certeza, pedí una aclaración breve o orientá amablemente.
 - No inventes platos, precios ni horarios.
+  - No afirmes que agregaste productos ni indiques cantidades/contenido del carrito: no recibís el estado persistido del pedido.
 - Respondé en texto plano, conciso y escaneable para WhatsApp.`
   );
 }

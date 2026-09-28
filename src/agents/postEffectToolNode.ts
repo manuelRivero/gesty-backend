@@ -10,7 +10,12 @@ export class PostEffectToolNode extends ToolNode {
     if (!(result instanceof ToolMessage) || result.status !== 'success') return result;
 
     const configurable = config.configurable as
-      | { conversationId?: unknown; businessId?: unknown; customerPhone?: unknown }
+      | {
+          conversationId?: unknown;
+          businessId?: unknown;
+          customerPhone?: unknown;
+          turnId?: unknown;
+        }
       | undefined;
     const conversationId = configurable?.conversationId;
     const businessId = configurable?.businessId;
@@ -50,6 +55,12 @@ export class PostEffectToolNode extends ToolNode {
           success: true,
         },
       });
+    console.log(JSON.stringify({
+      event: '[reconcile]',
+      turnId: typeof configurable?.turnId === 'string' ? configurable.turnId : undefined,
+      effect: kind,
+      success: true,
+    }));
     } catch (error) {
       console.error('[human-intent] post-tool reconciliation failed:', error);
     }

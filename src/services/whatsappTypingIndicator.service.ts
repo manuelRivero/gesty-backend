@@ -13,7 +13,7 @@ export async function sendTypingIndicatorRequest(
   messageId: string
 ): Promise<void> {
   if (isDryRunWhatsAppSend()) {
-    console.log('[WhatsAppTyping] DRY_RUN — typing indicator omitido', {
+    console.debug('[WhatsAppTyping] DRY_RUN — typing indicator omitido', {
       phoneNumberId,
       messageId,
     });
@@ -22,12 +22,12 @@ export async function sendTypingIndicatorRequest(
 
   const token = process.env.WHATSAPP_ACCESS_TOKEN;
   if (!token) {
-    console.error('[WhatsAppTyping] WHATSAPP_ACCESS_TOKEN no definido');
+    console.debug('[WhatsAppTyping] WHATSAPP_ACCESS_TOKEN no definido');
     return;
   }
 
   if (!phoneNumberId?.trim() || !messageId?.trim()) {
-    console.warn('[WhatsAppTyping] phoneNumberId o messageId faltante, omitiendo');
+    console.debug('[WhatsAppTyping] phoneNumberId o messageId faltante, omitiendo');
     return;
   }
 
@@ -50,7 +50,7 @@ export async function sendTypingIndicatorRequest(
       }
     );
 
-    console.log('[WhatsAppTyping] Indicador de escritura enviado', { messageId });
+    console.debug('[WhatsAppTyping] Indicador de escritura enviado', { messageId });
   } catch (error) {
     const axiosError = error as AxiosError;
     const status = axiosError.response?.status;
@@ -58,7 +58,7 @@ export async function sendTypingIndicatorRequest(
     const messageDetail =
       typeof data === 'string' ? data : JSON.stringify(data ?? {});
 
-    console.error('[WhatsAppTyping] Error al enviar indicador de escritura:', {
+    console.debug('[WhatsAppTyping] Error al enviar indicador de escritura:', {
       messageId,
       phoneNumberId,
       status: status ?? 'sin_status',

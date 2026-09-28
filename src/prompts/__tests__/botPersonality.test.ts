@@ -6,6 +6,7 @@ import {
   buildHumanizeSystemPrompt,
   buildHybridAgentSystemPrompt,
   buildProductAwareSystemPrompt,
+  buildFallbackSystemPrompt,
 } from '../botPersonality';
 
 const FRIENDLY_PROMPT = 'PERSONALIDAD AMIGUERA DE PRUEBA';
@@ -17,6 +18,14 @@ describe('botPersonality', () => {
 
     expect(humanize).toContain(BOT_PERSONALITY_PROMPT);
     expect(hybrid).toContain(BOT_PERSONALITY_PROMPT);
+  });
+
+  it('fallback no afirma mutaciones ni cantidades del carrito sin estado persistido', () => {
+    const fallback = buildFallbackSystemPrompt();
+
+    expect(fallback).toMatch(/no recibís el estado persistido del pedido/i);
+    expect(fallback).toMatch(/No afirmes que agregaste productos/i);
+    expect(fallback).not.toMatch(/según el historial/i);
   });
 
   it('inyecta el bloque de personalidad provisto desde BD', () => {

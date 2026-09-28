@@ -224,6 +224,13 @@ describe('runHybridReactAgent', () => {
       invoke: vi.fn().mockResolvedValue({
         messages: [
           {
+            tool_calls: [{
+              id: 'tc-add',
+              name: 'add_cart_item',
+              args: { productId: 'papa-1', quantity: 2 },
+            }],
+          },
+          {
             tool_call_id: 'tc-add',
             name: 'add_cart_item',
             content: JSON.stringify({
@@ -251,6 +258,32 @@ describe('runHybridReactAgent', () => {
     );
   });
 
+  it('procesa el efecto de un ToolMessage aunque falte tool_call_id', async () => {
+    vi.mocked(createReactAgent).mockReturnValue({
+      invoke: vi.fn().mockResolvedValue({
+        messages: [
+          {
+            name: 'add_cart_item',
+            content: JSON.stringify({
+              success: true,
+              effect: { kind: 'cart_item_persisted', reference: 'papa-1' },
+              added: { productId: 'papa-1', quantity: 1 },
+            }),
+          },
+        ],
+      }),
+    } as any);
+
+    const result = unwrap(await runHybridReactAgent(makeCtx() as any));
+
+    expect(result?.content).toMatchObject({
+      body: { text: expect.stringContaining('1× Papas a la huancaína') },
+    });
+    expect(buildCartSummaryMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ llmProse: null })
+    );
+  });
+
   it('no afirma agregado cuando add_cart_item no devuelve success', async () => {
     vi.mocked(createReactAgent).mockReturnValue({
       invoke: vi.fn().mockResolvedValue({
@@ -270,6 +303,59 @@ describe('runHybridReactAgent', () => {
     expect(result?.content).toMatch(/no pude confirmar/i);
     expect(result?.content).not.toMatch(/(sumé|agregué|tenés|te confirmo)/i);
     expect(buildCartSummaryMessage).not.toHaveBeenCalled();
+  });
+
+  it('success ausente se trata como desconocido, nunca como mutación exitosa', async () => {
+    vi.mocked(createReactAgent).mockReturnValue({
+      invoke: vi.fn().mockResolvedValue({
+        messages: [
+          {
+            tool_call_id: 'tc-add-unknown',
+            name: 'add_cart_item',
+            content: JSON.stringify({ success: null, error: 'unknown_result' }),
+          },
+        ],
+      }),
+    } as any);
+
+    const result = await runHybridReactAgent(makeCtx() as any);
+
+    expect(result).toBeNull();
+    expect(buildCartSummaryMessage).not.toHaveBeenCalled();
+  });
+
+  it('la traza conserva count=3 de save_party_size y separa call de resultado', async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+    const info = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    vi.mocked(createReactAgent).mockReturnValue({
+      invoke: vi.fn().mockResolvedValue({
+        messages: [
+          {
+            tool_calls: [{ id: 'tc-party', name: 'save_party_size', args: { count: 3 } }],
+          },
+          {
+            tool_call_id: 'tc-party',
+            name: 'save_party_size',
+            status: 'success',
+            content: JSON.stringify({
+              success: true,
+              effect: { kind: 'party_size_persisted' },
+              partySize: 3,
+            }),
+          },
+        ],
+      }),
+    } as any);
+
+    try {
+      await runHybridReactAgent(makeCtx() as any);
+      expect(debug).toHaveBeenCalledWith(expect.stringContaining('"count":3'));
+      expect(info).toHaveBeenCalledWith(expect.stringContaining('"event":"[tool]"'));
+      expect(info).toHaveBeenCalledWith(expect.stringContaining('"success":true'));
+    } finally {
+      debug.mockRestore();
+      info.mockRestore();
+    }
   });
 
   it('instala el gate central y propaga la revision solo cuando viene del preflight', async () => {

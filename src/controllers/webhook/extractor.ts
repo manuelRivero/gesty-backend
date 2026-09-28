@@ -1,4 +1,5 @@
 // webhooks/extractor.ts
+import { randomUUID } from 'node:crypto';
 import { WhatsAppWebhookPayload, WebhookContext } from './types';
 import { extractPayloadId } from './utils';
 
@@ -26,12 +27,12 @@ export const extractContext = (payload: WhatsAppWebhookPayload): WebhookContext 
     if (isWhatsAppStatusOnlyEvent(payload)) {
       console.debug('[Extractor] WhatsApp status event — no message body, skipping');
     } else {
-      console.log('[Extractor] No message found, ignoring...');
+      console.debug('[Extractor] No message found, ignoring...');
     }
     return null;
   }
 
-  console.log('[Extractor] Extracted context:', {
+  console.debug('[Extractor] Extracted context:', {
     phoneNumberId,
     to,
     message,
@@ -47,6 +48,7 @@ export const extractContext = (payload: WhatsAppWebhookPayload): WebhookContext 
     to,
     message,
     value,
+    turnId: randomUUID().slice(0, 8),
     payloadId  // Ya procesado, los handlers lo usan directo
   };
 };

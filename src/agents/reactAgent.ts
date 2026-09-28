@@ -234,6 +234,8 @@ export interface HybridAgentSignals {
   cartAddSucceeded: boolean;
   /** Un add fallido no puede quedar cubierto por prosa afirmativa del LLM. */
   cartAddFailed: boolean;
+  /** Resultado ausente/no booleano: dejar que dispatch verifique el draft persistido. */
+  cartAddUnknown: boolean;
   /** Effects exitosos observados en ToolMessages de este turno. */
   successfulEffectCount: number;
   /** Producto del último add_cart_item exitoso de este turno. */
@@ -330,6 +332,7 @@ const TRACED_ARG_KEYS = [
   'productIds',
   'itemIndex',
   'quantity',
+  'count',
   'variation',
   'categoryTag',
   'categoryId',
@@ -364,13 +367,20 @@ const summarizeToolArgs = (args: unknown): Record<string, unknown> => {
  * loguean por su cuenta), así que un add resuelto por `find_products_by_filter`
  * era invisible.
  */
-const logToolCallTrace = (messages: unknown[], conversationId: string | undefined): void => {
-  const calls: Array<{ tool: string; args: Record<string, unknown> }> = [];
+const logToolCallTrace = (
+  messages: unknown[],
+  conversationId: string | undefined,
+  turnId: string | undefined
+): void => {
+  const calls: Array<{ id: string | null; tool: string; args: Record<string, unknown> }> = [];
   const results: Array<{
     tool: string;
+    id: string | null;
     success: boolean | null;
     effect: Record<string, unknown> | null;
     error: string | null;
+    status: string | null;
+    resultCount: number | null;
   }> = [];
   for (const msg of messages) {
     if (typeof msg !== 'object' || msg === null) continue;
@@ -387,12 +397,23 @@ const logToolCallTrace = (messages: unknown[], conversationId: string | undefine
               : null;
           results.push({
             tool: m.name,
+            id: typeof m.tool_call_id === 'string' ? m.tool_call_id : null,
             success: typeof data.success === 'boolean' ? data.success : null,
             effect,
             error: typeof data.error === 'string' ? data.error : null,
+            status: typeof m.status === 'string' ? m.status : null,
+            resultCount: typeof data.count === 'number' ? data.count : null,
           });
         } catch {
-          results.push({ tool: m.name, success: null, effect: null, error: null });
+          results.push({
+            tool: m.name,
+            id: typeof m.tool_call_id === 'string' ? m.tool_call_id : null,
+            success: null,
+            effect: null,
+            error: null,
+            status: typeof m.status === 'string' ? m.status : null,
+            resultCount: null,
+          });
         }
       }
     }
@@ -403,19 +424,34 @@ const logToolCallTrace = (messages: unknown[], conversationId: string | undefine
       if (typeof call !== 'object' || call === null) continue;
       const c = call as Record<string, unknown>;
       if (typeof c.name !== 'string') continue;
-      calls.push({ tool: c.name, args: summarizeToolArgs(c.args) });
+      calls.push({
+        id: typeof c.id === 'string' ? c.id : null,
+        tool: c.name,
+        args: summarizeToolArgs(c.args),
+      });
     }
   }
+  console.log(JSON.stringify({ event: '[react]', turnId, tools: calls.length }));
   if (calls.length === 0) return;
-  console.log(
-    JSON.stringify({
-      event: '[hybrid-agent] tool_trace',
-      conversationId,
-      toolCount: calls.length,
-      calls,
-      results,
-    })
-  );
+  for (const result of results) {
+    console.log(JSON.stringify({
+      event: '[tool]',
+      turnId,
+      name: result.tool,
+      success: result.success,
+      effect: typeof result.effect?.kind === 'string' ? result.effect.kind : null,
+      status: result.status,
+      ...(result.resultCount != null ? { results: result.resultCount } : {}),
+    }));
+  }
+  console.debug(JSON.stringify({
+    event: '[hybrid-agent] tool_trace',
+    turnId,
+    conversationId,
+    toolCount: calls.length,
+    calls,
+    results,
+  }));
 };
 
 const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
@@ -444,6 +480,7 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
     presentationCommands: [],
     cartAddSucceeded: false,
       cartAddFailed: false,
+    cartAddUnknown: false,
     successfulEffectCount: 0,
     lastAddedProductId: null,
     cartMutatedThisTurn: false,
@@ -457,11 +494,21 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
   };
 
   const stagedPresentations: Array<{ toolCallId: string; command: PresentationCommand }> = [];
+  const addCartCallCount = messages.reduce<number>((count, msg) => {
+    if (typeof msg !== 'object' || msg === null) return count;
+    const toolCalls = (msg as { tool_calls?: unknown }).tool_calls;
+    if (!Array.isArray(toolCalls)) return count;
+    return count + toolCalls.filter((call) =>
+      typeof call === 'object' && call !== null &&
+      (call as { name?: unknown }).name === 'add_cart_item'
+    ).length;
+  }, 0);
+  let addCartResultCount = 0;
+  let addCartUnknownResult = false;
 
   for (const msg of messages) {
     if (typeof msg !== 'object' || msg === null) continue;
     const m = msg as Record<string, unknown>;
-    if (typeof m.tool_call_id !== 'string') continue;
 
     const rawContent = typeof m.content === 'string' ? m.content : null;
     if (!rawContent) continue;
@@ -479,6 +526,10 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
         error?: string;
         askMessage?: string;
       };
+            if (m.name === 'add_cart_item') {
+        if (typeof data.success === 'boolean') addCartResultCount += 1;
+        else addCartUnknownResult = true;
+      }
             if (m.name === 'add_cart_item' && data.success === true) {
         signals.cartAddSucceeded = true;
         const added = data.added;
@@ -490,7 +541,7 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
           signals.lastAddedProductId = (added as { productId: string }).productId;
         }
       }
-      if (m.name === 'add_cart_item' && data.success !== true) {
+      if (m.name === 'add_cart_item' && data.success === false) {
         signals.cartAddFailed = true;
       }
       if (
@@ -593,6 +644,7 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
       }
       if (
         data.signal === 'present_category' &&
+        typeof m.tool_call_id === 'string' &&
         typeof data.categoryId === 'string' &&
         data.categoryId.length > 0
       ) {
@@ -620,7 +672,7 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
       }
       if (data.signal === 'present_product_cta') {
         const parsed = parsePresentProductCtaSignal(data);
-        if (parsed) {
+        if (parsed && typeof m.tool_call_id === 'string') {
           stagedPresentations.push({
             toolCallId: m.tool_call_id,
             command: { type: 'product_cta', cta: parsed },
@@ -628,10 +680,13 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
         }
       }
     } catch {
+      if (m.name === 'add_cart_item') addCartUnknownResult = true;
       /* ignorar mensajes no-JSON */
     }
   }
 
+  signals.cartAddUnknown =
+    addCartUnknownResult || addCartResultCount < addCartCallCount;
   signals.presentationCommands = alignPresentationCommands(messages, stagedPresentations);
   for (const command of signals.presentationCommands) {
     if (command.type === 'category') {
@@ -891,7 +946,7 @@ const emitHybridCtaResult = async (params: {
     console.error('[hybrid-cta] patchConversationMetadata failed:', err);
   }
 
-  console.log(
+  console.debug(
     JSON.stringify({
       event: '[hybrid-cta] cta_shown',
       source,
@@ -973,7 +1028,7 @@ const materializeCategoryPresentation = async (
       { bodyText: command.bodyText }
     );
     if (result.message) {
-      console.log(
+      console.debug(
         JSON.stringify({
           event: '[hybrid-agent] present_category_signal',
           categoryId: command.categoryId,
@@ -1091,7 +1146,7 @@ const materializeProductCtaPresentation = async (
     if (handlerResult) return handlerResult;
   }
 
-  console.log(
+  console.debug(
     JSON.stringify({
       event: '[hybrid-cta] cta_skipped',
       reason: 'agent_tool_build_failed',
@@ -1110,7 +1165,7 @@ const composeOrderedPresentations = async (
   for (const command of commands) {
     if (command.type === 'product_cta') {
       if (options.cartAddSucceeded) {
-        console.log(
+        console.debug(
           JSON.stringify({
             event: '[hybrid-cta] cta_skipped',
             reason: 'cart_add_same_turn',
@@ -1120,7 +1175,7 @@ const composeOrderedPresentations = async (
         continue;
       }
       if (!options.ctaFeatureOn) {
-        console.log(
+        console.debug(
           JSON.stringify({
             event: '[hybrid-cta] cta_skipped',
             reason: 'feature_off',
@@ -1217,6 +1272,7 @@ export const runHybridReactAgent = async (
       conversationId,
       conversationStartedAt,
       turnStartedAt,
+      turnId: ctx.turnId,
       userMessage: userMessageForTools,
       ...(typeof ctx.humanIntentGateRevision === 'number'
         ? { humanIntentGateRevision: ctx.humanIntentGateRevision }
@@ -1226,7 +1282,7 @@ export const runHybridReactAgent = async (
 
   const agentMessages = (out as { messages?: unknown[] }).messages ?? [];
   const llmProse = extractFinalText(out);
-  logToolCallTrace(agentMessages, conversationId);
+  logToolCallTrace(agentMessages, conversationId, ctx.turnId);
   const signals = extractHybridSignals(agentMessages);
   const metaAtTurnStart = normalizeMetadata(ctx.conversationState?.metadata);
   const pendingCancelAtTurnStart = metaAtTurnStart.pending_cancel_disambiguation;
@@ -1253,7 +1309,7 @@ export const runHybridReactAgent = async (
         signals.presentWelcomeOptions = true;
         signals.welcomeBodyText =
           '¡Hola! ¿Te ayudo con el menú, un pedido o una reserva de mesa?';
-        console.log(
+        console.debug(
           JSON.stringify({
             event: '[hybrid-agent] welcome_eligible_force_welcome',
             conversationId,
@@ -1279,7 +1335,7 @@ export const runHybridReactAgent = async (
       signals.startAddressEditSession ||
       signals.requestHumanSupport;
     if (!allowedEscape) {
-      console.log(
+      console.debug(
         JSON.stringify({
           event: '[hybrid-agent] cancel_disambiguation_guard',
           conversationId,
@@ -1304,7 +1360,7 @@ export const runHybridReactAgent = async (
   // Escalado a humano: la tool ya marcó `is_human_handled`. Cortamos acá para no
   // dejar que el modelo siga conversando sobre un turno que ya no es suyo.
   if (signals.requestHumanSupport) {
-    console.log(
+    console.debug(
       JSON.stringify({
         event: '[hybrid-agent] request_human_support',
         conversationId,
@@ -1337,7 +1393,7 @@ export const runHybridReactAgent = async (
       },
     });
     if (decision.type === 'delegate') {
-      console.log(
+      console.debug(
         JSON.stringify({
           event: '[hybrid-agent] delegate_to_checkout',
           reason: signals.startCheckoutReason,
@@ -1351,7 +1407,7 @@ export const runHybridReactAgent = async (
       };
     }
     if (decision.type === 'empty_cart') {
-      console.log(
+      console.debug(
         JSON.stringify({
           event: '[hybrid-agent] start_checkout_empty_cart',
           conversationId,
@@ -1372,7 +1428,7 @@ export const runHybridReactAgent = async (
     if (decision.type === 'defer_present_cart') {
       signals.presentCart = true;
       signals.startCheckoutSession = false;
-      console.log(
+      console.debug(
         JSON.stringify({
           event: '[hybrid-agent] checkout_deferred_cart_mutation',
           conversationId,
@@ -1386,7 +1442,7 @@ export const runHybridReactAgent = async (
     const { buildSwitchToReservationConfirmMessage } = await import(
       '../services/switchToReservationConfirm.service'
     );
-    console.log(
+    console.debug(
       JSON.stringify({
         event: '[hybrid-agent] ask_cancel_cart_for_reservation',
         conversationId,
@@ -1403,7 +1459,7 @@ export const runHybridReactAgent = async (
   }
 
   if (signals.startReservationSession) {
-    console.log(
+    console.debug(
       JSON.stringify({
         event: '[hybrid-agent] delegate_to_reservation',
         reason: signals.startReservationReason,
@@ -1418,7 +1474,7 @@ export const runHybridReactAgent = async (
   }
 
   if (signals.startAddressEditSession) {
-    console.log(
+    console.debug(
       JSON.stringify({
         event: '[hybrid-agent] delegate_to_address_edit',
         reason: signals.startAddressEditReason,
@@ -1433,7 +1489,7 @@ export const runHybridReactAgent = async (
 
   if (signals.presentComplementSuggestions) {
     if (!signals.cartAddSucceeded) {
-      console.log(
+      console.debug(
         JSON.stringify({
           event: '[hybrid-agent] present_complement_skipped_no_add_success',
           conversationId,
@@ -1472,7 +1528,7 @@ export const runHybridReactAgent = async (
           llmProse: signals.cartMutatedThisTurn ? null : llmProse,
         });
         if (listMsg) {
-          console.log(
+          console.debug(
             JSON.stringify({
               event: '[hybrid-agent] present_complement_suggestions_signal',
               conversationId,
@@ -1485,7 +1541,7 @@ export const runHybridReactAgent = async (
           };
         }
         // Sin ola (cooldown/presupuesto/sin ítems): carrito completo, no categorías en prosa.
-        console.log(
+        console.debug(
           JSON.stringify({
             event: '[hybrid-agent] present_complement_suggestions_fallback_cart',
             conversationId,
@@ -1512,7 +1568,7 @@ export const runHybridReactAgent = async (
         }
       );
       if (result) {
-        console.log(
+        console.debug(
           JSON.stringify({
             event: '[hybrid-agent] cancel_order_signal',
             conversationId,
@@ -1556,7 +1612,7 @@ export const runHybridReactAgent = async (
         note: signals.itemNoteText,
       });
       if (noteList) {
-        console.log(
+        console.debug(
           JSON.stringify({
             event: '[hybrid-agent] item_note_success_list',
             conversationId,
@@ -1583,7 +1639,7 @@ export const runHybridReactAgent = async (
       !signals.cartAddSucceeded &&
       !signals.markComplementRefused;
     if (skipCartForPendingAdd || skipCartForComplementBlock) {
-      console.log(
+      console.debug(
         JSON.stringify({
           event: '[hybrid-agent] present_cart_skipped_pending_add_gate',
           conversationId,
@@ -1605,7 +1661,7 @@ export const runHybridReactAgent = async (
         businessStreetAddress: business.street_address ?? null,
         llmProse,
       });
-      console.log(JSON.stringify({ event: '[hybrid-agent] present_cart_signal', conversationId }));
+      console.debug(JSON.stringify({ event: '[hybrid-agent] present_cart_signal', conversationId }));
       return { kind: 'response', handlerResult: markHybridResult({ content: cartMsg, isInteractive: true }) };
     } catch (err) {
       console.error('[hybrid-agent] present_cart failed, falling through', err);
@@ -1619,7 +1675,7 @@ export const runHybridReactAgent = async (
     !signals.cartAddSucceeded &&
     signals.cartAddPendingAskMessage
   ) {
-    console.log(
+    console.debug(
       JSON.stringify({
         event: '[hybrid-agent] surface_add_pending_ask',
         conversationId,
@@ -1650,7 +1706,7 @@ export const runHybridReactAgent = async (
         businessStreetAddress: business.street_address ?? null,
         llmProse: null,
       });
-      console.log(JSON.stringify({ event: '[hybrid-agent] post_effect_cart_summary', conversationId }));
+      console.debug(JSON.stringify({ event: '[hybrid-agent] post_effect_cart_summary', turnId: ctx.turnId, conversationId }));
       return { kind: 'response', handlerResult: markHybridResult({ content: cartMsg, isInteractive: true }) };
     } catch (err) {
       console.error('[hybrid-agent] post-effect cart summary failed, falling through', err);
@@ -1670,6 +1726,8 @@ export const runHybridReactAgent = async (
       }),
     };
   }
+
+  if (signals.cartAddUnknown) return null;
 
   if (signals.successfulEffectCount > 0) {
     return {
@@ -1725,7 +1783,7 @@ export const runHybridReactAgent = async (
     const confirmMsg = new AddressService().buildDelegatedConfirmAddressMessage(
       `📍 Encontré esta dirección:\n${signals.stagedAddressText}\n\n¿Es correcta?`
     );
-    console.log(JSON.stringify({ event: '[hybrid-agent] present_address_confirmation_signal', conversationId }));
+    console.debug(JSON.stringify({ event: '[hybrid-agent] present_address_confirmation_signal', conversationId }));
     return { kind: 'response', handlerResult: markHybridResult({ content: confirmMsg, isInteractive: true }) };
   }
 
@@ -1738,7 +1796,7 @@ export const runHybridReactAgent = async (
     try {
       const menu = await buildSmallTalkMenu(ctx, signals.welcomeBodyText ?? undefined);
       if (menu && typeof menu !== 'string') {
-        console.log(JSON.stringify({ event: '[hybrid-agent] present_welcome_options_signal', conversationId }));
+        console.debug(JSON.stringify({ event: '[hybrid-agent] present_welcome_options_signal', conversationId }));
         await clearWelcomeEligible(conversationId);
         return { kind: 'response', handlerResult: markHybridResult({ content: menu, isInteractive: true }) };
       }
@@ -1787,7 +1845,7 @@ export const runHybridReactAgent = async (
     signals.presentProductCta &&
     signals.cartAddSucceeded
   ) {
-    console.log(
+    console.debug(
       JSON.stringify({
         event: '[hybrid-cta] cta_skipped',
         reason: 'cart_add_same_turn',
@@ -1795,7 +1853,7 @@ export const runHybridReactAgent = async (
       })
     );
   } else if (deferSingleProductCta && signals.presentProductCta) {
-    console.log(
+    console.debug(
       JSON.stringify({
         event: '[hybrid-cta] cta_skipped',
         reason: 'feature_off',

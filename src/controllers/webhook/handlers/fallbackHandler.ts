@@ -4,11 +4,9 @@ import { IntentHandler, IntentClassification, HandlerResult, EnrichedContext, We
 import { generateAIResponse } from '../../../services/ai/openai.service';
 import { resolvePersonalityForBusiness } from '../../../services/botPersonality.service';
 import { buildFallbackSystemPrompt } from '../../../prompts/botPersonality';
-import { getRecentMessagesByConversationId } from '../../../repositories';
 import { ConversationIntent } from '../../../types/conversationIntent';
 import { textResponse } from '../utils';
 import { formatBotUserMessage } from '../../../services/productQuery/utils';
-import { ChatCompletionMessageParam } from 'openai/resources/index';
 
 export class FallbackHandler implements IntentHandler {
   readonly command = ConversationIntent.UNKNOWN;
@@ -70,23 +68,13 @@ export class FallbackHandler implements IntentHandler {
       );
     }
 
-    // Generar respuesta genérica con LLM
-    const history = await getRecentMessagesByConversationId(
-      conversation.id,
-      5,
-      conversation.started_at
-    );
-    const messages: ChatCompletionMessageParam[] = history.map(m => ({
-      role: m.sender === 'ai' ? 'assistant' : 'user',
-      content: m.message
-    }));
-
+    // Last resort receives only the current message; history is not evidence
+    // that a cart mutation succeeded.
     const { promptText } = await resolvePersonalityForBusiness(business.id);
     const systemPrompt = buildFallbackSystemPrompt(promptText);
     
     const response = await generateAIResponse(business, [
       { role: 'system', content: systemPrompt },
-      ...messages,
       { role: 'user' as const, content: messageContent }
     ]);
 

@@ -52,7 +52,7 @@ export const extractContextNode = async (
 
   const ctx = extractContextFromPayload(payload);
   if (ctx) {
-    console.log('[Orchestrator] Extracted context:', ctx);
+    console.debug('[Orchestrator] Extracted context:', ctx);
   }
 
   if (!ctx) {
@@ -73,7 +73,7 @@ export const extractContextNode = async (
     return { earlyExit: 'invalid_payload' };
   }
 
-  console.log('[Orchestrator] Processing message from:', ctx.to);
+  console.debug('[Orchestrator] Processing message from:', ctx.to);
 
   return { webhookContext: ctx };
 };
@@ -176,7 +176,7 @@ export const persistUserMessageNode = async (
       customerPhone: customer.phone_number ?? ctx.to,
     });
 
-    console.log('[Persist] Message saved:', {
+    console.debug('[Persist] Message saved:', {
       conversationId: conversation.id,
       type: messageType,
       contentPreview: messageContent.substring(0, 50),
@@ -363,14 +363,15 @@ export const buildDetectionContextNode = async (
 
     const isOnboardingAgentSession = onboardingOwnership.shouldOwn === true;
 
-    console.log(
-      JSON.stringify({
-        event: '[context] onboarding_ownership',
-        reason: onboardingOwnership.reason,
-        shouldOwn: onboardingOwnership.shouldOwn,
-        conversationId: conversation.id,
-      })
-    );
+    const ownershipLog = JSON.stringify({
+      event: '[context] onboarding_ownership',
+      reason: onboardingOwnership.reason,
+      shouldOwn: onboardingOwnership.shouldOwn,
+      turnId: ctx.turnId,
+      conversationId: conversation.id,
+    });
+    if (onboardingOwnership.shouldOwn) console.log(ownershipLog);
+    else console.debug(ownershipLog);
     if (
       onboardingOwnership.reason === 'facts_missing_address' ||
       onboardingOwnership.reason === 'facts_missing_name'
