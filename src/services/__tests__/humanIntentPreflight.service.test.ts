@@ -102,6 +102,25 @@ describe('Human Intent Preflight', () => {
       .toEqual(decision);
   });
 
+  it('representa "Ceviche, postre y bebidas" con tres objetivos en intents', () => {
+    const decision = {
+      decision: 'NEW_INTENT',
+      intents: [
+        { goal: 'PEDIR', request: { products: ['ceviche'] } },
+        { goal: 'EXPLORAR', request: { category: 'postres' } },
+        { goal: 'EXPLORAR', request: { category: 'bebidas' } },
+      ],
+    };
+
+    expect(validateHumanIntentTurnDecision(
+      decision,
+      input({
+        turn: { messageId: 'wamid.multi', text: 'Ceviche, postre y bebidas' },
+        state: { revision: 0, active: null, pending: [] },
+      })
+    )).toEqual(decision);
+  });
+
   it('no fragmenta varios productos de un mismo PEDIR', () => {
     const decision = {
       decision: 'NEW_INTENT',
@@ -155,6 +174,12 @@ describe('Human Intent Preflight', () => {
         input()
       )
     ).toBeNull();
+    expect(
+      validateHumanIntentTurnDecision(
+        { decision: 'NEW_INTENT', request: { goal: 'PEDIR' } },
+        input()
+      )
+    ).toBeNull();
   });
 
   it('acepta anáfora ligada a referencia visible y rechaza un ID inventado', () => {
@@ -182,7 +207,7 @@ describe('Human Intent Preflight', () => {
     expect(
       validateHumanIntentTurnDecision(
         {
-          action: 'NEW_INTENT',
+          decision: 'NEW_INTENT',
           intents: [{
             goal: 'PEDIR',
             request: { menu_item_id: '99999999-9999-4999-8999-999999999999' },
@@ -212,6 +237,18 @@ describe('Human Intent Preflight', () => {
     await expect(
       runHumanIntentPreflight(input({ turn: { messageId: 'wamid.greeting', text: 'Hola buenas' } }))
     ).resolves.toEqual({ decision: 'NO_INTENT' });
+  });
+
+  it('parsea "Quiero hacer un pedido" como NEW_INTENT con intents y request vacío', async () => {
+    const result = {
+      decision: 'NEW_INTENT',
+      intents: [{ goal: 'PEDIR', request: {} }],
+    };
+    invokeMock.mockResolvedValue(result);
+
+    await expect(
+      runHumanIntentPreflight(input({ turn: { messageId: 'wamid.order', text: 'Quiero hacer un pedido' } }))
+    ).resolves.toEqual(result);
   });
 
   it('output inválido o error del LLM falla cerrado como AMBIGUOUS', async () => {

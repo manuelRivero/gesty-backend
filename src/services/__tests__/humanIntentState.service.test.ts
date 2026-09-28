@@ -313,7 +313,7 @@ describe('humanIntentState V1', () => {
 
   it('NEW_INTENT sin ACTIVE crea la nueva como ACTIVE', async () => {
     const result = await applyDecision('turn-new-1', {
-      action: 'NEW_INTENT',
+      decision: 'NEW_INTENT',
       intents: [{ goal: 'PEDIR', request: { products: ['ceviche'] } }],
     });
 
@@ -329,7 +329,7 @@ describe('humanIntentState V1', () => {
   it('NEW_INTENT suspende ACTIVE sin destruirla', async () => {
     const original = await createHumanIntent(CONVERSATION_ID, input('PEDIR'));
     await applyDecision('turn-new-2', {
-      action: 'NEW_INTENT',
+      decision: 'NEW_INTENT',
       intents: [{ goal: 'CONSULTAR_NEGOCIO', request: { subject: 'delivery' } }],
     });
 
@@ -346,7 +346,7 @@ describe('humanIntentState V1', () => {
     });
 
     await applyDecision('turn-party-size', {
-      action: 'CONTINUE_ACTIVE',
+      decision: 'CONTINUE_ACTIVE',
       intentId: active.id,
       answeredBlockerIds: [blocked.blockers[0].id],
     });
@@ -365,7 +365,7 @@ describe('humanIntentState V1', () => {
     });
 
     await applyDecision('turn-independent', {
-      action: 'NEW_INTENT',
+      decision: 'NEW_INTENT',
       intents: [{ goal: 'EXPLORAR', request: { category: 'postres' } }],
     });
 
@@ -385,7 +385,7 @@ describe('humanIntentState V1', () => {
       goal: 'EXPLORAR', request: { category: 'bebidas' },
     });
 
-    await applyDecision('turn-resume', { action: 'RESUME_PENDING', intentId: postres.id });
+    await applyDecision('turn-resume', { decision: 'RESUME_PENDING', intentId: postres.id });
 
     const state = await getHumanIntentState(CONVERSATION_ID);
     expect(state.records.find(({ id }) => id === postres.id)?.status).toBe('ACTIVE');
@@ -396,7 +396,7 @@ describe('humanIntentState V1', () => {
   it('REPLACE reemplaza solo ACTIVE y mantiene CANCEL distinto', async () => {
     const original = await createHumanIntent(CONVERSATION_ID, input('PEDIR'));
     const result = await applyDecision('turn-replace', {
-      action: 'REPLACE',
+      decision: 'REPLACE',
       intentId: original.id,
       replacement: { goal: 'PEDIR', request: { products: ['hamburguesa'] } },
     });
@@ -416,7 +416,7 @@ describe('humanIntentState V1', () => {
       goal: 'EXPLORAR', request: { category: 'postres' },
     });
 
-    await applyDecision('turn-cancel', { action: 'CANCEL', intentId: active.id });
+    await applyDecision('turn-cancel', { decision: 'CANCEL', intentId: active.id });
 
     const state = await getHumanIntentState(CONVERSATION_ID);
     expect(state.records.find(({ id }) => id === active.id)?.status).toBe('CANCELLED');
@@ -426,7 +426,7 @@ describe('humanIntentState V1', () => {
   it('AMBIGUOUS no modifica records ni revision', async () => {
     await createHumanIntent(CONVERSATION_ID, input('PEDIR'));
     const before = await getHumanIntentState(CONVERSATION_ID);
-    const result = await applyDecision('turn-ambiguous', { action: 'AMBIGUOUS' });
+    const result = await applyDecision('turn-ambiguous', { decision: 'AMBIGUOUS' });
     const after = await getHumanIntentState(CONVERSATION_ID);
 
     expect(result.status).toBe('ambiguous');
@@ -435,7 +435,7 @@ describe('humanIntentState V1', () => {
 
   it('multi-intent aplica ACTIVE y PENDING en orden dentro de una transición', async () => {
     await applyDecision('turn-multi', {
-      action: 'NEW_INTENT',
+      decision: 'NEW_INTENT',
       intents: [
         { goal: 'PEDIR', request: { products: ['ceviche'] } },
         { goal: 'EXPLORAR', request: { category: 'postres' } },
@@ -454,7 +454,7 @@ describe('humanIntentState V1', () => {
 
   it('productos de un solo PEDIR permanecen en un único record', async () => {
     await applyDecision('turn-one-order', {
-      action: 'NEW_INTENT',
+      decision: 'NEW_INTENT',
       intents: [{ goal: 'PEDIR', request: { products: ['ceviche', 'lomo'] } }],
     });
 
@@ -466,7 +466,7 @@ describe('humanIntentState V1', () => {
     const before = await getHumanIntentState(CONVERSATION_ID);
     const result = await applyDecision(
       'turn-stale',
-      { action: 'NEW_INTENT', intents: [{ goal: 'EXPLORAR', request: { category: 'postres' } }] },
+      { decision: 'NEW_INTENT', intents: [{ goal: 'EXPLORAR', request: { category: 'postres' } }] },
       before.revision - 1
     );
 
@@ -476,7 +476,7 @@ describe('humanIntentState V1', () => {
 
   it('el mismo messageId aplicado dos veces no crea records adicionales', async () => {
     const decision = {
-      action: 'NEW_INTENT' as const,
+      decision: 'NEW_INTENT' as const,
       intents: [{ goal: 'PEDIR' as const, request: { products: ['ceviche'] } }],
     };
     const first = await applyDecision('turn-idempotent', decision);
@@ -494,7 +494,7 @@ describe('humanIntentState V1', () => {
 
     await expect(
       applyDecision('turn-invalid-batch', {
-        action: 'NEW_INTENT',
+        decision: 'NEW_INTENT',
         intents: [
           { goal: 'EXPLORAR', request: { category: 'postres' } },
           { goal: 'EXPLORAR', request: { category: 'postres' } },

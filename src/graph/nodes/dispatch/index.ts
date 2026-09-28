@@ -54,7 +54,6 @@ import type { HybridAgentRunResult } from '../../../agents/reactAgent';
 import {
   applyHumanIntentTurnDecision,
   getHumanIntentState,
-  type HumanIntentTurnDecision,
 } from '../../../services/humanIntentState.service';
 import { runHumanIntentPreflight } from '../../../services/humanIntentPreflight.service';
 import {
@@ -752,13 +751,11 @@ export const nlpSubgraphNode = async (
       if (decision.decision === 'NO_INTENT') {
         allowLegacyFallback = true;
       } else {
-        const { decision: action, ...decisionFields } = decision;
-        const stateDecision = { action, ...decisionFields } as HumanIntentTurnDecision;
         const applied = await applyHumanIntentTurnDecision({
           conversationId: conversation.id,
           messageId,
           expectedRevision: intentState.revision,
-          decision: stateDecision,
+          decision,
         });
         if (applied.status === 'duplicate') return { skipAIPersistence: true };
         if (applied.status !== 'applied') {
@@ -783,7 +780,7 @@ export const nlpSubgraphNode = async (
         console.log(
           JSON.stringify({
             event: '[human-intent-preflight] applied',
-            action,
+            decision: decision.decision,
             conversationId: conversation.id,
             revision: applied.state.revision,
           })

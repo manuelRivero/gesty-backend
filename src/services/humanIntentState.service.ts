@@ -71,17 +71,17 @@ export interface AddHumanIntentBlockerInput {
 }
 
 export type HumanIntentTurnDecision =
-  | { action: 'NO_INTENT' }
-  | { action: 'CONTINUE_ACTIVE'; intentId: string; answeredBlockerIds: string[] }
-  | { action: 'NEW_INTENT'; intents: Array<{ goal: HumanGoal; request: Record<string, unknown> }> }
-  | { action: 'RESUME_PENDING'; intentId: string }
-  | { action: 'CANCEL'; intentId: string }
+  | { decision: 'NO_INTENT' }
+  | { decision: 'CONTINUE_ACTIVE'; intentId: string; answeredBlockerIds: string[] }
+  | { decision: 'NEW_INTENT'; intents: Array<{ goal: HumanGoal; request: Record<string, unknown> }> }
+  | { decision: 'RESUME_PENDING'; intentId: string }
+  | { decision: 'CANCEL'; intentId: string }
   | {
-      action: 'REPLACE';
+      decision: 'REPLACE';
       intentId: string;
       replacement: { goal: HumanGoal; request: Record<string, unknown> };
     }
-  | { action: 'AMBIGUOUS' };
+  | { decision: 'AMBIGUOUS' };
 
 export type ApplyHumanIntentDecisionResult =
   | { status: 'applied'; state: HumanIntentStateV1 }
@@ -342,7 +342,7 @@ export const applyHumanIntentTurnDecision = (params: {
     if (state.revision !== params.expectedRevision) {
       return { status: 'stale', state };
     }
-    if (params.decision.action === 'AMBIGUOUS') {
+    if (params.decision.decision === 'AMBIGUOUS') {
       return { status: 'ambiguous', state };
     }
 
@@ -354,7 +354,7 @@ export const applyHumanIntentTurnDecision = (params: {
       return index;
     };
 
-    switch (params.decision.action) {
+    switch (params.decision.decision) {
       case 'NO_INTENT':
         break;
       case 'CONTINUE_ACTIVE': {
