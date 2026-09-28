@@ -339,6 +339,92 @@ describe('humanIntentState V1', () => {
     expect(state.records.find(({ status }) => status === 'ACTIVE')?.goal).toBe('CONSULTAR_NEGOCIO');
   });
 
+  it('NEW_INTENT reutiliza el mismo PEDIR y conserva su intentId', async () => {
+    const original = await createHumanIntent(CONVERSATION_ID, {
+      goal: 'PEDIR',
+      request: { products: ['ceviche'] },
+    });
+
+    await applyDecision('turn-same-order', {
+      decision: 'NEW_INTENT',
+      intents: [{ goal: 'PEDIR', request: { products: ['ceviche'] } }],
+    });
+
+    const openOrders = (await getHumanIntentState(CONVERSATION_ID)).records.filter(
+      ({ goal, status }) => goal === 'PEDIR' && (status === 'ACTIVE' || status === 'PENDING')
+    );
+    expect(openOrders).toHaveLength(1);
+    expect(openOrders[0]).toMatchObject({ id: original.id, status: 'ACTIVE' });
+  });
+
+  it('NEW_INTENT enriquece el PEDIR equivalente y conserva su intentId', async () => {
+    const original = await createHumanIntent(CONVERSATION_ID, {
+      goal: 'PEDIR',
+      request: { products: ['milanesa'] },
+    });
+
+    await applyDecision('turn-enrich-order', {
+      decision: 'NEW_INTENT',
+      intents: [{ goal: 'PEDIR', request: { products: ['milanesa', 'papas'] } }],
+    });
+
+    const state = await getHumanIntentState(CONVERSATION_ID);
+    expect(state.records.filter(({ goal }) => goal === 'PEDIR')).toHaveLength(1);
+    expect(state.records[0]).toMatchObject({
+      id: original.id,
+      status: 'ACTIVE',
+      request: { products: ['milanesa', 'papas'] },
+    });
+  });
+
+  it('NEW_INTENT mantiene separados dos PEDIR con productos distintos', async () => {
+    const original = await createHumanIntent(CONVERSATION_ID, {
+      goal: 'PEDIR',
+      request: { products: ['ceviche'] },
+    });
+
+    await applyDecision('turn-different-order', {
+      decision: 'NEW_INTENT',
+      intents: [{ goal: 'PEDIR', request: { products: ['milanesa'] } }],
+    });
+
+    const openOrders = (await getHumanIntentState(CONVERSATION_ID)).records.filter(
+      ({ goal, status }) => goal === 'PEDIR' && (status === 'ACTIVE' || status === 'PENDING')
+    );
+    expect(openOrders).toHaveLength(2);
+    expect(openOrders.find(({ id }) => id === original.id)?.status).toBe('PENDING');
+    expect(openOrders.find(({ id }) => id !== original.id)).toMatchObject({
+      status: 'ACTIVE',
+      request: { products: ['milanesa'] },
+    });
+  });
+
+  it('PEDIR existente + exploraciones conserva el pedido y solo agrega exploraciones pendientes', async () => {
+    const order = await createHumanIntent(CONVERSATION_ID, { goal: 'PEDIR', request: {} });
+
+    await applyDecision('turn-order-and-exploration', {
+      decision: 'NEW_INTENT',
+      intents: [
+        { goal: 'PEDIR', request: { products: ['ceviche'] } },
+        { goal: 'EXPLORAR', request: { category: 'postres' } },
+        { goal: 'EXPLORAR', request: { category: 'bebidas' } },
+      ],
+    });
+
+    const state = await getHumanIntentState(CONVERSATION_ID);
+    expect(state.records).toHaveLength(3);
+    expect(state.records.find(({ id }) => id === order.id)).toMatchObject({
+      status: 'ACTIVE',
+      request: { products: ['ceviche'] },
+    });
+    expect(state.records.filter(({ goal, status }) => goal === 'PEDIR' && status === 'PENDING')).toHaveLength(0);
+    expect(state.records.filter(({ goal, status }) => goal === 'EXPLORAR' && status === 'PENDING'))
+      .toMatchObject([
+        { request: { category: 'postres' } },
+        { request: { category: 'bebidas' } },
+      ]);
+  });
+
   it('respuesta a blocker conserva ACTIVE y el blocker intacto', async () => {
     const active = await createHumanIntent(CONVERSATION_ID, input('PEDIR'));
     const blocked = await addHumanIntentBlocker(CONVERSATION_ID, active.id, {
