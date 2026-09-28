@@ -92,13 +92,14 @@ describe('pedido en espera cuando falta el número', () => {
     });
   });
 
-  it('save_party_size guarda el número y no consume el pending', async () => {
+  it('save_party_size restaura el plan estructurado como cola sin perder líneas', async () => {
     metadata = {
       pendingPartySizeOrder: {
         source: 'plan',
-        summary: '1× ceviche',
+        summary: '1× ceviche, 1× lomo',
         setAt: '2026-09-27T16:00:00.000Z',
         turnStartedAt: TURN_1.configurable.turnStartedAt,
+        lines: planLines,
       },
     };
 
@@ -107,10 +108,18 @@ describe('pedido en espera cuando falta el número', () => {
     );
 
     expect(saved.success).toBe(true);
-    expect(saved.heldOrder).toBe('1× ceviche');
+    expect(saved.heldOrder).toBe('1× ceviche, 1× lomo');
+    expect(saved.activeLine).toEqual({ hint: 'ceviche', requestedQuantity: 1 });
+    expect(saved.followUp.instruction).toContain('cola estructurada');
     expect(metadata.peopleCount).toBe(3);
     expect(metadata.requestedPartySize).toBe(3);
-    expect(metadata.pendingPartySizeOrder).toMatchObject({ summary: '1× ceviche' });
+    expect(metadata.pendingPartySizeOrder).toBeUndefined();
+    expect(metadata.pendingOrderLines).toMatchObject({
+      lines: [
+        { hint: 'ceviche', requestedQuantity: 1, status: 'active' },
+        { hint: 'lomo', requestedQuantity: 1, status: 'queued' },
+      ],
+    });
   });
 
   it('save_party_size sin count rechaza la llamada sin producir efectos', async () => {
@@ -153,6 +162,7 @@ describe('pedido en espera cuando falta el número', () => {
     expect(metadata.pendingPartySizeOrder).toMatchObject({
       source: 'plan',
       summary: '1× ceviche, 1× lomo',
+      lines: planLines,
     });
   });
 

@@ -168,7 +168,7 @@ export const saveReservationDateTool = new DynamicStructuredTool<
     }
     // Merge con el draft existente (P0.1/D1): nunca pisar slotId/partySize/environmentId.
     await patchReservationDraft(conversationId, { date });
-    return toJson({ saved: true, date });
+    return toJson({ saved: true, effect: { kind: 'reservation_date_persisted' }, date });
   },
 });
 
@@ -202,7 +202,11 @@ export const saveReservationPartySizeTool = new DynamicStructuredTool<
       return toJson({ saved: false, error: 'party_size_too_large', max });
     }
     await patchReservationDraft(conversationId, { partySize: count });
-    return toJson({ saved: true, partySize: count });
+    return toJson({
+      saved: true,
+      effect: { kind: 'reservation_party_size_persisted' },
+      partySize: count,
+    });
   },
 });
 
@@ -249,7 +253,11 @@ export const saveReservationEnvironmentTool = new DynamicStructuredTool<
     }
 
     await patchReservationDraft(conversationId, { environmentId });
-    return toJson({ saved: true, environmentId });
+    return toJson({
+      saved: true,
+      effect: { kind: 'reservation_environment_persisted' },
+      environmentId,
+    });
   },
 });
 
@@ -289,6 +297,7 @@ export const saveReservationSlotTool = new DynamicStructuredTool<
     });
     return toJson({
       saved: true,
+      effect: { kind: 'reservation_slot_persisted' },
       slotId: slot.id,
       time: slot.start_time,
       endTime: slot.end_time,

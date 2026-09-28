@@ -231,6 +231,59 @@ describe('buildContextMessage', () => {
     );
   });
 
+  it('el request del plan no se proyecta como contenido factual del carrito', async () => {
+    findFirstMock.mockResolvedValue({
+      id: 'draft-1',
+      fulfillment_type: null,
+      expires_at: null,
+      _count: { draft_order_item: 1 },
+      draft_order_item: [
+        { id: 'line-a', quantity: 1, variation: null, menu_item: { name: 'A' } },
+      ],
+    });
+    const msg = await buildContextMessage(
+      makeCtx({
+        userMsg: '¿Qué tengo?',
+        metadata: {
+          peopleCount: 3,
+          requestedPartySize: 3,
+          pendingOrderLines: {
+            lines: [
+              { id: 'line-a', hint: 'A', requestedQuantity: 1, status: 'done' },
+              { id: 'line-b', hint: 'B', requestedQuantity: 2, status: 'queued' },
+            ],
+            sourceMessage: 'A y B',
+            createdAt: '2026-09-28T00:00:00.000Z',
+          },
+          humanIntentState: {
+            version: 1,
+            revision: 1,
+            nextSequence: 2,
+            processedMessageIds: [],
+            records: [{
+              id: 'intent-order',
+              sequence: 1,
+              goal: 'PEDIR',
+              request: { products: ['A', 'B'] },
+              status: 'ACTIVE',
+              blockers: [],
+              createdAt: '2026-09-28T00:00:00.000Z',
+              updatedAt: '2026-09-28T00:00:00.000Z',
+            }],
+          },
+        },
+      })
+    );
+    const cartSection = msg.match(/- Carrito:\n([\s\S]*?)(?:\n- |\n\n)/)?.[1] ?? '';
+
+    expect(msg).toContain('solicitud: PEDIR');
+    expect(msg).toContain('no son confirmación de efectos ni contenido del carrito');
+    expect(msg).toContain('línea activa ahora → *B* (2×)');
+    expect(cartSection).toContain('A');
+    expect(cartSection).not.toContain('B');
+    expect(msg.endsWith('¿Qué tengo?')).toBe(true);
+  });
+
   it('oferta activa con party size: menciona Oferta activa', async () => {
     findFirstMock.mockResolvedValue(null);
     const msg = await buildContextMessage(
@@ -500,7 +553,7 @@ describe('buildContextMessage', () => {
       })
     );
 
-    expect(msg).toContain('ACTIVE (intent-1): PEDIR');
+    expect(msg).toContain('ACTIVE (intent-1) — solicitud: PEDIR');
     expect(msg).toContain('Blockers de ACTIVE: PARTY_SIZE_REQUIRED');
     expect(msg).toContain('1. EXPLORAR: {"category":"postres"} | 2. EXPLORAR: {"category":"bebidas"}');
     expect(msg).toContain('No ejecutes tools ni presentes opciones por una intención PENDING');

@@ -292,8 +292,9 @@ export const buildHumanIntentContextLines = (metadata: unknown): string[] => {
     `${record.goal}: ${JSON.stringify(record.request).slice(0, 600)}`;
   return [
     '[HUMAN INTENT STATE]',
+    '- ACTIVE/PENDING y su request describen trabajo solicitado; no son confirmación de efectos ni contenido del carrito.',
     active
-      ? `- ACTIVE (${active.id}): ${describe(active)}`
+      ? `- ACTIVE (${active.id}) — solicitud: ${describe(active)}`
       : '- No hay una intención ACTIVE.',
     ...(active?.blockers?.length
       ? [
@@ -304,7 +305,7 @@ export const buildHumanIntentContextLines = (metadata: unknown): string[] => {
       : []),
     ...(pending.length
       ? [
-          `- PENDING, en orden y solo para turnos futuros: ${pending
+          `- Solicitudes PENDING, en orden y solo para turnos futuros: ${pending
             .map((record, index) => `${index + 1}. ${describe(record)}`)
             .join(' | ')}`,
         ]

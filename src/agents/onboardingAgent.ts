@@ -14,6 +14,7 @@
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { HumanMessage } from '@langchain/core/messages';
 import { getReactReasonerLlm } from '../config/llm';
+import { PostEffectToolNode } from './postEffectToolNode';
 import { buildAgentHistoryMessages } from './conversationHistory';
 import { buildOnboardingAgentSystemPrompt } from '../prompts/botPersonality';
 import { resolvePersonalityForBusiness } from '../services/botPersonality.service';
@@ -70,7 +71,7 @@ const buildAgent = (personalityId: string, personalityPrompt: string) => {
   if (!agent) {
     agent = createReactAgent({
       llm: getReactReasonerLlm(),
-      tools: allOnboardingTools,
+      tools: new PostEffectToolNode(allOnboardingTools),
       prompt: buildOnboardingAgentSystemPrompt(personalityPrompt),
     });
     cachedAgents.set(cacheKey, agent);

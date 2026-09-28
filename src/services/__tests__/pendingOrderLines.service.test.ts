@@ -290,6 +290,20 @@ describe('pendingOrderLines.service', () => {
     expect(text).toMatch(/PROHIBIDO ofrecer complementos/);
   });
 
+  it('después de cerrar A, la siguiente derivación señala B como trabajo activo', () => {
+    const lines = buildPendingOrderLinesContextLines({
+      pendingOrderLines: basePending({
+        lines: [
+          { id: 'l1', hint: 'A', requestedQuantity: 1, status: 'done' },
+          { id: 'l2', hint: 'B', requestedQuantity: 2, status: 'queued' },
+        ],
+      }),
+    });
+
+    expect(lines.join('\n')).toContain('línea activa ahora → *B* (2×)');
+    expect(lines.join('\n')).not.toContain('línea activa ahora → *A*');
+  });
+
   it('buildPendingOrderLinesContextLines vacío sin cola', () => {
     expect(buildPendingOrderLinesContextLines({})).toEqual([]);
   });

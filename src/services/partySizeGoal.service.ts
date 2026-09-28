@@ -96,6 +96,8 @@ export type PendingPartySizeOrder = {
   setAt: string;
   /** Inicio del turno ReAct que escribió este pending. Cruza turnos, no el texto. */
   turnStartedAt?: string | null;
+  /** Líneas estructuradas de plan_order_lines, preservadas mientras se pide party size. */
+  lines?: Array<{ hint: string; requestedQuantity: number | null }>;
 };
 
 const collapseFoodText = (value: string): string => value.replace(/\s+/g, ' ').trim();
@@ -110,14 +112,29 @@ export const getPendingPartySizeOrder = (
 ): PendingPartySizeOrder | null => {
   const raw = normalizeMetadata(metadata).pendingPartySizeOrder;
   if (!raw || typeof raw !== 'object') return null;
-  if (raw.source !== 'plan' && raw.source !== 'lookup') return null;
-  if (typeof raw.summary !== 'string' || !raw.summary.trim()) return null;
-  if (typeof raw.setAt !== 'string' || !raw.setAt) return null;
+  const rawRecord = raw as unknown as Record<string, unknown>;
+  if (rawRecord.source !== 'plan' && rawRecord.source !== 'lookup') return null;
+  if (typeof rawRecord.summary !== 'string' || !rawRecord.summary.trim()) return null;
+  if (typeof rawRecord.setAt !== 'string' || !rawRecord.setAt) return null;
   return {
-    source: raw.source,
-    summary: raw.summary.trim(),
-    setAt: raw.setAt,
-    ...(typeof raw.turnStartedAt === 'string' ? { turnStartedAt: raw.turnStartedAt } : {}),
+    source: rawRecord.source,
+    summary: rawRecord.summary.trim(),
+    setAt: rawRecord.setAt,
+    ...(typeof rawRecord.turnStartedAt === 'string'
+      ? { turnStartedAt: rawRecord.turnStartedAt }
+      : {}),
+    ...(Array.isArray(rawRecord.lines)
+      ? {
+          lines: rawRecord.lines.filter(
+            (line): line is { hint: string; requestedQuantity: number | null } =>
+              typeof line === 'object' &&
+              line !== null &&
+              typeof (line as { hint?: unknown }).hint === 'string' &&
+              ((line as { requestedQuantity?: unknown }).requestedQuantity === null ||
+                typeof (line as { requestedQuantity?: unknown }).requestedQuantity === 'number')
+          ),
+        }
+      : {}),
   };
 };
 
@@ -186,6 +203,7 @@ export const mergePartySizeBlockedFood = (
     source: PartySizeBlockedFoodSource;
     summary: string;
     turnStartedAt?: string | null;
+    lines?: Array<{ hint: string; requestedQuantity: number | null }>;
   }
 ): PendingPartySizeOrder | null => {
   const piece = clipFoodSummary(collapseFoodText(incoming.summary));
@@ -193,7 +211,13 @@ export const mergePartySizeBlockedFood = (
   const setAt = new Date().toISOString();
   const turnStartedAt = incoming.turnStartedAt ?? null;
   if (incoming.source === 'plan' || !current) {
-    return { source: incoming.source, summary: piece, setAt, turnStartedAt };
+    return {
+      source: incoming.source,
+      summary: piece,
+      setAt,
+      turnStartedAt,
+      ...(incoming.lines ? { lines: incoming.lines } : {}),
+    };
   }
   if (current.source === 'plan') return current;
   if (!samePartySizeTurn(current, turnStartedAt)) {
@@ -262,7 +286,11 @@ const enqueuePartySizeRemember = <T>(
 
 export const rememberPartySizeBlockedFood = async (
   conversationId: string,
-  incoming: { source: PartySizeBlockedFoodSource; summary: string },
+  incoming: {
+    source: PartySizeBlockedFoodSource;
+    summary: string;
+    lines?: Array<{ hint: string; requestedQuantity: number | null }>;
+  },
   turnStartedAt?: string | null
 ): Promise<string | null> =>
   enqueuePartySizeRemember(conversationId, async () => {
@@ -276,7 +304,8 @@ export const rememberPartySizeBlockedFood = async (
     if (
       current &&
       current.summary === next.summary &&
-      current.source === next.source
+      current.source === next.source &&
+      (!incoming.lines || JSON.stringify(current.lines) === JSON.stringify(next.lines))
     ) {
       return current.summary;
     }

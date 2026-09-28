@@ -256,7 +256,11 @@ export const saveFulfillmentTypeTool = new DynamicStructuredTool<
     if (!result.success) {
       return toJson({ success: false, error: result.error });
     }
-    return toJson({ success: true, fulfillmentType: type });
+    return toJson({
+      success: true,
+      effect: { kind: 'checkout_fulfillment_persisted' },
+      fulfillmentType: type,
+    });
   },
 });
 
@@ -333,6 +337,7 @@ export const savePaymentMethodTool = new DynamicStructuredTool<
     }
     return toJson({
       success: true,
+      effect: { kind: 'checkout_payment_method_persisted' },
       paymentMethod: method,
       signal: 'payment_method_saved',
     });

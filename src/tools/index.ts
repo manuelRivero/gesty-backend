@@ -182,14 +182,18 @@ const PRODUCT_SHORTLIST_MAX_LIMIT = 12;
 const rejectMissingPartySize = async (
   conversationId: string,
   metadata: unknown,
-  food?: { source: PartySizeBlockedFoodSource; summary: string } | null,
+  food?: {
+    source: PartySizeBlockedFoodSource;
+    summary: string;
+    lines?: Array<{ hint: string; requestedQuantity: number | null }>;
+  } | null,
   turnStartedAt?: string | null
 ): Promise<string | null> => {
   if (!isPartySizeMissingForOrderingTools(metadata)) return null;
   const held = food?.summary.trim()
     ? await rememberPartySizeBlockedFood(
         conversationId,
-        { source: food.source, summary: food.summary },
+        { source: food.source, summary: food.summary, ...(food.lines ? { lines: food.lines } : {}) },
         turnStartedAt
       )
     : (getPendingPartySizeOrder(metadata)?.summary ?? null);
@@ -198,7 +202,11 @@ const rejectMissingPartySize = async (
 
 const partySizeOrderingGateJson = async (
   conversationId: string,
-  food?: { source: PartySizeBlockedFoodSource; summary: string } | null,
+  food?: {
+    source: PartySizeBlockedFoodSource;
+    summary: string;
+    lines?: Array<{ hint: string; requestedQuantity: number | null }>;
+  } | null,
   turnStartedAt?: string | null
 ): Promise<string | null> => {
   const state = await findOrCreateConversationState(conversationId);
@@ -2424,6 +2432,7 @@ export const addCartItemTool = new DynamicStructuredTool<
 
     return toJson({
       success: true,
+      effect: { kind: 'cart_item_persisted', reference: productId },
       added: {
         productId,
         itemName: item.name,
@@ -2623,6 +2632,7 @@ export const updateCartItemQuantityTool = new DynamicStructuredTool<
 
     return toJson({
       success: true,
+      effect: { kind: 'cart_quantity_persisted', reference: line.product_id },
       updated: { itemIndex: parsedIndex, itemName, quantity: parsedQuantity },
       cart: {
         total: newTotal.toString(),
@@ -2797,6 +2807,7 @@ export const removeCartItemTool = new DynamicStructuredTool<
 
     return toJson({
       success: true,
+      effect: { kind: 'cart_item_removed', reference: line.product_id },
       removed: { itemName: removedName, quantity: removedQty },
       cart: {
         total: newTotal.toString(),
@@ -2989,6 +3000,7 @@ export const updateItemNoteTool = new DynamicStructuredTool<
 
     return toJson({
       success: true,
+      effect: { kind: 'cart_item_note_persisted' },
       note: normalizedNote,
       updatedCount: targets.length,
       items: targets.map((line) => ({
@@ -3150,12 +3162,34 @@ export const savePartySizeTool = new DynamicStructuredTool<
     const state = await findOrCreateConversationState(conversationId);
     const held = getPendingPartySizeOrder(state.metadata);
     await patchConversationMetadata(conversationId, partySizeMetadataFields(count));
+    const resumedLines = held?.lines?.length
+      ? await setPendingOrderLines({
+          conversationId,
+          lines: held.lines,
+          sourceMessage: held.summary,
+        })
+      : null;
+    if (resumedLines) await clearPendingPartySizeOrder(conversationId);
+    const activeLine = getActiveOrderLine(resumedLines);
     return toJson({
       success: true,
+      effect: { kind: 'party_size_persisted' },
       partySize: count,
       ...(held ? { heldOrder: held.summary } : {}),
+      ...(activeLine
+        ? {
+            activeLine: {
+              hint: activeLine.hint,
+              requestedQuantity: activeLine.requestedQuantity,
+            },
+          }
+        : {}),
       followUp: {
-        instruction: held
+        instruction: activeLine
+          ? 'Personas guardadas. La cola estructurada del pedido ya está restaurada; trabajá SOLO ' +
+            `la línea activa "${activeLine.hint}". No vuelvas a llamar plan_order_lines ni ` +
+            'reconstruyas las líneas que esperan en cola.'
+          : held
           ? 'Personas guardadas. Retomá ahora el pedido en espera: ' +
             `${held.summary}. Si son varios platos, plan_order_lines; si es uno, ` +
             'search_products o add_cart_item. PROHIBIDO present_product_cta(VIEW_MENU) ' +
@@ -3195,7 +3229,11 @@ export const saveCustomerNameTool = new DynamicStructuredTool<
   func: async ({ name }: SaveCustomerNameInput, _runManager, config?: RunnableConfig) => {
     const { customerId } = getReactContext(config);
     await updateCustomerName(customerId, name.trim());
-    return toJson({ success: true, name: name.trim() });
+    return toJson({
+      success: true,
+      effect: { kind: 'customer_name_persisted' },
+      name: name.trim(),
+    });
   },
 });
 
@@ -3235,7 +3273,11 @@ export const saveDeliveryAddressTool = new DynamicStructuredTool<
       customerId,
       addressText,
     });
-    return toJson(result);
+    return toJson(
+      result.status === 'saved'
+        ? { ...result, effect: { kind: 'customer_address_persisted' } }
+        : result
+    );
   },
 });
 
@@ -3699,6 +3741,7 @@ export const planOrderLinesTool = new DynamicStructuredTool<
       {
         source: 'plan',
         summary: summarizeBlockedOrderLines(plannedLines),
+        lines: plannedLines,
       },
       turnStartedAt
     );
@@ -3720,6 +3763,7 @@ export const planOrderLinesTool = new DynamicStructuredTool<
     const active = getActiveOrderLine(pending);
     return toJson({
       success: true,
+      effect: { kind: 'order_plan_persisted' },
       activeLine: active
         ? { hint: active.hint, requestedQuantity: active.requestedQuantity }
         : null,
@@ -3765,6 +3809,7 @@ export const continueOrderLineTool = new DynamicStructuredTool<
     }
     return toJson({
       success: true,
+      effect: { kind: 'order_plan_advanced' },
       activeLine: { hint: active.hint, requestedQuantity: active.requestedQuantity },
       instruction: buildOrderLineSearchInstruction(active.hint),
     });
@@ -3811,6 +3856,7 @@ export const cancelOrderLineTool = new DynamicStructuredTool<
       : null;
     return toJson({
       cancelled: true,
+      effect: { kind: 'order_plan_line_cancelled' },
       ...(queueFollowUp ? { queueFollowUp } : { queueEmpty: true }),
     });
   },
@@ -3850,6 +3896,7 @@ export const clearPendingOrderLinesTool = new DynamicStructuredTool<
 
     return toJson({
       cleared: true,
+      effect: { kind: 'order_plan_cleared' },
       cartItemCount,
       instruction:
         cartItemCount > 0

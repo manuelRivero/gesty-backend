@@ -104,6 +104,7 @@ describe('onboarding tool gates (withGate)', () => {
     );
     expect(out).toEqual({
       success: true,
+      effect: { kind: 'customer_name_persisted' },
       name: 'Ana',
       signal: 'customer_name_saved',
     });

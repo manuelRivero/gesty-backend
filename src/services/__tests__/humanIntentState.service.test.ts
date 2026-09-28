@@ -26,10 +26,13 @@ import {
   getHumanIntentState,
   getPendingHumanIntents,
   removeHumanIntentBlocker,
+  reconcileActiveHumanIntent,
   replaceHumanIntent,
   resolveActiveHumanIntent,
   suspendActiveHumanIntent,
 } from '../humanIntentState.service';
+import { deriveRequestedWorkProgress } from '../humanIntentReconciliation.service';
+import { derivePartySizeGoal } from '../partySizeGoal.service';
 
 const CONVERSATION_ID = '11111111-1111-4111-8111-111111111111';
 const EFFECT = {
@@ -146,6 +149,107 @@ describe('humanIntentState V1', () => {
       id: second.id,
       status: 'ACTIVE',
     });
+  });
+
+  it('efecto parcial marca progreso solo contra el carrito y mantiene PEDIR ACTIVE', async () => {
+    const active = await createHumanIntent(CONVERSATION_ID, {
+      goal: 'PEDIR',
+      request: { products: ['A', 'B'] },
+    });
+    const metadata = {
+      pendingOrderLines: {
+        lines: [
+          { id: 'line-a', hint: 'A', requestedQuantity: 1, status: 'done' },
+          { id: 'line-b', hint: 'B', requestedQuantity: 2, status: 'queued' },
+        ],
+      },
+    };
+    const progress = deriveRequestedWorkProgress(active, metadata, true);
+
+    expect(progress.tasks).toEqual([
+      { id: 'line-a', status: 'done' },
+      { id: 'line-b', status: 'pending' },
+    ]);
+    expect(progress.complete).toBe(false);
+    expect(
+      await reconcileActiveHumanIntent(CONVERSATION_ID, EFFECT, (intent) =>
+        deriveRequestedWorkProgress(intent, metadata, true).complete
+      )
+    ).toBeNull();
+    expect(await getActiveHumanIntent(CONVERSATION_ID)).toMatchObject({
+      id: active.id,
+      status: 'ACTIVE',
+    });
+  });
+
+  it('resuelve PEDIR cuando todo el request está persistido y no queda trabajo abierto', async () => {
+    const active = await createHumanIntent(CONVERSATION_ID, {
+      goal: 'PEDIR',
+      request: { products: ['A'] },
+    });
+
+    const resolved = await reconcileActiveHumanIntent(CONVERSATION_ID, EFFECT, (intent) =>
+      deriveRequestedWorkProgress(intent, {}, true).complete
+    );
+
+    expect(resolved).toMatchObject({ id: active.id, status: 'RESOLVED', outcome: EFFECT });
+    expect(await getActiveHumanIntent(CONVERSATION_ID)).toBeNull();
+  });
+
+  it('save_party_size cierra su Goal derivado sin resolver PEDIR con trabajo pendiente', async () => {
+    const active = await createHumanIntent(CONVERSATION_ID, {
+      goal: 'PEDIR',
+      request: { products: ['A', 'B'] },
+    });
+    expect(
+      derivePartySizeGoal(
+        { partySize: null, foodRelatedSignal: true, checkoutActive: false },
+        { abandonment: false, surfaceCount: 0, lastSurfacedAt: null }
+      ).open
+    ).toBe(true);
+    expect(
+      derivePartySizeGoal(
+        { partySize: 3, foodRelatedSignal: true, checkoutActive: false },
+        { abandonment: false, surfaceCount: 0, lastSurfacedAt: null }
+      ).open
+    ).toBe(false);
+
+    await reconcileActiveHumanIntent(CONVERSATION_ID, EFFECT, (intent) =>
+      deriveRequestedWorkProgress(intent, {
+        pendingOrderLines: {
+          lines: [{ id: 'line-b', hint: 'B', requestedQuantity: 1, status: 'queued' }],
+        },
+      }, true).complete
+    );
+    expect(await getActiveHumanIntent(CONVERSATION_ID)).toMatchObject({
+      id: active.id,
+      status: 'ACTIVE',
+    });
+  });
+
+  it('dos efectos sucesivos resuelven solo después de persistir ambos targets', async () => {
+    const active = await createHumanIntent(CONVERSATION_ID, {
+      goal: 'PEDIR',
+      request: { products: ['A', 'B'] },
+    });
+    let metadata: Record<string, unknown> = {
+      pendingOrderLines: {
+        lines: [
+          { id: 'line-a', hint: 'A', requestedQuantity: 1, status: 'done' },
+          { id: 'line-b', hint: 'B', requestedQuantity: 2, status: 'queued' },
+        ],
+      },
+    };
+    const reconcile = () =>
+      reconcileActiveHumanIntent(CONVERSATION_ID, EFFECT, (intent) =>
+        deriveRequestedWorkProgress(intent, metadata, true).complete
+      );
+
+    expect(await reconcile()).toBeNull();
+    expect(await getActiveHumanIntent(CONVERSATION_ID)).toMatchObject({ status: 'ACTIVE' });
+
+    metadata = {};
+    expect(await reconcile()).toMatchObject({ id: active.id, status: 'RESOLVED' });
   });
 
   it('rechaza resolver con un efecto fallido', async () => {

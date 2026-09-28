@@ -108,7 +108,11 @@ describe('save_reservation_date — gate (D7/R-G)', () => {
 
     const raw = await saveReservationDateTool.func({ date: dateStr }, undefined, CONFIG);
     const parsed = JSON.parse(raw) as { saved: boolean; date?: string };
-    expect(parsed).toEqual({ saved: true, date: dateStr });
+    expect(parsed).toEqual({
+      saved: true,
+      effect: { kind: 'reservation_date_persisted' },
+      date: dateStr,
+    });
     expect(mockedPatch).toHaveBeenCalledWith('conv-1', {
       reservation_draft: { partySize: 4, date: dateStr },
     });
@@ -153,13 +157,21 @@ describe('save_reservation_date — cruce con el día declarado', () => {
       undefined,
       CONFIG
     );
-    expect(JSON.parse(raw)).toEqual({ saved: true, date: '04/09/2026' });
+    expect(JSON.parse(raw)).toEqual({
+      saved: true,
+      effect: { kind: 'reservation_date_persisted' },
+      date: '04/09/2026',
+    });
     expect(mockedPatch).toHaveBeenCalled();
   });
 
   it('sin weekday no cruza nada: una fecha explícita del cliente se guarda igual', async () => {
     const raw = await saveReservationDateTool.func({ date: '03/09/2026' }, undefined, CONFIG);
-    expect(JSON.parse(raw)).toEqual({ saved: true, date: '03/09/2026' });
+    expect(JSON.parse(raw)).toEqual({
+      saved: true,
+      effect: { kind: 'reservation_date_persisted' },
+      date: '03/09/2026',
+    });
   });
 
   it('rechaza una fecha más allá del horizonte de reservas', async () => {
@@ -192,7 +204,11 @@ describe('save_reservation_party_size — gate de capacidad (D7/R-G)', () => {
 
     const raw = await saveReservationPartySizeTool.func({ count: 4 }, undefined, CONFIG);
     const parsed = JSON.parse(raw) as { saved: boolean; partySize?: number };
-    expect(parsed).toEqual({ saved: true, partySize: 4 });
+    expect(parsed).toEqual({
+      saved: true,
+      effect: { kind: 'reservation_party_size_persisted' },
+      partySize: 4,
+    });
     expect(mockedPatch).toHaveBeenCalledWith('conv-1', {
       reservation_draft: { date: '20/08/2026', partySize: 4 },
     });
@@ -224,6 +240,7 @@ describe('save_reservation_slot — gate de catálogo', () => {
     const raw = await saveReservationSlotTool.func({ slotId: 'slot-19' }, undefined, CONFIG);
     expect(JSON.parse(raw)).toEqual({
       saved: true,
+      effect: { kind: 'reservation_slot_persisted' },
       slotId: 'slot-19',
       time: '19:00',
       endTime: '20:30',
@@ -274,7 +291,11 @@ describe('save_reservation_environment — gate catálogo', () => {
       undefined,
       CONFIG
     );
-    expect(JSON.parse(raw)).toEqual({ saved: true, environmentId: 'env-salon' });
+    expect(JSON.parse(raw)).toEqual({
+      saved: true,
+      effect: { kind: 'reservation_environment_persisted' },
+      environmentId: 'env-salon',
+    });
     expect(mockedPatch).toHaveBeenCalled();
   });
 
@@ -284,7 +305,11 @@ describe('save_reservation_environment — gate catálogo', () => {
       undefined,
       CONFIG
     );
-    expect(JSON.parse(raw)).toEqual({ saved: true, environmentId: null });
+    expect(JSON.parse(raw)).toEqual({
+      saved: true,
+      effect: { kind: 'reservation_environment_persisted' },
+      environmentId: null,
+    });
     expect(mockedEnvs).not.toHaveBeenCalled();
     expect(mockedPatch).toHaveBeenCalled();
   });

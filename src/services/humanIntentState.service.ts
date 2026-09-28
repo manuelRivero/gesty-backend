@@ -642,6 +642,31 @@ export const resolveActiveHumanIntent = (
     return resolved;
   });
 
+/** Resolves ACTIVE only when a post-effect derivation confirms its request is complete. */
+export const reconcileActiveHumanIntent = (
+  conversationId: string,
+  effect: HumanIntentEffect,
+  isSatisfied: (intent: HumanIntentRecord) => boolean
+): Promise<HumanIntentRecord | null> =>
+  mutateState(conversationId, (state) => {
+    if (effect.success !== true || !effect.kind.trim() || !Number.isFinite(Date.parse(effect.occurredAt))) {
+      throw new HumanIntentStateError('Reconciliation requires a validated successful effect');
+    }
+    const index = activeIndex(state);
+    if (index < 0 || !isSatisfied(state.records[index])) return null;
+
+    const resolved: HumanIntentRecord = {
+      ...state.records[index],
+      status: 'RESOLVED',
+      blockers: [],
+      outcome: { ...effect },
+      updatedAt: new Date().toISOString(),
+    };
+    state.records[index] = resolved;
+    promoteOldestPending(state, resolved.updatedAt);
+    return resolved;
+  });
+
 export const cancelHumanIntent = (
   conversationId: string,
   intentId: string

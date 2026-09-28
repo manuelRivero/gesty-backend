@@ -46,6 +46,7 @@ import {
 import type { CheckoutStep } from '../services/checkout/nextCheckoutStep';
 import type { ConversationMetadata } from '../services/productQuery/types';
 import { getRefusalCount } from '../services/intent/intentRefusal.service';
+import { PostEffectToolNode } from './postEffectToolNode';
 
 // ---------------------------------------------------------------------------
 // Cache de agentes por personalidad (mismo patrón que reactAgent.ts)
@@ -59,13 +60,13 @@ const buildAgent = (personalityId: string, personalityPrompt: string) => {
   if (!agent) {
     agent = createReactAgent({
       llm: getReactReasonerLlm(),
-      tools: [
+      tools: new PostEffectToolNode([
         ...allCheckoutTools,
         cancelOrderTool,
         getCartTool,
         saveCustomerNameTool,
         saveDeliveryAddressTool,
-      ],
+      ]),
       prompt: buildCheckoutAgentSystemPrompt(personalityPrompt),
     });
     cachedAgents.set(cacheKey, agent);

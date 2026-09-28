@@ -213,6 +213,7 @@ describe('save_payment_method tool', () => {
 
     expect(parsed).toEqual({
       success: true,
+      effect: { kind: 'checkout_payment_method_persisted' },
       paymentMethod: 'transfer',
       signal: 'payment_method_saved',
     });

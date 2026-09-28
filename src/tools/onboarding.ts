@@ -140,6 +140,7 @@ const saveCustomerNameInner = new DynamicStructuredTool<
     await updateCustomerName(customerId, trimmed);
     return toJson({
       success: true,
+      effect: { kind: 'customer_name_persisted' },
       name: trimmed,
       signal: 'customer_name_saved',
     });

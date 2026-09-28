@@ -1,10 +1,10 @@
 import { ToolMessage } from '@langchain/core/messages';
 import type { ToolCall } from '@langchain/core/messages/tool';
 import type { RunnableConfig } from '@langchain/core/runnables';
-import { ToolNode } from '@langchain/langgraph/prebuilt';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { getHumanIntentState, type HumanIntentRecord } from '../services/humanIntentState.service';
+import { PostEffectToolNode } from './postEffectToolNode';
 
 const uuidSchema = z.string().uuid();
 
@@ -161,7 +161,7 @@ const internalToolError = (call: ToolCall, code: string, intentId?: string): Too
     }),
   });
 
-export class HumanIntentToolNode extends ToolNode {
+export class HumanIntentToolNode extends PostEffectToolNode {
   protected override async runTool(call: ToolCall, config: RunnableConfig) {
     const configurable = config.configurable as
       | { conversationId?: unknown; businessId?: unknown; humanIntentGateRevision?: unknown }

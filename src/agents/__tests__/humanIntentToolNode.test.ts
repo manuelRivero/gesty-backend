@@ -3,14 +3,24 @@ import { DynamicStructuredTool } from '@langchain/core/tools';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
-const { getStateMock, itemFindFirstMock, categoryFindFirstMock } = vi.hoisted(() => ({
+const {
+  getStateMock,
+  itemFindFirstMock,
+  categoryFindFirstMock,
+  reconcileAfterToolMock,
+} = vi.hoisted(() => ({
   getStateMock: vi.fn(),
   itemFindFirstMock: vi.fn(),
   categoryFindFirstMock: vi.fn(),
+  reconcileAfterToolMock: vi.fn(),
 }));
 
 vi.mock('../../services/humanIntentState.service', () => ({
   getHumanIntentState: getStateMock,
+}));
+
+vi.mock('../../services/humanIntentReconciliation.service', () => ({
+  reconcileHumanIntentAfterToolEffect: reconcileAfterToolMock,
 }));
 
 vi.mock('../../lib/prisma', () => ({
@@ -63,7 +73,7 @@ const toolCall = (name: string, args: Record<string, unknown>) =>
     tool_calls: [{ id: `call-${name}`, name, args, type: 'tool_call' }],
   });
 
-const makeTool = (name: string, effect: ReturnType<typeof vi.fn>) =>
+const makeTool = (name: string, effect: () => unknown) =>
   new DynamicStructuredTool({
     name,
     description: 'test tool',
@@ -77,20 +87,24 @@ const makeTool = (name: string, effect: ReturnType<typeof vi.fn>) =>
     },
   });
 
-const makeAddCartItemTool = (effect: ReturnType<typeof vi.fn>) =>
+const makeAddCartItemTool = (effect: () => unknown) =>
   new DynamicStructuredTool({
     name: 'add_cart_item',
     description: 'test tool',
     schema: z.object({ productId: z.string().uuid() }),
     func: async () => {
       await effect();
-      return JSON.stringify({ success: true });
+      return JSON.stringify({
+        success: true,
+        effect: { kind: 'cart_item_persisted', reference: PRODUCT_ID },
+      });
     },
   });
 
 const config = (revision = 7) => ({
   configurable: {
     conversationId: 'conv-1',
+    customerPhone: '+5491100000000',
     businessId: 'biz-1',
     humanIntentGateRevision: revision,
   },
@@ -100,6 +114,7 @@ describe('HumanIntentToolNode', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getStateMock.mockResolvedValue(state());
+    reconcileAfterToolMock.mockResolvedValue(null);
     itemFindFirstMock.mockResolvedValue({ name: 'Ceviche Clásico' });
     categoryFindFirstMock.mockResolvedValue({ name: 'Postres' });
   });
@@ -112,6 +127,47 @@ describe('HumanIntentToolNode', () => {
 
     expect(effect).toHaveBeenCalledOnce();
     expect(result.messages[0]).toMatchObject({ status: 'success' });
+    expect(reconcileAfterToolMock).not.toHaveBeenCalled();
+  });
+
+  it('reconcilia después de ejecutar una tool autorizada y exitosa', async () => {
+    const node = new HumanIntentToolNode([makeAddCartItemTool(vi.fn())]);
+
+    await node.invoke(
+      { messages: [toolCall('add_cart_item', { productId: PRODUCT_ID })] },
+      config()
+    );
+
+    expect(reconcileAfterToolMock).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId: 'conv-1', businessId: 'biz-1' })
+    );
+    expect(reconcileAfterToolMock.mock.calls[0][0].effect).toMatchObject({
+      kind: 'cart_item_persisted',
+      reference: PRODUCT_ID,
+      success: true,
+    });
+  });
+
+  it('usa el mismo hook para otros efectos persistidos declarados', async () => {
+    const partySizeTool = new DynamicStructuredTool({
+      name: 'save_party_size',
+      description: 'persist party size',
+      schema: z.object({}),
+      func: async () =>
+        JSON.stringify({ success: true, effect: { kind: 'party_size_persisted' } }),
+    });
+    const node = new HumanIntentToolNode([partySizeTool]);
+
+    await node.invoke(
+      { messages: [toolCall('save_party_size', {})] },
+      config()
+    );
+
+    expect(reconcileAfterToolMock.mock.calls[0][0].effect).toMatchObject({
+      kind: 'party_size_persisted',
+      success: true,
+    });
+    expect(reconcileAfterToolMock.mock.calls[0][0].effect.reference).toBeUndefined();
   });
 
   it('bloquea una tool cuyo target coincide solo con PENDING', async () => {
