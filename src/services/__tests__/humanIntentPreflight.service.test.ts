@@ -65,16 +65,16 @@ describe('Human Intent Preflight', () => {
   it('acepta CONTINUE_ACTIVE al responder un blocker del ACTIVE', () => {
     expect(
       validateHumanIntentTurnDecision(
-        { action: 'CONTINUE_ACTIVE', intentId: ACTIVE_ID, answeredBlockerIds: [BLOCKER_ID] },
+        { decision: 'CONTINUE_ACTIVE', intentId: ACTIVE_ID, answeredBlockerIds: [BLOCKER_ID] },
         input()
       )
-    ).toMatchObject({ action: 'CONTINUE_ACTIVE', intentId: ACTIVE_ID });
+    ).toMatchObject({ decision: 'CONTINUE_ACTIVE', intentId: ACTIVE_ID });
   });
 
   it('rechaza blockers que no pertenecen al ACTIVE', () => {
     expect(
       validateHumanIntentTurnDecision(
-        { action: 'CONTINUE_ACTIVE', intentId: ACTIVE_ID, answeredBlockerIds: [PENDING_ID] },
+        { decision: 'CONTINUE_ACTIVE', intentId: ACTIVE_ID, answeredBlockerIds: [PENDING_ID] },
         input()
       )
     ).toBeNull();
@@ -83,15 +83,15 @@ describe('Human Intent Preflight', () => {
   it('acepta una intención independiente con goal humano permitido', () => {
     expect(
       validateHumanIntentTurnDecision(
-        { action: 'NEW_INTENT', intents: [{ goal: 'CONSULTAR_NEGOCIO', request: { subject: 'delivery' } }] },
+        { decision: 'NEW_INTENT', intents: [{ goal: 'CONSULTAR_NEGOCIO', request: { subject: 'delivery' } }] },
         input({ turn: { messageId: 'wamid.delivery', text: '¿Hacen delivery?' } })
       )
-    ).toMatchObject({ action: 'NEW_INTENT', intents: [{ goal: 'CONSULTAR_NEGOCIO' }] });
+    ).toMatchObject({ decision: 'NEW_INTENT', intents: [{ goal: 'CONSULTAR_NEGOCIO' }] });
   });
 
   it('acepta múltiples objetivos distintos y conserva el orden del array', () => {
     const decision = {
-      action: 'NEW_INTENT',
+      decision: 'NEW_INTENT',
       intents: [
         { goal: 'PEDIR', request: { products: ['ceviche'] } },
         { goal: 'EXPLORAR', request: { category: 'postres' } },
@@ -104,54 +104,54 @@ describe('Human Intent Preflight', () => {
 
   it('no fragmenta varios productos de un mismo PEDIR', () => {
     const decision = {
-      action: 'NEW_INTENT',
+      decision: 'NEW_INTENT',
       intents: [{ goal: 'PEDIR', request: { products: ['ceviche', 'lomo'] } }],
     };
     expect(validateHumanIntentTurnDecision(decision, input())).toEqual(decision);
   });
 
   it('RESUME_PENDING solo acepta un ID de la lista PENDING', () => {
-    expect(validateHumanIntentTurnDecision({ action: 'RESUME_PENDING', intentId: PENDING_ID }, input()))
-      .toEqual({ action: 'RESUME_PENDING', intentId: PENDING_ID });
-    expect(validateHumanIntentTurnDecision({ action: 'RESUME_PENDING', intentId: ACTIVE_ID }, input()))
+    expect(validateHumanIntentTurnDecision({ decision: 'RESUME_PENDING', intentId: PENDING_ID }, input()))
+      .toEqual({ decision: 'RESUME_PENDING', intentId: PENDING_ID });
+    expect(validateHumanIntentTurnDecision({ decision: 'RESUME_PENDING', intentId: ACTIVE_ID }, input()))
       .toBeNull();
   });
 
   it('distingue CANCEL de la intención CANCELAR_COMPRA', () => {
-    expect(validateHumanIntentTurnDecision({ action: 'CANCEL', intentId: ACTIVE_ID }, input()))
-      .toEqual({ action: 'CANCEL', intentId: ACTIVE_ID });
+    expect(validateHumanIntentTurnDecision({ decision: 'CANCEL', intentId: ACTIVE_ID }, input()))
+      .toEqual({ decision: 'CANCEL', intentId: ACTIVE_ID });
     expect(
       validateHumanIntentTurnDecision(
-        { action: 'NEW_INTENT', intents: [{ goal: 'CANCELAR_COMPRA', request: { target: 'draft' } }] },
+        { decision: 'NEW_INTENT', intents: [{ goal: 'CANCELAR_COMPRA', request: { target: 'draft' } }] },
         input()
       )
-    ).toMatchObject({ action: 'NEW_INTENT', intents: [{ goal: 'CANCELAR_COMPRA' }] });
+    ).toMatchObject({ decision: 'NEW_INTENT', intents: [{ goal: 'CANCELAR_COMPRA' }] });
   });
 
   it('REPLACE solo acepta la intención ACTIVE', () => {
     const replacement = { goal: 'PEDIR', request: { products: ['hamburguesa'] } };
-    expect(validateHumanIntentTurnDecision({ action: 'REPLACE', intentId: ACTIVE_ID, replacement }, input()))
-      .toMatchObject({ action: 'REPLACE', intentId: ACTIVE_ID });
-    expect(validateHumanIntentTurnDecision({ action: 'REPLACE', intentId: PENDING_ID, replacement }, input()))
+    expect(validateHumanIntentTurnDecision({ decision: 'REPLACE', intentId: ACTIVE_ID, replacement }, input()))
+      .toMatchObject({ decision: 'REPLACE', intentId: ACTIVE_ID });
+    expect(validateHumanIntentTurnDecision({ decision: 'REPLACE', intentId: PENDING_ID, replacement }, input()))
       .toBeNull();
   });
 
   it('permite NO_INTENT y AMBIGUOUS sin campos adicionales', () => {
-    expect(validateHumanIntentTurnDecision({ action: 'NO_INTENT' }, input())).toEqual({ action: 'NO_INTENT' });
-    expect(validateHumanIntentTurnDecision({ action: 'AMBIGUOUS' }, input())).toEqual({ action: 'AMBIGUOUS' });
-    expect(validateHumanIntentTurnDecision({ action: 'AMBIGUOUS', confidence: 0.5 }, input())).toBeNull();
+    expect(validateHumanIntentTurnDecision({ decision: 'NO_INTENT' }, input())).toEqual({ decision: 'NO_INTENT' });
+    expect(validateHumanIntentTurnDecision({ decision: 'AMBIGUOUS' }, input())).toEqual({ decision: 'AMBIGUOUS' });
+    expect(validateHumanIntentTurnDecision({ decision: 'AMBIGUOUS', confidence: 0.5 }, input())).toBeNull();
   });
 
   it('rechaza goal legacy/tool y campos extra en el output', () => {
     expect(
       validateHumanIntentTurnDecision(
-        { action: 'NEW_INTENT', intents: [{ goal: 'present_category', request: {} }] },
+        { decision: 'NEW_INTENT', intents: [{ goal: 'present_category', request: {} }] },
         input()
       )
     ).toBeNull();
     expect(
       validateHumanIntentTurnDecision(
-        { action: 'NEW_INTENT', confidence: 0.9, intents: [{ goal: 'EXPLORAR', request: {} }] },
+        { decision: 'NEW_INTENT', confidence: 0.9, intents: [{ goal: 'EXPLORAR', request: {} }] },
         input()
       )
     ).toBeNull();
@@ -161,7 +161,7 @@ describe('Human Intent Preflight', () => {
     expect(
       validateHumanIntentTurnDecision(
         {
-          action: 'NEW_INTENT',
+          decision: 'NEW_INTENT',
           intents: [{ goal: 'PEDIR', request: { productId: VISIBLE_PRODUCT_ID } }],
         },
         input({ turn: { messageId: 'wamid.that', text: 'Dame ese.' } })
@@ -170,7 +170,7 @@ describe('Human Intent Preflight', () => {
     expect(
       validateHumanIntentTurnDecision(
         {
-          action: 'NEW_INTENT',
+          decision: 'NEW_INTENT',
           intents: [{ goal: 'PEDIR', request: { productId: '99999999-9999-4999-8999-999999999999' } }],
         },
         input({ turn: { messageId: 'wamid.that', text: 'Dame ese.' } })
@@ -194,11 +194,11 @@ describe('Human Intent Preflight', () => {
   });
 
   it('llama al LLM estructurado sin tools y serializa solo el input declarado', async () => {
-    invokeMock.mockResolvedValue({ action: 'CONTINUE_ACTIVE', intentId: ACTIVE_ID, answeredBlockerIds: [BLOCKER_ID] });
+    invokeMock.mockResolvedValue({ decision: 'CONTINUE_ACTIVE', intentId: ACTIVE_ID, answeredBlockerIds: [BLOCKER_ID] });
 
     const decision = await runHumanIntentPreflight(input());
 
-    expect(decision.action).toBe('CONTINUE_ACTIVE');
+    expect(decision.decision).toBe('CONTINUE_ACTIVE');
     expect(withStructuredOutputMock).toHaveBeenCalledOnce();
     const invokeMessages = invokeMock.mock.calls[0][0] as Array<{ content: string }>;
     expect(invokeMessages[1].content).toContain('visibleReferences');
@@ -206,12 +206,20 @@ describe('Human Intent Preflight', () => {
     expect(invokeMessages[1].content).not.toContain('intentLedger');
   });
 
+  it('acepta NO_INTENT como resultado válido del preflight para un saludo', async () => {
+    invokeMock.mockResolvedValue({ decision: 'NO_INTENT' });
+
+    await expect(
+      runHumanIntentPreflight(input({ turn: { messageId: 'wamid.greeting', text: 'Hola buenas' } }))
+    ).resolves.toEqual({ decision: 'NO_INTENT' });
+  });
+
   it('output inválido o error del LLM falla cerrado como AMBIGUOUS', async () => {
-    invokeMock.mockResolvedValue({ action: 'CANCEL', intentId: 'invented-id', explanation: 'no' });
-    expect(await runHumanIntentPreflight(input())).toEqual({ action: 'AMBIGUOUS' });
+    invokeMock.mockResolvedValue({ decision: 'CANCEL', intentId: 'invented-id', explanation: 'no' });
+    expect(await runHumanIntentPreflight(input())).toEqual({ decision: 'AMBIGUOUS' });
 
     invokeMock.mockRejectedValue(new Error('model unavailable'));
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    expect(await runHumanIntentPreflight(input())).toEqual({ action: 'AMBIGUOUS' });
+    expect(await runHumanIntentPreflight(input())).toEqual({ decision: 'AMBIGUOUS' });
   });
 });

@@ -1,6 +1,6 @@
 export const HUMAN_INTENT_PREFLIGHT_SYSTEM_PROMPT = `Sos un clasificador de relación entre el mensaje actual y los objetivos humanos abiertos de una conversación de restaurante.
 
-Devolvé exclusivamente un objeto JSON que cumpla el schema estructurado. No llames herramientas, no supongas efectos realizados y no devuelvas texto explicativo, confianza, estados, IDs nuevos, secuencias ni timestamps.
+Devolvé exclusivamente un objeto JSON que cumpla el schema estructurado. El discriminador obligatorio es "decision" y su valor debe ser una de las decisiones enumeradas abajo. No llames herramientas, no supongas efectos realizados y no devuelvas texto explicativo, confianza, estados, IDs nuevos, secuencias ni timestamps.
 
 Goals permitidos:
 - PEDIR: solicitar añadir productos al pedido actual.

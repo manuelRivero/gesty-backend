@@ -54,6 +54,7 @@ import type { HybridAgentRunResult } from '../../../agents/reactAgent';
 import {
   applyHumanIntentTurnDecision,
   getHumanIntentState,
+  type HumanIntentTurnDecision,
 } from '../../../services/humanIntentState.service';
 import { runHumanIntentPreflight } from '../../../services/humanIntentPreflight.service';
 import {
@@ -737,7 +738,7 @@ export const nlpSubgraphNode = async (
         state: { revision: intentState.revision, active, pending },
       });
 
-      if (decision.action === 'AMBIGUOUS') {
+      if (decision.decision === 'AMBIGUOUS') {
         console.log(
           JSON.stringify({ event: '[human-intent-preflight] ambiguous', conversationId: conversation.id })
         );
@@ -748,40 +749,46 @@ export const nlpSubgraphNode = async (
         };
       }
 
-      const applied = await applyHumanIntentTurnDecision({
-        conversationId: conversation.id,
-        messageId,
-        expectedRevision: intentState.revision,
-        decision,
-      });
-      if (applied.status === 'duplicate') return { skipAIPersistence: true };
-      if (applied.status !== 'applied') {
+      if (decision.decision === 'NO_INTENT') {
+        allowLegacyFallback = true;
+      } else {
+        const { decision: action, ...decisionFields } = decision;
+        const stateDecision = { action, ...decisionFields } as HumanIntentTurnDecision;
+        const applied = await applyHumanIntentTurnDecision({
+          conversationId: conversation.id,
+          messageId,
+          expectedRevision: intentState.revision,
+          decision: stateDecision,
+        });
+        if (applied.status === 'duplicate') return { skipAIPersistence: true };
+        if (applied.status !== 'applied') {
+          console.log(
+            JSON.stringify({
+              event: '[human-intent-preflight] transition_rejected',
+              status: applied.status,
+              conversationId: conversation.id,
+            })
+          );
+          return {
+            handlerResult: humanIntentClarificationResult(),
+            detection: NLP_AGENT_FIRST_DETECTION,
+            dataCollectionDelegated: true,
+          };
+        }
+
+        workingConversationState = await findOrCreateConversationState(conversation.id);
+        enrichedBase.conversationState = workingConversationState;
+        enrichedBase.humanIntentGateRevision = applied.state.revision;
+        allowLegacyFallback = false;
         console.log(
           JSON.stringify({
-            event: '[human-intent-preflight] transition_rejected',
-            status: applied.status,
+            event: '[human-intent-preflight] applied',
+            action,
             conversationId: conversation.id,
+            revision: applied.state.revision,
           })
         );
-        return {
-          handlerResult: humanIntentClarificationResult(),
-          detection: NLP_AGENT_FIRST_DETECTION,
-          dataCollectionDelegated: true,
-        };
       }
-
-      workingConversationState = await findOrCreateConversationState(conversation.id);
-      enrichedBase.conversationState = workingConversationState;
-      enrichedBase.humanIntentGateRevision = applied.state.revision;
-      allowLegacyFallback = decision.action === 'NO_INTENT';
-      console.log(
-        JSON.stringify({
-          event: '[human-intent-preflight] applied',
-          action: decision.action,
-          conversationId: conversation.id,
-          revision: applied.state.revision,
-        })
-      );
     } catch (error) {
       console.error('[human-intent-preflight] failed closed:', error);
       return {

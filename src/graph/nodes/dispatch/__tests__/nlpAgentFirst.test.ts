@@ -80,7 +80,7 @@ vi.mock('../../../../services/humanIntentState.service', () => ({
 }));
 
 vi.mock('../../../../services/humanIntentPreflight.service', () => ({
-  runHumanIntentPreflight: vi.fn().mockResolvedValue({ action: 'NO_INTENT' }),
+  runHumanIntentPreflight: vi.fn().mockResolvedValue({ decision: 'NO_INTENT' }),
 }));
 
 vi.mock('../../../../services/order.service', () => ({
@@ -197,7 +197,7 @@ describe('nlpSubgraphNode — agent-first', () => {
 
   it('aplica NEW_INTENT antes de ReAct y pasa el estado actualizado al agente', async () => {
     const decision = {
-      action: 'NEW_INTENT' as const,
+      decision: 'NEW_INTENT' as const,
       intents: [{ goal: 'PEDIR' as const, request: { products: ['ceviche'] } }],
     };
     const active = {
@@ -235,7 +235,7 @@ describe('nlpSubgraphNode — agent-first', () => {
   });
 
   it('AMBIGUOUS no entra a ReAct ni al fallback legacy', async () => {
-    vi.mocked(runHumanIntentPreflight).mockResolvedValueOnce({ action: 'AMBIGUOUS' });
+    vi.mocked(runHumanIntentPreflight).mockResolvedValueOnce({ decision: 'AMBIGUOUS' });
 
     const update = await nlpSubgraphNode(nlpState('¿Ese?'));
 
@@ -277,31 +277,20 @@ describe('nlpSubgraphNode — agent-first', () => {
       .toEqual([{ id: candidateId, kind: 'product', label: 'Ceviche' }]);
   });
 
-  it('revision obsoleta no entra a ReAct ni al fallback legacy', async () => {
-    vi.mocked(runHumanIntentPreflight).mockResolvedValueOnce({ action: 'NO_INTENT' });
-    vi.mocked(applyHumanIntentTurnDecision).mockResolvedValueOnce({
-      status: 'stale',
-      state: lifecycleMock.state,
-    });
+  it('"Hola buenas" acepta NO_INTENT sin mutar HumanIntentState y continúa a ReAct', async () => {
+    const originalState = structuredClone(lifecycleMock.state);
+    const originalMetadata = structuredClone(lifecycleMock.metadata);
 
-    await nlpSubgraphNode(nlpState('hola'));
+    const update = await nlpSubgraphNode(nlpState('Hola buenas'));
 
-    expect(runHybridReactAgent).not.toHaveBeenCalled();
-    expect(dispatchIntent).not.toHaveBeenCalled();
-  });
-
-  it('messageId duplicado no entra a ReAct y evita persistir una segunda respuesta', async () => {
-    vi.mocked(runHumanIntentPreflight).mockResolvedValueOnce({ action: 'NO_INTENT' });
-    vi.mocked(applyHumanIntentTurnDecision).mockResolvedValueOnce({
-      status: 'duplicate',
-      state: lifecycleMock.state,
-    });
-
-    const update = await nlpSubgraphNode(nlpState('hola'));
-
-    expect(runHybridReactAgent).not.toHaveBeenCalled();
-    expect(dispatchIntent).not.toHaveBeenCalled();
-    expect(update.skipAIPersistence).toBe(true);
+    expect(runHumanIntentPreflight).toHaveBeenCalledWith(expect.objectContaining({
+      turn: expect.objectContaining({ text: 'Hola buenas' }),
+    }));
+    expect(applyHumanIntentTurnDecision).not.toHaveBeenCalled();
+    expect(lifecycleMock.state).toEqual(originalState);
+    expect(lifecycleMock.metadata).toEqual(originalMetadata);
+    expect(runHybridReactAgent).toHaveBeenCalledOnce();
+    expect(update.handlerResult?.content).toBe('respuesta híbrida');
   });
 
   it('no plantea confirmación de intent: el híbrido desambigua en prosa', async () => {

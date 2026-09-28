@@ -5,7 +5,6 @@ import {
   HUMAN_GOALS,
   type HumanGoal,
   type HumanIntentRecord,
-  type HumanIntentTurnDecision,
 } from './humanIntentState.service';
 import {
   buildHumanIntentPreflightUserPrompt,
@@ -42,32 +41,34 @@ const newIntentSchema = z.object({
   request: requestSchema,
 }).strict();
 
-export const humanIntentTurnDecisionSchema = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('NO_INTENT') }).strict(),
+export const humanIntentTurnDecisionSchema = z.discriminatedUnion('decision', [
+  z.object({ decision: z.literal('NO_INTENT') }).strict(),
   z.object({
-    action: z.literal('CONTINUE_ACTIVE'),
+    decision: z.literal('CONTINUE_ACTIVE'),
     intentId: z.string().min(1),
     answeredBlockerIds: z.array(z.string()),
   }).strict(),
   z.object({
-    action: z.literal('NEW_INTENT'),
+    decision: z.literal('NEW_INTENT'),
     intents: z.array(newIntentSchema).min(1).max(8),
   }).strict(),
   z.object({
-    action: z.literal('RESUME_PENDING'),
+    decision: z.literal('RESUME_PENDING'),
     intentId: z.string().min(1),
   }).strict(),
   z.object({
-    action: z.literal('CANCEL'),
+    decision: z.literal('CANCEL'),
     intentId: z.string().min(1),
   }).strict(),
   z.object({
-    action: z.literal('REPLACE'),
+    decision: z.literal('REPLACE'),
     intentId: z.string().min(1),
     replacement: newIntentSchema,
   }).strict(),
-  z.object({ action: z.literal('AMBIGUOUS') }).strict(),
+  z.object({ decision: z.literal('AMBIGUOUS') }).strict(),
 ]);
+
+export type HumanIntentPreflightDecision = z.infer<typeof humanIntentTurnDecisionSchema>;
 
 const canonicalJson = (value: unknown): string => {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
@@ -130,29 +131,29 @@ const knownIdsFor = (input: HumanIntentPreflightInput): Set<string> =>
 export const validateHumanIntentTurnDecision = (
   value: unknown,
   input: HumanIntentPreflightInput
-): HumanIntentTurnDecision | null => {
+): HumanIntentPreflightDecision | null => {
   const parsed = humanIntentTurnDecisionSchema.safeParse(value);
   if (!parsed.success) return null;
 
   const decision = parsed.data;
   const open = openIntents(input);
-  if (decision.action === 'CONTINUE_ACTIVE') {
+  if (decision.decision === 'CONTINUE_ACTIVE') {
     if (decision.intentId !== input.state.active?.id) return null;
     const blockerIds = new Set((input.state.active?.blockers ?? []).map((blocker) => blocker.id));
     if (decision.answeredBlockerIds.some((id) => !blockerIds.has(id))) return null;
     if (new Set(decision.answeredBlockerIds).size !== decision.answeredBlockerIds.length) return null;
   }
-  if (decision.action === 'RESUME_PENDING') {
+  if (decision.decision === 'RESUME_PENDING') {
     if (!input.state.pending.some((intent) => intent.id === decision.intentId)) return null;
   }
-  if (decision.action === 'CANCEL') {
+  if (decision.decision === 'CANCEL') {
     if (!open.some((intent) => intent.id === decision.intentId)) return null;
   }
-  if (decision.action === 'REPLACE') {
+  if (decision.decision === 'REPLACE') {
     if (decision.intentId !== input.state.active?.id) return null;
     if (!requestContainsOnlyKnownIds(decision.replacement.request, knownIdsFor(input))) return null;
   }
-  if (decision.action === 'NEW_INTENT') {
+  if (decision.decision === 'NEW_INTENT') {
     const proposalKeys = new Set<string>();
     const knownIds = knownIdsFor(input);
     for (const proposal of decision.intents) {
@@ -171,14 +172,14 @@ export const validateHumanIntentTurnDecision = (
       }
     }
   }
-  return decision as HumanIntentTurnDecision;
+  return decision;
 };
 
 export const runHumanIntentPreflight = async (
   input: HumanIntentPreflightInput
-): Promise<HumanIntentTurnDecision> => {
+): Promise<HumanIntentPreflightDecision> => {
   if (!input.turn.messageId.trim() || !input.turn.text.trim()) {
-    return { action: 'AMBIGUOUS' };
+    return { decision: 'AMBIGUOUS' };
   }
 
   try {
@@ -190,10 +191,10 @@ export const runHumanIntentPreflight = async (
       ],
       { signal: AbortSignal.timeout(5000) }
     );
-    return validateHumanIntentTurnDecision(result, input) ?? { action: 'AMBIGUOUS' };
+    return validateHumanIntentTurnDecision(result, input) ?? { decision: 'AMBIGUOUS' };
   } catch (error) {
     console.error('[human-intent-preflight] classification failed:', error);
-    return { action: 'AMBIGUOUS' };
+    return { decision: 'AMBIGUOUS' };
   }
 };
 
