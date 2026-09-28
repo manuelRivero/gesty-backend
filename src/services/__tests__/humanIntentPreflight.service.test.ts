@@ -14,6 +14,7 @@ import {
   validateHumanIntentTurnDecision,
   type HumanIntentPreflightInput,
 } from '../humanIntentPreflight.service';
+import { HUMAN_INTENT_PREFLIGHT_SYSTEM_PROMPT } from '../../prompts/humanIntentPreflight';
 
 const ACTIVE_ID = '11111111-1111-4111-8111-111111111111';
 const PENDING_ID = '22222222-2222-4222-8222-222222222222';
@@ -136,15 +137,38 @@ describe('Human Intent Preflight', () => {
       .toBeNull();
   });
 
-  it('distingue CANCEL de la intención CANCELAR_COMPRA', () => {
-    expect(validateHumanIntentTurnDecision({ decision: 'CANCEL', intentId: ACTIVE_ID }, input()))
-      .toEqual({ decision: 'CANCEL', intentId: ACTIVE_ID });
-    expect(
-      validateHumanIntentTurnDecision(
-        { decision: 'NEW_INTENT', intents: [{ goal: 'CANCELAR_COMPRA', request: { target: 'draft' } }] },
-        input()
-      )
-    ).toMatchObject({ decision: 'NEW_INTENT', intents: [{ goal: 'CANCELAR_COMPRA' }] });
+  it('distingue cancelar la compra de abandonar una HumanIntent existente', () => {
+    const cancelPurchase = {
+      decision: 'NEW_INTENT',
+      intents: [{ goal: 'CANCELAR_COMPRA', request: {} }],
+    };
+    for (const text of ['Cancelar pedido', 'Quiero cancelar la compra']) {
+      expect(validateHumanIntentTurnDecision(
+        cancelPurchase,
+        input({ turn: { messageId: 'wamid.cancel-purchase', text } })
+      )).toEqual(cancelPurchase);
+    }
+
+    const abandonPending = input({
+      turn: { messageId: 'wamid.abandon-desserts', text: 'Olvidá lo de los postres' },
+    });
+    expect(validateHumanIntentTurnDecision({ decision: 'CANCEL', intentId: PENDING_ID }, abandonPending))
+      .toEqual({ decision: 'CANCEL', intentId: PENDING_ID });
+    expect(validateHumanIntentTurnDecision({ decision: 'CANCEL', intentId: 'invented-id' }, abandonPending))
+      .toBeNull();
+    expect(validateHumanIntentTurnDecision({ decision: 'CANCEL' }, abandonPending)).toBeNull();
+  });
+
+  it('incluye ejemplos contrastivos de CANCEL y CANCELAR_COMPRA en el prompt', () => {
+    expect(HUMAN_INTENT_PREFLIGHT_SYSTEM_PROMPT).toContain('“Cancelar pedido”');
+    expect(HUMAN_INTENT_PREFLIGHT_SYSTEM_PROMPT).toContain('“Quiero cancelar la compra”');
+    expect(HUMAN_INTENT_PREFLIGHT_SYSTEM_PROMPT).toContain('“Olvidá lo de los postres”');
+    expect(HUMAN_INTENT_PREFLIGHT_SYSTEM_PROMPT).toContain(
+      '{"decision":"NEW_INTENT","intents":[{"goal":"CANCELAR_COMPRA","request":{}}]}'
+    );
+    expect(HUMAN_INTENT_PREFLIGHT_SYSTEM_PROMPT).toContain(
+      '{"decision":"CANCEL","intentId":"<ID_PENDING>"}'
+    );
   });
 
   it('REPLACE solo acepta la intención ACTIVE', () => {
@@ -252,6 +276,9 @@ describe('Human Intent Preflight', () => {
   });
 
   it('output inválido o error del LLM falla cerrado como AMBIGUOUS', async () => {
+    invokeMock.mockResolvedValue({ decision: 'CANCEL' });
+    expect(await runHumanIntentPreflight(input())).toEqual({ decision: 'AMBIGUOUS' });
+
     invokeMock.mockResolvedValue({ decision: 'CANCEL', intentId: 'invented-id', explanation: 'no' });
     expect(await runHumanIntentPreflight(input())).toEqual({ decision: 'AMBIGUOUS' });
 

@@ -17,7 +17,10 @@ Decisiones:
 - CONTINUE_ACTIVE cuando responde a la intención ACTIVE, incluida una respuesta a uno de sus blockers. Usa solo el intentId ACTIVE y answeredBlockerIds existentes.
 - NEW_INTENT cuando aparece un objetivo humano independiente. Puede contener varios objetivos realmente distintos en el orden expresado. Siempre devuelve intents como array; cada elemento tiene goal y request. request nunca va en la raíz. Varios productos para añadir dentro de un mismo pedido suelen ser un solo PEDIR con una lista de productos en request; no los dividas solo por aparecer varios nombres.
 - RESUME_PENDING cuando el usuario retoma inequívocamente una intención PENDING. Devuelve su ID exacto; no la dupliques.
-- CANCEL solo cuando el usuario abandona una intención humana. “Cancelá el pedido” normalmente expresa CANCELAR_COMPRA, no cancelar la intención PEDIR.
+- CANCEL y CANCELAR_COMPRA representan objetivos distintos:
+  - CANCEL significa abandonar una HumanIntent ya existente, no cancelar la compra. Requiere el intentId exacto de una intención ACTIVE o PENDING que el usuario esté abandonando explícitamente. Usa CANCEL solo si el mensaje identifica esa intención existente; por ejemplo, “Olvidá lo de los postres” cuando PENDING es EXPLORAR de postres.
+  - CANCELAR_COMPRA es un objetivo nuevo: cancelar un carrito o pedido real. Frases como “Cancelar pedido”, “Quiero cancelar el pedido” y “Cancelá la compra” se clasifican como NEW_INTENT con goal CANCELAR_COMPRA, aunque haya una intención PEDIR abierta. No uses CANCEL para ellas.
+  - Si parece que el usuario quiere abandonar una HumanIntent pero no puede identificarse una intención abierta concreta con un ID válido, devuelve AMBIGUOUS. Nunca inventes el ID ni conviertas esa cancelación en CANCELAR_COMPRA.
 - REPLACE solo ante corrección explícita e incompatible de la ACTIVE, no ante una interrupción independiente.
 - AMBIGUOUS si el objetivo, la relación, la referencia o la intención de cancelación/reemplazo no se pueden determinar con el contexto disponible.
 - NO_INTENT si el mensaje es saludo, charla social u otro turno sin objetivo humano persistente; permite que continúe el comportamiento conversacional existente.
@@ -40,6 +43,12 @@ RESUME_PENDING (usa el ID PENDING exacto de la entrada):
 
 CANCEL (usa el ID abierto exacto de la entrada):
 {"decision":"CANCEL","intentId":"<ID_OPEN>"}
+
+Para “Cancelar pedido” o “Quiero cancelar la compra” (es una solicitud nueva sobre la compra, no abandono de una HumanIntent):
+{"decision":"NEW_INTENT","intents":[{"goal":"CANCELAR_COMPRA","request":{}}]}
+
+Para “Olvidá lo de los postres” cuando la intención PENDING existente es EXPLORAR postres (usa su ID exacto):
+{"decision":"CANCEL","intentId":"<ID_PENDING>"}
 
 REPLACE (usa el ID ACTIVE exacto de la entrada):
 {"decision":"REPLACE","intentId":"<ID_ACTIVE>","replacement":{"goal":"PEDIR","request":{}}}
