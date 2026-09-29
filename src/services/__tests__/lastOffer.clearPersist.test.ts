@@ -9,9 +9,14 @@ vi.mock('../intentLedger.repository', () => ({
   patchIntentLedgerEntry: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock('../productResolution.service', () => ({
+  issueProductResolutions: vi.fn().mockResolvedValue([]),
+}));
+
 import { clearLastOffer, persistLastOffer } from '../lastOffer.service';
 import { omitConversationMetadataKeys, setLastReferencedProductId } from '../../repositories';
 import { patchIntentLedgerEntry } from '../intentLedger.repository';
+import { issueProductResolutions } from '../productResolution.service';
 
 describe('lastOffer clear / persist (PR2 writes)', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -25,6 +30,7 @@ describe('lastOffer clear / persist (PR2 writes)', () => {
   it('persistLastOffer(Y) escribe Y con surfaceCount 0 (reemplazo)', async () => {
     await persistLastOffer({
       conversationId: 'conv-1',
+      businessId: 'biz-1',
       productId: 'product-y',
       productName: 'Hamburguesa',
       suggestedQuantity: 1,
@@ -42,5 +48,16 @@ describe('lastOffer clear / persist (PR2 writes)', () => {
     );
     expect(setLastReferencedProductId).toHaveBeenCalledWith('conv-1', 'product-y');
     expect(omitConversationMetadataKeys).toHaveBeenCalledWith('conv-1', ['lastOffer']);
+    expect(issueProductResolutions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        productIds: ['product-y'],
+        businessId: 'biz-1',
+        conversationId: 'conv-1',
+        source: 'last_offer',
+        status: 'resolved',
+        scope: 'conversation',
+        expiresAt: expect.any(String),
+      })
+    );
   });
 });

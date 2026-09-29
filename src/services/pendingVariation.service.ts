@@ -14,11 +14,13 @@ import {
 } from '../repositories';
 import type { ConversationMetadata } from './productQuery/types';
 import { normalizeMetadata } from './productQuery/utils';
+import { extendProductResolutionForPending } from './productResolution.service';
 
 export const PENDING_VARIATION_KEY = 'pendingVariation' as const;
 
 export type PendingVariation = {
   productId: string;
+  productResolutionId?: string;
   productName: string;
   variations: string[];
   quantity: number;
@@ -47,6 +49,9 @@ export const parsePendingVariation = (raw: unknown): PendingVariation | null => 
       : new Date().toISOString();
   return {
     productId: raw.productId.trim(),
+    ...(typeof raw.productResolutionId === 'string'
+      ? { productResolutionId: raw.productResolutionId }
+      : {}),
     productName: raw.productName.trim(),
     variations,
     quantity,
@@ -62,6 +67,7 @@ export const getPendingVariation = (metadata: unknown): PendingVariation | null 
 export const setPendingVariation = async (params: {
   conversationId: string;
   productId: string;
+  productResolutionId?: string | null;
   productName: string;
   variations: string[];
   quantity?: number;
@@ -74,12 +80,22 @@ export const setPendingVariation = async (params: {
   await patchConversationMetadata(params.conversationId, {
     pendingVariation: {
       productId: params.productId,
+      ...(params.productResolutionId
+        ? { productResolutionId: params.productResolutionId }
+        : {}),
       productName: params.productName.trim(),
       variations,
       quantity: Math.min(99, Math.max(1, Math.floor(params.quantity ?? 1))),
       askedAt: new Date().toISOString(),
     } satisfies PendingVariation,
   });
+  if (params.productResolutionId) {
+    await extendProductResolutionForPending({
+      resolutionId: params.productResolutionId,
+      productId: params.productId,
+      conversationId: params.conversationId,
+    });
+  }
 };
 
 export const clearPendingVariation = async (
@@ -97,7 +113,8 @@ export const buildPendingVariationContextLines = (
   const opts = pending.variations.map((v) => `*${v}*`).join(', ');
   return [
     `- Variación pendiente de confirmar (tipable; el cliente puede responder en prosa): ` +
-      `*${pending.productName}* (productId: ${pending.productId}). Opciones del catálogo: ${opts}. ` +
+      `*${pending.productName}* (productId: ${pending.productId}` +
+      `${pending.productResolutionId ? `, resolutionId: ${pending.productResolutionId}` : ''}). Opciones del catálogo: ${opts}. ` +
       `Interpretá el mensaje (nombre parcial, typo razonable, nota extra tipo "sin cebolla") y llamá ` +
       `add_cart_item(productId, quantity: ${pending.quantity}, variation=<opción del catálogo>). ` +
       `Si pide una variedad que NO está en esas opciones: aclará que para este plato no la tenés, ` +

@@ -18,6 +18,7 @@ import {
   needsAddQuantityConfirmation,
   suggestAddQuantity,
 } from './addQuantitySuggestion';
+import { extendProductResolutionForPending } from './productResolution.service';
 
 export const PENDING_ADD_QUANTITY_KEY = 'pendingAddQuantity' as const;
 
@@ -25,6 +26,7 @@ export type PendingAddQuantitySource = 'deterministic' | 'hybrid' | 'complement'
 
 export type PendingAddQuantity = {
   productId: string;
+  productResolutionId?: string;
   productName: string;
   suggestedQuantity: number;
   servesPeople: number | null;
@@ -72,6 +74,9 @@ export const parsePendingAddQuantity = (raw: unknown): PendingAddQuantity | null
       : new Date().toISOString();
   return {
     productId: raw.productId.trim(),
+    ...(typeof raw.productResolutionId === 'string'
+      ? { productResolutionId: raw.productResolutionId }
+      : {}),
     productName: raw.productName.trim(),
     suggestedQuantity: suggested,
     servesPeople,
@@ -122,6 +127,7 @@ export const shouldForceHybridForPendingAddQuantity = (
 export const setPendingAddQuantity = async (params: {
   conversationId: string;
   productId: string;
+  productResolutionId?: string | null;
   productName: string;
   suggestedQuantity: number;
   servesPeople?: number | null;
@@ -131,6 +137,9 @@ export const setPendingAddQuantity = async (params: {
 }): Promise<PendingAddQuantity> => {
   const pending: PendingAddQuantity = {
     productId: params.productId.trim(),
+    ...(params.productResolutionId
+      ? { productResolutionId: params.productResolutionId }
+      : {}),
     productName: params.productName.trim(),
     suggestedQuantity: Math.min(
       99,
@@ -156,6 +165,13 @@ export const setPendingAddQuantity = async (params: {
   await patchConversationMetadata(params.conversationId, {
     pendingAddQuantity: pending,
   });
+  if (params.productResolutionId) {
+    await extendProductResolutionForPending({
+      resolutionId: params.productResolutionId,
+      productId: params.productId,
+      conversationId: params.conversationId,
+    });
+  }
   return pending;
 };
 
@@ -220,6 +236,7 @@ export const buildPendingAddQuantityContextLines = (
 export async function maybeSetPendingAddQuantity(params: {
   conversationId: string;
   productId: string;
+  productResolutionId?: string | null;
   productName: string;
   servesPeople: number | null | undefined;
   metadata: unknown;
@@ -244,6 +261,7 @@ export async function maybeSetPendingAddQuantity(params: {
   return setPendingAddQuantity({
     conversationId: params.conversationId,
     productId: params.productId,
+    productResolutionId: params.productResolutionId,
     productName: params.productName,
     suggestedQuantity,
     servesPeople: params.servesPeople ?? null,

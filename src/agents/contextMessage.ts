@@ -109,6 +109,14 @@ export async function buildPendingProductSelectionLines(
     pendingComplementSelection?: boolean;
     pendingQuestion?: string;
     candidateProductIds?: string[];
+    productResolutions?: Array<{
+      resolutionId?: string;
+      productId?: string;
+      businessId?: string;
+      status?: string;
+      expiresAt?: string | null;
+      createdAt?: string;
+    }>;
     shortlistAwaitingChoice?: boolean;
     pendingTipables?: {
       management?: TipableManagementAction[];
@@ -125,7 +133,22 @@ export async function buildPendingProductSelectionLines(
 
   const labelCandidate = (id: string, index: number, name?: string | null): string => {
     const n = index + 1;
-    return name ? `${n}. *${name}* (ID: ${id})` : `${n}. (ID: ${id})`;
+    const resolution = (meta.productResolutions ?? [])
+      .filter(
+        (item) =>
+          item.productId === id &&
+          item.businessId === businessId &&
+          typeof item.resolutionId === 'string' &&
+          item.status === 'candidate' &&
+          (!item.expiresAt || Date.parse(item.expiresAt) > Date.now())
+      )
+      .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))[0];
+    const resolutionLabel = resolution?.resolutionId
+      ? `, resolutionId: ${resolution.resolutionId}`
+      : '';
+    return name
+      ? `${n}. *${name}* (ID: ${id}${resolutionLabel})`
+      : `${n}. (ID: ${id}${resolutionLabel})`;
   };
   let labeled = ids.map((id, index) => labelCandidate(id, index));
   if (businessId) {

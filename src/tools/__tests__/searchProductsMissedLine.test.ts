@@ -23,6 +23,16 @@ vi.mock('../../services/menu.service', () => ({
   },
 }));
 
+vi.mock('../../services/productResolution.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../services/productResolution.service')>();
+  return {
+    ...actual,
+    issueProductResolutions: vi.fn(async ({ productIds }: { productIds: string[] }) =>
+      productIds.map((productId) => ({ resolutionId: `test:${productId}`, productId }))
+    ),
+  };
+});
+
 vi.mock('../../repositories/conversationState.repository', () => ({
   patchConversationMetadata: (...args: unknown[]) => patchConversationMetadata(...args),
   omitConversationMetadataKeys: (...args: unknown[]) =>

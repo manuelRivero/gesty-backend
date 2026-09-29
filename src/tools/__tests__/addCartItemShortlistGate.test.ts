@@ -96,8 +96,19 @@ const CONFIG = {
 };
 
 const PRODUCT_ID = '11111111-1111-1111-1111-111111111111';
+const candidateResolution = (productId: string) => ({
+  resolutionId: `pr1:biz-1:conv-1:${productId}`,
+  productId,
+  businessId: 'biz-1',
+  conversationId: 'conv-1',
+  source: 'search_products',
+  status: 'candidate',
+  scope: 'conversation',
+  createdAt: new Date().toISOString(),
+  expiresAt: new Date(Date.now() + 60_000).toISOString(),
+});
 
-describe('add_cart_item — shortlistAwaitingChoice', () => {
+describe('add_cart_item — ProductResolution', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(prisma.draft_order.findFirst).mockResolvedValue({ id: 'draft-1' } as never);
@@ -112,13 +123,17 @@ describe('add_cart_item — shortlistAwaitingChoice', () => {
     } as never);
   });
 
-  it('suma el plato aunque shortlistAwaitingChoice esté activo', async () => {
+  it('no trata un shortlist ambiguo como selección', async () => {
     const meta = {
       peopleCount: 2,
       requestedPartySize: 2,
       shortlistAwaitingChoice: true,
       pendingProductSelection: true,
       candidateProductIds: [PRODUCT_ID, '22222222-2222-2222-2222-222222222222'],
+      productResolutions: [
+        candidateResolution(PRODUCT_ID),
+        candidateResolution('22222222-2222-2222-2222-222222222222'),
+      ],
     };
     findOrCreateConversationState.mockResolvedValue({ metadata: meta });
     vi.mocked(prisma.conversation_state.findUnique).mockResolvedValue({
@@ -142,26 +157,23 @@ describe('add_cart_item — shortlistAwaitingChoice', () => {
       )) as string
     );
 
-    expect(result.error).not.toBe('shortlist_selection_required');
-    expect(result.success).toBe(true);
-    expect(prisma.draft_order_item.create).toHaveBeenCalled();
+    expect(result).toMatchObject({
+      success: false,
+      error: 'product_resolution_required',
+      reason: 'resolution_not_selected',
+    });
+    expect(prisma.draft_order_item.create).not.toHaveBeenCalled();
   });
 
-  it('rechaza el alta si dos nombres coinciden con la búsqueda', async () => {
-    const otherId = '22222222-2222-2222-2222-222222222222';
+  it('rechaza un UUID real del mismo negocio sin ProductResolution', async () => {
     const meta = {
       peopleCount: 2,
       requestedPartySize: 2,
       shortlistAwaitingChoice: true,
       pendingProductSelection: true,
-      pendingQuestion: 'ceviche',
-      candidateProductIds: [PRODUCT_ID, otherId],
     };
     findOrCreateConversationState.mockResolvedValue({ metadata: meta });
-    vi.mocked(prisma.menu_item.findMany).mockResolvedValue([
-      { id: PRODUCT_ID, name: 'Ceviche Clásico' },
-      { id: otherId, name: 'Ceviche clasico con variaciones' },
-    ] as never);
+    vi.mocked(prisma.conversation_state.findUnique).mockResolvedValue({ metadata: meta } as never);
 
     const result = JSON.parse(
       (await addCartItemTool.func(
@@ -171,9 +183,11 @@ describe('add_cart_item — shortlistAwaitingChoice', () => {
       )) as string
     );
 
-    expect(result.success).toBe(false);
-    expect(result.error).toBe('ambiguous_product_name');
-    expect(result.productIds).toEqual([PRODUCT_ID, otherId]);
+    expect(result).toMatchObject({
+      success: false,
+      error: 'product_resolution_required',
+      reason: 'resolution_missing',
+    });
     expect(prisma.draft_order_item.create).not.toHaveBeenCalled();
   });
 });

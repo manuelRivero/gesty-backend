@@ -58,6 +58,7 @@ import { startReservationSessionTool } from '../tools/reservation';
 import { startAddressEditSessionTool } from '../tools/onboarding';
 import type { CtaPlan, CtaPlannerRaw } from './types';
 import { persistLastOffer } from '../services/lastOffer.service';
+import { issueProductResolutions } from '../services/productResolution.service';
 import { buildCartSummaryMessage } from '../services/cart.service';
 import { buildCancelOrderMessage, buildCancelDisambiguationMessage } from '../services/order.service';
 import {
@@ -168,6 +169,7 @@ export const resetAgentCacheForTesting = (): void => {
 
 const persistLastOfferFromCtaPlan = async (
   conversationId: string,
+  businessId: string,
   plan: CtaPlan,
   productHint?: string | null
 ): Promise<void> => {
@@ -192,6 +194,7 @@ const persistLastOfferFromCtaPlan = async (
 
   await persistLastOffer({
     conversationId,
+    businessId,
     productId,
     productName,
     suggestedQuantity: quantity,
@@ -922,13 +925,14 @@ const buildSelectFromListPlanFromIds = async (params: {
 
 const emitHybridCtaResult = async (params: {
   conversationId: string;
+  businessId: string;
   userMessage: string;
   formattedText: string;
   resolvedPlan: CtaPlan;
   source: string;
   productHintForOffer?: string | null;
 }): Promise<HandlerResult | null> => {
-  const { conversationId, userMessage, formattedText, resolvedPlan, source, productHintForOffer } =
+  const { conversationId, businessId, userMessage, formattedText, resolvedPlan, source, productHintForOffer } =
     params;
   const handlerResult = buildHybridCtaInteractive(formattedText, resolvedPlan);
   if (!handlerResult) return null;
@@ -953,7 +957,22 @@ const emitHybridCtaResult = async (params: {
           }
         : {}),
     });
-    await persistLastOfferFromCtaPlan(conversationId, resolvedPlan, productHintForOffer ?? null);
+      if (selectListCandidateIds) {
+        await issueProductResolutions({
+          productIds: selectListCandidateIds,
+          businessId,
+          conversationId,
+          source: 'whatsapp_presentation',
+          status: 'candidate',
+          scope: 'conversation',
+        });
+      }
+    await persistLastOfferFromCtaPlan(
+      conversationId,
+      businessId,
+      resolvedPlan,
+      productHintForOffer ?? null
+    );
   } catch (err) {
     console.error('[hybrid-cta] patchConversationMetadata failed:', err);
   }
@@ -1149,6 +1168,7 @@ const materializeProductCtaPresentation = async (
   if (resolvedPlan) {
     const handlerResult = await emitHybridCtaResult({
       conversationId,
+      businessId,
       userMessage,
       formattedText,
       resolvedPlan,

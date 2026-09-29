@@ -8,6 +8,8 @@ export interface ReactAgentContext {
   conversationStartedAt: string;
   /** ISO del inicio de este turno ReAct (no reusar un pending abierto en el mismo loop). */
   turnStartedAt?: string;
+  /** Identifica este turno para limitar resoluciones internas de catálogo. */
+  turnId?: string;
   /** Texto del mensaje del usuario en este turno (validar quantity vs prosa). */
   userMessage?: string;
 }

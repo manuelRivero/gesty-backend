@@ -9,8 +9,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Prisma } from '@prisma/client';
 
-vi.mock('../../lib/prisma', () => ({
-  prisma: {
+vi.mock('../../lib/prisma', () => {
+  const prisma: any = {
     draft_order: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
     menu_item: { findFirst: vi.fn() },
     draft_order_item: {
@@ -29,8 +29,26 @@ vi.mock('../../lib/prisma', () => ({
         reservations_enabled: true,
       },
     ]),
-  },
-}));
+  };
+  prisma.$executeRaw = vi.fn();
+  prisma.$transaction = vi.fn(async (callback: (tx: any) => unknown) => callback(prisma));
+  return { prisma };
+});
+
+vi.mock('../../services/productResolution.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../services/productResolution.service')>();
+  return {
+    ...actual,
+    resolveProductForAdd: vi.fn(async ({ productId }: { productId: string }) => ({
+      ok: true,
+      resolution: { resolutionId: `test:${productId}`, productId },
+    })),
+    consumeProductResolution: vi.fn(async (_tx: unknown, { productId }: { productId: string }) => ({
+      ok: true,
+      resolution: { resolutionId: `test:${productId}`, productId, status: 'consumed' },
+    })),
+  };
+});
 
 vi.mock('../../services/ordersCapabilityGate.service', () => ({
   assertCanOrder: vi.fn().mockResolvedValue({ ok: true }),

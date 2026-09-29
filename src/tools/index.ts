@@ -39,6 +39,13 @@ import {
   MENU_SUGGESTION_ORDER,
 } from '../helpers/complementaryMenu.helper';
 import { getReactContext } from './_context';
+import {
+  consumeProductResolution,
+  issueProductResolutions,
+  productResolutionErrorMessage,
+  resolveProductForAdd,
+  selectProductResolution,
+} from '../services/productResolution.service';
 import { createOnlinePaymentLink } from '../services/payment/payment.service';
 import { refreshDraftOrderTimeout } from '../services/draftOrderTimeout.service';
 import { assertCanOrder } from '../services/ordersCapabilityGate.service';
@@ -427,7 +434,7 @@ export const searchProductsTool = new DynamicStructuredTool<
   schema: searchProductsSchema,
   func: async ({ keyword }: SearchProductsInput, _runManager, config?: RunnableConfig) => {
     console.debug(JSON.stringify({ event: '[tool:start]', tool: 'search_products', args: { keyword } }));
-    const { businessId, conversationId, turnStartedAt } = getReactContext(config);
+    const { businessId, conversationId, turnStartedAt, turnId } = getReactContext(config);
     const { reservationTurn, metadata } = await readOrderingTurnScope(conversationId);
     const partyHeld = await rejectMissingPartySize(
       conversationId,
@@ -438,6 +445,18 @@ export const searchProductsTool = new DynamicStructuredTool<
     if (partyHeld) return partyHeld;
     const items = await MenuService.searchMenuItemsByKeyword({ businessId, keyword });
     const shortlisted = items.slice(0, PRODUCT_SHORTLIST_MAX_LIMIT);
+    const resolutions = reservationTurn
+      ? []
+      : await issueProductResolutions({
+          productIds: shortlisted.map((item) => item.id),
+          businessId,
+          conversationId,
+          source: 'search_products',
+          status: shortlisted.length === 1 ? 'resolved' : 'candidate',
+          scope: shortlisted.length === 1 ? 'turn' : 'conversation',
+          turnId,
+        });
+    const resolutionByProductId = new Map(resolutions.map((item) => [item.productId, item]));
     const nameMatchIds = productIdsMatchingSearchKeyword(keyword, shortlisted);
     const nameAmbiguous = !reservationTurn && nameMatchIds.length >= 2;
     if (!reservationTurn) {
@@ -493,15 +512,70 @@ export const searchProductsTool = new DynamicStructuredTool<
               ? { instruction: SHORTLIST_CHOICE_INSTRUCTION }
               : {}),
       items: shortlisted.map((item) =>
-        toShortlistItem({
-          ...item,
-          // La raw SQL devuelve campos planos; los reempaquetamos al formato
-          // que espera toShortlistItem para que category.name llegue al agente
-          menu_category: item.category_id
-            ? { id: item.category_id, name: item.category_name ?? '', category_tag: item.category_tag ?? null }
-            : null,
+        ({
+          ...toShortlistItem({
+            ...item,
+            // La raw SQL devuelve campos planos; reempaquetamos category.
+            menu_category: item.category_id
+              ? {
+                  id: item.category_id,
+                  name: item.category_name ?? '',
+                  category_tag: item.category_tag ?? null,
+                }
+              : null,
+          }),
+          resolutionId: resolutionByProductId.get(item.id)?.resolutionId,
         })
       ),
+    });
+  },
+});
+
+const resolveProductSchema = z.object({
+  productId: z.string().uuid(),
+  resolutionId: z.string().min(1).max(160),
+});
+type ResolveProductInput = z.infer<typeof resolveProductSchema>;
+
+export const resolveProductTool = new DynamicStructuredTool<
+  typeof resolveProductSchema,
+  ResolveProductInput
+>({
+  name: 'resolve_product',
+  description:
+    'Selecciona un producto de los candidatos devueltos por una búsqueda o lista vigente. ' +
+    'Usala antes de add_cart_item cuando el resultado tenga varios candidatos. ' +
+    'Solo puede seleccionar un productId que pertenezca a ese resolutionId y a esta conversación.',
+  schema: resolveProductSchema,
+  func: async ({ productId, resolutionId }: ResolveProductInput, _runManager, config?: RunnableConfig) => {
+    const { businessId, conversationId, turnId } = getReactContext(config);
+    const result = await selectProductResolution({
+      productId,
+      resolutionId,
+      businessId,
+      conversationId,
+      turnId,
+      explicitButtonSelection: true,
+    });
+    if (!result.ok) {
+      console.warn(JSON.stringify({
+        event: '[product-resolution] selection_rejected',
+        reason: result.reason,
+        businessId,
+        conversationId,
+      }));
+      return toJson({
+        success: false,
+        error: 'product_resolution_required',
+        reason: result.reason,
+        message: productResolutionErrorMessage(result.reason),
+      });
+    }
+    return toJson({
+      success: true,
+      productId: result.resolution.productId,
+      resolutionId: result.resolution.resolutionId,
+      status: result.resolution.status,
     });
   },
 });
@@ -1042,7 +1116,7 @@ export const findProductsByFilterTool = new DynamicStructuredTool<
     _runManager,
     config?: RunnableConfig
   ) => {
-    const { businessId, conversationId, turnStartedAt } = getReactContext(config);
+    const { businessId, conversationId, turnStartedAt, turnId } = getReactContext(config);
     const { reservationTurn, metadata } = await readOrderingTurnScope(conversationId);
     const partyHeld = await rejectMissingPartySize(
       conversationId,
@@ -1163,6 +1237,18 @@ export const findProductsByFilterTool = new DynamicStructuredTool<
         'filtro de menú'
       );
     }
+    const resolutions = reservationTurn
+      ? []
+      : await issueProductResolutions({
+          productIds: items.map((item) => item.id),
+          businessId,
+          conversationId,
+          source: 'find_products_by_filter',
+          status: items.length === 1 ? 'resolved' : 'candidate',
+          scope: items.length === 1 ? 'turn' : 'conversation',
+          turnId,
+        });
+    const resolutionByProductId = new Map(resolutions.map((item) => [item.productId, item]));
 
     return toJson({
       count: items.length,
@@ -1174,7 +1260,12 @@ export const findProductsByFilterTool = new DynamicStructuredTool<
         : items.length >= 2
           ? { instruction: SHORTLIST_CHOICE_INSTRUCTION }
           : {}),
-      items: items.map((item) => toShortlistItem(item)),
+      items: items.map((item) => ({
+        ...toShortlistItem(item),
+        ...(resolutionByProductId.get(item.id)
+          ? { resolutionId: resolutionByProductId.get(item.id)!.resolutionId }
+          : {}),
+      })),
     });
   },
 });
@@ -1818,6 +1909,12 @@ const addCartItemSchema = z.object({
     .string()
     .uuid()
     .describe('UUID del menu_item a agregar (usar el id devuelto por search_products o find_products_by_filter)'),
+  resolutionId: z
+    .string()
+    .min(1)
+    .max(160)
+    .optional()
+    .describe('Referencia de resolución devuelta por una búsqueda o selección vigente.'),
   quantity: z
     .number()
     .int()
@@ -1886,7 +1983,7 @@ export const addCartItemTool = new DynamicStructuredTool<
     'CÓMO AÑADIR ALGO NUEVO: Si el cliente pide un plato nuevo (ej. \'Suspiro\') y NO tienes su `productId`, NO repitas las herramientas de los platos viejos. Llama a `search_products` INMEDIATAMENTE para buscar el nuevo plato. NUNCA inventes un ID.',
   schema: addCartItemSchema,
   func: async (
-    { productId, quantity, variation }: AddCartItemInput,
+    { productId, resolutionId, quantity, variation }: AddCartItemInput,
     _runManager,
     config?: RunnableConfig
   ) => {
@@ -1897,7 +1994,7 @@ export const addCartItemTool = new DynamicStructuredTool<
         args: { productId, quantity, variation },
       })
     );
-    const { businessId, customerPhone, conversationId, turnStartedAt, userMessage } =
+    const { businessId, customerPhone, conversationId, turnStartedAt, turnId, userMessage } =
       getReactContext(config);
 
     const ordersGate = await assertCanOrder(businessId);
@@ -1931,6 +2028,7 @@ export const addCartItemTool = new DynamicStructuredTool<
       return toJson({ success: false, error: 'product_not_found_or_unavailable' });
     }
 
+    let productResolutionId = resolutionId ?? null;
     let partySize: number | null = null;
     let pendingReply = false;
     let orderLine: OrderLine | null = null;
@@ -1963,6 +2061,46 @@ export const addCartItemTool = new DynamicStructuredTool<
 
       const state = await findOrCreateConversationState(conversationId);
       const meta = normalizeMetadata(state.metadata);
+      const pendingAddResolutionId =
+        meta.pendingAddQuantity &&
+        typeof meta.pendingAddQuantity === 'object' &&
+        'productResolutionId' in meta.pendingAddQuantity &&
+        typeof meta.pendingAddQuantity.productResolutionId === 'string'
+          ? meta.pendingAddQuantity.productResolutionId
+          : null;
+      const pendingVariationResolutionId =
+        meta.pendingVariation &&
+        typeof meta.pendingVariation === 'object' &&
+        'productResolutionId' in meta.pendingVariation &&
+        typeof meta.pendingVariation.productResolutionId === 'string'
+          ? meta.pendingVariation.productResolutionId
+          : null;
+      const resolution = await resolveProductForAdd({
+        productId,
+        businessId,
+        conversationId,
+        resolutionId,
+        turnId,
+        pendingResolutionId: pendingAddResolutionId ?? pendingVariationResolutionId,
+      });
+      if (!resolution.ok) {
+        console.warn(JSON.stringify({
+          event: '[product-resolution] add_rejected',
+          reason: resolution.reason,
+          businessId,
+          conversationId,
+          productId,
+        }));
+        return toJson({
+          success: false,
+          error: 'product_resolution_required',
+          reason: resolution.reason,
+          message: productResolutionErrorMessage(resolution.reason),
+          instruction:
+            'No agregues el producto todavía. Usá resolve_product con un candidato vigente o volvé a buscarlo.',
+        });
+      }
+      productResolutionId = resolution.resolution.resolutionId;
 
       // Soft-gate ola de complemento: solo sumar si el mensaje nombra un candidato.
       const complementCandidates = (meta.candidateProductIds ?? []).filter(
@@ -2154,6 +2292,7 @@ export const addCartItemTool = new DynamicStructuredTool<
           await setPendingVariation({
             conversationId,
             productId,
+            productResolutionId,
             productName: item.name,
             variations: item.variations,
             quantity: qtyForVariationPending,
@@ -2210,6 +2349,7 @@ export const addCartItemTool = new DynamicStructuredTool<
       const pending = await setPendingAddQuantity({
         conversationId,
         productId,
+        productResolutionId,
         productName: item.name,
         suggestedQuantity,
         servesPeople: item.serves_people,
@@ -2350,10 +2490,39 @@ export const addCartItemTool = new DynamicStructuredTool<
       }
     }
 
-    const { draft, newQty, newTotal, createdDraft } =
-      typeof prisma.$transaction === 'function'
-        ? await prisma.$transaction((tx) => writeCartLine(tx, true))
-        : await writeCartLine(prisma, false);
+    const writeResult = await prisma.$transaction(async (tx) => {
+      const resolution = await consumeProductResolution(tx, {
+        productId,
+        businessId,
+        conversationId,
+        resolutionId: productResolutionId,
+        turnId,
+        pendingResolutionId: productResolutionId,
+      });
+      if (!resolution.ok) return { ok: false as const, reason: resolution.reason };
+      return {
+        ok: true as const,
+        result: await writeCartLine(tx, true),
+      };
+    });
+    if (!writeResult.ok) {
+      console.warn(JSON.stringify({
+        event: '[product-resolution] add_rejected',
+        reason: writeResult.reason,
+        businessId,
+        conversationId,
+        productId,
+      }));
+      return toJson({
+        success: false,
+        error: 'product_resolution_required',
+        reason: writeResult.reason,
+        message: productResolutionErrorMessage(writeResult.reason),
+        instruction:
+          'No agregues el producto. Volvé a resolverlo/seleccionarlo y llamá add_cart_item una sola vez.',
+      });
+    }
+    const { draft, newQty, newTotal, createdDraft } = writeResult.result;
 
     if (createdDraft) {
       // Inicialización (no renovación): fija el primer expires_at del draft
@@ -4270,6 +4439,7 @@ export const requestHumanSupportTool = new DynamicStructuredTool<
 
 export const allReactTools = [
   searchProductsTool,
+  resolveProductTool,
   getProductsDetailsByIdsTool,
   getFeaturedProductsTool,
   getCategoriesTool,

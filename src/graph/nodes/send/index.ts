@@ -12,6 +12,7 @@
 import { sendResponse } from '../../../controllers/webhook/sender';
 import {
   createConversationMessage,
+  findOrCreateConversationState,
   updateConversationLastMessageAt,
   updateConversationSentiment,
 } from '../../../repositories';
@@ -21,8 +22,70 @@ import { resolvePersonalityPromptText } from '../../../services/botPersonality.s
 import { analyzeConversationSentiment } from '../../../services/ai/conversationSentiment.service';
 import { emitAdminConversationSentimentUpdated } from '../../../socket/adminSocket';
 import { NEGATIVE_SENTIMENTS } from '../../../types/conversationSentiment';
+import { z } from 'zod';
+import { parseAddItemButtonPayload, parseProductId } from '../../../controllers/webhook/utils';
+import { issueProductResolutions } from '../../../services/productResolution.service';
 import type { HandlerResult } from '../../../controllers/webhook/types';
 import type { AgentState, AgentStateUpdate } from '../../state';
+
+const productUuidSchema = z.string().uuid();
+
+const productIdFromPayload = (payloadId: unknown): string | null => {
+  if (typeof payloadId !== 'string') return null;
+  let productId: string | null = null;
+  if (payloadId.startsWith('ADD_ITEM:')) {
+    productId = parseAddItemButtonPayload(payloadId).productId;
+  } else if (
+    payloadId.startsWith('SELECT_PRODUCT:') ||
+    payloadId.startsWith('SELECT_ORDER_PRODUCT:')
+  ) {
+    productId = parseProductId(payloadId);
+  }
+  return productUuidSchema.safeParse(productId).success ? productId : null;
+};
+
+const collectProductPayloadIds = (result: HandlerResult): string[] => {
+  const ids: string[] = [];
+  const collectContent = (content: unknown): void => {
+    if (!content || typeof content !== 'object') return;
+    const root = content as Record<string, unknown>;
+    if (root.type === 'interactive') {
+      const interactive = root.interactive as Record<string, unknown> | undefined;
+      const action = interactive?.action as Record<string, unknown> | undefined;
+      const buttons = action?.buttons;
+      if (Array.isArray(buttons)) {
+        for (const button of buttons) {
+          if (!button || typeof button !== 'object') continue;
+          const reply = (button as Record<string, unknown>).reply as Record<string, unknown> | undefined;
+          const id = productIdFromPayload(reply?.id);
+          if (id) ids.push(id);
+        }
+      }
+    }
+    if (root.type === 'list') {
+      const action = root.action as Record<string, unknown> | undefined;
+      const sections = action?.sections;
+      if (!Array.isArray(sections)) return;
+      for (const section of sections) {
+        if (!section || typeof section !== 'object') continue;
+        const rows = (section as Record<string, unknown>).rows;
+        if (!Array.isArray(rows)) continue;
+        for (const row of rows) {
+          if (!row || typeof row !== 'object') continue;
+          const id = productIdFromPayload((row as Record<string, unknown>).id);
+          if (id) ids.push(id);
+        }
+      }
+    }
+  };
+
+  collectContent(result.content);
+  for (const followUp of result.followUps ?? []) {
+    if (followUp.type === 'list') collectContent(followUp.listMessage);
+    if (followUp.type === 'interactive') collectContent(followUp.message);
+  }
+  return [...new Set(ids)];
+};
 
 /**
  * Elimina botones y filas de lista con payload ADD_ITEM del handlerResult.
@@ -116,6 +179,42 @@ export const sendResponseNode = async (
   }
 
   await sendResponse(ctx, humanizedResult);
+  const conversationId = state.conversationId ?? state.conversation?.id;
+  if (conversationId && businessId) {
+    const presentedProductIds = collectProductPayloadIds(humanizedResult);
+    const conversationState = await findOrCreateConversationState(conversationId);
+    const metadata = conversationState.metadata as Record<string, unknown> | null;
+    const isComplementPresentation = metadata?.pendingComplementSelection === true;
+    const complementCandidateIds = new Set(
+      Array.isArray(metadata?.candidateProductIds)
+        ? metadata.candidateProductIds.filter((id): id is string => typeof id === 'string')
+        : []
+    );
+    const complementIds = isComplementPresentation
+      ? presentedProductIds.filter((id) => complementCandidateIds.has(id))
+      : [];
+    const otherIds = presentedProductIds.filter((id) => !complementCandidateIds.has(id));
+    if (complementIds.length > 0) {
+      await issueProductResolutions({
+        productIds: complementIds,
+        businessId,
+        conversationId,
+        source: 'complement',
+        status: 'candidate',
+        scope: 'conversation',
+      });
+    }
+    if (otherIds.length > 0) {
+      await issueProductResolutions({
+        productIds: otherIds,
+        businessId,
+        conversationId,
+        source: 'whatsapp_presentation',
+        status: 'candidate',
+        scope: 'conversation',
+      });
+    }
+  }
   return { handlerResult: humanizedResult };
 };
 

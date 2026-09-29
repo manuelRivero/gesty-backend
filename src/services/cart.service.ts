@@ -1,3 +1,8 @@
+import {
+  consumeProductResolution,
+  productResolutionErrorMessage,
+  resolveProductForAdd,
+} from './productResolution.service';
 // services/cartService.ts
 
 import {
@@ -360,13 +365,10 @@ export const buildAddItemMessage = async (
    */
   mode: 'add' | 'set' = 'add',
   /** Variación elegida por el cliente (D4/D3); `null` para platillos sin variaciones. */
-  variation: string | null = null
+  variation: string | null = null,
+  productResolutionId?: string | null
 ): Promise<AddItemMessageResult> => {
   const qty = Math.min(99, Math.max(1, Math.floor(addQuantity)));
-
-    const cart = await handleDraftOrder(business, customer);
-    if (!cart) return 'Error al crear el pedido.';
-  
 
   const item = await prisma.menu_item.findFirst({
     where: { id: menuItemId, business_id: business.id, is_available: true },
@@ -391,32 +393,62 @@ export const buildAddItemMessage = async (
     return errorText;
   }
 
+  const authorization = await resolveProductForAdd({
+    productId: item.id,
+    businessId: business.id,
+    conversationId: conversation.id,
+    resolutionId: productResolutionId,
+    pendingResolutionId: productResolutionId,
+  });
+  if (!authorization.ok) {
+    console.warn(JSON.stringify({
+      event: '[product-resolution] add_rejected',
+      reason: authorization.reason,
+      businessId: business.id,
+      conversationId: conversation.id,
+      productId: item.id,
+    }));
+    return productResolutionErrorMessage(authorization.reason);
+  }
+
+  const cart = await handleDraftOrder(business, customer);
+  if (!cart) return 'Error al crear el pedido.';
+
   const resolved = resolveEffectivePrice(item);
   const unitDec = resolved.finalPrice;
 
   // La variación es parte de la identidad de la línea (D4): una pizza
   // especial y una de roquefort son dos líneas, no una con cantidad 2.
-  const existingItem = await prisma.draft_order_item.findFirst({
-    where: { draft_order_id: cart.id, product_id: item.id, variation }
-  });
-
-  let writtenLineId: string;
-  if (existingItem) {
-    const newQ = mode === 'set' ? qty : existingItem.quantity + qty;
-    const updated = await prisma.draft_order_item.update({
-      where: { draft_order_id: cart.id, id: existingItem.id },
-      data: {
-        quantity: newQ,
-        unit_price: unitDec,
-        total_price: unitDec.mul(newQ),
-        list_price: resolved.hasDiscount ? resolved.listPrice : null,
-        discount_amount: resolved.hasDiscount ? resolved.discountAmount : null,
-      },
-      select: { id: true },
+  const writeResult = await prisma.$transaction(async (tx) => {
+    const resolution = await consumeProductResolution(tx, {
+      productId: item.id,
+      businessId: business.id,
+      conversationId: conversation.id,
+      resolutionId: productResolutionId,
+      explicitButtonSelection: false,
     });
-    writtenLineId = updated.id;
-  } else {
-    const created = await prisma.draft_order_item.create({
+    if (!resolution.ok) return { ok: false as const, reason: resolution.reason };
+
+    const existingItem = await tx.draft_order_item.findFirst({
+      where: { draft_order_id: cart.id, product_id: item.id, variation },
+    });
+    if (existingItem) {
+      const newQ = mode === 'set' ? qty : existingItem.quantity + qty;
+      const updated = await tx.draft_order_item.update({
+        where: { draft_order_id: cart.id, id: existingItem.id },
+        data: {
+          quantity: newQ,
+          unit_price: unitDec,
+          total_price: unitDec.mul(newQ),
+          list_price: resolved.hasDiscount ? resolved.listPrice : null,
+          discount_amount: resolved.hasDiscount ? resolved.discountAmount : null,
+        },
+        select: { id: true },
+      });
+      return { ok: true as const, lineId: updated.id, existed: true };
+    }
+
+    const created = await tx.draft_order_item.create({
       data: {
         draft_order_id: cart.id,
         product_id: item.id,
@@ -429,8 +461,20 @@ export const buildAddItemMessage = async (
       },
       select: { id: true },
     });
-    writtenLineId = created.id;
+    return { ok: true as const, lineId: created.id, existed: false };
+  });
+
+  if (!writeResult.ok) {
+    console.warn(JSON.stringify({
+      event: '[product-resolution] add_rejected',
+      reason: writeResult.reason,
+      businessId: business.id,
+      conversationId: conversation.id,
+      productId: item.id,
+    }));
+    return productResolutionErrorMessage(writeResult.reason);
   }
+  const writtenLineId = writeResult.lineId;
 
   console.log(
     JSON.stringify({
@@ -441,7 +485,7 @@ export const buildAddItemMessage = async (
       quantity: qty,
       mode,
       variation,
-      op: existingItem ? 'update' : 'create',
+      op: writeResult.existed ? 'update' : 'create',
     })
   );
 
@@ -627,7 +671,8 @@ export const handleAddItemFromWebhook = async (
   menuItemId: string,
   addQuantity: number = 1,
   mode: 'add' | 'set' = 'add',
-  variation: string | null = null
+  variation: string | null = null,
+  productResolutionId?: string | null
 ): Promise<AddItemMessageResult | null> => {
 
   const entry = payload.entry?.[0];
@@ -646,9 +691,8 @@ export const handleAddItemFromWebhook = async (
   const conversation = await createOrGetOpenConversation(business.id, customer.id);
   await findOrCreateConversationState(conversation.id);
 
-  // handleDraftOrder ya fija expires_at si crea el draft; la renovación por
-  // actividad del usuario la maneja touchSession, no este handler.
-  const draftOrder = await handleDraftOrder(business, customer);
+  // handleDraftOrder dentro de buildAddItemMessage fija expires_at al crear.
+  // La renovación por actividad la maneja touchSession.
   const result = await buildAddItemMessage(
     business,
     conversation,
@@ -656,7 +700,8 @@ export const handleAddItemFromWebhook = async (
     customer,
     addQuantity,
     mode,
-    variation
+    variation,
+    productResolutionId
   );
   if (
     typeof result === 'object' &&

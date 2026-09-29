@@ -22,6 +22,7 @@ import type { ConversationMetadata } from './productQuery/types';
 import { normalizeMetadata } from './productQuery/utils';
 import { patchIntentLedgerEntry } from './intentLedger.repository';
 import { computeCatalogPermission } from './intent/activeIntent.service';
+import { issueProductResolutions } from './productResolution.service';
 
 export type LastOfferKind = 'ADD_ITEM';
 
@@ -151,6 +152,7 @@ export const getLastOffer = (metadata: unknown): LastOffer | null => {
 
 export const persistLastOffer = async (params: {
   conversationId: string;
+  businessId: string;
   productId: string;
   productName: string;
   suggestedQuantity?: number;
@@ -181,6 +183,15 @@ export const persistLastOffer = async (params: {
   // Flip: ya no escribimos el bag paralelo. Limpiamos legacy si existía.
   await omitConversationMetadataKeys(params.conversationId, ['lastOffer']);
   await setLastReferencedProductId(params.conversationId, params.productId);
+  await issueProductResolutions({
+    productIds: [params.productId],
+    businessId: params.businessId,
+    conversationId: params.conversationId,
+    source: 'last_offer',
+    status: 'resolved',
+    scope: 'conversation',
+    expiresAt,
+  });
 };
 
 export const clearLastOffer = async (conversationId: string): Promise<void> => {

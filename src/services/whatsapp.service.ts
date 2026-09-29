@@ -34,6 +34,11 @@ import {
   parseSelectProductListRowId,
 } from './productQuery/utils';
 import { persistLastOffer } from './lastOffer.service';
+import {
+  consumeProductResolution,
+  productResolutionErrorMessage,
+  selectProductResolutionFromButton,
+} from './productResolution.service';
 
 type ConversationMetadata = {
   pendingProductSelection?: boolean;
@@ -359,6 +364,7 @@ Respondé en español con información útil sobre el plato (precio, porciones s
   // Persistir después del updateConversationState para que el patch no sea sobreescrito.
   await persistLastOffer({
     conversationId: conversation.id,
+    businessId: business.id,
     productId: item.id,
     productName: item.name,
     suggestedQuantity: listSuggestedQuantity ?? 1,
@@ -474,11 +480,28 @@ export const handleOrderProductSelectionFromWebhook = async (
       ? Math.round(extraction.quantity)
       : 1;
 
+  const selectedResolution = await selectProductResolutionFromButton({
+    productId: item.id,
+    businessId: business.id,
+    conversationId: conversation.id,
+  });
+  if (!selectedResolution.ok) {
+    console.warn(JSON.stringify({
+      event: '[product-resolution] order_selection_rejected',
+      reason: selectedResolution.reason,
+      businessId: business.id,
+      conversationId: conversation.id,
+      productId: item.id,
+    }));
+    return productResolutionErrorMessage(selectedResolution.reason);
+  }
+
   try {
     await addProductToOrder({
       conversationId: conversation.id,
       productId: item.id,
-      quantity
+      quantity,
+      resolutionId: selectedResolution.resolution.resolutionId,
     });
   } catch (error) {
     const messageText =
@@ -556,6 +579,7 @@ const addProductToOrder = async (params: {
   conversationId: string;
   productId: string;
   quantity: number;
+  resolutionId: string;
 }): Promise<void> => {
   const conversation = await prisma.conversation.findUnique({
     where: { id: params.conversationId },
@@ -585,6 +609,23 @@ const addProductToOrder = async (params: {
   };
 
   await prisma.$transaction(async (tx) => {
+    const resolution = await consumeProductResolution(tx, {
+      productId: params.productId,
+      businessId: conversation.business.id,
+      conversationId: params.conversationId,
+      resolutionId: params.resolutionId,
+    });
+    if (!resolution.ok) {
+      console.warn(JSON.stringify({
+        event: '[product-resolution] order_add_rejected',
+        reason: resolution.reason,
+        businessId: conversation.business.id,
+        conversationId: params.conversationId,
+        productId: params.productId,
+      }));
+      throw new Error(productResolutionErrorMessage(resolution.reason));
+    }
+
     let draftOrder = await tx.draft_order.findFirst({
       where: {
         business_id: conversation.business.id,

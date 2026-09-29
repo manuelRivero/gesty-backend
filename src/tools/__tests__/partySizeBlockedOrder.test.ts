@@ -44,6 +44,24 @@ vi.mock('../../services/ordersCapabilityGate.service', () => ({
   assertCanOrder: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
+vi.mock('../../services/productResolution.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../services/productResolution.service')>();
+  return {
+    ...actual,
+    issueProductResolutions: vi.fn(async ({ productIds }: { productIds: string[] }) =>
+      productIds.map((productId) => ({ resolutionId: `test:${productId}`, productId }))
+    ),
+    resolveProductForAdd: vi.fn(async ({ productId }: { productId: string }) => ({
+      ok: true,
+      resolution: { resolutionId: `test:${productId}`, productId },
+    })),
+    consumeProductResolution: vi.fn(async (_tx: unknown, { productId }: { productId: string }) => ({
+      ok: true,
+      resolution: { resolutionId: `test:${productId}`, productId, status: 'consumed' },
+    })),
+  };
+});
+
 import { prisma } from '../../lib/prisma';
 import { MenuService } from '../../services/menu.service';
 import { buildPendingPartySizeOrderContextLines } from '../../services/partySizeGoal.service';

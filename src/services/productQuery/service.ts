@@ -296,6 +296,7 @@ export async function executeProductQuery(
   // Persistir después del updateConversationState para que el patch no sea sobreescrito.
   await persistLastOffer({
     conversationId: ctx.conversation.id,
+    businessId: ctx.business.id,
     productId: matchedItem.id,
     productName: matchedItem.name,
     suggestedQuantity: 1,
