@@ -218,6 +218,8 @@ describe('nlpSubgraphNode — agent-first', () => {
       request: { products: ['ceviche'] },
       status: 'ACTIVE',
       blockers: [],
+      createdAt: '2026-09-28T00:00:00.000Z',
+      updatedAt: '2026-09-28T00:00:00.000Z',
     };
     vi.mocked(runHumanIntentPreflight).mockResolvedValueOnce(decision);
     vi.mocked(applyHumanIntentTurnDecision).mockImplementationOnce(async ({ messageId }) => {
@@ -243,6 +245,40 @@ describe('nlpSubgraphNode — agent-first', () => {
     const hybridContext = vi.mocked(runHybridReactAgent).mock.calls[0][0];
     expect(hybridContext.conversationState.metadata.humanIntentState.records).toEqual([active]);
     expect(update.handlerResult?.content).toBe('respuesta híbrida');
+  });
+
+  it('pasa a ReAct solo el fulfillmentCandidate devuelto por preflight', async () => {
+    const activeIntent = {
+      id: 'intent-order',
+      sequence: 1,
+      goal: 'PEDIR',
+      request: { products: ['ceviche'] },
+      status: 'ACTIVE',
+      blockers: [],
+    };
+    lifecycleMock.state = {
+      ...lifecycleMock.state,
+      records: [activeIntent],
+    };
+    lifecycleMock.metadata = {
+      lastOffer: { kind: 'ADD_ITEM' },
+      humanIntentState: lifecycleMock.state,
+    };
+    vi.mocked(runHumanIntentPreflight).mockResolvedValueOnce({
+      decision: 'CONTINUE_ACTIVE',
+      intentId: activeIntent.id,
+      answeredBlockerIds: [],
+      fulfillmentCandidate: { goalType: 'OBTENER_PERSONAS_DEL_PEDIDO' },
+    });
+
+    await nlpSubgraphNode(nlpState('3', lifecycleMock.metadata));
+
+    expect(runHybridReactAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        activeBlockingGoal: 'OBTENER_PERSONAS_DEL_PEDIDO',
+        goalFulfillmentCandidate: { goalType: 'OBTENER_PERSONAS_DEL_PEDIDO' },
+      })
+    );
   });
 
   it('AMBIGUOUS no entra a ReAct ni al fallback legacy', async () => {

@@ -861,6 +861,9 @@ export const nlpSubgraphNode = async (
         },
         getPartySizeGoalLedger(metadataBeforePreflight)
       ).open;
+      if (partySizeGoalActive) {
+        enrichedBase.activeBlockingGoal = 'OBTENER_PERSONAS_DEL_PEDIDO';
+      }
       const decision = await runHumanIntentPreflight({
         turn: { messageId, text: userMessage },
         context: {
@@ -927,6 +930,13 @@ export const nlpSubgraphNode = async (
         workingConversationState = await findOrCreateConversationState(conversation.id);
         enrichedBase.conversationState = workingConversationState;
         enrichedBase.humanIntentGateRevision = applied.state.revision;
+        const fulfillmentCandidate =
+          decision.decision === 'CONTINUE_ACTIVE'
+            ? decision.fulfillmentCandidate
+            : undefined;
+        if (fulfillmentCandidate) {
+          enrichedBase.goalFulfillmentCandidate = fulfillmentCandidate;
+        }
         allowLegacyFallback = false;
         console.log(
           JSON.stringify({

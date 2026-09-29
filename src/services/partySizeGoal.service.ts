@@ -6,7 +6,11 @@
  * Alias ledger legacy: RECOLECTAR_PARTY_SIZE (migración suave).
  */
 
-import { getIntentCatalogEntry, type IntentCandidate } from '../domain/intent/family';
+import {
+  getGoalFulfillmentContract,
+  getIntentCatalogEntry,
+  type IntentCandidate,
+} from '../domain/intent/family';
 import { computeCatalogPermission, type IntentLedgerEntry } from './intent/activeIntent.service';
 import { patchIntentLedgerEntry } from './intentLedger.repository';
 import {
@@ -22,6 +26,7 @@ import {
 import { isReservationFaqMode } from './reservationFaqDelegation.service';
 
 export const PARTY_SIZE_GOAL_TYPE = 'OBTENER_PERSONAS_DEL_PEDIDO' as const;
+const PARTY_SIZE_FULFILLMENT = getGoalFulfillmentContract(PARTY_SIZE_GOAL_TYPE);
 /** Key histórica en intentLedger (Opportunity ambient C.3). */
 export const PARTY_SIZE_GOAL_LEGACY_TYPE = 'RECOLECTAR_PARTY_SIZE' as const;
 
@@ -390,14 +395,19 @@ export type PartySizeGoal = {
 export const derivePartySizeGoal = (
   facts: PartySizeGoalFacts,
   ledger: PartySizeGoalLedger
-): PartySizeGoal => ({
-  open:
-    facts.partySize == null &&
-    facts.foodRelatedSignal &&
-    !facts.checkoutActive &&
-    !facts.reservationDomainActive &&
-    !ledger.abandonment,
-});
+): PartySizeGoal => {
+  if (!PARTY_SIZE_FULFILLMENT) {
+    throw new Error(`Missing fulfillment contract for ${PARTY_SIZE_GOAL_TYPE}`);
+  }
+  return {
+    open:
+      !PARTY_SIZE_FULFILLMENT.completionPredicate({ partySize: facts.partySize }) &&
+      facts.foodRelatedSignal &&
+      !facts.checkoutActive &&
+      !facts.reservationDomainActive &&
+      !ledger.abandonment,
+  };
+};
 
 /**
  * Señal “el usuario pregunta por comida” sin Ownership.
@@ -437,6 +447,8 @@ export const derivePartySizeGoalCandidate = (
   if (!perm.granted) return null;
 
   const cat = getIntentCatalogEntry(PARTY_SIZE_GOAL_TYPE);
+  const fulfillment = getGoalFulfillmentContract(PARTY_SIZE_GOAL_TYPE);
+  if (!fulfillment) throw new Error(`Missing fulfillment contract for ${PARTY_SIZE_GOAL_TYPE}`);
   return {
     type: PARTY_SIZE_GOAL_TYPE,
     kind: cat.kind,
@@ -448,6 +460,7 @@ export const derivePartySizeGoalCandidate = (
       'PROHIBIDO search_products, find_products_by_filter, present_product_cta, present_category, ' +
       'plan_order_lines o add_cart_item hasta save_party_size. ' +
       'Cuando lo diga, persistilo con save_party_size y recién ahí continuá con la comida del turno.',
+    fulfillment,
     tieBreak: 95,
   };
 };

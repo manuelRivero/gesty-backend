@@ -326,6 +326,80 @@ describe('Human Intent Preflight', () => {
     expect(HUMAN_INTENT_PREFLIGHT_SYSTEM_PROMPT).toContain('No crees otro HumanIntent');
   });
 
+  it.each(['3', 'Para 3', 'Somos tres'])(
+    'valida fulfillmentCandidate de party size para "%s"',
+    (text) => {
+      const requestInput = input({
+        turn: { messageId: `wamid.party-size-${text}`, text },
+        context: {
+          recentTurns: [{ role: 'assistant', text: '¿Para cuántas personas?' }],
+          lastAssistantQuestion: '¿Para cuántas personas?',
+          activeBlockingGoal: 'OBTENER_PERSONAS_DEL_PEDIDO',
+        },
+        state: { revision: 3, active: { ...active, blockers: [] }, pending: [] },
+      });
+      const decision = {
+        decision: 'CONTINUE_ACTIVE',
+        intentId: ACTIVE_ID,
+        answeredBlockerIds: [],
+        fulfillmentCandidate: { goalType: 'OBTENER_PERSONAS_DEL_PEDIDO' },
+      };
+
+      expect(validateHumanIntentTurnDecision(decision, requestInput)).toMatchObject({
+        fulfillmentCandidate: { goalType: 'OBTENER_PERSONAS_DEL_PEDIDO' },
+      });
+    }
+  );
+
+  it.each([
+    {
+      text: '¿Tienen ceviche?',
+      decision: {
+        decision: 'NEW_INTENT',
+        intents: [{ goal: 'EXPLORAR', request: { category: 'ceviche' } }],
+      },
+    },
+    {
+      text: 'Después te digo',
+      decision: {
+        decision: 'CONTINUE_ACTIVE',
+        intentId: ACTIVE_ID,
+        answeredBlockerIds: [],
+      },
+    },
+  ])('no fuerza fulfillment para "$text" aunque el Goal esté activo', ({ text, decision }) => {
+    const requestInput = input({
+      turn: { messageId: `wamid.not-fulfillment-${text}`, text },
+      context: {
+        recentTurns: [{ role: 'assistant', text: '¿Para cuántas personas?' }],
+        activeBlockingGoal: 'OBTENER_PERSONAS_DEL_PEDIDO',
+      },
+      state: { revision: 3, active: { ...active, blockers: [] }, pending: [] },
+    });
+
+    expect(validateHumanIntentTurnDecision(decision, requestInput)).not.toHaveProperty(
+      'fulfillmentCandidate'
+    );
+  });
+
+  it('rechaza fulfillmentCandidate sin Goal activo coincidente o sin contrato', () => {
+    const requestInput = input({
+      context: { recentTurns: [], activeBlockingGoal: undefined },
+      state: { revision: 3, active: { ...active, blockers: [] }, pending: [] },
+    });
+    expect(
+      validateHumanIntentTurnDecision(
+        {
+          decision: 'CONTINUE_ACTIVE',
+          intentId: ACTIVE_ID,
+          answeredBlockerIds: [],
+          fulfillmentCandidate: { goalType: 'OBTENER_PERSONAS_DEL_PEDIDO' },
+        },
+        requestInput
+      )
+    ).toBeNull();
+  });
+
   it('falla cerrado si CONTINUE_ACTIVE usa un intentId PENDING como blocker', async () => {
     invokeMock.mockResolvedValue({
       decision: 'CONTINUE_ACTIVE',

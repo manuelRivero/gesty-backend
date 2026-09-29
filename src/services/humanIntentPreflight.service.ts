@@ -2,6 +2,13 @@ import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { z } from 'zod';
 import { getIntentDetectorLlm } from '../config/llm';
 import {
+  getGoalFulfillmentContract,
+  INTENT_CATALOG,
+  isIntentType,
+  type GoalFulfillmentCandidate,
+  type IntentType,
+} from '../domain/intent/family';
+import {
   HUMAN_GOALS,
   mergeEquivalentPedirRequest,
   type HumanGoal,
@@ -28,7 +35,7 @@ export interface HumanIntentPreflightInput {
       kind: 'product' | 'category' | 'cart_item' | 'reservation';
       label: string;
     }>;
-    activeBlockingGoal?: 'OBTENER_PERSONAS_DEL_PEDIDO';
+    activeBlockingGoal?: IntentType;
   };
   state: {
     revision: number;
@@ -38,6 +45,8 @@ export interface HumanIntentPreflightInput {
 }
 
 const requestSchema = z.record(z.string(), z.unknown());
+const intentTypeSchema = z.enum(Object.keys(INTENT_CATALOG) as [IntentType, ...IntentType[]]);
+const fulfillmentCandidateSchema = z.object({ goalType: intentTypeSchema }).strict();
 const newIntentSchema = z.object({
   goal: z.enum(HUMAN_GOALS),
   request: requestSchema,
@@ -49,6 +58,7 @@ export const humanIntentTurnDecisionSchema = z.discriminatedUnion('decision', [
     decision: z.literal('CONTINUE_ACTIVE'),
     intentId: z.string().min(1),
     answeredBlockerIds: z.array(z.string()),
+    fulfillmentCandidate: fulfillmentCandidateSchema.optional(),
   }).strict(),
   z.object({
     decision: z.literal('NEW_INTENT'),
@@ -144,6 +154,16 @@ export const validateHumanIntentTurnDecision = (
     const blockerIds = new Set((input.state.active?.blockers ?? []).map((blocker) => blocker.id));
     if (decision.answeredBlockerIds.some((id) => !blockerIds.has(id))) return null;
     if (new Set(decision.answeredBlockerIds).size !== decision.answeredBlockerIds.length) return null;
+    if (decision.fulfillmentCandidate) {
+      const goalType = decision.fulfillmentCandidate.goalType;
+      if (
+        goalType !== input.context.activeBlockingGoal ||
+        !isIntentType(goalType) ||
+        !getGoalFulfillmentContract(goalType)
+      ) {
+        return null;
+      }
+    }
   }
   if (decision.decision === 'RESUME_PENDING') {
     if (!input.state.pending.some((intent) => intent.id === decision.intentId)) return null;

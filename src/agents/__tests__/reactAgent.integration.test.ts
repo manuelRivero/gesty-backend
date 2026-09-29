@@ -116,6 +116,7 @@ import {
   extractPrimaryProductId,
 } from '../../whatsappBuilders/hybridCta';
 import { findOrCreateConversationState, patchConversationMetadata } from '../../repositories';
+import { getHybridReasonerLlm } from '../../config/llm';
 import * as complementSuggestions from '../../services/complementSuggestions.service';
 import { prisma } from '../../lib/prisma';
 import { buildCategoryProductListMessage } from '../../services/category.service';
@@ -204,6 +205,63 @@ describe('runHybridReactAgent', () => {
     vi.mocked(createReactAgent).mockReturnValue({
       invoke: makeAgentInvoke(BOT_TEXT),
     } as any);
+  });
+
+  it.each(['3', 'Para 3', 'Somos tres'])(
+    'fuerza save_party_size para "%s" solo en la llamada inicial',
+    async (text) => {
+      const bindTools = vi.fn().mockReturnValue({ invoke: vi.fn() });
+      vi.mocked(getHybridReasonerLlm).mockReturnValue({ bindTools } as never);
+
+      await runHybridReactAgent(
+        makeCtx({
+          message: { text: { body: text } },
+          activeBlockingGoal: 'OBTENER_PERSONAS_DEL_PEDIDO',
+          goalFulfillmentCandidate: { goalType: 'OBTENER_PERSONAS_DEL_PEDIDO' },
+        }) as any
+      );
+
+      const createCalls = vi.mocked(createReactAgent).mock.calls;
+      const createArgs = createCalls[createCalls.length - 1]?.[0] as any;
+      expect(typeof createArgs.llm).toBe('function');
+      createArgs.llm({ messages: [{ _getType: () => 'human' }] });
+      createArgs.llm({ messages: [{ _getType: () => 'tool' }] });
+
+      expect(bindTools).toHaveBeenNthCalledWith(
+        1,
+        expect.arrayContaining([expect.objectContaining({ name: 'save_party_size' })]),
+        expect.objectContaining({
+          parallel_tool_calls: false,
+          tool_choice: 'save_party_size',
+        })
+      );
+      expect(bindTools).toHaveBeenNthCalledWith(
+        2,
+        expect.any(Array),
+        { parallel_tool_calls: true }
+      );
+    }
+  );
+
+  it('mantiene el binding estático sin candidate, con Goal activo o sin Goal', async () => {
+    const bindTools = vi.fn().mockReturnValue({ invoke: vi.fn() });
+    vi.mocked(getHybridReasonerLlm).mockReturnValue({ bindTools } as never);
+
+    await runHybridReactAgent(
+      makeCtx({ activeBlockingGoal: 'OBTENER_PERSONAS_DEL_PEDIDO' }) as any
+    );
+    let createCalls = vi.mocked(createReactAgent).mock.calls;
+    let createArgs = createCalls[createCalls.length - 1]?.[0] as any;
+    expect(typeof createArgs.llm).not.toBe('function');
+    expect(bindTools.mock.calls[0]?.[1]).toEqual({ parallel_tool_calls: true });
+
+    resetAgentCacheForTesting();
+    bindTools.mockClear();
+    await runHybridReactAgent(makeCtx({ message: { text: { body: '3' } } }) as any);
+    createCalls = vi.mocked(createReactAgent).mock.calls;
+    createArgs = createCalls[createCalls.length - 1]?.[0] as any;
+    expect(typeof createArgs.llm).not.toBe('function');
+    expect(bindTools.mock.calls[0]?.[1]).toEqual({ parallel_tool_calls: true });
   });
 
   it('sin present_product_cta → texto plano y planCta no corre', async () => {

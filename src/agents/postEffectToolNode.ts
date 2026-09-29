@@ -2,6 +2,7 @@ import { ToolMessage } from '@langchain/core/messages';
 import type { ToolCall } from '@langchain/core/messages/tool';
 import type { RunnableConfig } from '@langchain/core/runnables';
 import { ToolNode } from '@langchain/langgraph/prebuilt';
+import { getGoalFulfillmentContractsForTool } from '../domain/intent/family';
 import { reconcileHumanIntentAfterToolEffect } from '../services/humanIntentReconciliation.service';
 
 export class PostEffectToolNode extends ToolNode {
@@ -43,6 +44,17 @@ export class PostEffectToolNode extends ToolNode {
         typeof (descriptor as { kind?: unknown }).kind === 'string'
           ? (descriptor as { kind: string }).kind
           : call.name;
+
+      for (const { goalType, contract } of getGoalFulfillmentContractsForTool(call.name)) {
+        console.log(JSON.stringify({
+          event: '[goal-fulfillment]',
+          goal: goalType,
+          tool: call.name,
+          expectedEffect: contract.expectedEffect,
+          actualEffect: kind,
+          result: contract.expectedEffect === kind ? 'effect_verified' : 'effect_mismatch',
+        }));
+      }
 
       await reconcileHumanIntentAfterToolEffect({
         conversationId,

@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import type { WhatsAppListMessage } from '../../domain/intent/whatsappTemplates';
 import { prisma } from '../../lib/prisma';
+import { isValidPartySize } from '../../helpers/peopleCountExtraction';
 import type { ConversationMetadata } from './types';
 import {
   normalizeWhatsAppBoldMarkers,
@@ -155,7 +156,7 @@ export function getRequestedPartySize(
     meta.peopleCount ??
     meta.requestedPartySize ??
     meta.pendingProductQueryQuantity;
-  return v != null && v > 0 ? v : undefined;
+  return isValidPartySize(v) ? v : undefined;
 }
 
 /**

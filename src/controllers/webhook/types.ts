@@ -2,6 +2,7 @@ import type {
   WhatsAppInteractiveMessage,
   WhatsAppListMessage,
 } from '../../domain/intent/whatsappTemplates';
+import type { GoalFulfillmentCandidate, IntentType } from '../../domain/intent/family';
 import { ConversationIntent } from '../../types/conversationIntent';
 import { IntentDetectionResult } from '../../services/ai/detection.service';
 import type { CapabilityAccessResult } from '../../services/evaluateBusinessCapabilityAccess.service';
@@ -82,6 +83,8 @@ export interface EnrichedContext extends WebhookContext {
   partySizeJustConfirmed?: number;
   /** Revision del HumanIntentState usada solo en llamadas ReAct posteriores al preflight NLP. */
   humanIntentGateRevision?: number;
+  activeBlockingGoal?: IntentType;
+  goalFulfillmentCandidate?: GoalFulfillmentCandidate;
 }
 
 export type HandlerFollowUp =

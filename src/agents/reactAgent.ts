@@ -13,7 +13,7 @@
 
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { HumanIntentToolNode } from './humanIntentToolNode';
-import { HumanMessage } from '@langchain/core/messages';
+import { HumanMessage, type BaseMessage } from '@langchain/core/messages';
 import { getHybridReasonerLlm } from '../config/llm';
 import { buildAgentHistoryMessages } from './conversationHistory';
 import { buildContextMessage } from './contextMessage';
@@ -25,6 +25,7 @@ import {
 import { buildHybridAgentSystemPrompt } from '../prompts/botPersonality';
 import { resolvePersonalityForBusiness } from '../services/botPersonality.service';
 import { allReactTools } from '../tools';
+import { getGoalFulfillmentContract } from '../domain/intent/family';
 import type {
   EnrichedContext,
   HandlerFollowUp,
@@ -111,14 +112,15 @@ export type PresentationCommand =
 const buildAgent = (
   personalityId: string,
   personalityPrompt: string,
-  timezone?: string | null
+  timezone?: string | null,
+  requiredToolChoice?: string
 ) => {
   const checkoutDelegation = isCheckoutAgentEnabled();
   const reservationDelegation = isReservationAgentEnabled();
   const cultureKey = timezone?.trim() || 'default';
   const cacheKey = `${personalityId}:${checkoutDelegation ? 'checkout' : 'main'}:${
     reservationDelegation ? 'reservation' : 'noreservation'
-  }:${cultureKey}`;
+  }:${cultureKey}:${requiredToolChoice ?? 'auto'}`;
   let agent = cachedAgents.get(cacheKey);
   if (!agent) {
     const tools = [
@@ -128,12 +130,22 @@ const buildAgent = (
       ...(reservationDelegation ? [startReservationSessionTool] : []),
     ];
     const llm = getHybridReasonerLlm();
-    // Varios add_cart_item del mismo turno salen juntos. La escritura del
-    // carrito se serializa en la tool; acá el modelo puede emitirlas en paralelo.
-    // El mock de tests no implementa bindTools.
+    if (typeof llm.bindTools !== 'function' && requiredToolChoice) {
+      throw new Error('The configured ReAct model does not support required tool_choice');
+    }
     const llmForAgent =
       typeof llm.bindTools === 'function'
-        ? llm.bindTools(tools, { parallel_tool_calls: true })
+        ? requiredToolChoice
+          ? (state: { messages: BaseMessage[] }) => {
+              const lastMessage = state.messages[state.messages.length - 1];
+              const initialHumanTurn = lastMessage?._getType() === 'human';
+              const toolChoice = initialHumanTurn ? requiredToolChoice : undefined;
+              return llm.bindTools(tools, {
+                parallel_tool_calls: !toolChoice,
+                ...(toolChoice ? { tool_choice: toolChoice } : {}),
+              });
+            }
+          : llm.bindTools(tools, { parallel_tool_calls: true })
         : llm;
     agent = createReactAgent({
       llm: llmForAgent,
@@ -1224,7 +1236,37 @@ export const runHybridReactAgent = async (
     typeof ctx.business === 'object' && ctx.business
       ? (ctx.business as { timezone?: string | null }).timezone
       : null;
-  const agent = buildAgent(personalityId, promptText, businessTimezone);
+  const activeBlockingGoal = ctx.activeBlockingGoal;
+  const fulfillmentCandidate = ctx.goalFulfillmentCandidate;
+  const fulfillmentContract =
+    fulfillmentCandidate && fulfillmentCandidate.goalType === activeBlockingGoal
+      ? getGoalFulfillmentContract(fulfillmentCandidate.goalType)
+      : undefined;
+  const requiredToolChoice = fulfillmentContract?.fulfillmentTool;
+  const availableTools = [
+    ...allReactTools,
+    startAddressEditSessionTool,
+    ...(isCheckoutAgentEnabled() ? [startCheckoutSessionTool] : []),
+    ...(isReservationAgentEnabled() ? [startReservationSessionTool] : []),
+  ];
+  const fulfillmentToolAvailable = Boolean(
+    requiredToolChoice && availableTools.some((tool) => tool.name === requiredToolChoice)
+  );
+  const enforcedToolChoice = fulfillmentToolAvailable ? requiredToolChoice : undefined;
+  if (activeBlockingGoal) {
+    console.log(JSON.stringify({
+      event: '[goal-fulfillment]',
+      goal: activeBlockingGoal,
+      ...(enforcedToolChoice ? { tool: enforcedToolChoice } : {}),
+      toolChoice: enforcedToolChoice ? 'required' : 'none',
+    }));
+  }
+  const agent = buildAgent(
+    personalityId,
+    promptText,
+    businessTimezone,
+    enforcedToolChoice
+  );
 
   const customerId =
     typeof ctx.customer === 'object' && ctx.customer
@@ -1283,6 +1325,25 @@ export const runHybridReactAgent = async (
   const agentMessages = (out as { messages?: unknown[] }).messages ?? [];
   const llmProse = extractFinalText(out);
   logToolCallTrace(agentMessages, conversationId, ctx.turnId);
+  if (enforcedToolChoice && fulfillmentCandidate) {
+    const emitted = agentMessages.some((message) => {
+      if (typeof message !== 'object' || message === null) return false;
+      const calls = (message as { tool_calls?: unknown }).tool_calls;
+      return Array.isArray(calls) && calls.some(
+        (call) =>
+          typeof call === 'object' &&
+          call !== null &&
+          (call as { name?: unknown }).name === enforcedToolChoice
+      );
+    });
+    console.log(JSON.stringify({
+      event: '[goal-fulfillment]',
+      goal: fulfillmentCandidate.goalType,
+      tool: enforcedToolChoice,
+      toolChoice: 'required',
+      result: emitted ? 'tool_emitted' : 'tool_not_emitted',
+    }));
+  }
   const signals = extractHybridSignals(agentMessages);
   const metaAtTurnStart = normalizeMetadata(ctx.conversationState?.metadata);
   const pendingCancelAtTurnStart = metaAtTurnStart.pending_cancel_disambiguation;

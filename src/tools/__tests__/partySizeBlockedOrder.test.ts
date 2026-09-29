@@ -132,6 +132,17 @@ describe('pedido en espera cuando falta el número', () => {
     expect(metadata.peopleCount).toBeUndefined();
   });
 
+  it.each([0, 100, 1.5])('save_party_size rechaza count inválido %s sin persistir', async (count) => {
+    const result = JSON.parse(
+      (await savePartySizeTool.func({ count }, undefined, TURN_2)) as string
+    );
+
+    expect(result).toMatchObject({ success: false, error: 'count_required' });
+    expect(patchConversationMetadata).not.toHaveBeenCalled();
+    expect(metadata.peopleCount).toBeUndefined();
+    expect(metadata.requestedPartySize).toBeUndefined();
+  });
+
   it('después de guardar el número el estado sigue mostrando el pedido sin historial', () => {
     const lines = buildPendingPartySizeOrderContextLines({
       peopleCount: 3,

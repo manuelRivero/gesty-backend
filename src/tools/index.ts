@@ -32,6 +32,7 @@ import {
 } from '../repositories';
 import { prisma } from '../lib/prisma';
 import { buildGoogleMapsUrl } from '../utils/googleMapsUrl';
+import { partySizeSchema } from '../helpers/peopleCountExtraction';
 import {
   fetchComplementaryMenuItems,
   getMenuItemCategoryTag,
@@ -3131,12 +3132,9 @@ export const startItemNoteTool = new DynamicStructuredTool<
 // ---------------------------------------------------------------------------
 
 const savePartySizeSchema = z.object({
-  count: z
-    .number()
-    .int()
-    .min(1)
-    .max(99)
-    .describe('Número de personas que van a comer (1–99); no es cantidad de productos.'),
+  count: partySizeSchema.describe(
+    'Número de personas que van a comer (1–99); no es cantidad de productos.'
+  ),
 });
 type SavePartySizeInput = z.infer<typeof savePartySizeSchema>;
 

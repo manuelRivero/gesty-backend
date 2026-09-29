@@ -5,6 +5,8 @@
  * código solo la tipa. Agregar un IntentType es PR de catálogo (ADR-0011).
  */
 
+import { isValidPartySize } from '../../helpers/peopleCountExtraction';
+
 export type IntentKind = 'goal' | 'opportunity' | 'alert';
 export type IntentPressure = 'blocking' | 'resumable' | 'ambient' | 'emit_once';
 export type IntentCloseMode = 'fact_change' | 'decay' | 'emission' | 'emission_then_fact';
@@ -45,6 +47,7 @@ export type IntentCandidate = {
   kind: IntentKind;
   pressure: IntentPressure;
   closeMode: IntentCloseMode;
+  fulfillment?: GoalFulfillmentContract;
   /** Hint corto para [ESTADO DEL CLIENTE]; nunca copy final al cliente. */
   hint: string;
   /** Desempate dentro del mismo nivel de saliencia. Mayor = más urgente. */
@@ -63,7 +66,24 @@ export type IntentCatalogEntry = {
   ttlMs: number | null;
   /** Si true, el cliente no puede silenciarla (Alerts críticas). */
   critical: boolean;
+  fulfillment?: GoalFulfillmentContract;
 };
+
+export type GoalFulfillmentToolName = 'save_party_size';
+export type GoalFulfillmentEffectKind = 'party_size_persisted';
+export type GoalRequiredFact = 'PERSONAS_DEL_PEDIDO';
+
+export type GoalFulfillmentContract = {
+  requiredFact: GoalRequiredFact;
+  fulfillmentTool: GoalFulfillmentToolName;
+  expectedEffect: GoalFulfillmentEffectKind;
+  completionPredicate: (facts: Readonly<Record<string, unknown>>) => boolean;
+};
+
+export type GoalFulfillmentCandidate = { goalType: IntentType };
+
+const hasValidPartySizeFact = (facts: Readonly<Record<string, unknown>>): boolean =>
+  isValidPartySize(facts.partySize);
 
 /** Materialización de TAXONOMIA §2–§4. Toda key de IntentType debe existir acá. */
 export const INTENT_CATALOG: Record<IntentType, IntentCatalogEntry> = {
@@ -238,6 +258,12 @@ export const INTENT_CATALOG: Record<IntentType, IntentCatalogEntry> = {
     cooldownMs: 30 * 1000,
     ttlMs: null,
     critical: false,
+    fulfillment: {
+      requiredFact: 'PERSONAS_DEL_PEDIDO',
+      fulfillmentTool: 'save_party_size',
+      expectedEffect: 'party_size_persisted',
+      completionPredicate: hasValidPartySizeFact,
+    },
   },
   OFRECER_PROMOCION: {
     kind: 'opportunity',
@@ -323,6 +349,21 @@ export const getIntentCatalogEntry = (type: IntentType): IntentCatalogEntry => {
   }
   return entry;
 };
+
+export const isIntentType = (value: string): value is IntentType =>
+  Object.prototype.hasOwnProperty.call(INTENT_CATALOG, value);
+
+export const getGoalFulfillmentContract = (
+  type: IntentType
+): GoalFulfillmentContract | undefined => INTENT_CATALOG[type].fulfillment;
+
+export const getGoalFulfillmentContractsForTool = (toolName: string) =>
+  (Object.entries(INTENT_CATALOG) as Array<[IntentType, IntentCatalogEntry]>)
+    .flatMap(([goalType, entry]) =>
+      entry.fulfillment?.fulfillmentTool === toolName
+        ? [{ goalType, contract: entry.fulfillment }]
+        : []
+    );
 
 /**
  * Orden de saliencia (ADR-0008 / ADR-0009). Menor = más urgente.

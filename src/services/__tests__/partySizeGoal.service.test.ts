@@ -38,7 +38,11 @@ import {
   deriveIntentCandidates,
   rankActiveIntent,
 } from '../intent/activeIntent.service';
-import { getIntentCatalogEntry } from '../../domain/intent/family';
+import {
+  getGoalFulfillmentContractsForTool,
+  getIntentCatalogEntry,
+} from '../../domain/intent/family';
+import { getRequestedPartySize } from '../productQuery/utils';
 import { findOrCreateConversationState, patchConversationMetadata } from '../../repositories';
 
 const EMPTY_LEDGER: PartySizeGoalLedger = {
@@ -227,6 +231,42 @@ describe('derivePartySizeGoalCandidate — presupuesto 3', () => {
     expect(c?.type).toBe(PARTY_SIZE_GOAL_TYPE);
     expect(c?.kind).toBe('goal');
     expect(c?.pressure).toBe('blocking');
+  });
+
+  it('declara fulfillment estructurado y cierra solo con party size válido', () => {
+    const contract = getIntentCatalogEntry(PARTY_SIZE_GOAL_TYPE).fulfillment;
+    expect(contract).toMatchObject({
+      requiredFact: 'PERSONAS_DEL_PEDIDO',
+      fulfillmentTool: 'save_party_size',
+      expectedEffect: 'party_size_persisted',
+    });
+    expect(contract?.completionPredicate({ partySize: 3 })).toBe(true);
+    expect(contract?.completionPredicate({ partySize: 0 })).toBe(false);
+    expect(contract?.completionPredicate({ partySize: 100 })).toBe(false);
+    expect(contract?.completionPredicate({ partySize: 1.5 })).toBe(false);
+    expect(contract?.completionPredicate({ partySize: null })).toBe(false);
+    expect(getGoalFulfillmentContractsForTool('save_party_size')).toEqual([
+      expect.objectContaining({
+        goalType: PARTY_SIZE_GOAL_TYPE,
+        contract: expect.objectContaining({ expectedEffect: 'party_size_persisted' }),
+      }),
+    ]);
+    expect(getGoalFulfillmentContractsForTool('search_products')).toEqual([]);
+  });
+
+  it('el lector de Fact acepta solo valores válidos según la definición canónica', () => {
+    expect(getRequestedPartySize({ peopleCount: 3 })).toBe(3);
+    expect(getRequestedPartySize({ requestedPartySize: 3 })).toBe(3);
+    expect(getRequestedPartySize({ peopleCount: 100 })).toBeUndefined();
+    expect(getRequestedPartySize({ peopleCount: 1.5 })).toBeUndefined();
+  });
+
+  it('publica el contrato en el candidato que consume el contexto', () => {
+    const candidate = derivePartySizeGoalCandidate(
+      { partySize: null, foodRelatedSignal: true, checkoutActive: false },
+      { surfaceCount: 0 }
+    );
+    expect(candidate?.fulfillment?.fulfillmentTool).toBe('save_party_size');
   });
 
   it('enmudece al agotar maxSurfaces (3)', () => {
