@@ -1,9 +1,11 @@
-import { ToolMessage } from '@langchain/core/messages';
+import { AIMessage, BaseMessage, ToolMessage } from '@langchain/core/messages';
 import type { ToolCall } from '@langchain/core/messages/tool';
 import type { RunnableConfig } from '@langchain/core/runnables';
+import { Command, isCommand, Send } from '@langchain/langgraph';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { getHumanIntentState, type HumanIntentRecord } from '../services/humanIntentState.service';
+import { resolveProductForAdd } from '../services/productResolution.service';
 import { PostEffectToolNode } from './postEffectToolNode';
 
 const uuidSchema = z.string().uuid();
@@ -161,7 +163,171 @@ const internalToolError = (call: ToolCall, code: string, intentId?: string): Too
     }),
   });
 
+const PRODUCT_SEARCH_TOOLS = new Set(['search_products', 'find_products_by_filter']);
+
+const productIdFrom = (call: ToolCall): string | null => {
+  const args = call.args as Record<string, unknown>;
+  return typeof args.productId === 'string' ? args.productId : null;
+};
+
+const resolutionSucceededFor = (message: ToolMessage, call: ToolCall): boolean => {
+  if (message.status !== 'success' || typeof message.content !== 'string') return false;
+  try {
+    const result = JSON.parse(message.content) as Record<string, unknown>;
+    const expectedResolutionId = (call.args as Record<string, unknown>).resolutionId;
+    return (
+      result.success === true &&
+      result.productId === productIdFrom(call) &&
+      (typeof expectedResolutionId !== 'string' || result.resolutionId === expectedResolutionId)
+    );
+  } catch {
+    return false;
+  }
+};
+
+const deferredProductAdd = (call: ToolCall): ToolMessage =>
+  new ToolMessage({
+    name: call.name,
+    tool_call_id: call.id ?? '',
+    status: 'success',
+    content: JSON.stringify({
+      success: false,
+      error: 'product_resolution_required',
+      reason: 'resolution_missing',
+      message: 'El producto todavía no tiene una resolución vigente.',
+      instruction: 'Esperá los resultados de búsqueda y replanteá en el siguiente paso antes de agregarlo.',
+    }),
+  });
+
 export class HumanIntentToolNode extends PostEffectToolNode {
+  protected override async run(input: unknown, config: RunnableConfig) {
+    const messages: BaseMessage[] = Array.isArray(input)
+      ? input as BaseMessage[]
+      : typeof input === 'object' && input !== null && 'messages' in input && Array.isArray(input.messages)
+        ? input.messages as BaseMessage[]
+        : [];
+    const aiMessage = [...messages].reverse().find((message) => message.getType() === 'ai');
+      const calls = aiMessage instanceof AIMessage ? aiMessage.tool_calls : undefined;
+    if (!calls?.length) return super.run(input, config);
+
+    const completedCallIds = new Set(
+      messages
+        .filter((message): message is ToolMessage => ToolMessage.isInstance(message))
+        .map((message) => message.tool_call_id)
+    );
+    const pendingCalls = calls.filter((call) => call.id == null || !completedCallIds.has(call.id));
+    const addCalls = pendingCalls.filter((call) => call.name === 'add_cart_item');
+    const resolutionCalls = pendingCalls.filter((call) => call.name === 'resolve_product');
+    const hasProductSearch = pendingCalls.some((call) => PRODUCT_SEARCH_TOOLS.has(call.name));
+    if (addCalls.length === 0 || (!hasProductSearch && resolutionCalls.length === 0)) {
+      return super.run(input, config);
+    }
+
+    const configurable = config.configurable as
+      | { businessId?: unknown; conversationId?: unknown; turnId?: unknown }
+      | undefined;
+    const resolutionByAdd = new Map<ToolCall, ToolCall | undefined>();
+    const addHasBatchResolution = new Set<ToolCall>();
+    for (const addCall of addCalls) {
+      const addArgs = addCall.args as Record<string, unknown>;
+      const resolutionCall = resolutionCalls.find((call) => {
+        const resolutionArgs = call.args as Record<string, unknown>;
+        return (
+          resolutionArgs.productId === addArgs.productId &&
+          (typeof addArgs.resolutionId !== 'string' || resolutionArgs.resolutionId === addArgs.resolutionId)
+        );
+      });
+      if (resolutionCall) {
+        resolutionByAdd.set(addCall, resolutionCall);
+        addHasBatchResolution.add(addCall);
+      }
+    }
+
+    const hasMissingResolutionContext =
+      typeof configurable?.businessId !== 'string' ||
+      typeof configurable?.conversationId !== 'string';
+    const deferredAdds = new Set<ToolCall>();
+    if (hasProductSearch) {
+      await Promise.all(addCalls.map(async (call) => {
+        if (addHasBatchResolution.has(call)) return;
+        if (hasMissingResolutionContext) {
+          deferredAdds.add(call);
+          return;
+        }
+        const args = call.args as Record<string, unknown>;
+        const productId = productIdFrom(call);
+        if (!productId) {
+          deferredAdds.add(call);
+          return;
+        }
+        try {
+          const resolution = await resolveProductForAdd({
+            productId,
+            businessId: configurable.businessId as string,
+            conversationId: configurable.conversationId as string,
+            resolutionId: typeof args.resolutionId === 'string' ? args.resolutionId : undefined,
+            turnId: typeof configurable.turnId === 'string' ? configurable.turnId : undefined,
+          });
+          if (!resolution.ok) deferredAdds.add(call);
+        } catch {
+          deferredAdds.add(call);
+        }
+      }));
+    }
+
+    const batchResolutionCalls = [...new Set(resolutionByAdd.values())].filter(
+      (call): call is ToolCall => call !== undefined
+    );
+    const independentCalls = pendingCalls.filter(
+      (call) => !batchResolutionCalls.includes(call) && !addCalls.includes(call)
+    );
+    const preAddCalls = [...independentCalls, ...batchResolutionCalls];
+    const preAddResults = await Promise.all(
+      preAddCalls.map((call) => this.runTool(call, config))
+    );
+    const resolutionMessages = new Map(
+      batchResolutionCalls.map((call) => [call, preAddResults[preAddCalls.indexOf(call)]])
+    );
+    const addResults = await Promise.all(addCalls.map(async (call) => {
+      if (deferredAdds.has(call)) return deferredProductAdd(call);
+      const resolutionCall = resolutionByAdd.get(call);
+      if (resolutionCall) {
+        const result = resolutionMessages.get(resolutionCall);
+        if (!(result instanceof ToolMessage) || !resolutionSucceededFor(result, call)) {
+          return deferredProductAdd(call);
+        }
+      }
+      return this.runTool(call, config);
+    }));
+
+    const resultByCall = new Map<ToolCall, unknown>();
+    preAddCalls.forEach((call, index) => resultByCall.set(call, preAddResults[index]));
+    addCalls.forEach((call, index) => resultByCall.set(call, addResults[index]));
+    const outputs = pendingCalls.map((call) => resultByCall.get(call) ?? deferredProductAdd(call));
+    if (!outputs.some(isCommand)) return Array.isArray(input) ? outputs : { messages: outputs };
+
+    const combinedOutputs: unknown[] = [];
+    let parentSends: Send[] | null = null;
+    for (const output of outputs) {
+      if (isCommand(output)) {
+        if (
+          output.graph === Command.PARENT &&
+          Array.isArray(output.goto) &&
+          output.goto.every((send) => send instanceof Send)
+        ) {
+          if (parentSends) parentSends.push(...output.goto);
+          else parentSends = [...output.goto];
+        } else {
+          combinedOutputs.push(output);
+        }
+      } else {
+        combinedOutputs.push(Array.isArray(input) ? [output] : { messages: [output] });
+      }
+    }
+    if (parentSends) combinedOutputs.push(new Command({ graph: Command.PARENT, goto: parentSends }));
+    return combinedOutputs;
+  }
+
   protected override async runTool(call: ToolCall, config: RunnableConfig) {
     const configurable = config.configurable as
       | { conversationId?: unknown; businessId?: unknown; humanIntentGateRevision?: unknown }

@@ -8,11 +8,13 @@ const {
   itemFindFirstMock,
   categoryFindFirstMock,
   reconcileAfterToolMock,
+  resolveProductForAddMock,
 } = vi.hoisted(() => ({
   getStateMock: vi.fn(),
   itemFindFirstMock: vi.fn(),
   categoryFindFirstMock: vi.fn(),
   reconcileAfterToolMock: vi.fn(),
+  resolveProductForAddMock: vi.fn(),
 }));
 
 vi.mock('../../services/humanIntentState.service', () => ({
@@ -21,6 +23,10 @@ vi.mock('../../services/humanIntentState.service', () => ({
 
 vi.mock('../../services/humanIntentReconciliation.service', () => ({
   reconcileHumanIntentAfterToolEffect: reconcileAfterToolMock,
+}));
+
+vi.mock('../../services/productResolution.service', () => ({
+  resolveProductForAdd: resolveProductForAddMock,
 }));
 
 vi.mock('../../lib/prisma', () => ({
@@ -67,10 +73,14 @@ const state = (records: Array<Record<string, unknown>> = [ACTIVE, PENDING], revi
   records,
 });
 
+
 const toolCall = (name: string, args: Record<string, unknown>) =>
+  toolCalls([{ name, args, id: `call-${name}` }]);
+
+const toolCalls = (calls: Array<{ name: string; args: Record<string, unknown>; id: string }>) =>
   new AIMessage({
     content: '',
-    tool_calls: [{ id: `call-${name}`, name, args, type: 'tool_call' }],
+    tool_calls: calls.map(({ id, name, args }) => ({ id, name, args, type: 'tool_call' })),
   });
 
 const makeTool = (name: string, effect: () => unknown) =>
@@ -101,6 +111,17 @@ const makeAddCartItemTool = (effect: () => unknown) =>
     },
   });
 
+const makeResolveProductTool = (effect: () => unknown, success = true) =>
+  new DynamicStructuredTool({
+    name: 'resolve_product',
+    description: 'resolve product',
+    schema: z.object({ productId: z.string().uuid(), resolutionId: z.string() }),
+    func: async () => {
+      await effect();
+      return JSON.stringify({ success, productId: PRODUCT_ID, resolutionId: 'resolution-1' });
+    },
+  });
+
 const config = (revision = 7) => ({
   configurable: {
     conversationId: 'conv-1',
@@ -115,6 +136,7 @@ describe('HumanIntentToolNode', () => {
     vi.clearAllMocks();
     getStateMock.mockResolvedValue(state());
     reconcileAfterToolMock.mockResolvedValue(null);
+    resolveProductForAddMock.mockResolvedValue({ ok: false, reason: 'resolution_missing' });
     itemFindFirstMock.mockResolvedValue({ name: 'Ceviche Clásico' });
     categoryFindFirstMock.mockResolvedValue({ name: 'Postres' });
   });
@@ -296,5 +318,149 @@ describe('HumanIntentToolNode', () => {
     expect(JSON.parse(String(result.messages[0].content))).toMatchObject({
       error: HUMAN_INTENT_STATE_STALE,
     });
+  });
+
+  it('mantiene en paralelo búsquedas independientes del mismo batch', async () => {
+    let started = 0;
+    let releaseSearches!: () => void;
+    const searchesReleased = new Promise<void>((resolve) => {
+      releaseSearches = resolve;
+    });
+    const searchEffect = vi.fn(async () => {
+      started += 1;
+      if (started === 2) releaseSearches();
+      await searchesReleased;
+    });
+    const node = new HumanIntentToolNode([
+      makeTool('search_products', searchEffect),
+      makeAddCartItemTool(vi.fn()),
+    ]);
+
+    const result = await node.invoke(
+      {
+        messages: [toolCalls([
+          { id: 'search-1', name: 'search_products', args: { keyword: 'ceviche' } },
+          { id: 'search-2', name: 'search_products', args: { keyword: 'lomo' } },
+          { id: 'add-1', name: 'add_cart_item', args: { productId: PRODUCT_ID } },
+        ])],
+      },
+      config()
+    );
+
+    expect(searchEffect).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(result.messages[2].content))).toMatchObject({
+      success: false,
+      error: 'product_resolution_required',
+    });
+  });
+
+  it('ejecuta resolve_product antes de agregar solo ante resolución exitosa', async () => {
+    const events: string[] = [];
+    const node = new HumanIntentToolNode([
+      makeResolveProductTool(() => { events.push('resolve'); }),
+      makeAddCartItemTool(() => { events.push('add'); }),
+    ]);
+
+    await node.invoke(
+      {
+        messages: [toolCalls([
+          {
+            id: 'add-1',
+            name: 'add_cart_item',
+            args: { productId: PRODUCT_ID, resolutionId: 'resolution-1' },
+          },
+          {
+            id: 'resolve-1',
+            name: 'resolve_product',
+            args: { productId: PRODUCT_ID, resolutionId: 'resolution-1' },
+          },
+        ])],
+      },
+      config()
+    );
+
+    expect(events).toEqual(['resolve', 'add']);
+  });
+
+  it('no invoca add_cart_item cuando resolve_product falla aunque el ToolMessage sea success', async () => {
+    const resolveEffect = vi.fn();
+    const addEffect = vi.fn();
+    const node = new HumanIntentToolNode([
+      makeResolveProductTool(resolveEffect, false),
+      makeAddCartItemTool(addEffect),
+    ]);
+
+    const result = await node.invoke(
+      {
+        messages: [toolCalls([
+          { id: 'resolve-1', name: 'resolve_product', args: { productId: PRODUCT_ID, resolutionId: 'resolution-1' } },
+          { id: 'add-1', name: 'add_cart_item', args: { productId: PRODUCT_ID, resolutionId: 'resolution-1' } },
+        ])],
+      },
+      config()
+    );
+
+    expect(resolveEffect).toHaveBeenCalledOnce();
+    expect(addEffect).not.toHaveBeenCalled();
+    expect(JSON.parse(String(result.messages[1].content))).toMatchObject({
+      success: false,
+      error: 'product_resolution_required',
+    });
+  });
+
+  it('ejecuta la búsqueda y difiere el alta prematura al siguiente ciclo', async () => {
+    const events: string[] = [];
+    const addEffect = vi.fn();
+    const node = new HumanIntentToolNode([
+      makeTool('search_products', () => { events.push('search'); }),
+      makeAddCartItemTool(addEffect),
+    ]);
+
+    const result = await node.invoke(
+      {
+        messages: [toolCalls([
+          { id: 'search-1', name: 'search_products', args: { keyword: 'ceviche' } },
+          { id: 'add-1', name: 'add_cart_item', args: { productId: PRODUCT_ID } },
+        ])],
+      },
+      config()
+    );
+
+    expect(resolveProductForAddMock).toHaveBeenCalledWith({
+      productId: PRODUCT_ID,
+      businessId: 'biz-1',
+      conversationId: 'conv-1',
+      resolutionId: undefined,
+      turnId: undefined,
+    });
+    expect(events).toEqual(['search']);
+    expect(addEffect).not.toHaveBeenCalled();
+    expect(JSON.parse(String(result.messages[1].content))).toMatchObject({
+      success: false,
+      error: 'product_resolution_required',
+    });
+  });
+
+  it('permite alta junto a una búsqueda si ProductResolution ya valida el producto', async () => {
+    resolveProductForAddMock.mockResolvedValue({ ok: true, resolution: { productId: PRODUCT_ID } });
+    const searchEffect = vi.fn();
+    const addEffect = vi.fn();
+    const node = new HumanIntentToolNode([
+      makeTool('search_products', searchEffect),
+      makeAddCartItemTool(addEffect),
+    ]);
+
+    await node.invoke(
+      {
+        messages: [toolCalls([
+          { id: 'search-1', name: 'search_products', args: { keyword: 'ceviche' } },
+          { id: 'add-1', name: 'add_cart_item', args: { productId: PRODUCT_ID } },
+        ])],
+      },
+      config()
+    );
+
+    expect(searchEffect).toHaveBeenCalledOnce();
+    expect(addEffect).toHaveBeenCalledOnce();
   });
 });
