@@ -219,7 +219,9 @@ export class HumanIntentToolNode extends PostEffectToolNode {
     const addCalls = pendingCalls.filter((call) => call.name === 'add_cart_item');
     const resolutionCalls = pendingCalls.filter((call) => call.name === 'resolve_product');
     const hasProductSearch = pendingCalls.some((call) => PRODUCT_SEARCH_TOOLS.has(call.name));
-    if (addCalls.length === 0 || (!hasProductSearch && resolutionCalls.length === 0)) {
+    const hasSearchResolutionDependency = hasProductSearch && resolutionCalls.length > 0;
+    const hasAddDependency = addCalls.length > 0 && (hasProductSearch || resolutionCalls.length > 0);
+    if (!hasSearchResolutionDependency && !hasAddDependency) {
       return super.run(input, config);
     }
 
@@ -227,7 +229,6 @@ export class HumanIntentToolNode extends PostEffectToolNode {
       | { businessId?: unknown; conversationId?: unknown; turnId?: unknown }
       | undefined;
     const resolutionByAdd = new Map<ToolCall, ToolCall | undefined>();
-    const addHasBatchResolution = new Set<ToolCall>();
     for (const addCall of addCalls) {
       const addArgs = addCall.args as Record<string, unknown>;
       const resolutionCall = resolutionCalls.find((call) => {
@@ -239,7 +240,6 @@ export class HumanIntentToolNode extends PostEffectToolNode {
       });
       if (resolutionCall) {
         resolutionByAdd.set(addCall, resolutionCall);
-        addHasBatchResolution.add(addCall);
       }
     }
 
@@ -247,46 +247,43 @@ export class HumanIntentToolNode extends PostEffectToolNode {
       typeof configurable?.businessId !== 'string' ||
       typeof configurable?.conversationId !== 'string';
     const deferredAdds = new Set<ToolCall>();
-    if (hasProductSearch) {
-      await Promise.all(addCalls.map(async (call) => {
-        if (addHasBatchResolution.has(call)) return;
-        if (hasMissingResolutionContext) {
-          deferredAdds.add(call);
-          return;
-        }
-        const args = call.args as Record<string, unknown>;
-        const productId = productIdFrom(call);
-        if (!productId) {
-          deferredAdds.add(call);
-          return;
-        }
-        try {
-          const resolution = await resolveProductForAdd({
-            productId,
-            businessId: configurable.businessId as string,
-            conversationId: configurable.conversationId as string,
-            resolutionId: typeof args.resolutionId === 'string' ? args.resolutionId : undefined,
-            turnId: typeof configurable.turnId === 'string' ? configurable.turnId : undefined,
-          });
-          if (!resolution.ok) deferredAdds.add(call);
-        } catch {
-          deferredAdds.add(call);
-        }
-      }));
-    }
+    await Promise.all(addCalls.map(async (call) => {
+      if (resolutionByAdd.has(call)) return;
+      if (hasMissingResolutionContext) {
+        deferredAdds.add(call);
+        return;
+      }
+      const args = call.args as Record<string, unknown>;
+      const productId = productIdFrom(call);
+      if (!productId) {
+        deferredAdds.add(call);
+        return;
+      }
+      try {
+        const resolution = await resolveProductForAdd({
+          productId,
+          businessId: configurable.businessId as string,
+          conversationId: configurable.conversationId as string,
+          resolutionId: typeof args.resolutionId === 'string' ? args.resolutionId : undefined,
+          turnId: typeof configurable.turnId === 'string' ? configurable.turnId : undefined,
+        });
+        if (!resolution.ok) deferredAdds.add(call);
+      } catch {
+        deferredAdds.add(call);
+      }
+    }));
 
-    const batchResolutionCalls = [...new Set(resolutionByAdd.values())].filter(
-      (call): call is ToolCall => call !== undefined
-    );
     const independentCalls = pendingCalls.filter(
-      (call) => !batchResolutionCalls.includes(call) && !addCalls.includes(call)
+      (call) => !resolutionCalls.includes(call) && !addCalls.includes(call)
     );
-    const preAddCalls = [...independentCalls, ...batchResolutionCalls];
-    const preAddResults = await Promise.all(
-      preAddCalls.map((call) => this.runTool(call, config))
+    const independentResults = await Promise.all(
+      independentCalls.map((call) => this.runTool(call, config))
+    );
+    const resolutionResults = await Promise.all(
+      resolutionCalls.map((call) => this.runTool(call, config))
     );
     const resolutionMessages = new Map(
-      batchResolutionCalls.map((call) => [call, preAddResults[preAddCalls.indexOf(call)]])
+      resolutionCalls.map((call, index) => [call, resolutionResults[index]])
     );
     const addResults = await Promise.all(addCalls.map(async (call) => {
       if (deferredAdds.has(call)) return deferredProductAdd(call);
@@ -301,7 +298,8 @@ export class HumanIntentToolNode extends PostEffectToolNode {
     }));
 
     const resultByCall = new Map<ToolCall, unknown>();
-    preAddCalls.forEach((call, index) => resultByCall.set(call, preAddResults[index]));
+    independentCalls.forEach((call, index) => resultByCall.set(call, independentResults[index]));
+    resolutionCalls.forEach((call, index) => resultByCall.set(call, resolutionResults[index]));
     addCalls.forEach((call, index) => resultByCall.set(call, addResults[index]));
     const outputs = pendingCalls.map((call) => resultByCall.get(call) ?? deferredProductAdd(call));
     if (!outputs.some(isCommand)) return Array.isArray(input) ? outputs : { messages: outputs };

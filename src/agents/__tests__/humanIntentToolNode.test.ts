@@ -64,6 +64,7 @@ const PENDING = {
   updatedAt: '2026-09-27T00:00:00.000Z',
 };
 const PRODUCT_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const OTHER_PRODUCT_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 
 const state = (records: Array<Record<string, unknown>> = [ACTIVE, PENDING], revision = 7) => ({
   version: 1 as const,
@@ -168,6 +169,7 @@ describe('HumanIntentToolNode', () => {
       reference: PRODUCT_ID,
       success: true,
     });
+    expect(resolveProductForAddMock).not.toHaveBeenCalled();
   });
 
   it('usa el mismo hook para otros efectos persistidos declarados', async () => {
@@ -382,6 +384,26 @@ describe('HumanIntentToolNode', () => {
     expect(events).toEqual(['resolve', 'add']);
   });
 
+  it('espera la búsqueda antes de resolver productos del mismo batch', async () => {
+    const events: string[] = [];
+    const node = new HumanIntentToolNode([
+      makeTool('search_products', () => { events.push('search'); }),
+      makeResolveProductTool(() => { events.push('resolve'); }),
+    ]);
+
+    await node.invoke(
+      {
+        messages: [toolCalls([
+          { id: 'resolve-1', name: 'resolve_product', args: { productId: PRODUCT_ID, resolutionId: 'resolution-1' } },
+          { id: 'search-1', name: 'search_products', args: { keyword: 'producto' } },
+        ])],
+      },
+      config()
+    );
+
+    expect(events).toEqual(['search', 'resolve']);
+  });
+
   it('no invoca add_cart_item cuando resolve_product falla aunque el ToolMessage sea success', async () => {
     const resolveEffect = vi.fn();
     const addEffect = vi.fn();
@@ -401,6 +423,33 @@ describe('HumanIntentToolNode', () => {
     );
 
     expect(resolveEffect).toHaveBeenCalledOnce();
+    expect(addEffect).not.toHaveBeenCalled();
+    expect(JSON.parse(String(result.messages[1].content))).toMatchObject({
+      success: false,
+      error: 'product_resolution_required',
+    });
+  });
+
+  it('no habilita add_cart_item con un resolve_product de otro producto', async () => {
+    const addEffect = vi.fn();
+    const resolveEffect = vi.fn();
+    const node = new HumanIntentToolNode([
+      makeResolveProductTool(resolveEffect),
+      makeAddCartItemTool(addEffect),
+    ]);
+
+    const result = await node.invoke(
+      {
+        messages: [toolCalls([
+          { id: 'resolve-1', name: 'resolve_product', args: { productId: OTHER_PRODUCT_ID, resolutionId: 'resolution-1' } },
+          { id: 'add-1', name: 'add_cart_item', args: { productId: PRODUCT_ID } },
+        ])],
+      },
+      config()
+    );
+
+    expect(resolveEffect).toHaveBeenCalledOnce();
+    expect(resolveProductForAddMock).toHaveBeenCalledWith(expect.objectContaining({ productId: PRODUCT_ID }));
     expect(addEffect).not.toHaveBeenCalled();
     expect(JSON.parse(String(result.messages[1].content))).toMatchObject({
       success: false,
