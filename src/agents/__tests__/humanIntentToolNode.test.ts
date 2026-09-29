@@ -7,12 +7,18 @@ const {
   getStateMock,
   itemFindFirstMock,
   categoryFindFirstMock,
+  conversationStateFindUniqueMock,
+  findOrCreateConversationStateMock,
+  patchConversationMetadataMock,
   reconcileAfterToolMock,
   resolveProductForAddMock,
 } = vi.hoisted(() => ({
   getStateMock: vi.fn(),
   itemFindFirstMock: vi.fn(),
   categoryFindFirstMock: vi.fn(),
+  conversationStateFindUniqueMock: vi.fn(),
+  findOrCreateConversationStateMock: vi.fn(),
+  patchConversationMetadataMock: vi.fn(),
   reconcileAfterToolMock: vi.fn(),
   resolveProductForAddMock: vi.fn(),
 }));
@@ -29,10 +35,22 @@ vi.mock('../../services/productResolution.service', () => ({
   resolveProductForAdd: resolveProductForAddMock,
 }));
 
+vi.mock('../../repositories', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../repositories')>();
+  return {
+    ...actual,
+    findOrCreateConversationState: (...args: unknown[]) =>
+      findOrCreateConversationStateMock(...args),
+    patchConversationMetadata: (...args: unknown[]) =>
+      patchConversationMetadataMock(...args),
+  };
+});
+
 vi.mock('../../lib/prisma', () => ({
   prisma: {
     menu_item: { findFirst: itemFindFirstMock, findMany: vi.fn() },
     menu_category: { findFirst: categoryFindFirstMock },
+    conversation_state: { findUnique: conversationStateFindUniqueMock },
   },
 }));
 
@@ -133,11 +151,23 @@ const config = (revision = 7) => ({
 });
 
 describe('HumanIntentToolNode', () => {
+  let persistedConversationMetadata: Record<string, unknown>;
+
   beforeEach(() => {
     vi.clearAllMocks();
+    persistedConversationMetadata = { peopleCount: 2 };
     getStateMock.mockResolvedValue(state());
     reconcileAfterToolMock.mockResolvedValue(null);
     resolveProductForAddMock.mockResolvedValue({ ok: false, reason: 'resolution_missing' });
+    findOrCreateConversationStateMock.mockImplementation(async () => ({
+      metadata: persistedConversationMetadata,
+    }));
+    patchConversationMetadataMock.mockImplementation(
+      async (_conversationId: string, patch: Record<string, unknown>) => {
+        persistedConversationMetadata = { ...persistedConversationMetadata, ...patch };
+      }
+    );
+    conversationStateFindUniqueMock.mockResolvedValue({ metadata: { peopleCount: 2 } });
     itemFindFirstMock.mockResolvedValue({ name: 'Ceviche Clásico' });
     categoryFindFirstMock.mockResolvedValue({ name: 'Postres' });
   });
@@ -154,6 +184,7 @@ describe('HumanIntentToolNode', () => {
   });
 
   it('reconcilia después de ejecutar una tool autorizada y exitosa', async () => {
+    resolveProductForAddMock.mockResolvedValue({ ok: true, resolution: { productId: PRODUCT_ID } });
     const node = new HumanIntentToolNode([makeAddCartItemTool(vi.fn())]);
 
     await node.invoke(
@@ -169,7 +200,51 @@ describe('HumanIntentToolNode', () => {
       reference: PRODUCT_ID,
       success: true,
     });
-    expect(resolveProductForAddMock).not.toHaveBeenCalled();
+    expect(resolveProductForAddMock).toHaveBeenCalledOnce();
+  });
+
+  it('difiere el ADD sin ProductResolution vigente sin ejecutar la tool', async () => {
+    const effect = vi.fn();
+    const node = new HumanIntentToolNode([makeAddCartItemTool(effect)]);
+
+    const result = await node.invoke(
+      { messages: [toolCall('add_cart_item', { productId: PRODUCT_ID })] },
+      config()
+    );
+
+    expect(effect).not.toHaveBeenCalled();
+    expect(result.messages[0]).toMatchObject({ status: 'success' });
+    expect(JSON.parse(String(result.messages[0].content))).toMatchObject({
+      success: false,
+      error: 'product_resolution_required',
+      missingRequirements: ['PRODUCT_RESOLVED'],
+    });
+  });
+
+  it('difiere el ADD sin party size aunque ProductResolution sea válida', async () => {
+    resolveProductForAddMock.mockResolvedValue({ ok: true, resolution: { productId: PRODUCT_ID } });
+    conversationStateFindUniqueMock.mockResolvedValue({ metadata: {} });
+    const effect = vi.fn();
+    const node = new HumanIntentToolNode([makeAddCartItemTool(effect)]);
+
+    const result = await node.invoke(
+      { messages: [toolCall('add_cart_item', { productId: PRODUCT_ID })] },
+      config()
+    );
+
+    expect(effect).not.toHaveBeenCalled();
+    expect(JSON.parse(String(result.messages[0].content))).toMatchObject({
+      success: false,
+      error: 'party_size_required',
+      pending: true,
+      heldOrder: 'Ceviche Clásico',
+      missingRequirements: ['PARTY_SIZE_OBTAINED'],
+    });
+    expect(persistedConversationMetadata.pendingPartySizeOrder).toMatchObject({
+      source: 'lookup',
+      summary: 'Ceviche Clásico',
+      turnStartedAt: null,
+    });
   });
 
   it('usa el mismo hook para otros efectos persistidos declarados', async () => {
@@ -356,9 +431,11 @@ describe('HumanIntentToolNode', () => {
     });
   });
 
-  it('ejecuta resolve_product antes de agregar solo ante resolución exitosa', async () => {
+  it('ejecuta search, resolve y add en orden sin resolver dos veces', async () => {
+    resolveProductForAddMock.mockResolvedValue({ ok: true, resolution: { productId: PRODUCT_ID } });
     const events: string[] = [];
     const node = new HumanIntentToolNode([
+      makeTool('search_products', () => { events.push('search'); }),
       makeResolveProductTool(() => { events.push('resolve'); }),
       makeAddCartItemTool(() => { events.push('add'); }),
     ]);
@@ -366,6 +443,7 @@ describe('HumanIntentToolNode', () => {
     await node.invoke(
       {
         messages: [toolCalls([
+          { id: 'search-1', name: 'search_products', args: { keyword: 'ceviche' } },
           {
             id: 'add-1',
             name: 'add_cart_item',
@@ -381,7 +459,8 @@ describe('HumanIntentToolNode', () => {
       config()
     );
 
-    expect(events).toEqual(['resolve', 'add']);
+    expect(events).toEqual(['search', 'resolve', 'add']);
+    expect(resolveProductForAddMock).not.toHaveBeenCalled();
   });
 
   it('espera la búsqueda antes de resolver productos del mismo batch', async () => {
@@ -511,5 +590,6 @@ describe('HumanIntentToolNode', () => {
 
     expect(searchEffect).toHaveBeenCalledOnce();
     expect(addEffect).toHaveBeenCalledOnce();
+    expect(resolveProductForAddMock).toHaveBeenCalledOnce();
   });
 });

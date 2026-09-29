@@ -6,6 +6,12 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { getHumanIntentState, type HumanIntentRecord } from '../services/humanIntentState.service';
 import { resolveProductForAdd } from '../services/productResolution.service';
+import { evaluateToolRequirement } from '../services/requirementEvaluator';
+import {
+  partySizeRequiredPayload,
+  rememberPartySizeBlockedFood,
+  summarizeBlockedAdd,
+} from '../services/partySizeGoal.service';
 import { PostEffectToolNode } from './postEffectToolNode';
 
 const uuidSchema = z.string().uuid();
@@ -170,18 +176,25 @@ const productIdFrom = (call: ToolCall): string | null => {
   return typeof args.productId === 'string' ? args.productId : null;
 };
 
-const resolutionSucceededFor = (message: ToolMessage, call: ToolCall): boolean => {
-  if (message.status !== 'success' || typeof message.content !== 'string') return false;
+const validatedProductResolutionFor = (
+  message: ToolMessage,
+  call: ToolCall
+): { productId: string; resolutionId?: string } | null => {
+  if (message.status !== 'success' || typeof message.content !== 'string') return null;
   try {
     const result = JSON.parse(message.content) as Record<string, unknown>;
     const expectedResolutionId = (call.args as Record<string, unknown>).resolutionId;
-    return (
+    const valid =
       result.success === true &&
       result.productId === productIdFrom(call) &&
-      (typeof expectedResolutionId !== 'string' || result.resolutionId === expectedResolutionId)
-    );
+      (typeof expectedResolutionId !== 'string' || result.resolutionId === expectedResolutionId);
+    if (!valid || typeof result.productId !== 'string') return null;
+    return {
+      productId: result.productId,
+      ...(typeof result.resolutionId === 'string' ? { resolutionId: result.resolutionId } : {}),
+    };
   } catch {
-    return false;
+    return null;
   }
 };
 
@@ -198,6 +211,39 @@ const deferredProductAdd = (call: ToolCall): ToolMessage =>
       instruction: 'Esperá los resultados de búsqueda y replanteá en el siguiente paso antes de agregarlo.',
     }),
   });
+
+const deferredRequirement = (
+  call: ToolCall,
+  reason: string,
+  missingRequirements: string[] = []
+): ToolMessage => {
+  const normalizedReason = reason === 'quantity_required' || reason === 'variation_required' || reason === 'party_size_required'
+    ? reason
+    : 'product_resolution_required';
+
+  const labels: Record<string, string> = {
+    product_resolution_required: 'El producto todavía no tiene una resolución vigente.',
+    quantity_required: 'Falta la cantidad del producto.',
+    variation_required: 'Falta la variación del producto.',
+    party_size_required: 'Falta la cantidad de personas para el pedido.',
+    product_id_required: 'Falta identificar el producto.',
+    human_intent_incompatible: 'La operación no corresponde al HumanIntent activo.',
+  };
+
+  return new ToolMessage({
+    name: call.name,
+    tool_call_id: call.id ?? '',
+    status: 'success',
+    content: JSON.stringify({
+      success: false,
+      error: normalizedReason,
+      reason,
+      missingRequirements,
+      message: labels[normalizedReason] ?? 'La operación todavía no está autorizada.',
+      instruction: 'Esperá a que se satisfagan los requisitos del flujo antes de ejecutar esta tool.',
+    }),
+  });
+};
 
 export class HumanIntentToolNode extends PostEffectToolNode {
   protected override async run(input: unknown, config: RunnableConfig) {
@@ -247,6 +293,10 @@ export class HumanIntentToolNode extends PostEffectToolNode {
       typeof configurable?.businessId !== 'string' ||
       typeof configurable?.conversationId !== 'string';
     const deferredAdds = new Set<ToolCall>();
+    const validatedResolutionByAdd = new Map<
+      ToolCall,
+      { productId: string; resolutionId?: string }
+    >();
     await Promise.all(addCalls.map(async (call) => {
       if (resolutionByAdd.has(call)) return;
       if (hasMissingResolutionContext) {
@@ -267,7 +317,14 @@ export class HumanIntentToolNode extends PostEffectToolNode {
           resolutionId: typeof args.resolutionId === 'string' ? args.resolutionId : undefined,
           turnId: typeof configurable.turnId === 'string' ? configurable.turnId : undefined,
         });
-        if (!resolution.ok) deferredAdds.add(call);
+        if (!resolution.ok) {
+          deferredAdds.add(call);
+        } else {
+          validatedResolutionByAdd.set(call, {
+            productId: resolution.resolution.productId,
+            resolutionId: resolution.resolution.resolutionId,
+          });
+        }
       } catch {
         deferredAdds.add(call);
       }
@@ -288,13 +345,16 @@ export class HumanIntentToolNode extends PostEffectToolNode {
     const addResults = await Promise.all(addCalls.map(async (call) => {
       if (deferredAdds.has(call)) return deferredProductAdd(call);
       const resolutionCall = resolutionByAdd.get(call);
+      let validatedResolution = validatedResolutionByAdd.get(call);
       if (resolutionCall) {
         const result = resolutionMessages.get(resolutionCall);
-        if (!(result instanceof ToolMessage) || !resolutionSucceededFor(result, call)) {
+        if (!(result instanceof ToolMessage)) {
           return deferredProductAdd(call);
         }
+        validatedResolution = validatedProductResolutionFor(result, call) ?? undefined;
+        if (!validatedResolution) return deferredProductAdd(call);
       }
-      return this.runTool(call, config);
+      return this.runTool(call, config, validatedResolution);
     }));
 
     const resultByCall = new Map<ToolCall, unknown>();
@@ -326,13 +386,25 @@ export class HumanIntentToolNode extends PostEffectToolNode {
     return combinedOutputs;
   }
 
-  protected override async runTool(call: ToolCall, config: RunnableConfig) {
+  protected override async runTool(
+    call: ToolCall,
+    config: RunnableConfig,
+    validatedProductResolution?: { productId: string; resolutionId?: string }
+  ) {
     const configurable = config.configurable as
-      | { conversationId?: unknown; businessId?: unknown; humanIntentGateRevision?: unknown }
+      | {
+          conversationId?: unknown;
+          businessId?: unknown;
+          humanIntentGateRevision?: unknown;
+          turnId?: unknown;
+          turnStartedAt?: unknown;
+        }
       | undefined;
     const conversationId = configurable?.conversationId;
     const businessId = configurable?.businessId;
     const expectedRevision = configurable?.humanIntentGateRevision;
+    const turnId = configurable?.turnId;
+    const turnStartedAt = configurable?.turnStartedAt;
 
     // Handoffs and legacy direct invocations do not carry a preflight revision.
     if (
@@ -356,14 +428,91 @@ export class HumanIntentToolNode extends PostEffectToolNode {
 
     const active = state.records.find((intent) => intent.status === 'ACTIVE');
     const pending = state.records.filter((intent) => intent.status === 'PENDING');
-    if (!active || pending.length === 0) return super.runTool(call, config);
+    if (!active) {
+      return super.runTool(call, config);
+    }
+
+    if (call.name === 'add_cart_item') {
+      let addProductName: string | null = null;
+      try {
+        const targets = await toolTargets(call.name, call.args, businessId);
+        if (targets?.length) {
+          addProductName = targets[0];
+          const pendingMatch = pending.find((intent) => matchesIntent(intent, targets));
+          if (pendingMatch && !matchesIntent(active, targets)) {
+            return internalToolError(call, HUMAN_INTENT_TOOL_DENIED, pendingMatch.id);
+          }
+        }
+      } catch {
+        // Requirement evaluation remains authoritative if a display target cannot be loaded.
+      }
+
+      let requirementDecision;
+      try {
+        requirementDecision = await evaluateToolRequirement({
+          toolName: call.name,
+          callArgs: call.args as Record<string, unknown>,
+          businessId,
+          conversationId,
+          turnId: typeof turnId === 'string' ? turnId : undefined,
+          humanIntent: active,
+          state,
+          validatedProductResolution,
+        });
+      } catch {
+        return internalToolError(call, 'requirement_evaluation_failed');
+      }
+
+      if (requirementDecision.type === 'DEFER') {
+        if (requirementDecision.reason === 'party_size_required') {
+          const args = call.args as Record<string, unknown>;
+          const heldOrder = await rememberPartySizeBlockedFood(
+            conversationId,
+            {
+              source: 'lookup',
+              summary: summarizeBlockedAdd({
+                name: addProductName ?? '',
+                quantity: typeof args.quantity === 'number' ? args.quantity : null,
+                variation: typeof args.variation === 'string' ? args.variation : null,
+              }),
+            },
+            typeof turnStartedAt === 'string' ? turnStartedAt : undefined
+          );
+          const payload = {
+            ...partySizeRequiredPayload(heldOrder),
+            missingRequirements: requirementDecision.missingRequirements,
+          };
+          return new ToolMessage({
+            name: call.name,
+            tool_call_id: call.id ?? '',
+            status: 'success',
+            content: JSON.stringify(payload),
+          });
+        }
+        return deferredRequirement(
+          call,
+          requirementDecision.reason,
+          requirementDecision.missingRequirements
+        );
+      }
+      if (requirementDecision.type === 'REJECT') {
+        return internalToolError(call, requirementDecision.reason);
+      }
+      return super.runTool(call, config);
+    }
+
+    if (pending.length === 0) return super.runTool(call, config);
 
     try {
       const targets = await toolTargets(call.name, call.args, businessId);
-      if (!targets || targets.length === 0) return super.runTool(call, config);
+      if (!targets || targets.length === 0) {
+        return super.runTool(call, config);
+      }
 
       const pendingMatch = pending.find((intent) => matchesIntent(intent, targets));
-      if (!pendingMatch || matchesIntent(active, targets)) return super.runTool(call, config);
+      if (!pendingMatch || matchesIntent(active, targets)) {
+        return super.runTool(call, config);
+      }
       return internalToolError(call, HUMAN_INTENT_TOOL_DENIED, pendingMatch.id);
     } catch {
       // A target that cannot be resolved is not clearly attributable to PENDING.
