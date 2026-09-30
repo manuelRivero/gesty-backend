@@ -105,6 +105,7 @@ vi.mock('../../repositories', async (importOriginal) => {
 });
 
 import { MenuService } from '../../services/menu.service';
+import * as productResolutionService from '../../services/productResolution.service';
 import { addCartItemTool, resolveProductTool, searchProductsTool } from '../index';
 import { prisma } from '../../lib/prisma';
 
@@ -112,6 +113,7 @@ const BUSINESS_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const CONVERSATION_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const PRODUCT_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const OTHER_PRODUCT_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+const THIRD_PRODUCT_ID = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
 const PRODUCT = {
   id: PRODUCT_ID,
   name: 'Producto de prueba',
@@ -140,6 +142,7 @@ const CONFIG = {
 
 describe('search_products → ProductResolution → add_cart_item', () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
     vi.clearAllMocks();
     database.state.metadata = { peopleCount: 1, requestedPartySize: 1 };
     vi.mocked(MenuService.searchMenuItemsByKeyword).mockResolvedValue([PRODUCT] as never);
@@ -156,6 +159,7 @@ describe('search_products → ProductResolution → add_cart_item', () => {
   });
 
   it('escribe el producto buscado y consume la resolución en la transacción', async () => {
+    const resolveProductForAddSpy = vi.spyOn(productResolutionService, 'resolveProductForAdd');
     const search = JSON.parse(
       (await searchProductsTool.func({ keyword: 'producto de prueba' }, undefined, CONFIG)) as string
     );
@@ -184,6 +188,118 @@ describe('search_products → ProductResolution → add_cart_item', () => {
         status: 'consumed',
       }),
     ]);
+    expect(resolveProductForAddSpy).toHaveBeenCalledOnce();
+  });
+
+  it('consume la resolución inter-step sin volver a ejecutar resolveProductForAdd', async () => {
+    const resolveProductForAddSpy = vi.spyOn(productResolutionService, 'resolveProductForAdd');
+    const search = JSON.parse(
+      (await searchProductsTool.func({ keyword: 'producto de prueba' }, undefined, CONFIG)) as string
+    );
+    const resolutionId = search.items[0].resolutionId as string;
+    const resolution = JSON.parse(
+      (await resolveProductTool.func({ productId: PRODUCT_ID, resolutionId }, undefined, CONFIG)) as string
+    );
+
+    const add = JSON.parse(
+      (await addCartItemTool.func(
+        { productId: PRODUCT_ID, resolutionId, quantity: 4 },
+        undefined,
+        {
+          ...CONFIG,
+          configurable: {
+            ...CONFIG.configurable,
+            validatedProductResolutionFromExecutionContext: resolution,
+          },
+        }
+      )) as string
+    );
+
+    expect(resolution.success).toBe(true);
+    expect(add.success).toBe(true);
+    expect(resolveProductForAddSpy).not.toHaveBeenCalled();
+    expect(database.state.metadata.productResolutions).toEqual([
+      expect.objectContaining({ resolutionId, productId: PRODUCT_ID, status: 'consumed' }),
+    ]);
+  });
+
+  it('mantiene aisladas las resoluciones inter-step de dos productos', async () => {
+    const resolveProductForAddSpy = vi.spyOn(productResolutionService, 'resolveProductForAdd');
+    const secondProduct = { ...PRODUCT, id: THIRD_PRODUCT_ID, name: 'Otro producto' };
+    vi.mocked(MenuService.searchMenuItemsByKeyword).mockResolvedValue([PRODUCT, secondProduct] as never);
+    const search = JSON.parse(
+      (await searchProductsTool.func({ keyword: 'productos' }, undefined, CONFIG)) as string
+    );
+    const resolutions = await Promise.all(
+      search.items.map(async (item: { id: string; resolutionId: string }) => ({
+        productId: item.id,
+        value: JSON.parse(
+          (await resolveProductTool.func(
+            { productId: item.id, resolutionId: item.resolutionId },
+            undefined,
+            CONFIG
+          )) as string
+        ),
+      }))
+    );
+
+    const adds = await Promise.all(
+      resolutions.map(async ({ productId, value }) =>
+        JSON.parse(
+          (await addCartItemTool.func(
+            { productId, resolutionId: value.resolutionId, quantity: 1 },
+            undefined,
+            {
+              ...CONFIG,
+              configurable: {
+                ...CONFIG.configurable,
+                validatedProductResolutionFromExecutionContext: value,
+              },
+            }
+          )) as string
+        )
+      )
+    );
+
+    expect(resolutions.map(({ value }) => value.productId)).toEqual([PRODUCT_ID, THIRD_PRODUCT_ID]);
+    expect(adds.every((add) => add.success)).toBe(true);
+    expect(database.prisma.draft_order_item.create).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ data: expect.objectContaining({ product_id: PRODUCT_ID }) })
+    );
+    expect(database.prisma.draft_order_item.create).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ data: expect.objectContaining({ product_id: THIRD_PRODUCT_ID }) })
+    );
+    expect(resolveProductForAddSpy).not.toHaveBeenCalled();
+  });
+
+  it('no persiste con una resolución inter-step inválida', async () => {
+    const search = JSON.parse(
+      (await searchProductsTool.func({ keyword: 'producto de prueba' }, undefined, CONFIG)) as string
+    );
+    const resolutionId = search.items[0].resolutionId as string;
+    const resolution = JSON.parse(
+      (await resolveProductTool.func({ productId: PRODUCT_ID, resolutionId }, undefined, CONFIG)) as string
+    );
+
+    const add = JSON.parse(
+      (await addCartItemTool.func(
+        { productId: PRODUCT_ID, resolutionId: 'pr1:other:other:invalid', quantity: 4 },
+        undefined,
+        {
+          ...CONFIG,
+          configurable: {
+            ...CONFIG.configurable,
+            validatedProductResolutionFromExecutionContext: resolution,
+          },
+        }
+      )) as string
+    );
+
+    expect(add).toMatchObject({ success: false, error: 'product_resolution_required' });
+    expect(add.effect).toBeUndefined();
+    expect(prisma.draft_order_item.create).not.toHaveBeenCalled();
   });
 
   it('no agrega un candidato ambiguo hasta que resolve_product lo seleccione', async () => {

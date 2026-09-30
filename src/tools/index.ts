@@ -39,6 +39,7 @@ import {
   MENU_SUGGESTION_ORDER,
 } from '../helpers/complementaryMenu.helper';
 import { getReactContext } from './_context';
+import type { ProductResolution } from '../services/productResolution.service';
 import {
   consumeProductResolution,
   issueProductResolutions,
@@ -573,9 +574,7 @@ export const resolveProductTool = new DynamicStructuredTool<
     }
     return toJson({
       success: true,
-      productId: result.resolution.productId,
-      resolutionId: result.resolution.resolutionId,
-      status: result.resolution.status,
+      ...result.resolution,
     });
   },
 });
@@ -1994,7 +1993,15 @@ export const addCartItemTool = new DynamicStructuredTool<
         args: { productId, quantity, variation },
       })
     );
-    const { businessId, customerPhone, conversationId, turnStartedAt, turnId, userMessage } =
+    const {
+      businessId,
+      customerPhone,
+      conversationId,
+      turnStartedAt,
+      turnId,
+      userMessage,
+      validatedProductResolutionFromExecutionContext,
+    } =
       getReactContext(config);
 
     const ordersGate = await assertCanOrder(businessId);
@@ -2075,32 +2082,56 @@ export const addCartItemTool = new DynamicStructuredTool<
         typeof meta.pendingVariation.productResolutionId === 'string'
           ? meta.pendingVariation.productResolutionId
           : null;
-      const resolution = await resolveProductForAdd({
-        productId,
-        businessId,
-        conversationId,
-        resolutionId,
-        turnId,
-        pendingResolutionId: pendingAddResolutionId ?? pendingVariationResolutionId,
-      });
-      if (!resolution.ok) {
-        console.warn(JSON.stringify({
-          event: '[product-resolution] add_rejected',
-          reason: resolution.reason,
+      const executionResolution = validatedProductResolutionFromExecutionContext;
+      const resolutionFromExecutionContextIsValid =
+        executionResolution != null &&
+        executionResolution.productId === productId &&
+        executionResolution.businessId === businessId &&
+        executionResolution.conversationId === conversationId &&
+        executionResolution.resolutionId === (resolutionId ?? executionResolution.resolutionId) &&
+        executionResolution.resolutionId.startsWith(`pr1:${businessId}:${conversationId}:`) &&
+        executionResolution.status === 'selected' &&
+        (executionResolution.scope === 'turn' ||
+          executionResolution.scope === 'conversation' ||
+          executionResolution.scope === 'pending') &&
+        (executionResolution.expiresAt === null ||
+          (Number.isFinite(Date.parse(executionResolution.expiresAt)) &&
+            Date.parse(executionResolution.expiresAt) > Date.now())) &&
+        (executionResolution.scope !== 'turn' || executionResolution.turnId === turnId) &&
+        (executionResolution.scope !== 'pending' ||
+          executionResolution.resolutionId === pendingAddResolutionId ||
+          executionResolution.resolutionId === pendingVariationResolutionId);
+
+      if (resolutionFromExecutionContextIsValid) {
+        productResolutionId = executionResolution.resolutionId;
+      } else {
+        const resolution = await resolveProductForAdd({
+          productId,
           businessId,
           conversationId,
-          productId,
-        }));
-        return toJson({
-          success: false,
-          error: 'product_resolution_required',
-          reason: resolution.reason,
-          message: productResolutionErrorMessage(resolution.reason),
-          instruction:
-            'No agregues el producto todavía. Usá resolve_product con un candidato vigente o volvé a buscarlo.',
+          resolutionId,
+          turnId,
+          pendingResolutionId: pendingAddResolutionId ?? pendingVariationResolutionId,
         });
+        if (!resolution.ok) {
+          console.warn(JSON.stringify({
+            event: '[product-resolution] add_rejected',
+            reason: resolution.reason,
+            businessId,
+            conversationId,
+            productId,
+          }));
+          return toJson({
+            success: false,
+            error: 'product_resolution_required',
+            reason: resolution.reason,
+            message: productResolutionErrorMessage(resolution.reason),
+            instruction:
+              'No agregues el producto todavía. Usá resolve_product con un candidato vigente o volvé a buscarlo.',
+          });
+        }
+        productResolutionId = resolution.resolution.resolutionId;
       }
-      productResolutionId = resolution.resolution.resolutionId;
 
       // Soft-gate ola de complemento: solo sumar si el mensaje nombra un candidato.
       const complementCandidates = (meta.candidateProductIds ?? []).filter(

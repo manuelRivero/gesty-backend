@@ -1,4 +1,5 @@
 import type { RunnableConfig } from '@langchain/core/runnables';
+import type { ProductResolution } from '../services/productResolution.service';
 
 export interface ReactAgentContext {
   businessId: string;
@@ -12,6 +13,8 @@ export interface ReactAgentContext {
   turnId?: string;
   /** Texto del mensaje del usuario en este turno (validar quantity vs prosa). */
   userMessage?: string;
+  /** Resolución validada entregada por el execution plan actual, no por el modelo. */
+  validatedProductResolutionFromExecutionContext?: ProductResolution;
 }
 
 export const getReactContext = (config?: RunnableConfig): ReactAgentContext => {
