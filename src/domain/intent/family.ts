@@ -25,6 +25,7 @@ export type IntentType =
   | 'SUGERIR_DIRECCION'
   | 'OFRECER_PROMOCION'
   | 'OBTENER_PERSONAS_DEL_PEDIDO'
+  | 'OBTENER_CANTIDAD_DEL_PRODUCTO'
   | 'PEDIDO_POR_EXPIRAR'
   | 'NEGOCIO_POR_CERRAR'
   | 'FUERA_DE_COBERTURA'
@@ -69,9 +70,9 @@ export type IntentCatalogEntry = {
   fulfillment?: GoalFulfillmentContract;
 };
 
-export type GoalFulfillmentToolName = 'save_party_size';
-export type GoalFulfillmentEffectKind = 'party_size_persisted';
-export type GoalRequiredFact = 'PERSONAS_DEL_PEDIDO';
+export type GoalFulfillmentToolName = 'save_party_size' | 'set_order_line_quantity';
+export type GoalFulfillmentEffectKind = 'party_size_persisted' | 'order_line_quantity_persisted';
+export type GoalRequiredFact = 'PERSONAS_DEL_PEDIDO' | 'CANTIDAD_DEL_PRODUCTO';
 
 export type GoalFulfillmentContract = {
   requiredFact: GoalRequiredFact;
@@ -84,6 +85,9 @@ export type GoalFulfillmentCandidate = { goalType: IntentType };
 
 const hasValidPartySizeFact = (facts: Readonly<Record<string, unknown>>): boolean =>
   isValidPartySize(facts.partySize);
+
+const hasValidProductQuantityFact = (facts: Readonly<Record<string, unknown>>): boolean =>
+  Number.isInteger(facts.quantity) && Number(facts.quantity) >= 1 && Number(facts.quantity) <= 99;
 
 /** Materialización de TAXONOMIA §2–§4. Toda key de IntentType debe existir acá. */
 export const INTENT_CATALOG: Record<IntentType, IntentCatalogEntry> = {
@@ -263,6 +267,21 @@ export const INTENT_CATALOG: Record<IntentType, IntentCatalogEntry> = {
       fulfillmentTool: 'save_party_size',
       expectedEffect: 'party_size_persisted',
       completionPredicate: hasValidPartySizeFact,
+    },
+  },
+  OBTENER_CANTIDAD_DEL_PRODUCTO: {
+    kind: 'goal',
+    pressure: 'blocking',
+    closeMode: 'fact_change',
+    maxSurfaces: 3,
+    cooldownMs: 0,
+    ttlMs: null,
+    critical: false,
+    fulfillment: {
+      requiredFact: 'CANTIDAD_DEL_PRODUCTO',
+      fulfillmentTool: 'set_order_line_quantity',
+      expectedEffect: 'order_line_quantity_persisted',
+      completionPredicate: hasValidProductQuantityFact,
     },
   },
   OFRECER_PROMOCION: {

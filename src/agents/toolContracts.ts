@@ -1,11 +1,13 @@
 export const PRODUCT_CANDIDATE = 'PRODUCT_CANDIDATE' as const;
 export const PRODUCT_RESOLUTION = 'PRODUCT_RESOLUTION' as const;
 export const CART_ITEM_PERSISTED = 'CART_ITEM_PERSISTED' as const;
+export const ORDER_LINE_QUANTITY_PERSISTED = 'ORDER_LINE_QUANTITY_PERSISTED' as const;
 
 export type ToolRequirementType =
   | typeof PRODUCT_CANDIDATE
   | typeof PRODUCT_RESOLUTION
   | typeof CART_ITEM_PERSISTED
+  | typeof ORDER_LINE_QUANTITY_PERSISTED
   | string;
 
 export type ToolScope = Record<string, string | undefined>;
@@ -50,6 +52,10 @@ export const DEFAULT_TOOL_CONTRACTS: ToolContract[] = [
     name: 'add_cart_item',
     requires: [{ type: PRODUCT_RESOLUTION }],
     produces: [{ type: CART_ITEM_PERSISTED }],
+  },
+  {
+    name: 'set_order_line_quantity',
+    produces: [{ type: ORDER_LINE_QUANTITY_PERSISTED }],
   },
 ];
 

@@ -96,4 +96,21 @@ describe('plan_order_lines + ola de complemento', () => {
     );
     expect(clearComplementSuggestionSnapshot).toHaveBeenCalledWith('conv-1');
   });
+
+  it('preserva UNKNOWN cuando requestedQuantity fue omitido', async () => {
+    await planOrderLinesTool.invoke({
+      lines: [{ hint: 'papas' }, { hint: 'ceviche' }],
+    }, CONFIG);
+
+    const pending = setPendingOrderLines.mock.lastCall?.[0] as {
+      lines: Array<{ hint: string; requestedQuantity: number | null }>;
+    };
+    expect(pending.lines).toEqual([
+      { hint: 'papas', requestedQuantity: null },
+      { hint: 'ceviche', requestedQuantity: null },
+    ]);
+    for (const line of pending.lines) {
+      expect(line.requestedQuantity).toBeNull();
+    }
+  });
 });

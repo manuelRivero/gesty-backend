@@ -91,6 +91,46 @@ export const getActiveOrderLine = (pending: PendingOrderLines | null): OrderLine
   );
 };
 
+/** Quantity target: active UNKNOWN first, then the first queued UNKNOWN line. */
+export const getNextOrderLineRequiringQuantity = (
+  pending: PendingOrderLines | null
+): OrderLine | null => {
+  if (!pending) return null;
+  const open = pending.lines.filter((line) => line.status === 'active' || line.status === 'queued');
+  return (
+    open.find((line) => line.status === 'active' && line.requestedQuantity == null) ??
+    open.find((line) => line.status === 'queued' && line.requestedQuantity == null) ??
+    null
+  );
+};
+
+/** Persist a confirmed quantity without advancing the order-line lifecycle. */
+export const setOrderLineRequestedQuantity = async (params: {
+  conversationId: string;
+  metadata: unknown;
+  orderLineId: string;
+  quantity: number;
+}): Promise<PendingOrderLines | null> => {
+  const pending = getPendingOrderLines(params.metadata);
+  if (!pending || !Number.isInteger(params.quantity) || params.quantity < 1 || params.quantity > 99) {
+    return null;
+  }
+  const target = pending.lines.find(
+    (line) => line.id === params.orderLineId &&
+      (line.status === 'active' || line.status === 'queued')
+  );
+  if (!target) return null;
+
+  const next: PendingOrderLines = {
+    ...pending,
+    lines: pending.lines.map((line) =>
+      line.id === target.id ? { ...line, requestedQuantity: params.quantity } : line
+    ),
+  };
+  await patchConversationMetadata(params.conversationId, { pendingOrderLines: next });
+  return next;
+};
+
 const STOPWORDS = new Set([
   'de',
   'del',
@@ -365,6 +405,39 @@ export const setPendingOrderLines = async (params: {
   return pending;
 };
 
+/** Materializes requested PEDIR products as lines only when no plan exists yet. */
+export const ensurePendingOrderLinesFromRequest = async (params: {
+  conversationId: string;
+  request: Record<string, unknown>;
+  sourceMessage: string;
+  metadata: unknown;
+}): Promise<PendingOrderLines | null> => {
+  const existing = getPendingOrderLines(params.metadata);
+  if (existing) return existing;
+  const products = Array.isArray(params.request.products)
+    ? params.request.products.flatMap((product) => {
+        if (typeof product === 'string' && product.trim()) return [{ hint: product.trim() }];
+        if (isRecord(product)) {
+          const hint = [product.hint, product.name, product.product]
+            .find((value): value is string => typeof value === 'string' && value.trim().length > 0);
+          const requestedQuantity =
+            typeof product.quantity === 'number' && Number.isInteger(product.quantity) &&
+            product.quantity >= 1 && product.quantity <= 99
+              ? product.quantity
+              : null;
+          if (hint) return [{ hint: hint.trim(), requestedQuantity }];
+        }
+        return [];
+      })
+    : [];
+  if (products.length === 0) return null;
+  return setPendingOrderLines({
+    conversationId: params.conversationId,
+    lines: products,
+    sourceMessage: params.sourceMessage,
+  });
+};
+
 export const clearPendingOrderLines = async (conversationId: string): Promise<void> => {
   await omitConversationMetadataKeys(conversationId, [PENDING_ORDER_LINES_KEY]);
 };
@@ -472,22 +545,38 @@ export const buildOrderLinesContinueOrCancelHint = (
 };
 
 /** Ledger para el híbrido (misma filosofía que pendingAddQuantity / pendingItemNote). */
-export const buildPendingOrderLinesContextLines = (metadata: unknown): string[] => {
+export const buildPendingOrderLinesContextLines = (
+  metadata: unknown,
+  options: { quantityGoalActive?: boolean } = {}
+): string[] => {
   const pending = getPendingOrderLines(metadata);
   if (!pending) return [];
+  const quantityTarget = getNextOrderLineRequiringQuantity(pending);
   const active = getActiveOrderLine(pending);
   const queued = pending.lines.filter(
     (l) => l.status === 'queued' && l.id !== active?.id
   );
 
   const activeLabel = active
-    ? `*${active.hint}*${active.requestedQuantity ? ` (${active.requestedQuantity}×)` : ''}`
+    ? `*${active.hint}*${active.requestedQuantity ? ` (${active.requestedQuantity}×)` : ''} [orderLineId: ${active.id}]`
     : null;
   const queuedLabels = queued.map(
-    (l) => `*${l.hint}*${l.requestedQuantity ? ` (${l.requestedQuantity}×)` : ''}`
+    (l) => `*${l.hint}*${l.requestedQuantity ? ` (${l.requestedQuantity}×)` : ''} [orderLineId: ${l.id}]`
   );
 
   if (!activeLabel && queuedLabels.length === 0) return [];
+
+  if (quantityTarget && options.quantityGoalActive) {
+    return [
+      `- Cola de pedido: ${pending.lines
+        .filter((line) => line.status === 'active' || line.status === 'queued')
+        .map((line) => `${line.id}=${line.hint} (quantity=${line.requestedQuantity ?? 'UNKNOWN'}, status=${line.status})`)
+        .join('; ')}. ` +
+        `El Goal de cantidad determina el target: ${quantityTarget.id} (${quantityTarget.hint}). ` +
+        'En este turno resolvé SOLO la cantidad que responde al Goal; no busques ni agregues líneas ' +
+        'hasta que el Goal deje de estar abierto.',
+    ];
+  }
 
   const parts: string[] = [];
   parts.push(

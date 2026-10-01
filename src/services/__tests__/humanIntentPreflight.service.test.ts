@@ -351,6 +351,26 @@ describe('Human Intent Preflight', () => {
     }
   );
 
+  it('valida fulfillmentCandidate de cantidad para el Goal blocking activo', () => {
+    const requestInput = input({
+      turn: { messageId: 'wamid.qty-2', text: '2' },
+      context: {
+        recentTurns: [{ role: 'assistant', text: '¿Cuántas unidades de papas querés?' }],
+        lastAssistantQuestion: '¿Cuántas unidades de papas querés?',
+        activeBlockingGoal: 'OBTENER_CANTIDAD_DEL_PRODUCTO',
+      },
+      state: { revision: 3, active: { ...active, blockers: [] }, pending: [] },
+    });
+    expect(validateHumanIntentTurnDecision({
+      decision: 'CONTINUE_ACTIVE',
+      intentId: ACTIVE_ID,
+      answeredBlockerIds: [],
+      fulfillmentCandidate: { goalType: 'OBTENER_CANTIDAD_DEL_PRODUCTO' },
+    }, requestInput)).toMatchObject({
+      fulfillmentCandidate: { goalType: 'OBTENER_CANTIDAD_DEL_PRODUCTO' },
+    });
+  });
+
   it.each([
     {
       text: '¿Tienen ceviche?',

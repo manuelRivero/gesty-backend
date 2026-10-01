@@ -253,6 +253,8 @@ export interface HybridAgentSignals {
   cartAddUnknown: boolean;
   /** Effects exitosos observados en ToolMessages de este turno. */
   successfulEffectCount: number;
+  /** Siguiente línea cuya cantidad UNKNOWN debe preguntarse tras un efecto. */
+  nextQuantityTarget: { id: string; hint: string } | null;
   /** Producto del último add_cart_item exitoso de este turno. */
   lastAddedProductId: string | null;
   /**
@@ -497,6 +499,7 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
       cartAddFailed: false,
     cartAddUnknown: false,
     successfulEffectCount: 0,
+    nextQuantityTarget: null,
     lastAddedProductId: null,
     cartMutatedThisTurn: false,
     cartAddPendingGate: false,
@@ -565,6 +568,31 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
         data.effect !== null
       ) {
         signals.successfulEffectCount += 1;
+        const nextGoal = data.nextGoal;
+        const goalTarget =
+          nextGoal && typeof nextGoal === 'object'
+            ? (nextGoal as { target?: unknown }).target
+            : null;
+        const directTarget = data.nextQuantityTarget;
+        const target = goalTarget ?? directTarget;
+        if (
+          target &&
+          typeof target === 'object' &&
+          typeof (target as { hint?: unknown }).hint === 'string'
+        ) {
+          const id =
+            typeof (target as { orderLineId?: unknown }).orderLineId === 'string'
+              ? (target as { orderLineId: string }).orderLineId
+              : typeof (target as { id?: unknown }).id === 'string'
+                ? (target as { id: string }).id
+                : null;
+          if (id) {
+            signals.nextQuantityTarget = {
+              id,
+              hint: (target as { hint: string }).hint,
+            };
+          }
+        }
       }
       if (toolMessageMutatedCart(m.name, data.success)) {
         signals.cartMutatedThisTurn = true;
@@ -1811,6 +1839,20 @@ export const runHybridReactAgent = async (
   if (signals.cartAddUnknown) return null;
 
   if (signals.successfulEffectCount > 0) {
+    if (signals.nextQuantityTarget) {
+      const target = signals.nextQuantityTarget;
+      return {
+        kind: 'response',
+        handlerResult: markHybridResult({
+          content: formatBotUserMessage(
+            `¿Cuántas unidades de ${target.hint} querés?`,
+            '🔢',
+            `La cantidad de *${target.hint}* todavía no está confirmada.`
+          ),
+          isInteractive: false,
+        }),
+      };
+    }
     return {
       kind: 'response',
       handlerResult: markHybridResult({

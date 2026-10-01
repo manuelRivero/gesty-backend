@@ -101,6 +101,7 @@ import {
   buildWelcomeEligibleContextLines,
   isWelcomeEligible,
 } from '../services/welcomeEligible.service';
+import { deriveOrderQuantityGoalCandidate } from '../services/orderQuantityGoal.service';
 
 /** Hint interno cuando hay shortlist pendiente (SELECT_FROM_LIST / product query). */
 export async function buildPendingProductSelectionLines(
@@ -514,6 +515,15 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
       (ctx.conversation as { lastReferencedProductId?: string | null } | undefined)
         ?.lastReferencedProductId ?? null,
   });
+  const orderQuantityCandidate = deriveOrderQuantityGoalCandidate(
+    {
+      activePedir: hasActivePedirHumanIntent(meta),
+      checkoutActive,
+      partySizeKnown: partySize != null,
+      metadata: meta,
+    },
+    meta.intentLedger?.OBTENER_CANTIDAD_DEL_PRODUCTO
+  );
 
   const isInCoverage = ctx.isInCoverage === true;
 
@@ -584,6 +594,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
           },
           resolvePartySizeLedgerEntry(meta)
         ),
+    orderQuantityCandidate,
     confirmOfferCandidate,
   ].filter((c): c is NonNullable<typeof c> => c != null);
 
@@ -626,6 +637,9 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
   }
   if (meta.intentLedger?.DESBLOQUEAR_PEDIDO_CERRADO) {
     extrasLedger.DESBLOQUEAR_PEDIDO_CERRADO = meta.intentLedger.DESBLOQUEAR_PEDIDO_CERRADO;
+  }
+  if (meta.intentLedger?.OBTENER_CANTIDAD_DEL_PRODUCTO) {
+    extrasLedger.OBTENER_CANTIDAD_DEL_PRODUCTO = meta.intentLedger.OBTENER_CANTIDAD_DEL_PRODUCTO;
   }
   if (meta.intentLedger?.RETOMAR_TAREA_INTERRUMPIDA) {
     extrasLedger.RETOMAR_TAREA_INTERRUMPIDA = meta.intentLedger.RETOMAR_TAREA_INTERRUMPIDA;
@@ -674,7 +688,8 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
   } else if (
     ranked.active?.type === 'CONFIRMAR_PAGO_ONLINE' ||
     ranked.active?.type === 'DESBLOQUEAR_PEDIDO_CERRADO' ||
-    ranked.active?.type === 'RETOMAR_TAREA_INTERRUMPIDA'
+    ranked.active?.type === 'RETOMAR_TAREA_INTERRUMPIDA' ||
+    ranked.active?.type === 'OBTENER_CANTIDAD_DEL_PRODUCTO'
   ) {
     void recordCatalogGoalSurfaced(ctx.conversationId, ranked.active.type, meta).catch((err) =>
       console.error('[intent] failed to record catalog goal surfaced:', err)
@@ -728,7 +743,9 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
 
   const pendingVariationLines = buildPendingVariationContextLines(meta);
   const pendingAddQuantityLines = buildPendingAddQuantityContextLines(meta);
-  const pendingOrderLinesLines = buildPendingOrderLinesContextLines(meta);
+  const pendingOrderLinesLines = buildPendingOrderLinesContextLines(meta, {
+    quantityGoalActive: ranked.active?.type === 'OBTENER_CANTIDAD_DEL_PRODUCTO',
+  });
   const switchToReservationLines = buildSwitchToReservationContextLines(meta);
   const partySizeJustConfirmedLines = buildPartySizeJustConfirmedContextLines(
     ctx.partySizeJustConfirmed

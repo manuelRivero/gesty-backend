@@ -51,6 +51,9 @@ import {
   getPartySizeGoalLedger,
   isFoodRelatedPartySizeSignal,
 } from '../../../services/partySizeGoal.service';
+import { deriveOrderQuantityGoalTarget } from '../../../services/orderQuantityGoal.service';
+import { ensurePendingOrderLinesFromRequest } from '../../../services/pendingOrderLines.service';
+import { clearWelcomeEligible } from '../../../services/welcomeEligible.service';
 import { patchConversationMetadata, findOrCreateConversationState, omitConversationMetadataKeys } from '../../../repositories';
 import { isCheckoutAgentEnabled, isReservationAgentEnabled } from '../../../config/env';
 import { reservationAgentNode } from '../reservation';
@@ -861,18 +864,27 @@ export const nlpSubgraphNode = async (
         },
         getPartySizeGoalLedger(metadataBeforePreflight)
       ).open;
-      if (partySizeGoalActive) {
-        enrichedBase.activeBlockingGoal = 'OBTENER_PERSONAS_DEL_PEDIDO';
-      }
+      const quantityGoalActive = !partySizeGoalActive && active?.goal === 'PEDIR' && Boolean(
+        deriveOrderQuantityGoalTarget({
+          activePedir: true,
+          checkoutActive: metadataBeforePreflight.checkout_active === true,
+          partySizeKnown: getRequestedPartySize(metadataBeforePreflight) != null,
+          metadata: metadataBeforePreflight,
+        })
+      );
+      const activeBlockingGoal = partySizeGoalActive
+        ? 'OBTENER_PERSONAS_DEL_PEDIDO'
+        : quantityGoalActive
+          ? 'OBTENER_CANTIDAD_DEL_PRODUCTO'
+          : undefined;
+      if (activeBlockingGoal) enrichedBase.activeBlockingGoal = activeBlockingGoal;
       const decision = await runHumanIntentPreflight({
         turn: { messageId, text: userMessage },
         context: {
           recentTurns,
           ...(lastAssistantQuestion ? { lastAssistantQuestion } : {}),
           visibleReferences,
-          ...(partySizeGoalActive
-            ? { activeBlockingGoal: 'OBTENER_PERSONAS_DEL_PEDIDO' as const }
-            : {}),
+          ...(activeBlockingGoal ? { activeBlockingGoal } : {}),
         },
         state: { revision: intentState.revision, active, pending },
       });
@@ -930,6 +942,20 @@ export const nlpSubgraphNode = async (
         workingConversationState = await findOrCreateConversationState(conversation.id);
         enrichedBase.conversationState = workingConversationState;
         enrichedBase.humanIntentGateRevision = applied.state.revision;
+        const activePedir = applied.state.records.find(
+          (intent) => intent.goal === 'PEDIR' && intent.status === 'ACTIVE'
+        );
+        if (activePedir) {
+          await clearWelcomeEligible(conversation.id);
+          await ensurePendingOrderLinesFromRequest({
+            conversationId: conversation.id,
+            request: activePedir.request,
+            sourceMessage: userMessage,
+            metadata: workingConversationState.metadata,
+          });
+          workingConversationState = await findOrCreateConversationState(conversation.id);
+          enrichedBase.conversationState = workingConversationState;
+        }
         const fulfillmentCandidate =
           decision.decision === 'CONTINUE_ACTIVE'
             ? decision.fulfillmentCandidate

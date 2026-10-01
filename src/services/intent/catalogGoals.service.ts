@@ -90,7 +90,11 @@ export const deriveDesbloquearPedidoCerradoCandidate = (
 
 export const recordCatalogGoalSurfaced = async (
   conversationId: string,
-  type: 'CONFIRMAR_PAGO_ONLINE' | 'DESBLOQUEAR_PEDIDO_CERRADO' | 'RETOMAR_TAREA_INTERRUMPIDA',
+  type:
+    | 'CONFIRMAR_PAGO_ONLINE'
+    | 'DESBLOQUEAR_PEDIDO_CERRADO'
+    | 'RETOMAR_TAREA_INTERRUMPIDA'
+    | 'OBTENER_CANTIDAD_DEL_PRODUCTO',
   metadata: unknown
 ): Promise<void> => {
   const meta: ConversationMetadata = normalizeMetadata(metadata);

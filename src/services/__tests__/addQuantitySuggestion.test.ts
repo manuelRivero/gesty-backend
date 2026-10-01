@@ -2,9 +2,20 @@ import { describe, expect, it } from 'vitest';
 import {
   isConfirmedAddQuantity,
   needsAddQuantityConfirmation,
+  parseBareQuantityReply,
   suggestAddQuantity,
   userMessageStatesUnitQuantity,
 } from '../addQuantitySuggestion';
+
+describe('parseBareQuantityReply', () => {
+  it('acepta solo números enteros dentro del dominio de cantidades', () => {
+    expect(parseBareQuantityReply('2')).toBe(2);
+    expect(parseBareQuantityReply(' 3 ')).toBe(3);
+    expect(parseBareQuantityReply('Para 3 personas')).toBeNull();
+    expect(parseBareQuantityReply('1.5')).toBeNull();
+    expect(parseBareQuantityReply('100')).toBeNull();
+  });
+});
 
 describe('suggestAddQuantity', () => {
   it('(3,1) → 3 portion_math', () => {

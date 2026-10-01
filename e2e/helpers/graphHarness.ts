@@ -276,6 +276,7 @@ export const resetE2eCustomer = async (
     'pendingOrderSelection',
     'pendingOrderMessage',
     'pendingOrderCandidateIds',
+    'pendingPartySizeOrder',
     'pendingTipables',
     'pendingOrderLines',
     'pendingAction',

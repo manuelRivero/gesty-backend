@@ -261,6 +261,18 @@ describe('add_cart_item — cola de pedido y cantidad por línea', () => {
     expect(prisma.draft_order_item.create).not.toHaveBeenCalled();
   });
 
+  it('línea UNKNOWN no se agrega aunque la sugerencia calculada sea 1', async () => {
+    const unknown = metadataWithQueue({ partySize: 1, requestedQuantity: null });
+    findOrCreateConversationState.mockResolvedValue({ metadata: unknown });
+    vi.mocked(prisma.conversation_state.findUnique).mockResolvedValue({ metadata: unknown } as never);
+
+    const result = JSON.parse((await callTool({ productId: PRODUCT_ID })) as string);
+
+    expect(result).toMatchObject({ success: false, error: 'order_line_quantity_required' });
+    expect(setPendingAddQuantity).not.toHaveBeenCalled();
+    expect(prisma.draft_order_item.create).not.toHaveBeenCalled();
+  });
+
   it('producto ajeno a la cola: no toma la cantidad de otra línea', async () => {
     vi.mocked(prisma.menu_item.findFirst).mockResolvedValue(
       menuItem('Lomo saltado') as never

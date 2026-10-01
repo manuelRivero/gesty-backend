@@ -194,6 +194,8 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
       );
       const after = await (await import('../src/services/humanIntentState.service'))
         .getHumanIntentState(conversationId);
+      const conversationMetadataAfter = await (await import('./helpers/graphHarness'))
+        .getFreshConversationMetadata(conversationId);
       const observation = [...preflightObservations.entries]
         .reverse()
         .find((entry) => (entry.input as HumanIntentPreflightInput).turn.messageId === messageId);
@@ -206,6 +208,7 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
         humanIntentAfter: snapshotHumanIntentState(after),
         toolCalls: callback.calls,
         assistantResponse: extractHandlerText(result.handlerResult),
+        conversationMetadataAfter,
       };
       trace.turns.push(turn);
       assertLifecycleInvariant(
@@ -342,6 +345,59 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
     assertLifecycleInvariant(trace, 4, 'INV-1', turn4.humanIntentAfter.active.length <= 1, 'sin intención PEDIR duplicada', compactValue(turn4.humanIntentAfter));
     assertLifecycleInvariant(trace, 6, 'INV-5', trace.turns[5].humanIntentAfter.active.some((intent) => intent.goal === 'EXPLORAR' && intentText(intent).includes('postres')) || trace.turns[5].humanIntentAfter.records.some((intent) => intent.goal === 'EXPLORAR' && intent.status === 'RESOLVED' && intentText(intent).includes('postres')), 'postres ACTIVE o RESOLVED al consultar su categoría', compactValue(trace.turns[5].humanIntentAfter));
     assertLifecycleInvariant(trace, 7, 'INV-5', trace.turns[6].humanIntentAfter.active.some((intent) => intent.goal === 'EXPLORAR' && intentText(intent).includes('bebidas')) || trace.turns[6].humanIntentAfter.records.some((intent) => intent.goal === 'EXPLORAR' && intent.status === 'RESOLVED' && intentText(intent).includes('bebidas')), 'bebidas ACTIVE o RESOLVED al consultar su categoría', compactValue(trace.turns[6].humanIntentAfter));
+    trace.status = 'PASS';
+  }, 600_000);
+
+  it('CASE 07 — Party size → cantidad por línea → siguiente target', async () => {
+    const trace = await runCase('CASE 07 — Quantity Goal multi-línea', [
+      'Hola',
+      'Quiero papas a la huancaína y ceviche',
+      'Para 3 personas',
+      '2',
+    ], { requirePartySize: true });
+    const orderPlanTurn = trace.turns[1];
+    const partyTurn = trace.turns[2];
+    const quantityTurn = trace.turns[3];
+    const metadata = await (await import('./helpers/graphHarness'))
+      .getFreshConversationMetadata(conversationId);
+    const partyMetadata = partyTurn.conversationMetadataAfter;
+    const plannedLines = (orderPlanTurn.conversationMetadataAfter?.pendingOrderLines as {
+      lines?: Array<{ hint: string; requestedQuantity: number | null }>;
+    } | undefined)?.lines;
+    const pending = metadata?.pendingOrderLines as {
+      lines?: Array<{ id: string; hint: string; requestedQuantity: number | null; status: string }>;
+    } | undefined;
+    const papas = pending?.lines?.find((line) => normalize(line.hint).includes('papas'));
+    const ceviche = pending?.lines?.find((line) => normalize(line.hint).includes('ceviche'));
+    const quantityCall = quantityTurn.toolCalls.find((call) => call.name === 'set_order_line_quantity');
+    const partySizeCall = partyTurn.toolCalls.find((call) => call.name === 'save_party_size');
+    let quantityToolResult: Record<string, unknown> = {};
+    try {
+      quantityToolResult = JSON.parse(quantityCall?.result ?? '{}') as Record<string, unknown>;
+    } catch {
+      quantityToolResult = {};
+    }
+    const persistedLine = quantityToolResult.orderLine as { requestedQuantity?: number } | undefined;
+    const quantityArgs = quantityCall?.args as { orderLineId?: string } | undefined;
+    const nextQuantityTarget = quantityToolResult.nextQuantityTarget as { id?: string } | undefined;
+    const quantityGoalType = (
+      quantityTurn.preflight as { decision?: { fulfillmentCandidate?: { goalType?: string } } } | null
+    )?.decision?.fulfillmentCandidate?.goalType;
+
+    const linesAfterParty = (partyMetadata?.pendingOrderLines as typeof pending)?.lines;
+    assertLifecycleInvariant(trace, 2, 'INV-QTY-00', Boolean(plannedLines?.length === 2 && plannedLines.every((line) => line.requestedQuantity === null)), 'pendingOrderLines conserva ambas cantidades como UNKNOWN desde el plan', compactValue(plannedLines));
+    assertLifecycleInvariant(trace, 3, 'INV-QTY-01', partyMetadata?.peopleCount === 3 && partyMetadata?.requestedPartySize === 3, 'peopleCount y requestedPartySize persisten 3', compactValue(partyMetadata));
+    assertLifecycleInvariant(trace, 3, 'INV-QTY-02', Boolean(linesAfterParty?.length === 2 && linesAfterParty.every((line) => line.requestedQuantity === null)), 'ambas líneas siguen UNKNOWN tras guardar party size', compactValue(linesAfterParty));
+    assertLifecycleInvariant(trace, 3, 'INV-QTY-11', Boolean(partySizeCall) && quantityGoalType === 'OBTENER_CANTIDAD_DEL_PRODUCTO', 'el siguiente preflight deriva el Quantity Goal tras party_size_persisted', compactValue(quantityTurn.preflight));
+    assertLifecycleInvariant(trace, 3, 'INV-QTY-03', !partyTurn.toolCalls.some((call) => call.name === 'add_cart_item'), 'no hay ADD al guardar party size', compactValue(partyTurn.toolCalls));
+    assertLifecycleInvariant(trace, 4, 'INV-QTY-04', Boolean(quantityCall), 'el Goal usa la tool de persistencia de cantidad', compactValue(quantityTurn.toolCalls));
+    assertLifecycleInvariant(trace, 4, 'INV-QTY-12', quantityArgs?.orderLineId === papas?.id, 'la respuesta breve se vincula al id de la línea activa', compactValue(quantityCall));
+    assertLifecycleInvariant(trace, 4, 'INV-QTY-05', persistedLine?.requestedQuantity === 2, 'la respuesta 2 persiste solo la cantidad confirmada', compactValue(quantityCall));
+    assertLifecycleInvariant(trace, 4, 'INV-QTY-06', Boolean(papas && papas.requestedQuantity === 2 && papas.status === 'active'), 'papas conserva cantidad 2 y status active', compactValue(pending));
+    assertLifecycleInvariant(trace, 4, 'INV-QTY-07', Boolean(ceviche && ceviche.requestedQuantity == null && ceviche.status === 'queued'), 'ceviche sigue UNKNOWN y queued', compactValue(pending));
+    assertLifecycleInvariant(trace, 4, 'INV-QTY-08', quantityTurn.toolCalls.every((call) => call.name !== 'add_cart_item'), 'no se ejecuta ADD antes de obtener todas las cantidades', compactValue(quantityTurn.toolCalls));
+    assertLifecycleInvariant(trace, 4, 'INV-QTY-13', nextQuantityTarget?.id === ceviche?.id, 'la persistencia deriva ceviche como siguiente Quantity Goal target', compactValue(quantityToolResult));
+    assertLifecycleInvariant(trace, 4, 'INV-QTY-09', normalize(quantityTurn.assistantResponse).includes('ceviche'), 'el siguiente target comunicado es ceviche', quantityTurn.assistantResponse);
     trace.status = 'PASS';
   }, 600_000);
 });

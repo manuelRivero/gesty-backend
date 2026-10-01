@@ -13,7 +13,11 @@ import {
   rememberPartySizeBlockedFood,
   summarizeBlockedAdd,
 } from '../services/partySizeGoal.service';
-import { DEFAULT_TOOL_CONTRACTS } from './toolContracts';
+import {
+  DEFAULT_TOOL_CONTRACTS,
+  PRODUCT_CANDIDATE,
+  PRODUCT_RESOLUTION,
+} from './toolContracts';
 import { ToolExecutor } from './toolExecutor';
 import { planToolCalls } from './toolPlanner';
 import { PostEffectToolNode } from './postEffectToolNode';
@@ -354,9 +358,16 @@ export class HumanIntentToolNode extends PostEffectToolNode {
     const pendingCalls = calls.filter((call) => call.id == null || !completedCallIds.has(call.id));
     if (pendingCalls.length === 0) return super.run(input, config);
 
-    const plannerAwareBatch =
+    const hasSearchResolutionChain =
       pendingCalls.some((call) => PRODUCT_SEARCH_TOOLS.has(call.name)) &&
       pendingCalls.some((call) => call.name === 'resolve_product');
+    const hasStandaloneDeclaredEffect = pendingCalls.some((call) => {
+      const contract = DEFAULT_TOOL_CONTRACTS.find((item) => item.name === call.name);
+      return contract?.produces?.some(
+        (capability) => capability.type !== PRODUCT_CANDIDATE && capability.type !== PRODUCT_RESOLUTION
+      ) ?? false;
+    });
+    const plannerAwareBatch = hasSearchResolutionChain || hasStandaloneDeclaredEffect;
 
     if (plannerAwareBatch) {
       const plannerPlan = planToolCalls(pendingCalls, {

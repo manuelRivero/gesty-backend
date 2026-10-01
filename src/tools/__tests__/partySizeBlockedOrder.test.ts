@@ -270,7 +270,7 @@ describe('pedido en espera cuando falta el número', () => {
     expect(
       (metadata.pendingOrderLines as { lines: Array<{ requestedQuantity: number | null }> }).lines
         .map((line) => line.requestedQuantity)
-    ).toEqual([1, 1]);
+    ).toEqual([null, null]);
   });
 
   it('una búsqueda con resultados no consume el pending', async () => {

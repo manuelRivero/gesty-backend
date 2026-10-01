@@ -153,6 +153,7 @@ export type ConversationMetadata = {
     summary: string;
     setAt: string;
     turnStartedAt?: string | null;
+    lines?: Array<{ hint: string; requestedQuantity: number | null }>;
   } | null;
   /** @deprecated Lectura legacy; preferir requestedPartySize. */
   pendingProductQueryQuantity?: number;
@@ -388,6 +389,7 @@ export type ConversationMetadata = {
     /** @deprecated Alias ledger; preferir OBTENER_PERSONAS_DEL_PEDIDO. */
     RECOLECTAR_PARTY_SIZE?: IntentLedgerEntryBase;
     OBTENER_PERSONAS_DEL_PEDIDO?: IntentLedgerEntryBase;
+    OBTENER_CANTIDAD_DEL_PRODUCTO?: IntentLedgerEntryBase;
     PEDIDO_POR_EXPIRAR?: IntentLedgerEntryBase & { emitted?: boolean };
     NEGOCIO_POR_CERRAR?: IntentLedgerEntryBase & { emitted?: boolean };
     FUERA_DE_COBERTURA?: IntentLedgerEntryBase & { emitted?: boolean };

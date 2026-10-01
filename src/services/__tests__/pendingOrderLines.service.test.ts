@@ -6,7 +6,9 @@ import {
   buildPendingOrderLinesContextLines,
   cancelOrderLine,
   clearPendingOrderLines,
+  ensurePendingOrderLinesFromRequest,
   getActiveOrderLine,
+  getNextOrderLineRequiringQuantity,
   getPendingOrderLines,
   hasOpenOrderLines,
   normalizeOrderLineInput,
@@ -17,6 +19,7 @@ import {
   ingredientFilterCarvesDishHint,
   buildOrderLineSearchInstruction,
   setPendingOrderLines,
+  setOrderLineRequestedQuantity,
   type PendingOrderLines,
 } from '../pendingOrderLines.service';
 
@@ -63,6 +66,41 @@ describe('pendingOrderLines.service', () => {
     expect(getActiveOrderLine(null)).toBeNull();
   });
 
+  it('selecciona la línea UNKNOWN activa y luego la primera queued UNKNOWN', () => {
+    const pending = basePending({
+      lines: [
+        { id: 'papas', hint: 'papas', requestedQuantity: null, status: 'active' },
+        { id: 'ceviche', hint: 'ceviche', requestedQuantity: null, status: 'queued' },
+      ],
+    });
+    expect(getNextOrderLineRequiringQuantity(pending)?.id).toBe('papas');
+    expect(getNextOrderLineRequiringQuantity({
+      ...pending,
+      lines: pending.lines.map((line) =>
+        line.id === 'papas' ? { ...line, requestedQuantity: 2 } : line
+      ),
+    })?.id).toBe('ceviche');
+  });
+
+  it('persiste cantidad confirmada sin alterar status ni convertir otros UNKNOWN', async () => {
+    const pending = basePending({
+      lines: [
+        { id: 'papas', hint: 'papas', requestedQuantity: null, status: 'active' },
+        { id: 'ceviche', hint: 'ceviche', requestedQuantity: null, status: 'queued' },
+      ],
+    });
+    const next = await setOrderLineRequestedQuantity({
+      conversationId: 'conv-1',
+      metadata: { pendingOrderLines: pending },
+      orderLineId: 'papas',
+      quantity: 2,
+    });
+    expect(next?.lines).toMatchObject([
+      { id: 'papas', requestedQuantity: 2, status: 'active' },
+      { id: 'ceviche', requestedQuantity: null, status: 'queued' },
+    ]);
+  });
+
   it('hasOpenOrderLines: true con queued/active, false con todo done/cancelled o sin cola', () => {
     expect(hasOpenOrderLines({ pendingOrderLines: basePending() })).toBe(true);
     expect(hasOpenOrderLines({})).toBe(false);
@@ -85,11 +123,24 @@ describe('pendingOrderLines.service', () => {
       sourceMessage: '3 lomos y un ceviche',
     });
     expect(pending.lines[0]).toMatchObject({ hint: 'lomo', requestedQuantity: 3, status: 'active' });
-    expect(pending.lines[1]).toMatchObject({ hint: 'ceviche', status: 'queued' });
+    expect(pending.lines[1]).toMatchObject({ hint: 'ceviche', requestedQuantity: null, status: 'queued' });
     expect(patchConversationMetadata).toHaveBeenCalledWith(
       'conv-1',
       expect.objectContaining({ pendingOrderLines: expect.any(Object) })
     );
+  });
+
+  it('materializa products de PEDIR conservando cantidades desconocidas', async () => {
+    const pending = await ensurePendingOrderLinesFromRequest({
+      conversationId: 'conv-1',
+      request: { products: ['papas a la huancaína', 'ceviche'] },
+      sourceMessage: 'Quiero papas a la huancaína y ceviche',
+      metadata: {},
+    });
+    expect(pending?.lines).toMatchObject([
+      { hint: 'papas a la huancaína', requestedQuantity: null, status: 'active' },
+      { hint: 'ceviche', requestedQuantity: null, status: 'queued' },
+    ]);
   });
 
   describe('normalizeOrderLineInput (cantidad dentro del hint)', () => {
@@ -300,7 +351,7 @@ describe('pendingOrderLines.service', () => {
       }),
     });
 
-    expect(lines.join('\n')).toContain('línea activa ahora → *B* (2×)');
+    expect(lines.join('\n')).toContain('línea activa ahora → *B* (2×) [orderLineId: l2]');
     expect(lines.join('\n')).not.toContain('línea activa ahora → *A*');
   });
 

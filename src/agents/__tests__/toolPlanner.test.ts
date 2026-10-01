@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ToolPlanner, planToolCalls } from '../toolPlanner';
 import { ToolExecutor, executeToolPlan } from '../toolExecutor';
-import { DEFAULT_TOOL_CONTRACTS } from '../toolContracts';
+import { DEFAULT_TOOL_CONTRACTS, ORDER_LINE_QUANTITY_PERSISTED } from '../toolContracts';
 import { evaluateToolRequirement } from '../../services/requirementEvaluator';
 
 const call = (name: string, args: Record<string, unknown>) => ({ name, args, id: `${name}-${Math.random()}` });
@@ -92,6 +92,19 @@ describe('ToolPlanner', () => {
       ['resolve_product'],
       ['add_cart_item'],
     ]);
+  });
+
+  it('trata la persistencia quantity como capability declarada, sin regla por nombre', () => {
+    const plan = planToolCalls(
+      [call('set_order_line_quantity', { orderLineId: 'line-1', quantity: 2 })],
+      { contracts: DEFAULT_TOOL_CONTRACTS }
+    );
+    expect(plan).toMatchObject({
+      status: 'READY',
+      steps: [{ status: 'READY', calls: [{ name: 'set_order_line_quantity' }] }],
+    });
+    expect(DEFAULT_TOOL_CONTRACTS.find((contract) => contract.name === 'set_order_line_quantity')?.produces)
+      .toEqual([{ type: ORDER_LINE_QUANTITY_PERSISTED }]);
   });
 });
 

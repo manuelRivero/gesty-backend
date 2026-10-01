@@ -98,6 +98,7 @@ import {
   cancelOrderLine,
   clearPendingOrderLines,
   getActiveOrderLine,
+  getNextOrderLineRequiringQuantity,
   getPendingOrderLines,
   hasOpenOrderLines,
   ingredientFilterCarvesDishHint,
@@ -106,10 +107,12 @@ import {
   resolveMissedSearchOrderLine,
   resolveOrderLineForProduct,
   setPendingOrderLines,
+  setOrderLineRequestedQuantity,
   type OrderLine,
 } from '../services/pendingOrderLines.service';
 import {
   needsAddQuantityConfirmation,
+  parseBareQuantityReply,
   suggestAddQuantity,
   userMessageStatesUnitQuantity,
 } from '../services/addQuantitySuggestion';
@@ -2263,6 +2266,7 @@ export const addCartItemTool = new DynamicStructuredTool<
     // ya quedó fijada en la variación pendiente. Si no, manda la cobertura
     // ceil(party/serves): "para dos" con ración 2 escribe 1, no el 2 del modelo.
     const lineQuantity = orderLine?.requestedQuantity ?? null;
+    const orderLineNeedsQuantity = orderLine != null && lineQuantity == null;
     const unitsFromClient =
       pendingReply || statedUnits || variationQtyCarry;
     const qty = lineQuantity != null
@@ -2270,10 +2274,11 @@ export const addCartItemTool = new DynamicStructuredTool<
       : unitsFromClient && modelQty != null
         ? modelQty
         : suggestedQuantity;
-    const willAskQuantity =
+    const willAskQuantity = orderLineNeedsQuantity || (
       lineQuantity == null &&
       !unitsFromClient &&
-      needsAddQuantityConfirmation({ suggestedQuantity, partySize });
+      needsAddQuantityConfirmation({ suggestedQuantity, partySize })
+    );
     if (
       modelQty != null &&
       !unitsFromClient &&
@@ -2365,6 +2370,18 @@ export const addCartItemTool = new DynamicStructuredTool<
 
     // D7 — cantidad: si la cobertura sugiere ≥2 y el mensaje no afirmó unidades, no escribir.
     if (willAskQuantity && conversationId) {
+      if (orderLineNeedsQuantity) {
+        return toJson({
+          success: false,
+          error: 'order_line_quantity_required',
+          orderLineId: orderLine?.id,
+          productName: item.name,
+          instruction:
+            'La línea estructurada todavía tiene requestedQuantity UNKNOWN. No escribas el carrito. ' +
+            'Si el mensaje actual contiene unidades explícitas, persistilas con set_order_line_quantity ' +
+            `usando orderLineId=${orderLine?.id}; si no, preguntá cuántas quiere.`,
+        });
+      }
       if (quantity != null) {
         console.debug(
           JSON.stringify({
@@ -3400,6 +3417,64 @@ export const savePartySizeTool = new DynamicStructuredTool<
   },
 });
 
+const setOrderLineQuantitySchema = z.object({
+  orderLineId: z.string().min(1).describe('ID de la línea indicada por el Goal activo de cantidad.'),
+  quantity: z.number().int().min(1).max(99).describe('Unidades confirmadas por el usuario para esa línea.'),
+});
+type SetOrderLineQuantityInput = z.infer<typeof setOrderLineQuantitySchema>;
+
+export const setOrderLineQuantityTool = new DynamicStructuredTool<
+  typeof setOrderLineQuantitySchema,
+  SetOrderLineQuantityInput
+>({
+  name: 'set_order_line_quantity',
+  description:
+    'Persiste una cantidad confirmada para una línea UNKNOWN de pendingOrderLines. ' +
+    'Usá el orderLineId del Goal de cantidad; una respuesta corta corresponde a ese target. ' +
+    'Si el usuario nombra explícitamente otra línea, usá el id de esa línea. ' +
+    'No uses partySize ni suggestedQuantity como quantity.',
+  schema: setOrderLineQuantitySchema,
+  func: async ({ orderLineId, quantity }: SetOrderLineQuantityInput, _runManager, config?: RunnableConfig) => {
+    const { conversationId, userMessage } = getReactContext(config);
+    if (!conversationId) return toJson({ success: false, error: 'no_conversation' });
+    const bareReply = parseBareQuantityReply(userMessage);
+    const messageConfirmsQuantity =
+      bareReply != null || userMessageStatesUnitQuantity(userMessage, quantity);
+    if (!messageConfirmsQuantity) {
+      return toJson({
+        success: false,
+        error: 'quantity_not_confirmed_by_user_message',
+        instruction: 'El mensaje actual no confirma esa cantidad. No persistas el argumento del modelo.',
+      });
+    }
+    const confirmedQuantity = bareReply ?? quantity;
+    const state = await findOrCreateConversationState(conversationId);
+    const pending = getPendingOrderLines(state.metadata);
+    const line = pending?.lines.find(
+      (candidate) => candidate.id === orderLineId &&
+        (candidate.status === 'active' || candidate.status === 'queued')
+    );
+    if (!line) return toJson({ success: false, error: 'order_line_not_open' });
+    if (line.requestedQuantity != null) {
+      return toJson({ success: false, error: 'order_line_quantity_already_known' });
+    }
+    const updated = await setOrderLineRequestedQuantity({
+      conversationId,
+      metadata: state.metadata,
+      orderLineId,
+      quantity: confirmedQuantity,
+    });
+    if (!updated) return toJson({ success: false, error: 'order_line_quantity_not_persisted' });
+    const nextTarget = getNextOrderLineRequiringQuantity(updated);
+    return toJson({
+      success: true,
+      effect: { kind: 'order_line_quantity_persisted', reference: orderLineId },
+      orderLine: { id: orderLineId, hint: line.hint, requestedQuantity: confirmedQuantity, status: line.status },
+      ...(nextTarget ? { nextQuantityTarget: { id: nextTarget.id, hint: nextTarget.hint } } : {}),
+    });
+  },
+});
+
 // ---------------------------------------------------------------------------
 // save_customer_name
 // ---------------------------------------------------------------------------
@@ -3890,7 +3965,7 @@ const planOrderLinesSchema = z.object({
               '"3 lomos" → { hint: "lomo saltado", requestedQuantity: 3 }. ' +
               '"1 ceviche" → { hint: "ceviche", requestedQuantity: 1 }. ' +
               'Omití si no indicó unidades para esa línea ("quiero ceviche", "una bebida"); ' +
-              'la línea comienza con 1 unidad. ' +
+              'la cantidad queda UNKNOWN y se preguntará antes de agregar. ' +
               'Un número de comensales ("para 3", "somos 3") nunca es cantidad de esta línea.'
           ),
       })
@@ -3914,7 +3989,7 @@ export const planOrderLinesTool = new DynamicStructuredTool<
     'viva y nombra 2+ candidatos de esa lista ("1 adobo y 1 ají"): misma tool; cierra la ola y abre cola. ' +
     'NO uses esta tool si es un solo plato (aunque pida varias unidades del mismo, ej. "2 pizzas" es 1 línea, ' +
     'no la necesitás). requestedQuantity solo contiene unidades explícitas de cada producto; si se omite, ' +
-    'la línea comienza con 1 unidad. El número de personas del pedido nunca se copia a las líneas. ' +
+    'la línea conserva cantidad UNKNOWN. El número de personas del pedido nunca se copia a las líneas. ' +
     'Llamala UNA sola vez por mensaje, ANTES de resolver ningún producto. Después de ' +
     'llamarla, trabajá SOLO la línea activa: si el hint nombra un plato, search_products(keyword=hint entero); ' +
     'si es sección/rol ("algo de beber", "postre"), get_categories + present_category o ' +
@@ -3926,10 +4001,12 @@ export const planOrderLinesTool = new DynamicStructuredTool<
     _runManager,
     config?: RunnableConfig
   ) => {
-    const plannedLines = lines.map((line) => ({
-      ...line,
-      requestedQuantity: line.requestedQuantity ?? 1,
-    }));
+    const plannedLines: Array<{ hint: string; requestedQuantity: number | null }> = lines.map(
+      (line) => ({
+        hint: line.hint,
+        requestedQuantity: line.requestedQuantity ?? null,
+      })
+    );
     const { conversationId, turnStartedAt } = getReactContext(config);
     if (!conversationId) {
       return toJson({ success: false, error: 'no_conversation' });
@@ -4492,6 +4569,7 @@ export const allReactTools = [
   updateItemNoteTool,
   startItemNoteTool,
   savePartySizeTool,
+  setOrderLineQuantityTool,
   presentCartTool,
   cancelOrderTool,
   presentComplementSuggestionsTool,

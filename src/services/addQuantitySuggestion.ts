@@ -144,6 +144,13 @@ export function userMessageStatesUnitQuantity(
   return patterns.some((re) => re.test(normalized));
 }
 
+/** Parses a bare numeric reply; its meaning comes from the active Goal target. */
+export function parseBareQuantityReply(userMessage: string | null | undefined): number | null {
+  if (!userMessage?.trim()) return null;
+  const quantity = Number(userMessage.trim());
+  return Number.isInteger(quantity) && quantity >= 1 && quantity <= 99 ? quantity : null;
+}
+
 /**
  * Qty del payload/tool cuenta como confirmada por el cliente (no abrir pending).
  *

@@ -33,6 +33,7 @@ export type LifecycleTurn = {
   humanIntentAfter: HumanIntentSnapshot;
   toolCalls: LifecycleToolCall[];
   assistantResponse: string;
+  conversationMetadataAfter?: Record<string, unknown>;
 };
 
 export type HumanIntentCaseTrace = {
