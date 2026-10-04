@@ -1,7 +1,7 @@
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { BaseCallbackHandler } from '@langchain/core/callbacks/base';
-import { afterAll, beforeAll, describe, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { HumanIntentPreflightInput } from '../src/services/humanIntentPreflight.service';
 import { isE2eEnabled, applyE2eEnv } from './helpers/env';
 import {
@@ -400,4 +400,19 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
     assertLifecycleInvariant(trace, 4, 'INV-QTY-09', normalize(quantityTurn.assistantResponse).includes('ceviche'), 'el siguiente target comunicado es ceviche', quantityTurn.assistantResponse);
     trace.status = 'PASS';
   }, 600_000);
+
+  it('P0 — ceviche + papas conserva el protocolo tool_call_id', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    let trace: HumanIntentCaseTrace;
+    try {
+      trace = await runCase('P0 — ceviche + papas a la huacaina', [
+        'Hola buenas quiero un ceviche y unas papas a la huacaina',
+      ]);
+    } finally {
+      const errors = errorSpy.mock.calls.flat().map(String).join('\n');
+      errorSpy.mockRestore();
+      expect(errors).not.toMatch(/Invalid parameter:[\s\S]*tool_call_id/);
+    }
+    expect(trace!.turns[0].assistantResponse).not.toMatch(/Invalid parameter:[\s\S]*tool_call_id/);
+  }, 480_000);
 });

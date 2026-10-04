@@ -16,8 +16,6 @@ import {
 } from '../services/partySizeGoal.service';
 import {
   DEFAULT_TOOL_CONTRACTS,
-  PRODUCT_CANDIDATE,
-  PRODUCT_RESOLUTION,
 } from './toolContracts';
 import { ToolExecutor } from './toolExecutor';
 import { planToolCalls } from './toolPlanner';
@@ -362,15 +360,7 @@ export class HumanIntentToolNode extends PostEffectToolNode {
     const hasSearchResolutionChain =
       pendingCalls.some((call) => PRODUCT_SEARCH_TOOLS.has(call.name)) &&
       pendingCalls.some((call) => call.name === 'resolve_product');
-    const hasStandaloneDeclaredEffect = pendingCalls.some((call) => {
-      const contract = DEFAULT_TOOL_CONTRACTS.find((item) => item.name === call.name);
-      return contract?.produces?.some(
-        (capability) => capability.type !== PRODUCT_CANDIDATE && capability.type !== PRODUCT_RESOLUTION
-      ) ?? false;
-    });
-    const plannerAwareBatch = hasSearchResolutionChain || hasStandaloneDeclaredEffect;
-
-    if (plannerAwareBatch) {
+    if (hasSearchResolutionChain) {
       const plannerPlan = planToolCalls(pendingCalls, {
         contracts: DEFAULT_TOOL_CONTRACTS,
       });
@@ -441,9 +431,10 @@ export class HumanIntentToolNode extends PostEffectToolNode {
 
       const outputs = executionResults.map((result) => {
         if (result.status === 'REJECTED' || result.status === 'DEFERRED' || result.status === 'BLOCKED') {
+          if (typeof result.call.id !== 'string' || result.call.id.length === 0) return undefined;
           return new ToolMessage({
             name: result.callName,
-            tool_call_id: result.callName,
+            tool_call_id: result.call.id,
             status: 'success',
             content: JSON.stringify({
               success: false,

@@ -1,0 +1,2661 @@
+[
+  {
+    "caseName": "CASE 07 — Quantity Goal multi-línea",
+    "status": "PASS",
+    "turns": [
+      {
+        "turn": 1,
+        "userMessage": "Hola",
+        "preflight": {
+          "decision": {
+            "decision": "NO_INTENT"
+          }
+        },
+        "humanIntentBefore": {
+          "revision": 0,
+          "records": [],
+          "active": [],
+          "pending": []
+        },
+        "humanIntentAfter": {
+          "revision": 0,
+          "records": [],
+          "active": [],
+          "pending": []
+        },
+        "toolCalls": [
+          {
+            "name": "present_welcome_options",
+            "args": {
+              "bodyText": "¡Hola! ¿Te gustaría ver el menú o reservar una mesa? Estoy aquí para ayudarte."
+            },
+            "result": "{\"signal\":\"present_welcome_options\",\"bodyText\":\"¡Hola! ¿Te gustaría ver el menú o reservar una mesa? Estoy aquí para ayudarte.\"}"
+          }
+        ],
+        "assistantResponse": "{\"type\":\"list\",\"header\":{\"type\":\"text\",\"text\":\"\"},\"body\":{\"text\":\"🤖\\n\\n*Bienvenido a Sabrosòn* 👋\\n\\n¡Hola! ¿Te gustaría ver el menú o reservar una mesa? Estoy aquí para ayudarte.\\n\\n• Hacer *pedido*\\n• *Menú*\\n• *Horarios*\\n• *Consulta*\\n• *Reservar* mesa\\n• *Editar* dirección\"},\"footer\":{\"text\":\"Elegí o escribí\"},\"action\":{\"button\":\"Ver opciones\",\"sections\":[{\"title\":\"Opciones\",\"rows\":[{\"id\":\"O",
+        "conversationMetadataAfter": {
+          "intentLedger": {
+            "OBTENER_NOMBRE": {},
+            "COMPLETAR_RESERVA": {
+              "abandonment": false,
+              "surfaceCount": 2,
+              "lastSurfacedAt": "2026-09-30T16:48:12.566Z"
+            },
+            "OBTENER_DIRECCION": {},
+            "OBTENER_PERSONAS_DEL_PEDIDO": {
+              "surfaceCount": 3,
+              "lastSurfacedAt": "2026-10-01T01:29:23.206Z"
+            },
+            "OBTENER_CANTIDAD_DEL_PRODUCTO": {
+              "surfaceCount": 3,
+              "lastSurfacedAt": "2026-10-01T01:35:31.851Z"
+            }
+          },
+          "checkout_active": false,
+          "pendingTipables": {
+            "offeredAt": "2026-10-01T04:50:59.669Z",
+            "management": [
+              "ORDER_FOOD",
+              "VIEW_MENU"
+            ]
+          },
+          "humanIntentState": {
+            "records": [],
+            "version": 1,
+            "revision": 0,
+            "nextSequence": 1,
+            "processedMessageIds": []
+          },
+          "awaitingPartySize": false,
+          "productResolutions": [
+            {
+              "scope": "pending",
+              "source": "search_products",
+              "status": "selected",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.126Z",
+              "expiresAt": "2026-09-30T17:19:12.210Z",
+              "productId": "7899fdd4-e838-4f3f-9c07-02771774c8ae",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:31fff32a-3de6-4282-a990-79311c93ac07",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.126Z",
+              "expiresAt": "2026-09-30T17:19:03.126Z",
+              "productId": "8195636e-d56e-4b7e-b078-fd4a5c89556d",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:eb4ceb23-2370-4565-8e74-16edd241e3cd",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.126Z",
+              "expiresAt": "2026-09-30T17:19:03.126Z",
+              "productId": "c6ca2d42-551a-44d0-a15e-2a5773733cb5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:bf073ca3-a76b-4971-b845-7e96d17054c9",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.126Z",
+              "expiresAt": "2026-09-30T17:19:03.126Z",
+              "productId": "f54550d2-a541-405a-88de-520b22300fa5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:88523585-796b-4ba9-a66e-00f0b58cca89",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.126Z",
+              "expiresAt": "2026-09-30T17:19:03.126Z",
+              "productId": "ee684803-ac5f-4672-b19b-7c3551f867a3",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:9f0920f7-1db6-4628-a7f5-70c06bbbc2c1",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.126Z",
+              "expiresAt": "2026-09-30T17:19:03.126Z",
+              "productId": "571b858d-84d2-47da-a6c6-a445cebd1c87",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:0af52d38-fe38-4ff7-8e98-93f281fc9422",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "selected",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.317Z",
+              "expiresAt": "2026-09-30T17:19:03.317Z",
+              "productId": "742df439-a245-4414-8f30-289ab8097cac",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:b02c86c2-d46a-48c9-a0ff-aa643f474b8e",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.317Z",
+              "expiresAt": "2026-09-30T17:19:03.317Z",
+              "productId": "caae2144-8aef-40d8-a85b-aaa45e12a7f9",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:0d7b8808-b53b-4842-90fa-eacd70986afc",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.317Z",
+              "expiresAt": "2026-09-30T17:19:03.317Z",
+              "productId": "2242aa0a-659f-424c-b2e6-1db5e29900b1",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:ee395286-1f8c-4474-a3ec-484be2f80b37",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.317Z",
+              "expiresAt": "2026-09-30T17:19:03.317Z",
+              "productId": "f2a49890-2f09-4491-8541-7b76f33073d8",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:73ae515a-549c-4cf0-bf4b-349e95413193",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.317Z",
+              "expiresAt": "2026-09-30T17:19:03.317Z",
+              "productId": "7868656e-be73-4a87-b867-0babfb62558c",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:5f22f315-46bd-4efc-91e0-33fa18bd56f8",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "e7d42e05",
+              "createdAt": "2026-10-01T02:12:37.743Z",
+              "expiresAt": "2026-10-01T02:42:37.743Z",
+              "productId": "7899fdd4-e838-4f3f-9c07-02771774c8ae",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:0ed08b17-bc39-465d-bcfb-bba2040f2c1d",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "e7d42e05",
+              "createdAt": "2026-10-01T02:12:37.743Z",
+              "expiresAt": "2026-10-01T02:42:37.743Z",
+              "productId": "8195636e-d56e-4b7e-b078-fd4a5c89556d",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:9d2520a4-ce08-42b5-bd5f-d0c961762517",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "e7d42e05",
+              "createdAt": "2026-10-01T02:12:37.743Z",
+              "expiresAt": "2026-10-01T02:42:37.743Z",
+              "productId": "c6ca2d42-551a-44d0-a15e-2a5773733cb5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:a9148a18-b793-4af1-9145-b724dc20fa64",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "e7d42e05",
+              "createdAt": "2026-10-01T02:12:37.743Z",
+              "expiresAt": "2026-10-01T02:42:37.743Z",
+              "productId": "f54550d2-a541-405a-88de-520b22300fa5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:24d3616e-696c-49aa-a433-4ee7b449b2b9",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "e7d42e05",
+              "createdAt": "2026-10-01T02:12:37.743Z",
+              "expiresAt": "2026-10-01T02:42:37.743Z",
+              "productId": "ee684803-ac5f-4672-b19b-7c3551f867a3",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:dce84d91-e0e4-4acf-87d7-18f5f327032d",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "e7d42e05",
+              "createdAt": "2026-10-01T02:12:37.743Z",
+              "expiresAt": "2026-10-01T02:42:37.743Z",
+              "productId": "571b858d-84d2-47da-a6c6-a445cebd1c87",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:460e8db6-52b6-4ac3-8f20-fd7cfc8867ea",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "b23601f7",
+              "createdAt": "2026-10-01T04:11:19.769Z",
+              "expiresAt": "2026-10-01T04:41:19.769Z",
+              "productId": "742df439-a245-4414-8f30-289ab8097cac",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:87cb42f9-d8e8-47c5-8017-24ed2f188f62",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "b23601f7",
+              "createdAt": "2026-10-01T04:11:19.769Z",
+              "expiresAt": "2026-10-01T04:41:19.769Z",
+              "productId": "caae2144-8aef-40d8-a85b-aaa45e12a7f9",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:4dfffea3-f1ab-4b29-9e53-b83e54f15544",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "b23601f7",
+              "createdAt": "2026-10-01T04:11:19.769Z",
+              "expiresAt": "2026-10-01T04:41:19.769Z",
+              "productId": "2242aa0a-659f-424c-b2e6-1db5e29900b1",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:a9f9b835-f1f5-4402-9491-fc93c63278aa",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "b23601f7",
+              "createdAt": "2026-10-01T04:11:19.769Z",
+              "expiresAt": "2026-10-01T04:41:19.769Z",
+              "productId": "f2a49890-2f09-4491-8541-7b76f33073d8",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:50511d5d-4bea-4c6b-84aa-3c931e876ac0",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "b23601f7",
+              "createdAt": "2026-10-01T04:11:19.769Z",
+              "expiresAt": "2026-10-01T04:41:19.769Z",
+              "productId": "7868656e-be73-4a87-b867-0babfb62558c",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:b0aa6012-d27c-486e-a170-f8736b73589d",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "2df309b7",
+              "createdAt": "2026-10-01T04:19:58.835Z",
+              "expiresAt": "2026-10-01T04:49:58.835Z",
+              "productId": "7899fdd4-e838-4f3f-9c07-02771774c8ae",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:c0946f21-13d3-41ab-adde-17ea61c06ad8",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "2df309b7",
+              "createdAt": "2026-10-01T04:19:58.835Z",
+              "expiresAt": "2026-10-01T04:49:58.835Z",
+              "productId": "8195636e-d56e-4b7e-b078-fd4a5c89556d",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:04755ba9-79ed-4f00-9854-c7dba3600b11",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "2df309b7",
+              "createdAt": "2026-10-01T04:19:58.835Z",
+              "expiresAt": "2026-10-01T04:49:58.835Z",
+              "productId": "c6ca2d42-551a-44d0-a15e-2a5773733cb5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:abf4a465-d764-42d7-a958-0d120ce09c5f",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "2df309b7",
+              "createdAt": "2026-10-01T04:19:58.835Z",
+              "expiresAt": "2026-10-01T04:49:58.835Z",
+              "productId": "f54550d2-a541-405a-88de-520b22300fa5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:72319b0f-d3b6-4162-aa92-593dded07b7a",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "2df309b7",
+              "createdAt": "2026-10-01T04:19:58.835Z",
+              "expiresAt": "2026-10-01T04:49:58.835Z",
+              "productId": "ee684803-ac5f-4672-b19b-7c3551f867a3",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:34619b76-e57b-44a8-9b8e-3abb5962de70",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "2df309b7",
+              "createdAt": "2026-10-01T04:19:58.835Z",
+              "expiresAt": "2026-10-01T04:49:58.835Z",
+              "productId": "571b858d-84d2-47da-a6c6-a445cebd1c87",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:baab28b6-56af-4caa-bae9-6799998168f3",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "f8ce0383",
+              "createdAt": "2026-10-01T04:30:04.326Z",
+              "expiresAt": "2026-10-01T05:00:04.326Z",
+              "productId": "7899fdd4-e838-4f3f-9c07-02771774c8ae",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:2c30b724-7f8d-4e81-99a8-126206df8fc2",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "f8ce0383",
+              "createdAt": "2026-10-01T04:30:04.326Z",
+              "expiresAt": "2026-10-01T05:00:04.326Z",
+              "productId": "8195636e-d56e-4b7e-b078-fd4a5c89556d",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:881038d7-a488-44a3-bc5f-84cd0555ff10",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "f8ce0383",
+              "createdAt": "2026-10-01T04:30:04.326Z",
+              "expiresAt": "2026-10-01T05:00:04.326Z",
+              "productId": "c6ca2d42-551a-44d0-a15e-2a5773733cb5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:f3c37aec-9ab2-446b-8037-65c0f5a3e999",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "f8ce0383",
+              "createdAt": "2026-10-01T04:30:04.326Z",
+              "expiresAt": "2026-10-01T05:00:04.326Z",
+              "productId": "f54550d2-a541-405a-88de-520b22300fa5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:759b3f1d-2d85-4d3e-b65c-4b6fe074ae48",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "f8ce0383",
+              "createdAt": "2026-10-01T04:30:04.326Z",
+              "expiresAt": "2026-10-01T05:00:04.326Z",
+              "productId": "ee684803-ac5f-4672-b19b-7c3551f867a3",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:68ba888f-cec7-479f-b6cb-fbc6c7ab58bc",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "f8ce0383",
+              "createdAt": "2026-10-01T04:30:04.326Z",
+              "expiresAt": "2026-10-01T05:00:04.326Z",
+              "productId": "571b858d-84d2-47da-a6c6-a445cebd1c87",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:7dd18801-c791-486e-934e-58035584148a",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "58e2e9a0",
+              "createdAt": "2026-10-01T04:38:13.517Z",
+              "expiresAt": "2026-10-01T05:08:13.517Z",
+              "productId": "7899fdd4-e838-4f3f-9c07-02771774c8ae",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:025566c8-c3f2-4096-9596-b6004a467e79",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "58e2e9a0",
+              "createdAt": "2026-10-01T04:38:13.517Z",
+              "expiresAt": "2026-10-01T05:08:13.517Z",
+              "productId": "8195636e-d56e-4b7e-b078-fd4a5c89556d",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:887c87ea-ec4e-4eeb-a26c-0494fed27327",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "58e2e9a0",
+              "createdAt": "2026-10-01T04:38:13.517Z",
+              "expiresAt": "2026-10-01T05:08:13.517Z",
+              "productId": "c6ca2d42-551a-44d0-a15e-2a5773733cb5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:4f94333d-2290-4067-8854-a07e1e38e19c",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "58e2e9a0",
+              "createdAt": "2026-10-01T04:38:13.517Z",
+              "expiresAt": "2026-10-01T05:08:13.517Z",
+              "productId": "f54550d2-a541-405a-88de-520b22300fa5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:f357910d-e770-4741-ada4-75b5daa58ee4",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "58e2e9a0",
+              "createdAt": "2026-10-01T04:38:13.517Z",
+              "expiresAt": "2026-10-01T05:08:13.517Z",
+              "productId": "ee684803-ac5f-4672-b19b-7c3551f867a3",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:4792a41d-d4e1-4b58-91cb-6d121ea574b3",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "58e2e9a0",
+              "createdAt": "2026-10-01T04:38:13.517Z",
+              "expiresAt": "2026-10-01T05:08:13.517Z",
+              "productId": "571b858d-84d2-47da-a6c6-a445cebd1c87",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:613c7538-78bf-4a5b-9057-50b0ba2b60e6",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            }
+          ],
+          "awaitingPeopleCount": false,
+          "closed_order_confirmed_at": "2026-10-01T04:50:39.757Z",
+          "pending_fulfillment_action": null,
+          "pending_address_confirmation": false
+        }
+      },
+      {
+        "turn": 2,
+        "userMessage": "Quiero papas a la huancaína y ceviche",
+        "preflight": {
+          "decision": {
+            "decision": "NEW_INTENT",
+            "intents": [
+              {
+                "goal": "PEDIR",
+                "request": {
+                  "products": [
+                    "papas a la huancaína",
+                    "ceviche"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "humanIntentBefore": {
+          "revision": 0,
+          "records": [],
+          "active": [],
+          "pending": []
+        },
+        "humanIntentAfter": {
+          "revision": 1,
+          "records": [
+            {
+              "id": "469ace9b-ed7f-471a-befc-a40899ff315f",
+              "goal": "PEDIR",
+              "status": "ACTIVE",
+              "request": [
+                "papas a la huancaína",
+                "ceviche"
+              ],
+              "blockers": []
+            }
+          ],
+          "active": [
+            {
+              "id": "469ace9b-ed7f-471a-befc-a40899ff315f",
+              "goal": "PEDIR",
+              "status": "ACTIVE",
+              "request": [
+                "papas a la huancaína",
+                "ceviche"
+              ],
+              "blockers": []
+            }
+          ],
+          "pending": []
+        },
+        "toolCalls": [
+          {
+            "name": "search_products",
+            "args": {
+              "keyword": "papas a la huancaína"
+            },
+            "result": "{\"success\":false,\"error\":\"party_size_required\",\"pending\":true,\"instruction\":\"Falta cuántas personas comen (Goal OBTENER_PERSONAS_DEL_PEDIDO). Preguntá el número (1–99) con el título *¿Para cuántas personas?*, llamá save_party_size cuando lo diga, y recién después continuá con sho…"
+          }
+        ],
+        "assistantResponse": "🤖  \n*¿Para cuántas personas?* 👥  \nNecesito saber cuántas personas van a comer para poder sumar las *papas a la huancaína*. ¡Contame!",
+        "conversationMetadataAfter": {
+          "intentLedger": {
+            "OBTENER_NOMBRE": {},
+            "COMPLETAR_RESERVA": {
+              "abandonment": false,
+              "surfaceCount": 2,
+              "lastSurfacedAt": "2026-09-30T16:48:12.566Z"
+            },
+            "OBTENER_DIRECCION": {},
+            "OBTENER_PERSONAS_DEL_PEDIDO": {
+              "surfaceCount": 3,
+              "lastSurfacedAt": "2026-10-01T01:29:23.206Z"
+            },
+            "OBTENER_CANTIDAD_DEL_PRODUCTO": {
+              "surfaceCount": 3,
+              "lastSurfacedAt": "2026-10-01T01:35:31.851Z"
+            }
+          },
+          "checkout_active": false,
+          "pendingTipables": {
+            "offeredAt": "2026-10-01T04:50:59.669Z",
+            "management": [
+              "ORDER_FOOD",
+              "VIEW_MENU"
+            ]
+          },
+          "humanIntentState": {
+            "records": [
+              {
+                "id": "469ace9b-ed7f-471a-befc-a40899ff315f",
+                "goal": "PEDIR",
+                "status": "ACTIVE",
+                "request": {
+                  "products": [
+                    "papas a la huancaína",
+                    "ceviche"
+                  ]
+                },
+                "blockers": [],
+                "sequence": 1,
+                "createdAt": "2026-10-01T04:51:12.796Z",
+                "updatedAt": "2026-10-01T04:51:12.796Z",
+                "sourceMessageId": "wamid.e2e-1790830263711-2"
+              }
+            ],
+            "version": 1,
+            "revision": 1,
+            "nextSequence": 2,
+            "processedMessageIds": [
+              "wamid.e2e-1790830263711-2"
+            ]
+          },
+          "awaitingPartySize": false,
+          "pendingOrderLines": {
+            "lines": [
+              {
+                "id": "9710cc0a",
+                "hint": "papas a la huancaína",
+                "status": "active",
+                "requestedQuantity": null
+              },
+              {
+                "id": "290c0855",
+                "hint": "ceviche",
+                "status": "queued",
+                "requestedQuantity": null
+              }
+            ],
+            "createdAt": "2026-10-01T04:51:15.020Z",
+            "sourceMessage": "Quiero papas a la huancaína y ceviche"
+          },
+          "productResolutions": [
+            {
+              "scope": "pending",
+              "source": "search_products",
+              "status": "selected",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.126Z",
+              "expiresAt": "2026-09-30T17:19:12.210Z",
+              "productId": "7899fdd4-e838-4f3f-9c07-02771774c8ae",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:31fff32a-3de6-4282-a990-79311c93ac07",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.126Z",
+              "expiresAt": "2026-09-30T17:19:03.126Z",
+              "productId": "8195636e-d56e-4b7e-b078-fd4a5c89556d",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:eb4ceb23-2370-4565-8e74-16edd241e3cd",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.126Z",
+              "expiresAt": "2026-09-30T17:19:03.126Z",
+              "productId": "c6ca2d42-551a-44d0-a15e-2a5773733cb5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:bf073ca3-a76b-4971-b845-7e96d17054c9",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.126Z",
+              "expiresAt": "2026-09-30T17:19:03.126Z",
+              "productId": "f54550d2-a541-405a-88de-520b22300fa5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:88523585-796b-4ba9-a66e-00f0b58cca89",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.126Z",
+              "expiresAt": "2026-09-30T17:19:03.126Z",
+              "productId": "ee684803-ac5f-4672-b19b-7c3551f867a3",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:9f0920f7-1db6-4628-a7f5-70c06bbbc2c1",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.126Z",
+              "expiresAt": "2026-09-30T17:19:03.126Z",
+              "productId": "571b858d-84d2-47da-a6c6-a445cebd1c87",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:0af52d38-fe38-4ff7-8e98-93f281fc9422",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "selected",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.317Z",
+              "expiresAt": "2026-09-30T17:19:03.317Z",
+              "productId": "742df439-a245-4414-8f30-289ab8097cac",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:b02c86c2-d46a-48c9-a0ff-aa643f474b8e",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.317Z",
+              "expiresAt": "2026-09-30T17:19:03.317Z",
+              "productId": "caae2144-8aef-40d8-a85b-aaa45e12a7f9",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:0d7b8808-b53b-4842-90fa-eacd70986afc",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.317Z",
+              "expiresAt": "2026-09-30T17:19:03.317Z",
+              "productId": "2242aa0a-659f-424c-b2e6-1db5e29900b1",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:ee395286-1f8c-4474-a3ec-484be2f80b37",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.317Z",
+              "expiresAt": "2026-09-30T17:19:03.317Z",
+              "productId": "f2a49890-2f09-4491-8541-7b76f33073d8",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:73ae515a-549c-4cf0-bf4b-349e95413193",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.317Z",
+              "expiresAt": "2026-09-30T17:19:03.317Z",
+              "productId": "7868656e-be73-4a87-b867-0babfb62558c",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:5f22f315-46bd-4efc-91e0-33fa18bd56f8",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "e7d42e05",
+              "createdAt": "2026-10-01T02:12:37.743Z",
+              "expiresAt": "2026-10-01T02:42:37.743Z",
+              "productId": "7899fdd4-e838-4f3f-9c07-02771774c8ae",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:0ed08b17-bc39-465d-bcfb-bba2040f2c1d",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "e7d42e05",
+              "createdAt": "2026-10-01T02:12:37.743Z",
+              "expiresAt": "2026-10-01T02:42:37.743Z",
+              "productId": "8195636e-d56e-4b7e-b078-fd4a5c89556d",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:9d2520a4-ce08-42b5-bd5f-d0c961762517",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "e7d42e05",
+              "createdAt": "2026-10-01T02:12:37.743Z",
+              "expiresAt": "2026-10-01T02:42:37.743Z",
+              "productId": "c6ca2d42-551a-44d0-a15e-2a5773733cb5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:a9148a18-b793-4af1-9145-b724dc20fa64",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "e7d42e05",
+              "createdAt": "2026-10-01T02:12:37.743Z",
+              "expiresAt": "2026-10-01T02:42:37.743Z",
+              "productId": "f54550d2-a541-405a-88de-520b22300fa5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:24d3616e-696c-49aa-a433-4ee7b449b2b9",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "e7d42e05",
+              "createdAt": "2026-10-01T02:12:37.743Z",
+              "expiresAt": "2026-10-01T02:42:37.743Z",
+              "productId": "ee684803-ac5f-4672-b19b-7c3551f867a3",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:dce84d91-e0e4-4acf-87d7-18f5f327032d",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "e7d42e05",
+              "createdAt": "2026-10-01T02:12:37.743Z",
+              "expiresAt": "2026-10-01T02:42:37.743Z",
+              "productId": "571b858d-84d2-47da-a6c6-a445cebd1c87",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:460e8db6-52b6-4ac3-8f20-fd7cfc8867ea",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "b23601f7",
+              "createdAt": "2026-10-01T04:11:19.769Z",
+              "expiresAt": "2026-10-01T04:41:19.769Z",
+              "productId": "742df439-a245-4414-8f30-289ab8097cac",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:87cb42f9-d8e8-47c5-8017-24ed2f188f62",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "b23601f7",
+              "createdAt": "2026-10-01T04:11:19.769Z",
+              "expiresAt": "2026-10-01T04:41:19.769Z",
+              "productId": "caae2144-8aef-40d8-a85b-aaa45e12a7f9",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:4dfffea3-f1ab-4b29-9e53-b83e54f15544",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "b23601f7",
+              "createdAt": "2026-10-01T04:11:19.769Z",
+              "expiresAt": "2026-10-01T04:41:19.769Z",
+              "productId": "2242aa0a-659f-424c-b2e6-1db5e29900b1",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:a9f9b835-f1f5-4402-9491-fc93c63278aa",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "b23601f7",
+              "createdAt": "2026-10-01T04:11:19.769Z",
+              "expiresAt": "2026-10-01T04:41:19.769Z",
+              "productId": "f2a49890-2f09-4491-8541-7b76f33073d8",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:50511d5d-4bea-4c6b-84aa-3c931e876ac0",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "b23601f7",
+              "createdAt": "2026-10-01T04:11:19.769Z",
+              "expiresAt": "2026-10-01T04:41:19.769Z",
+              "productId": "7868656e-be73-4a87-b867-0babfb62558c",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:b0aa6012-d27c-486e-a170-f8736b73589d",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "2df309b7",
+              "createdAt": "2026-10-01T04:19:58.835Z",
+              "expiresAt": "2026-10-01T04:49:58.835Z",
+              "productId": "7899fdd4-e838-4f3f-9c07-02771774c8ae",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:c0946f21-13d3-41ab-adde-17ea61c06ad8",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "2df309b7",
+              "createdAt": "2026-10-01T04:19:58.835Z",
+              "expiresAt": "2026-10-01T04:49:58.835Z",
+              "productId": "8195636e-d56e-4b7e-b078-fd4a5c89556d",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:04755ba9-79ed-4f00-9854-c7dba3600b11",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "2df309b7",
+              "createdAt": "2026-10-01T04:19:58.835Z",
+              "expiresAt": "2026-10-01T04:49:58.835Z",
+              "productId": "c6ca2d42-551a-44d0-a15e-2a5773733cb5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:abf4a465-d764-42d7-a958-0d120ce09c5f",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "2df309b7",
+              "createdAt": "2026-10-01T04:19:58.835Z",
+              "expiresAt": "2026-10-01T04:49:58.835Z",
+              "productId": "f54550d2-a541-405a-88de-520b22300fa5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:72319b0f-d3b6-4162-aa92-593dded07b7a",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "2df309b7",
+              "createdAt": "2026-10-01T04:19:58.835Z",
+              "expiresAt": "2026-10-01T04:49:58.835Z",
+              "productId": "ee684803-ac5f-4672-b19b-7c3551f867a3",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:34619b76-e57b-44a8-9b8e-3abb5962de70",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "2df309b7",
+              "createdAt": "2026-10-01T04:19:58.835Z",
+              "expiresAt": "2026-10-01T04:49:58.835Z",
+              "productId": "571b858d-84d2-47da-a6c6-a445cebd1c87",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:baab28b6-56af-4caa-bae9-6799998168f3",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "f8ce0383",
+              "createdAt": "2026-10-01T04:30:04.326Z",
+              "expiresAt": "2026-10-01T05:00:04.326Z",
+              "productId": "7899fdd4-e838-4f3f-9c07-02771774c8ae",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:2c30b724-7f8d-4e81-99a8-126206df8fc2",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "f8ce0383",
+              "createdAt": "2026-10-01T04:30:04.326Z",
+              "expiresAt": "2026-10-01T05:00:04.326Z",
+              "productId": "8195636e-d56e-4b7e-b078-fd4a5c89556d",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:881038d7-a488-44a3-bc5f-84cd0555ff10",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "f8ce0383",
+              "createdAt": "2026-10-01T04:30:04.326Z",
+              "expiresAt": "2026-10-01T05:00:04.326Z",
+              "productId": "c6ca2d42-551a-44d0-a15e-2a5773733cb5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:f3c37aec-9ab2-446b-8037-65c0f5a3e999",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "f8ce0383",
+              "createdAt": "2026-10-01T04:30:04.326Z",
+              "expiresAt": "2026-10-01T05:00:04.326Z",
+              "productId": "f54550d2-a541-405a-88de-520b22300fa5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:759b3f1d-2d85-4d3e-b65c-4b6fe074ae48",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "f8ce0383",
+              "createdAt": "2026-10-01T04:30:04.326Z",
+              "expiresAt": "2026-10-01T05:00:04.326Z",
+              "productId": "ee684803-ac5f-4672-b19b-7c3551f867a3",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:68ba888f-cec7-479f-b6cb-fbc6c7ab58bc",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "f8ce0383",
+              "createdAt": "2026-10-01T04:30:04.326Z",
+              "expiresAt": "2026-10-01T05:00:04.326Z",
+              "productId": "571b858d-84d2-47da-a6c6-a445cebd1c87",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:7dd18801-c791-486e-934e-58035584148a",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "58e2e9a0",
+              "createdAt": "2026-10-01T04:38:13.517Z",
+              "expiresAt": "2026-10-01T05:08:13.517Z",
+              "productId": "7899fdd4-e838-4f3f-9c07-02771774c8ae",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:025566c8-c3f2-4096-9596-b6004a467e79",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "58e2e9a0",
+              "createdAt": "2026-10-01T04:38:13.517Z",
+              "expiresAt": "2026-10-01T05:08:13.517Z",
+              "productId": "8195636e-d56e-4b7e-b078-fd4a5c89556d",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:887c87ea-ec4e-4eeb-a26c-0494fed27327",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "58e2e9a0",
+              "createdAt": "2026-10-01T04:38:13.517Z",
+              "expiresAt": "2026-10-01T05:08:13.517Z",
+              "productId": "c6ca2d42-551a-44d0-a15e-2a5773733cb5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:4f94333d-2290-4067-8854-a07e1e38e19c",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "58e2e9a0",
+              "createdAt": "2026-10-01T04:38:13.517Z",
+              "expiresAt": "2026-10-01T05:08:13.517Z",
+              "productId": "f54550d2-a541-405a-88de-520b22300fa5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:f357910d-e770-4741-ada4-75b5daa58ee4",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "58e2e9a0",
+              "createdAt": "2026-10-01T04:38:13.517Z",
+              "expiresAt": "2026-10-01T05:08:13.517Z",
+              "productId": "ee684803-ac5f-4672-b19b-7c3551f867a3",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:4792a41d-d4e1-4b58-91cb-6d121ea574b3",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "58e2e9a0",
+              "createdAt": "2026-10-01T04:38:13.517Z",
+              "expiresAt": "2026-10-01T05:08:13.517Z",
+              "productId": "571b858d-84d2-47da-a6c6-a445cebd1c87",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:613c7538-78bf-4a5b-9057-50b0ba2b60e6",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            }
+          ],
+          "awaitingPeopleCount": false,
+          "pendingPartySizeOrder": {
+            "setAt": "2026-10-01T04:51:21.930Z",
+            "source": "lookup",
+            "summary": "papas a la huancaína",
+            "turnStartedAt": "2026-10-01T04:51:18.805Z"
+          },
+          "closed_order_confirmed_at": "2026-10-01T04:50:39.757Z",
+          "pending_fulfillment_action": null,
+          "pending_address_confirmation": false
+        }
+      },
+      {
+        "turn": 3,
+        "userMessage": "Para 3 personas",
+        "preflight": {
+          "decision": {
+            "decision": "CONTINUE_ACTIVE",
+            "intentId": "469ace9b-ed7f-471a-befc-a40899ff315f",
+            "answeredBlockerIds": [],
+            "fulfillmentCandidate": {
+              "goalType": "OBTENER_PERSONAS_DEL_PEDIDO"
+            }
+          }
+        },
+        "humanIntentBefore": {
+          "revision": 1,
+          "records": [
+            {
+              "id": "469ace9b-ed7f-471a-befc-a40899ff315f",
+              "goal": "PEDIR",
+              "status": "ACTIVE",
+              "request": [
+                "papas a la huancaína",
+                "ceviche"
+              ],
+              "blockers": []
+            }
+          ],
+          "active": [
+            {
+              "id": "469ace9b-ed7f-471a-befc-a40899ff315f",
+              "goal": "PEDIR",
+              "status": "ACTIVE",
+              "request": [
+                "papas a la huancaína",
+                "ceviche"
+              ],
+              "blockers": []
+            }
+          ],
+          "pending": []
+        },
+        "humanIntentAfter": {
+          "revision": 2,
+          "records": [
+            {
+              "id": "469ace9b-ed7f-471a-befc-a40899ff315f",
+              "goal": "PEDIR",
+              "status": "ACTIVE",
+              "request": [
+                "papas a la huancaína",
+                "ceviche"
+              ],
+              "blockers": []
+            }
+          ],
+          "active": [
+            {
+              "id": "469ace9b-ed7f-471a-befc-a40899ff315f",
+              "goal": "PEDIR",
+              "status": "ACTIVE",
+              "request": [
+                "papas a la huancaína",
+                "ceviche"
+              ],
+              "blockers": []
+            }
+          ],
+          "pending": []
+        },
+        "toolCalls": [
+          {
+            "name": "save_party_size",
+            "args": {
+              "count": 3
+            },
+            "result": "{\"success\":true,\"effect\":{\"kind\":\"party_size_persisted\"},\"partySize\":3,\"heldOrder\":\"papas a la huancaína\",\"followUp\":{\"instruction\":\"Personas guardadas. Retomá ahora el pedido en espera: papas a la huancaína. Si son varios platos, plan_order_lines; si es uno, search_products o ad…"
+          },
+          {
+            "name": "search_products",
+            "args": {
+              "keyword": "papas a la huancaína"
+            },
+            "result": "{\"count\":6,\"totalMatches\":6,\"hasMore\":false,\"instruction\":\"Si encontrás los platos exactos que el cliente pidió, usá add_cart_item directamente con sus IDs. Solo usá present_product_cta(SELECT_FROM_LIST) si el pedido fue realmente ambiguo y necesitás que el cliente elija.\",\"items…"
+          }
+        ],
+        "assistantResponse": "",
+        "conversationMetadataAfter": {
+          "peopleCount": 3,
+          "intentLedger": {
+            "OBTENER_NOMBRE": {},
+            "COMPLETAR_RESERVA": {
+              "abandonment": false,
+              "surfaceCount": 2,
+              "lastSurfacedAt": "2026-09-30T16:48:12.566Z"
+            },
+            "OBTENER_DIRECCION": {},
+            "OBTENER_PERSONAS_DEL_PEDIDO": {
+              "surfaceCount": 3,
+              "lastSurfacedAt": "2026-10-01T01:29:23.206Z"
+            },
+            "OBTENER_CANTIDAD_DEL_PRODUCTO": {
+              "surfaceCount": 3,
+              "lastSurfacedAt": "2026-10-01T01:35:31.851Z"
+            }
+          },
+          "checkout_active": false,
+          "pendingQuestion": "papas a la huancaína",
+          "pendingTipables": {
+            "offeredAt": "2026-10-01T04:50:59.669Z",
+            "management": [
+              "ORDER_FOOD",
+              "VIEW_MENU"
+            ]
+          },
+          "humanIntentState": {
+            "records": [
+              {
+                "id": "469ace9b-ed7f-471a-befc-a40899ff315f",
+                "goal": "PEDIR",
+                "status": "ACTIVE",
+                "request": {
+                  "products": [
+                    "papas a la huancaína",
+                    "ceviche"
+                  ]
+                },
+                "blockers": [],
+                "sequence": 1,
+                "createdAt": "2026-10-01T04:51:12.796Z",
+                "updatedAt": "2026-10-01T04:51:12.796Z",
+                "sourceMessageId": "wamid.e2e-1790830263711-2"
+              }
+            ],
+            "version": 1,
+            "revision": 2,
+            "nextSequence": 2,
+            "processedMessageIds": [
+              "wamid.e2e-1790830263711-2",
+              "wamid.e2e-1790830287347-3"
+            ]
+          },
+          "awaitingPartySize": false,
+          "pendingOrderLines": {
+            "lines": [
+              {
+                "id": "9710cc0a",
+                "hint": "papas a la huancaína",
+                "status": "active",
+                "requestedQuantity": null
+              },
+              {
+                "id": "290c0855",
+                "hint": "ceviche",
+                "status": "queued",
+                "requestedQuantity": null
+              }
+            ],
+            "createdAt": "2026-10-01T04:51:15.020Z",
+            "sourceMessage": "Quiero papas a la huancaína y ceviche"
+          },
+          "productResolutions": [
+            {
+              "scope": "pending",
+              "source": "search_products",
+              "status": "selected",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.126Z",
+              "expiresAt": "2026-09-30T17:19:12.210Z",
+              "productId": "7899fdd4-e838-4f3f-9c07-02771774c8ae",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:31fff32a-3de6-4282-a990-79311c93ac07",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.126Z",
+              "expiresAt": "2026-09-30T17:19:03.126Z",
+              "productId": "8195636e-d56e-4b7e-b078-fd4a5c89556d",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:eb4ceb23-2370-4565-8e74-16edd241e3cd",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.126Z",
+              "expiresAt": "2026-09-30T17:19:03.126Z",
+              "productId": "c6ca2d42-551a-44d0-a15e-2a5773733cb5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:bf073ca3-a76b-4971-b845-7e96d17054c9",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.126Z",
+              "expiresAt": "2026-09-30T17:19:03.126Z",
+              "productId": "f54550d2-a541-405a-88de-520b22300fa5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:88523585-796b-4ba9-a66e-00f0b58cca89",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.126Z",
+              "expiresAt": "2026-09-30T17:19:03.126Z",
+              "productId": "ee684803-ac5f-4672-b19b-7c3551f867a3",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:9f0920f7-1db6-4628-a7f5-70c06bbbc2c1",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.126Z",
+              "expiresAt": "2026-09-30T17:19:03.126Z",
+              "productId": "571b858d-84d2-47da-a6c6-a445cebd1c87",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:0af52d38-fe38-4ff7-8e98-93f281fc9422",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "selected",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.317Z",
+              "expiresAt": "2026-09-30T17:19:03.317Z",
+              "productId": "742df439-a245-4414-8f30-289ab8097cac",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:b02c86c2-d46a-48c9-a0ff-aa643f474b8e",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.317Z",
+              "expiresAt": "2026-09-30T17:19:03.317Z",
+              "productId": "caae2144-8aef-40d8-a85b-aaa45e12a7f9",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:0d7b8808-b53b-4842-90fa-eacd70986afc",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.317Z",
+              "expiresAt": "2026-09-30T17:19:03.317Z",
+              "productId": "2242aa0a-659f-424c-b2e6-1db5e29900b1",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:ee395286-1f8c-4474-a3ec-484be2f80b37",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.317Z",
+              "expiresAt": "2026-09-30T17:19:03.317Z",
+              "productId": "f2a49890-2f09-4491-8541-7b76f33073d8",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:73ae515a-549c-4cf0-bf4b-349e95413193",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.317Z",
+              "expiresAt": "2026-09-30T17:19:03.317Z",
+              "productId": "7868656e-be73-4a87-b867-0babfb62558c",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:5f22f315-46bd-4efc-91e0-33fa18bd56f8",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "e7d42e05",
+              "createdAt": "2026-10-01T02:12:37.743Z",
+              "expiresAt": "2026-10-01T02:42:37.743Z",
+              "productId": "7899fdd4-e838-4f3f-9c07-02771774c8ae",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:0ed08b17-bc39-465d-bcfb-bba2040f2c1d",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "e7d42e05",
+              "createdAt": "2026-10-01T02:12:37.743Z",
+              "expiresAt": "2026-10-01T02:42:37.743Z",
+              "productId": "8195636e-d56e-4b7e-b078-fd4a5c89556d",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:9d2520a4-ce08-42b5-bd5f-d0c961762517",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "e7d42e05",
+              "createdAt": "2026-10-01T02:12:37.743Z",
+              "expiresAt": "2026-10-01T02:42:37.743Z",
+              "productId": "c6ca2d42-551a-44d0-a15e-2a5773733cb5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:a9148a18-b793-4af1-9145-b724dc20fa64",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "e7d42e05",
+              "createdAt": "2026-10-01T02:12:37.743Z",
+              "expiresAt": "2026-10-01T02:42:37.743Z",
+              "productId": "f54550d2-a541-405a-88de-520b22300fa5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:24d3616e-696c-49aa-a433-4ee7b449b2b9",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "e7d42e05",
+              "createdAt": "2026-10-01T02:12:37.743Z",
+              "expiresAt": "2026-10-01T02:42:37.743Z",
+              "productId": "ee684803-ac5f-4672-b19b-7c3551f867a3",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:dce84d91-e0e4-4acf-87d7-18f5f327032d",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "e7d42e05",
+              "createdAt": "2026-10-01T02:12:37.743Z",
+              "expiresAt": "2026-10-01T02:42:37.743Z",
+              "productId": "571b858d-84d2-47da-a6c6-a445cebd1c87",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:460e8db6-52b6-4ac3-8f20-fd7cfc8867ea",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "b23601f7",
+              "createdAt": "2026-10-01T04:11:19.769Z",
+              "expiresAt": "2026-10-01T04:41:19.769Z",
+              "productId": "742df439-a245-4414-8f30-289ab8097cac",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:87cb42f9-d8e8-47c5-8017-24ed2f188f62",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "b23601f7",
+              "createdAt": "2026-10-01T04:11:19.769Z",
+              "expiresAt": "2026-10-01T04:41:19.769Z",
+              "productId": "caae2144-8aef-40d8-a85b-aaa45e12a7f9",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:4dfffea3-f1ab-4b29-9e53-b83e54f15544",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "b23601f7",
+              "createdAt": "2026-10-01T04:11:19.769Z",
+              "expiresAt": "2026-10-01T04:41:19.769Z",
+              "productId": "2242aa0a-659f-424c-b2e6-1db5e29900b1",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:a9f9b835-f1f5-4402-9491-fc93c63278aa",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "b23601f7",
+              "createdAt": "2026-10-01T04:11:19.769Z",
+              "expiresAt": "2026-10-01T04:41:19.769Z",
+              "productId": "f2a49890-2f09-4491-8541-7b76f33073d8",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:50511d5d-4bea-4c6b-84aa-3c931e876ac0",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "b23601f7",
+              "createdAt": "2026-10-01T04:11:19.769Z",
+              "expiresAt": "2026-10-01T04:41:19.769Z",
+              "productId": "7868656e-be73-4a87-b867-0babfb62558c",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:b0aa6012-d27c-486e-a170-f8736b73589d",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "2df309b7",
+              "createdAt": "2026-10-01T04:19:58.835Z",
+              "expiresAt": "2026-10-01T04:49:58.835Z",
+              "productId": "7899fdd4-e838-4f3f-9c07-02771774c8ae",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:c0946f21-13d3-41ab-adde-17ea61c06ad8",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "2df309b7",
+              "createdAt": "2026-10-01T04:19:58.835Z",
+              "expiresAt": "2026-10-01T04:49:58.835Z",
+              "productId": "8195636e-d56e-4b7e-b078-fd4a5c89556d",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:04755ba9-79ed-4f00-9854-c7dba3600b11",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "2df309b7",
+              "createdAt": "2026-10-01T04:19:58.835Z",
+              "expiresAt": "2026-10-01T04:49:58.835Z",
+              "productId": "c6ca2d42-551a-44d0-a15e-2a5773733cb5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:abf4a465-d764-42d7-a958-0d120ce09c5f",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "2df309b7",
+              "createdAt": "2026-10-01T04:19:58.835Z",
+              "expiresAt": "2026-10-01T04:49:58.835Z",
+              "productId": "f54550d2-a541-405a-88de-520b22300fa5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:72319b0f-d3b6-4162-aa92-593dded07b7a",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "2df309b7",
+              "createdAt": "2026-10-01T04:19:58.835Z",
+              "expiresAt": "2026-10-01T04:49:58.835Z",
+              "productId": "ee684803-ac5f-4672-b19b-7c3551f867a3",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:34619b76-e57b-44a8-9b8e-3abb5962de70",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "2df309b7",
+              "createdAt": "2026-10-01T04:19:58.835Z",
+              "expiresAt": "2026-10-01T04:49:58.835Z",
+              "productId": "571b858d-84d2-47da-a6c6-a445cebd1c87",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:baab28b6-56af-4caa-bae9-6799998168f3",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "f8ce0383",
+              "createdAt": "2026-10-01T04:30:04.326Z",
+              "expiresAt": "2026-10-01T05:00:04.326Z",
+              "productId": "7899fdd4-e838-4f3f-9c07-02771774c8ae",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:2c30b724-7f8d-4e81-99a8-126206df8fc2",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "f8ce0383",
+              "createdAt": "2026-10-01T04:30:04.326Z",
+              "expiresAt": "2026-10-01T05:00:04.326Z",
+              "productId": "8195636e-d56e-4b7e-b078-fd4a5c89556d",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:881038d7-a488-44a3-bc5f-84cd0555ff10",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "f8ce0383",
+              "createdAt": "2026-10-01T04:30:04.326Z",
+              "expiresAt": "2026-10-01T05:00:04.326Z",
+              "productId": "c6ca2d42-551a-44d0-a15e-2a5773733cb5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:f3c37aec-9ab2-446b-8037-65c0f5a3e999",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "f8ce0383",
+              "createdAt": "2026-10-01T04:30:04.326Z",
+              "expiresAt": "2026-10-01T05:00:04.326Z",
+              "productId": "f54550d2-a541-405a-88de-520b22300fa5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:759b3f1d-2d85-4d3e-b65c-4b6fe074ae48",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "f8ce0383",
+              "createdAt": "2026-10-01T04:30:04.326Z",
+              "expiresAt": "2026-10-01T05:00:04.326Z",
+              "productId": "ee684803-ac5f-4672-b19b-7c3551f867a3",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:68ba888f-cec7-479f-b6cb-fbc6c7ab58bc",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "f8ce0383",
+              "createdAt": "2026-10-01T04:30:04.326Z",
+              "expiresAt": "2026-10-01T05:00:04.326Z",
+              "productId": "571b858d-84d2-47da-a6c6-a445cebd1c87",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:7dd18801-c791-486e-934e-58035584148a",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "58e2e9a0",
+              "createdAt": "2026-10-01T04:38:13.517Z",
+              "expiresAt": "2026-10-01T05:08:13.517Z",
+              "productId": "7899fdd4-e838-4f3f-9c07-02771774c8ae",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:025566c8-c3f2-4096-9596-b6004a467e79",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "58e2e9a0",
+              "createdAt": "2026-10-01T04:38:13.517Z",
+              "expiresAt": "2026-10-01T05:08:13.517Z",
+              "productId": "8195636e-d56e-4b7e-b078-fd4a5c89556d",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:887c87ea-ec4e-4eeb-a26c-0494fed27327",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "58e2e9a0",
+              "createdAt": "2026-10-01T04:38:13.517Z",
+              "expiresAt": "2026-10-01T05:08:13.517Z",
+              "productId": "c6ca2d42-551a-44d0-a15e-2a5773733cb5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:4f94333d-2290-4067-8854-a07e1e38e19c",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "58e2e9a0",
+              "createdAt": "2026-10-01T04:38:13.517Z",
+              "expiresAt": "2026-10-01T05:08:13.517Z",
+              "productId": "f54550d2-a541-405a-88de-520b22300fa5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:f357910d-e770-4741-ada4-75b5daa58ee4",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "58e2e9a0",
+              "createdAt": "2026-10-01T04:38:13.517Z",
+              "expiresAt": "2026-10-01T05:08:13.517Z",
+              "productId": "ee684803-ac5f-4672-b19b-7c3551f867a3",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:4792a41d-d4e1-4b58-91cb-6d121ea574b3",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "58e2e9a0",
+              "createdAt": "2026-10-01T04:38:13.517Z",
+              "expiresAt": "2026-10-01T05:08:13.517Z",
+              "productId": "571b858d-84d2-47da-a6c6-a445cebd1c87",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:613c7538-78bf-4a5b-9057-50b0ba2b60e6",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a2b5ebd4",
+              "createdAt": "2026-10-01T04:51:55.384Z",
+              "expiresAt": "2026-10-01T05:21:55.384Z",
+              "productId": "7899fdd4-e838-4f3f-9c07-02771774c8ae",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:7c78a442-996f-4b9d-bf7d-7e13a82d3688",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a2b5ebd4",
+              "createdAt": "2026-10-01T04:51:55.384Z",
+              "expiresAt": "2026-10-01T05:21:55.384Z",
+              "productId": "8195636e-d56e-4b7e-b078-fd4a5c89556d",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:1eef731f-5651-4099-8213-1ae60e26b74e",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a2b5ebd4",
+              "createdAt": "2026-10-01T04:51:55.384Z",
+              "expiresAt": "2026-10-01T05:21:55.384Z",
+              "productId": "c6ca2d42-551a-44d0-a15e-2a5773733cb5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:50a3e28b-eedc-4362-94cf-af4cd624848d",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a2b5ebd4",
+              "createdAt": "2026-10-01T04:51:55.384Z",
+              "expiresAt": "2026-10-01T05:21:55.384Z",
+              "productId": "f54550d2-a541-405a-88de-520b22300fa5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:2c29d4cb-b5b1-4b15-b0b2-32872976c148",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a2b5ebd4",
+              "createdAt": "2026-10-01T04:51:55.384Z",
+              "expiresAt": "2026-10-01T05:21:55.384Z",
+              "productId": "ee684803-ac5f-4672-b19b-7c3551f867a3",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:f867d861-19b3-4225-a0bc-129ddcf9ab57",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a2b5ebd4",
+              "createdAt": "2026-10-01T04:51:55.384Z",
+              "expiresAt": "2026-10-01T05:21:55.384Z",
+              "productId": "571b858d-84d2-47da-a6c6-a445cebd1c87",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:8eecb847-2f4a-4d16-ab13-7ed4dc226b0c",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            }
+          ],
+          "requestedPartySize": 3,
+          "awaitingPeopleCount": false,
+          "candidateProductIds": [
+            "7899fdd4-e838-4f3f-9c07-02771774c8ae",
+            "8195636e-d56e-4b7e-b078-fd4a5c89556d",
+            "c6ca2d42-551a-44d0-a15e-2a5773733cb5",
+            "f54550d2-a541-405a-88de-520b22300fa5",
+            "ee684803-ac5f-4672-b19b-7c3551f867a3",
+            "571b858d-84d2-47da-a6c6-a445cebd1c87"
+          ],
+          "pendingPartySizeOrder": {
+            "setAt": "2026-10-01T04:51:21.930Z",
+            "source": "lookup",
+            "summary": "papas a la huancaína",
+            "turnStartedAt": "2026-10-01T04:51:18.805Z"
+          },
+          "pendingProductSelection": true,
+          "shortlistAwaitingChoice": true,
+          "closed_order_confirmed_at": "2026-10-01T04:50:39.757Z",
+          "pending_fulfillment_action": null,
+          "pending_address_confirmation": false
+        }
+      },
+      {
+        "turn": 4,
+        "userMessage": "2",
+        "preflight": {
+          "decision": {
+            "decision": "CONTINUE_ACTIVE",
+            "intentId": "469ace9b-ed7f-471a-befc-a40899ff315f",
+            "answeredBlockerIds": [],
+            "fulfillmentCandidate": {
+              "goalType": "OBTENER_CANTIDAD_DEL_PRODUCTO"
+            }
+          }
+        },
+        "humanIntentBefore": {
+          "revision": 2,
+          "records": [
+            {
+              "id": "469ace9b-ed7f-471a-befc-a40899ff315f",
+              "goal": "PEDIR",
+              "status": "ACTIVE",
+              "request": [
+                "papas a la huancaína",
+                "ceviche"
+              ],
+              "blockers": []
+            }
+          ],
+          "active": [
+            {
+              "id": "469ace9b-ed7f-471a-befc-a40899ff315f",
+              "goal": "PEDIR",
+              "status": "ACTIVE",
+              "request": [
+                "papas a la huancaína",
+                "ceviche"
+              ],
+              "blockers": []
+            }
+          ],
+          "pending": []
+        },
+        "humanIntentAfter": {
+          "revision": 3,
+          "records": [
+            {
+              "id": "469ace9b-ed7f-471a-befc-a40899ff315f",
+              "goal": "PEDIR",
+              "status": "ACTIVE",
+              "request": [
+                "papas a la huancaína",
+                "ceviche"
+              ],
+              "blockers": []
+            }
+          ],
+          "active": [
+            {
+              "id": "469ace9b-ed7f-471a-befc-a40899ff315f",
+              "goal": "PEDIR",
+              "status": "ACTIVE",
+              "request": [
+                "papas a la huancaína",
+                "ceviche"
+              ],
+              "blockers": []
+            }
+          ],
+          "pending": []
+        },
+        "toolCalls": [
+          {
+            "name": "set_order_line_quantity",
+            "args": {
+              "orderLineId": "9710cc0a",
+              "quantity": 3
+            },
+            "result": "{\"success\":true,\"effect\":{\"kind\":\"order_line_quantity_persisted\",\"reference\":\"9710cc0a\"},\"orderLine\":{\"id\":\"9710cc0a\",\"hint\":\"papas a la huancaína\",\"requestedQuantity\":2,\"status\":\"active\"},\"nextQuantityTarget\":{\"id\":\"290c0855\",\"hint\":\"ceviche\"}}"
+          },
+          {
+            "name": "clear_pending_add_quantity",
+            "args": {},
+            "result": "{\"cleared\":true}"
+          }
+        ],
+        "assistantResponse": "🤖\n\n*¿Cuántas unidades de ceviche querés?* 🔢\n\nLa cantidad de *ceviche* todavía no está confirmada.",
+        "conversationMetadataAfter": {
+          "peopleCount": 3,
+          "intentLedger": {
+            "OBTENER_NOMBRE": {},
+            "COMPLETAR_RESERVA": {
+              "abandonment": false,
+              "surfaceCount": 2,
+              "lastSurfacedAt": "2026-09-30T16:48:12.566Z"
+            },
+            "OBTENER_DIRECCION": {},
+            "OBTENER_PERSONAS_DEL_PEDIDO": {
+              "surfaceCount": 3,
+              "lastSurfacedAt": "2026-10-01T01:29:23.206Z"
+            },
+            "OBTENER_CANTIDAD_DEL_PRODUCTO": {
+              "surfaceCount": 3,
+              "lastSurfacedAt": "2026-10-01T01:35:31.851Z"
+            }
+          },
+          "checkout_active": false,
+          "pendingQuestion": "papas a la huancaína",
+          "pendingTipables": {
+            "offeredAt": "2026-10-01T04:50:59.669Z",
+            "management": [
+              "ORDER_FOOD",
+              "VIEW_MENU"
+            ]
+          },
+          "humanIntentState": {
+            "records": [
+              {
+                "id": "469ace9b-ed7f-471a-befc-a40899ff315f",
+                "goal": "PEDIR",
+                "status": "ACTIVE",
+                "request": {
+                  "products": [
+                    "papas a la huancaína",
+                    "ceviche"
+                  ]
+                },
+                "blockers": [],
+                "sequence": 1,
+                "createdAt": "2026-10-01T04:51:12.796Z",
+                "updatedAt": "2026-10-01T04:51:12.796Z",
+                "sourceMessageId": "wamid.e2e-1790830263711-2"
+              }
+            ],
+            "version": 1,
+            "revision": 3,
+            "nextSequence": 2,
+            "processedMessageIds": [
+              "wamid.e2e-1790830263711-2",
+              "wamid.e2e-1790830287347-3",
+              "wamid.e2e-1790830321807-4"
+            ]
+          },
+          "awaitingPartySize": false,
+          "pendingOrderLines": {
+            "lines": [
+              {
+                "id": "9710cc0a",
+                "hint": "papas a la huancaína",
+                "status": "active",
+                "requestedQuantity": 2
+              },
+              {
+                "id": "290c0855",
+                "hint": "ceviche",
+                "status": "queued",
+                "requestedQuantity": null
+              }
+            ],
+            "createdAt": "2026-10-01T04:51:15.020Z",
+            "sourceMessage": "Quiero papas a la huancaína y ceviche"
+          },
+          "productResolutions": [
+            {
+              "scope": "pending",
+              "source": "search_products",
+              "status": "selected",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.126Z",
+              "expiresAt": "2026-09-30T17:19:12.210Z",
+              "productId": "7899fdd4-e838-4f3f-9c07-02771774c8ae",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:31fff32a-3de6-4282-a990-79311c93ac07",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.126Z",
+              "expiresAt": "2026-09-30T17:19:03.126Z",
+              "productId": "8195636e-d56e-4b7e-b078-fd4a5c89556d",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:eb4ceb23-2370-4565-8e74-16edd241e3cd",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.126Z",
+              "expiresAt": "2026-09-30T17:19:03.126Z",
+              "productId": "c6ca2d42-551a-44d0-a15e-2a5773733cb5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:bf073ca3-a76b-4971-b845-7e96d17054c9",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.126Z",
+              "expiresAt": "2026-09-30T17:19:03.126Z",
+              "productId": "f54550d2-a541-405a-88de-520b22300fa5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:88523585-796b-4ba9-a66e-00f0b58cca89",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.126Z",
+              "expiresAt": "2026-09-30T17:19:03.126Z",
+              "productId": "ee684803-ac5f-4672-b19b-7c3551f867a3",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:9f0920f7-1db6-4628-a7f5-70c06bbbc2c1",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.126Z",
+              "expiresAt": "2026-09-30T17:19:03.126Z",
+              "productId": "571b858d-84d2-47da-a6c6-a445cebd1c87",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:0af52d38-fe38-4ff7-8e98-93f281fc9422",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "selected",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.317Z",
+              "expiresAt": "2026-09-30T17:19:03.317Z",
+              "productId": "742df439-a245-4414-8f30-289ab8097cac",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:b02c86c2-d46a-48c9-a0ff-aa643f474b8e",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.317Z",
+              "expiresAt": "2026-09-30T17:19:03.317Z",
+              "productId": "caae2144-8aef-40d8-a85b-aaa45e12a7f9",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:0d7b8808-b53b-4842-90fa-eacd70986afc",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.317Z",
+              "expiresAt": "2026-09-30T17:19:03.317Z",
+              "productId": "2242aa0a-659f-424c-b2e6-1db5e29900b1",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:ee395286-1f8c-4474-a3ec-484be2f80b37",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.317Z",
+              "expiresAt": "2026-09-30T17:19:03.317Z",
+              "productId": "f2a49890-2f09-4491-8541-7b76f33073d8",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:73ae515a-549c-4cf0-bf4b-349e95413193",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a9e8195d",
+              "createdAt": "2026-09-30T16:49:03.317Z",
+              "expiresAt": "2026-09-30T17:19:03.317Z",
+              "productId": "7868656e-be73-4a87-b867-0babfb62558c",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:5f22f315-46bd-4efc-91e0-33fa18bd56f8",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "e7d42e05",
+              "createdAt": "2026-10-01T02:12:37.743Z",
+              "expiresAt": "2026-10-01T02:42:37.743Z",
+              "productId": "7899fdd4-e838-4f3f-9c07-02771774c8ae",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:0ed08b17-bc39-465d-bcfb-bba2040f2c1d",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "e7d42e05",
+              "createdAt": "2026-10-01T02:12:37.743Z",
+              "expiresAt": "2026-10-01T02:42:37.743Z",
+              "productId": "8195636e-d56e-4b7e-b078-fd4a5c89556d",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:9d2520a4-ce08-42b5-bd5f-d0c961762517",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "e7d42e05",
+              "createdAt": "2026-10-01T02:12:37.743Z",
+              "expiresAt": "2026-10-01T02:42:37.743Z",
+              "productId": "c6ca2d42-551a-44d0-a15e-2a5773733cb5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:a9148a18-b793-4af1-9145-b724dc20fa64",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "e7d42e05",
+              "createdAt": "2026-10-01T02:12:37.743Z",
+              "expiresAt": "2026-10-01T02:42:37.743Z",
+              "productId": "f54550d2-a541-405a-88de-520b22300fa5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:24d3616e-696c-49aa-a433-4ee7b449b2b9",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "e7d42e05",
+              "createdAt": "2026-10-01T02:12:37.743Z",
+              "expiresAt": "2026-10-01T02:42:37.743Z",
+              "productId": "ee684803-ac5f-4672-b19b-7c3551f867a3",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:dce84d91-e0e4-4acf-87d7-18f5f327032d",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "e7d42e05",
+              "createdAt": "2026-10-01T02:12:37.743Z",
+              "expiresAt": "2026-10-01T02:42:37.743Z",
+              "productId": "571b858d-84d2-47da-a6c6-a445cebd1c87",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:460e8db6-52b6-4ac3-8f20-fd7cfc8867ea",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "b23601f7",
+              "createdAt": "2026-10-01T04:11:19.769Z",
+              "expiresAt": "2026-10-01T04:41:19.769Z",
+              "productId": "742df439-a245-4414-8f30-289ab8097cac",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:87cb42f9-d8e8-47c5-8017-24ed2f188f62",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "b23601f7",
+              "createdAt": "2026-10-01T04:11:19.769Z",
+              "expiresAt": "2026-10-01T04:41:19.769Z",
+              "productId": "caae2144-8aef-40d8-a85b-aaa45e12a7f9",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:4dfffea3-f1ab-4b29-9e53-b83e54f15544",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "b23601f7",
+              "createdAt": "2026-10-01T04:11:19.769Z",
+              "expiresAt": "2026-10-01T04:41:19.769Z",
+              "productId": "2242aa0a-659f-424c-b2e6-1db5e29900b1",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:a9f9b835-f1f5-4402-9491-fc93c63278aa",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "b23601f7",
+              "createdAt": "2026-10-01T04:11:19.769Z",
+              "expiresAt": "2026-10-01T04:41:19.769Z",
+              "productId": "f2a49890-2f09-4491-8541-7b76f33073d8",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:50511d5d-4bea-4c6b-84aa-3c931e876ac0",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "b23601f7",
+              "createdAt": "2026-10-01T04:11:19.769Z",
+              "expiresAt": "2026-10-01T04:41:19.769Z",
+              "productId": "7868656e-be73-4a87-b867-0babfb62558c",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:b0aa6012-d27c-486e-a170-f8736b73589d",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "2df309b7",
+              "createdAt": "2026-10-01T04:19:58.835Z",
+              "expiresAt": "2026-10-01T04:49:58.835Z",
+              "productId": "7899fdd4-e838-4f3f-9c07-02771774c8ae",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:c0946f21-13d3-41ab-adde-17ea61c06ad8",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "2df309b7",
+              "createdAt": "2026-10-01T04:19:58.835Z",
+              "expiresAt": "2026-10-01T04:49:58.835Z",
+              "productId": "8195636e-d56e-4b7e-b078-fd4a5c89556d",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:04755ba9-79ed-4f00-9854-c7dba3600b11",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "2df309b7",
+              "createdAt": "2026-10-01T04:19:58.835Z",
+              "expiresAt": "2026-10-01T04:49:58.835Z",
+              "productId": "c6ca2d42-551a-44d0-a15e-2a5773733cb5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:abf4a465-d764-42d7-a958-0d120ce09c5f",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "2df309b7",
+              "createdAt": "2026-10-01T04:19:58.835Z",
+              "expiresAt": "2026-10-01T04:49:58.835Z",
+              "productId": "f54550d2-a541-405a-88de-520b22300fa5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:72319b0f-d3b6-4162-aa92-593dded07b7a",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "2df309b7",
+              "createdAt": "2026-10-01T04:19:58.835Z",
+              "expiresAt": "2026-10-01T04:49:58.835Z",
+              "productId": "ee684803-ac5f-4672-b19b-7c3551f867a3",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:34619b76-e57b-44a8-9b8e-3abb5962de70",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "2df309b7",
+              "createdAt": "2026-10-01T04:19:58.835Z",
+              "expiresAt": "2026-10-01T04:49:58.835Z",
+              "productId": "571b858d-84d2-47da-a6c6-a445cebd1c87",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:baab28b6-56af-4caa-bae9-6799998168f3",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "f8ce0383",
+              "createdAt": "2026-10-01T04:30:04.326Z",
+              "expiresAt": "2026-10-01T05:00:04.326Z",
+              "productId": "7899fdd4-e838-4f3f-9c07-02771774c8ae",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:2c30b724-7f8d-4e81-99a8-126206df8fc2",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "f8ce0383",
+              "createdAt": "2026-10-01T04:30:04.326Z",
+              "expiresAt": "2026-10-01T05:00:04.326Z",
+              "productId": "8195636e-d56e-4b7e-b078-fd4a5c89556d",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:881038d7-a488-44a3-bc5f-84cd0555ff10",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "f8ce0383",
+              "createdAt": "2026-10-01T04:30:04.326Z",
+              "expiresAt": "2026-10-01T05:00:04.326Z",
+              "productId": "c6ca2d42-551a-44d0-a15e-2a5773733cb5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:f3c37aec-9ab2-446b-8037-65c0f5a3e999",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "f8ce0383",
+              "createdAt": "2026-10-01T04:30:04.326Z",
+              "expiresAt": "2026-10-01T05:00:04.326Z",
+              "productId": "f54550d2-a541-405a-88de-520b22300fa5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:759b3f1d-2d85-4d3e-b65c-4b6fe074ae48",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "f8ce0383",
+              "createdAt": "2026-10-01T04:30:04.326Z",
+              "expiresAt": "2026-10-01T05:00:04.326Z",
+              "productId": "ee684803-ac5f-4672-b19b-7c3551f867a3",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:68ba888f-cec7-479f-b6cb-fbc6c7ab58bc",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "f8ce0383",
+              "createdAt": "2026-10-01T04:30:04.326Z",
+              "expiresAt": "2026-10-01T05:00:04.326Z",
+              "productId": "571b858d-84d2-47da-a6c6-a445cebd1c87",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:7dd18801-c791-486e-934e-58035584148a",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "58e2e9a0",
+              "createdAt": "2026-10-01T04:38:13.517Z",
+              "expiresAt": "2026-10-01T05:08:13.517Z",
+              "productId": "7899fdd4-e838-4f3f-9c07-02771774c8ae",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:025566c8-c3f2-4096-9596-b6004a467e79",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "58e2e9a0",
+              "createdAt": "2026-10-01T04:38:13.517Z",
+              "expiresAt": "2026-10-01T05:08:13.517Z",
+              "productId": "8195636e-d56e-4b7e-b078-fd4a5c89556d",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:887c87ea-ec4e-4eeb-a26c-0494fed27327",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "58e2e9a0",
+              "createdAt": "2026-10-01T04:38:13.517Z",
+              "expiresAt": "2026-10-01T05:08:13.517Z",
+              "productId": "c6ca2d42-551a-44d0-a15e-2a5773733cb5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:4f94333d-2290-4067-8854-a07e1e38e19c",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "58e2e9a0",
+              "createdAt": "2026-10-01T04:38:13.517Z",
+              "expiresAt": "2026-10-01T05:08:13.517Z",
+              "productId": "f54550d2-a541-405a-88de-520b22300fa5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:f357910d-e770-4741-ada4-75b5daa58ee4",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "58e2e9a0",
+              "createdAt": "2026-10-01T04:38:13.517Z",
+              "expiresAt": "2026-10-01T05:08:13.517Z",
+              "productId": "ee684803-ac5f-4672-b19b-7c3551f867a3",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:4792a41d-d4e1-4b58-91cb-6d121ea574b3",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "58e2e9a0",
+              "createdAt": "2026-10-01T04:38:13.517Z",
+              "expiresAt": "2026-10-01T05:08:13.517Z",
+              "productId": "571b858d-84d2-47da-a6c6-a445cebd1c87",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:613c7538-78bf-4a5b-9057-50b0ba2b60e6",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a2b5ebd4",
+              "createdAt": "2026-10-01T04:51:55.384Z",
+              "expiresAt": "2026-10-01T05:21:55.384Z",
+              "productId": "7899fdd4-e838-4f3f-9c07-02771774c8ae",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:7c78a442-996f-4b9d-bf7d-7e13a82d3688",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a2b5ebd4",
+              "createdAt": "2026-10-01T04:51:55.384Z",
+              "expiresAt": "2026-10-01T05:21:55.384Z",
+              "productId": "8195636e-d56e-4b7e-b078-fd4a5c89556d",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:1eef731f-5651-4099-8213-1ae60e26b74e",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a2b5ebd4",
+              "createdAt": "2026-10-01T04:51:55.384Z",
+              "expiresAt": "2026-10-01T05:21:55.384Z",
+              "productId": "c6ca2d42-551a-44d0-a15e-2a5773733cb5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:50a3e28b-eedc-4362-94cf-af4cd624848d",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a2b5ebd4",
+              "createdAt": "2026-10-01T04:51:55.384Z",
+              "expiresAt": "2026-10-01T05:21:55.384Z",
+              "productId": "f54550d2-a541-405a-88de-520b22300fa5",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:2c29d4cb-b5b1-4b15-b0b2-32872976c148",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a2b5ebd4",
+              "createdAt": "2026-10-01T04:51:55.384Z",
+              "expiresAt": "2026-10-01T05:21:55.384Z",
+              "productId": "ee684803-ac5f-4672-b19b-7c3551f867a3",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:f867d861-19b3-4225-a0bc-129ddcf9ab57",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            },
+            {
+              "scope": "conversation",
+              "source": "search_products",
+              "status": "candidate",
+              "turnId": "a2b5ebd4",
+              "createdAt": "2026-10-01T04:51:55.384Z",
+              "expiresAt": "2026-10-01T05:21:55.384Z",
+              "productId": "571b858d-84d2-47da-a6c6-a445cebd1c87",
+              "businessId": "e89dfb88-a409-4818-a01e-37d7d5ba2e11",
+              "resolutionId": "pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:8eecb847-2f4a-4d16-ab13-7ed4dc226b0c",
+              "conversationId": "e7a0c769-faf0-4940-a822-26f1389dc2bc"
+            }
+          ],
+          "requestedPartySize": 3,
+          "awaitingPeopleCount": false,
+          "candidateProductIds": [
+            "7899fdd4-e838-4f3f-9c07-02771774c8ae",
+            "8195636e-d56e-4b7e-b078-fd4a5c89556d",
+            "c6ca2d42-551a-44d0-a15e-2a5773733cb5",
+            "f54550d2-a541-405a-88de-520b22300fa5",
+            "ee684803-ac5f-4672-b19b-7c3551f867a3",
+            "571b858d-84d2-47da-a6c6-a445cebd1c87"
+          ],
+          "pendingPartySizeOrder": {
+            "setAt": "2026-10-01T04:51:21.930Z",
+            "source": "lookup",
+            "summary": "papas a la huancaína",
+            "turnStartedAt": "2026-10-01T04:51:18.805Z"
+          },
+          "pendingProductSelection": true,
+          "closed_order_confirmed_at": "2026-10-01T04:50:39.757Z",
+          "pending_fulfillment_action": null,
+          "pending_address_confirmation": false
+        }
+      }
+    ]
+  }
+]
