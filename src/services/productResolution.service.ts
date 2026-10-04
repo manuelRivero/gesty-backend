@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
+import {
+  getPendingOrderLines,
+  validateTaskResolutionOwnership,
+} from './pendingOrderLines.service';
 
 export const PRODUCT_RESOLUTIONS_METADATA_KEY = 'productResolutions' as const;
 export const PRODUCT_RESOLUTION_TTL_MS = 30 * 60 * 1000;
@@ -36,7 +40,12 @@ export type ProductResolutionFailure =
   | 'resolution_expired'
   | 'resolution_consumed'
   | 'resolution_product_mismatch'
-  | 'resolution_not_selected';
+  | 'resolution_not_selected'
+  | 'task_not_found'
+  | 'task_not_open'
+  | 'task_resolution_mismatch'
+  | 'resolution_already_owned'
+  | 'order_line_id_required';
 
 type MetadataRecord = Record<string, unknown>;
 
@@ -410,6 +419,7 @@ export const consumeProductResolution = async (
     turnId?: string;
     pendingResolutionId?: string | null;
     explicitButtonSelection?: boolean;
+    orderLineId?: string;
   }
 ): Promise<
   { ok: true; resolution: ProductResolution } |
@@ -422,6 +432,18 @@ export const consumeProductResolution = async (
   if (contextFailure) return { ok: false, reason: contextFailure };
 
   const metadata = await lockConversationState(tx, params.conversationId);
+  if (params.orderLineId) {
+    const ownership = validateTaskResolutionOwnership({
+      metadata,
+      taskId: params.orderLineId,
+      resolutionId: suppliedId,
+    });
+    if (!ownership.ok) return { ok: false, reason: ownership.reason };
+  } else if (getPendingOrderLines(metadata)?.lines.some(
+    (line) => line.status === 'active' || line.status === 'queued'
+  )) {
+    return { ok: false, reason: 'order_line_id_required' };
+  }
   const resolutions = parseResolutions(metadata);
   const eligibleStatuses: ProductResolutionStatus[] = params.explicitButtonSelection
     ? ['candidate', 'resolved', 'selected']
@@ -477,6 +499,13 @@ export const productResolutionErrorMessage = (reason: ProductResolutionFailure):
     case 'resolution_product_mismatch':
     case 'resolution_not_selected':
       return 'Ese producto todavía no fue seleccionado. Resolvé la selección antes de agregarlo.';
+    case 'task_not_found':
+    case 'task_not_open':
+    case 'task_resolution_mismatch':
+    case 'resolution_already_owned':
+      return 'La selección no pertenece a esta línea del pedido. Volvé a resolver el producto para esa línea.';
+    case 'order_line_id_required':
+      return 'Indicá la línea exacta del pedido antes de agregar el producto.';
     case 'resolution_missing':
       return 'No hay una selección válida de ese producto. Buscalo o elegilo desde el menú antes de agregarlo.';
   }

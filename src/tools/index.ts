@@ -94,13 +94,16 @@ import {
 import {
   activateNextOrderLine,
   advanceAfterLineClose,
+  associateProductResolutionToTask,
   buildOrderLinesContinueOrCancelHint,
   cancelOrderLine,
   clearPendingOrderLines,
   getActiveOrderLine,
+  getCurrentProductResolutionForTask,
   getNextOrderLineRequiringQuantity,
   getPendingOrderLines,
   hasOpenOrderLines,
+  validateTaskResolutionOwnership,
   ingredientFilterCarvesDishHint,
   buildOrderLineSearchInstruction,
   ORDER_LINES_MAX,
@@ -538,6 +541,7 @@ export const searchProductsTool = new DynamicStructuredTool<
 const resolveProductSchema = z.object({
   productId: z.string().uuid(),
   resolutionId: z.string().min(1).max(160),
+  orderLineId: z.string().min(1).optional().describe('ID opcional de la FulfillmentTask concreta vinculada a esta resolución.'),
 });
 type ResolveProductInput = z.infer<typeof resolveProductSchema>;
 
@@ -548,11 +552,27 @@ export const resolveProductTool = new DynamicStructuredTool<
   name: 'resolve_product',
   description:
     'Selecciona un producto de los candidatos devueltos por una búsqueda o lista vigente. ' +
-    'Usala antes de add_cart_item cuando el resultado tenga varios candidatos. ' +
+    'En una cola de pedido, usala después de cada search_products, incluso si devolvió un solo producto, ' +
+    'para asociar resolutionId al orderLineId exacto antes de agregar. Pasá productId, resolutionId y orderLineId ' +
+    'de la línea activa. Fuera de una cola, usala antes de add_cart_item si hay varios candidatos. ' +
     'Solo puede seleccionar un productId que pertenezca a ese resolutionId y a esta conversación.',
   schema: resolveProductSchema,
-  func: async ({ productId, resolutionId }: ResolveProductInput, _runManager, config?: RunnableConfig) => {
-    const { businessId, conversationId, turnId } = getReactContext(config);
+  func: async ({ productId, resolutionId, orderLineId }: ResolveProductInput, _runManager, config?: RunnableConfig) => {
+    const { businessId, conversationId, turnId, orderLineId: configuredOrderLineId } = getReactContext(config);
+    const explicitOrderLineId = typeof orderLineId === 'string' ? orderLineId.trim() : (typeof configuredOrderLineId === 'string' ? configuredOrderLineId.trim() : '');
+    const state = await findOrCreateConversationState(conversationId);
+    const pending = getPendingOrderLines(state.metadata);
+    const taskBound = Boolean(explicitOrderLineId) || Boolean(
+      pending?.lines.some((line) => line.status === 'active' || line.status === 'queued')
+    );
+    if (taskBound && !explicitOrderLineId) {
+      return toJson({ success: false, error: 'order_line_id_required' });
+    }
+    if (taskBound && !pending?.lines.some(
+      (line) => line.id === explicitOrderLineId && (line.status === 'active' || line.status === 'queued')
+    )) {
+      return toJson({ success: false, error: 'order_line_not_open' });
+    }
     const result = await selectProductResolution({
       productId,
       resolutionId,
@@ -575,8 +595,29 @@ export const resolveProductTool = new DynamicStructuredTool<
         message: productResolutionErrorMessage(result.reason),
       });
     }
+
+    if (explicitOrderLineId) {
+      const association = await associateProductResolutionToTask({
+        conversationId,
+        businessId,
+        taskId: explicitOrderLineId,
+        resolutionId: result.resolution.resolutionId,
+      });
+      if (!association.ok) {
+        return toJson({
+          success: false,
+          error: 'task_resolution_association_rejected',
+          reason: association.reason,
+          instruction: 'No agregues el producto. Resolvé una ProductResolution nueva para esta línea del pedido.',
+        });
+      }
+    } else if (taskBound) {
+      return toJson({ success: false, error: 'order_line_id_required' });
+    }
+
     return toJson({
       success: true,
+      ...(explicitOrderLineId ? { orderLineId: explicitOrderLineId, currentResolutionId: result.resolution.resolutionId } : {}),
       ...result.resolution,
     });
   },
@@ -1917,6 +1958,11 @@ const addCartItemSchema = z.object({
     .max(160)
     .optional()
     .describe('Referencia de resolución devuelta por una búsqueda o selección vigente.'),
+  orderLineId: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('ID de la FulfillmentTask que se está agregando; obligatorio si hay una cola de pedido abierta.'),
   quantity: z
     .number()
     .int()
@@ -1967,6 +2013,9 @@ export const addCartItemTool = new DynamicStructuredTool<
     'extraé 1 o 2 y pasalo obligatorio en quantity. Varios platos distintos en el mismo mensaje: ' +
     'una llamada por plato, cada una con su quantity. ' +
     'Variaciones distintas del mismo producto son líneas separadas. ' +
+    'Si hay una cola de pedido abierta, pasá orderLineId y resolutionId asociados explícitamente a esa misma línea; ' +
+    'primero vinculá cada búsqueda con resolve_product, incluso si search_products devolvió un solo resultado. ' +
+    'Nunca uses otra resolución del mismo productId ni omitas esos IDs en una línea de la cola. ' +
     'Antes de llamar necesitás el productId: si ya lo tenés del contexto úsalo; ' +
     'si no, llamá search_products primero. ' +
     'REGLA DE VARIACIONES OBLIGATORIAS: si el catálogo indica que el producto tiene variaciones ' +
@@ -1985,7 +2034,7 @@ export const addCartItemTool = new DynamicStructuredTool<
     'CÓMO AÑADIR ALGO NUEVO: Si el cliente pide un plato nuevo (ej. \'Suspiro\') y NO tienes su `productId`, NO repitas las herramientas de los platos viejos. Llama a `search_products` INMEDIATAMENTE para buscar el nuevo plato. NUNCA inventes un ID.',
   schema: addCartItemSchema,
   func: async (
-    { productId, resolutionId, quantity, variation }: AddCartItemInput,
+    { productId, resolutionId, orderLineId, quantity, variation }: AddCartItemInput,
     _runManager,
     config?: RunnableConfig
   ) => {
@@ -1993,7 +2042,7 @@ export const addCartItemTool = new DynamicStructuredTool<
       JSON.stringify({
         event: '[tool:start]',
         tool: 'add_cart_item',
-        args: { productId, quantity, variation },
+        args: { productId, resolutionId, orderLineId, quantity, variation },
       })
     );
     const {
@@ -2002,6 +2051,7 @@ export const addCartItemTool = new DynamicStructuredTool<
       conversationId,
       turnStartedAt,
       turnId,
+      orderLineId: configuredOrderLineId,
       userMessage,
       validatedProductResolutionFromExecutionContext,
     } =
@@ -2042,6 +2092,8 @@ export const addCartItemTool = new DynamicStructuredTool<
     let partySize: number | null = null;
     let pendingReply = false;
     let orderLine: OrderLine | null = null;
+    let taskBound = false;
+    let effectiveOrderLineId = '';
     // Cantidad ya resuelta en el turno anterior y guardada en la variación
     // pendiente. El mensaje de este turno es la variedad, no las unidades.
     let variationQtyCarry = false;
@@ -2085,6 +2137,15 @@ export const addCartItemTool = new DynamicStructuredTool<
         typeof meta.pendingVariation.productResolutionId === 'string'
           ? meta.pendingVariation.productResolutionId
           : null;
+      effectiveOrderLineId = typeof orderLineId === 'string' && orderLineId.trim()
+        ? orderLineId.trim()
+        : typeof configuredOrderLineId === 'string'
+          ? configuredOrderLineId.trim()
+          : '';
+      const pendingOrderLines = getPendingOrderLines(meta);
+      taskBound = Boolean(effectiveOrderLineId) || Boolean(
+        pendingOrderLines?.lines.some((line) => line.status === 'active' || line.status === 'queued')
+      );
       const executionResolution = validatedProductResolutionFromExecutionContext;
       const resolutionFromExecutionContextIsValid =
         executionResolution != null &&
@@ -2105,7 +2166,37 @@ export const addCartItemTool = new DynamicStructuredTool<
           executionResolution.resolutionId === pendingAddResolutionId ||
           executionResolution.resolutionId === pendingVariationResolutionId);
 
-      if (resolutionFromExecutionContextIsValid) {
+      if (taskBound) {
+        if (!effectiveOrderLineId) {
+          return toJson({ success: false, error: 'order_line_id_required' });
+        }
+        if (!resolutionId) {
+          return toJson({ success: false, error: 'resolution_id_required' });
+        }
+        const ownership = validateTaskResolutionOwnership({
+          metadata: meta,
+          taskId: effectiveOrderLineId,
+          resolutionId,
+        });
+        if (!ownership.ok) {
+          return toJson({ success: false, error: 'product_resolution_required', reason: ownership.reason });
+        }
+        const taskResolution = getCurrentProductResolutionForTask({
+          task: ownership.task,
+          metadata: meta,
+          businessId,
+          conversationId,
+        });
+        if (!taskResolution.ok || taskResolution.resolution.productId !== productId) {
+          return toJson({
+            success: false,
+            error: 'product_resolution_required',
+            reason: taskResolution.ok ? 'resolution_product_mismatch' : taskResolution.reason,
+          });
+        }
+        productResolutionId = resolutionId;
+        orderLine = ownership.task;
+      } else if (resolutionFromExecutionContextIsValid) {
         productResolutionId = executionResolution.resolutionId;
       } else {
         const resolution = await resolveProductForAdd({
@@ -2239,7 +2330,15 @@ export const addCartItemTool = new DynamicStructuredTool<
         quantity: quantity ?? null,
         turnStartedAt,
       });
-      orderLine = resolveOrderLineForProduct(getPendingOrderLines(meta), item.name);
+      if (!taskBound) {
+        orderLine =
+          pendingOrderLines?.lines.find(
+            (line) =>
+              (line.status === 'active' || line.status === 'queued') &&
+              !!line.currentResolutionId &&
+              line.currentResolutionId === (productResolutionId ?? line.currentResolutionId)
+          ) ?? null;
+      }
       // Turno siguiente de variación: el mensaje es la variedad. El número ya
       // resuelto quedó en el ledger y se reusa si el modelo lo reenvía igual.
       const pendingVar = meta.pendingVariation;
@@ -2546,6 +2645,7 @@ export const addCartItemTool = new DynamicStructuredTool<
         resolutionId: productResolutionId,
         turnId,
         pendingResolutionId: productResolutionId,
+        ...(taskBound && effectiveOrderLineId ? { orderLineId: effectiveOrderLineId } : {}),
       });
       if (!resolution.ok) return { ok: false as const, reason: resolution.reason };
       return {
@@ -2611,7 +2711,6 @@ export const addCartItemTool = new DynamicStructuredTool<
       if (hasOpenOrderLines(stateForRevival?.metadata)) {
         const nextPending = await advanceAfterLineClose({
           conversationId,
-          metadata: stateForRevival?.metadata,
           lineId: orderLine?.id ?? null,
           closeStatus: 'done',
         });
@@ -3455,6 +3554,27 @@ export const setOrderLineQuantityTool = new DynamicStructuredTool<
         (candidate.status === 'active' || candidate.status === 'queued')
     );
     if (!line) return toJson({ success: false, error: 'order_line_not_open' });
+    if (!line.currentResolutionId) {
+      return toJson({
+        success: false,
+        error: 'product_resolution_required',
+        reason: 'missing',
+        instruction: 'La línea activa todavía no tiene una ProductResolution válida. Primero resuelve el producto concreto.',
+      });
+    }
+    const validation = getCurrentProductResolutionForTask({
+      task: line,
+      metadata: state.metadata,
+      conversationId,
+    });
+    if (!validation.ok) {
+      return toJson({
+        success: false,
+        error: 'product_resolution_required',
+        reason: validation.reason,
+        instruction: 'La ProductResolution asociada a la línea quedó inválida. Vuelve a resolver el producto antes de guardar la cantidad.',
+      });
+    }
     if (line.requestedQuantity != null) {
       return toJson({ success: false, error: 'order_line_quantity_already_known' });
     }
@@ -3991,7 +4111,8 @@ export const planOrderLinesTool = new DynamicStructuredTool<
     'no la necesitás). requestedQuantity solo contiene unidades explícitas de cada producto; si se omite, ' +
     'la línea conserva cantidad UNKNOWN. El número de personas del pedido nunca se copia a las líneas. ' +
     'Llamala UNA sola vez por mensaje, ANTES de resolver ningún producto. Después de ' +
-    'llamarla, trabajá SOLO la línea activa: si el hint nombra un plato, search_products(keyword=hint entero); ' +
+    'llamarla, trabajá SOLO la línea activa: si el hint nombra un plato, search_products(keyword=hint entero) ' +
+    'y resolve_product con el orderLineId de esa línea, incluso si hay un solo resultado; ' +
     'si es sección/rol ("algo de beber", "postre"), get_categories + present_category o ' +
     'find_products_by_filter(categoryTag). PROHIBIDO containsIngredient recortando un nombre de plato. ' +
     'Las demás líneas esperan en cola, no las menciones como shortlist.',

@@ -6,6 +6,11 @@ import { getPendingAddQuantity } from './pendingAddQuantity.service';
 import { getPendingVariation } from './pendingVariation.service';
 import { normalizeMetadata } from './productQuery/utils';
 import { isPartySizeMissingForOrderingTools } from './partySizeGoal.service';
+import {
+  getCurrentProductResolutionForTask,
+  getPendingOrderLines,
+  validateTaskResolutionOwnership,
+} from './pendingOrderLines.service';
 
 export type RequirementDecision =
   | { type: 'ALLOW' }
@@ -18,6 +23,7 @@ export type RequirementEvaluationParams = {
   businessId: string;
   conversationId: string;
   turnId?: string;
+  orderLineId?: string | null;
   humanIntent?: HumanIntentRecord | null;
   state?: HumanIntentStateV1 | null;
   validatedProductResolution?: { productId: string; resolutionId?: string };
@@ -70,19 +76,57 @@ export const evaluateToolRequirement = async (
   }
 
   const metadata = await readConversationMetadata(params.conversationId);
-  const validatedResolution = params.validatedProductResolution?.productId === productId
-    ? { ok: true as const }
-    : await resolveProductForAdd({
-        productId,
-        businessId: params.businessId,
-        conversationId: params.conversationId,
-        resolutionId:
-          typeof params.callArgs.resolutionId === 'string'
-            ? params.callArgs.resolutionId
-            : undefined,
-        turnId: params.turnId,
-        pendingResolutionId: pendingResolutionId(metadata, productId),
-      });
+  const pendingLines = getPendingOrderLines(metadata);
+  const taskId = typeof params.callArgs.orderLineId === 'string'
+    ? params.callArgs.orderLineId.trim()
+    : params.orderLineId?.trim() ?? '';
+  const taskBound = Boolean(taskId) || Boolean(
+    pendingLines?.lines.some((line) => line.status === 'active' || line.status === 'queued')
+  );
+  let validatedResolution: { ok: true } | { ok: false; reason: string };
+  if (taskBound) {
+    const resolutionId = typeof params.callArgs.resolutionId === 'string'
+      ? params.callArgs.resolutionId.trim()
+      : '';
+    if (!taskId || !resolutionId) {
+      return {
+        type: 'DEFER',
+        reason: !taskId ? 'order_line_id_required' : 'resolution_id_required',
+        missingRequirements: ['TASK_RESOLUTION_PAIR'],
+      };
+    }
+    const ownership = validateTaskResolutionOwnership({ metadata, taskId, resolutionId });
+    if (!ownership.ok) {
+      return {
+        type: 'DEFER',
+        reason: ownership.reason,
+        missingRequirements: ['TASK_RESOLUTION_PAIR'],
+      };
+    }
+    const taskResolution = getCurrentProductResolutionForTask({
+      task: ownership.task,
+      metadata,
+      businessId: params.businessId,
+      conversationId: params.conversationId,
+    });
+    validatedResolution = taskResolution.ok && taskResolution.resolution.productId === productId
+      ? { ok: true }
+      : { ok: false, reason: taskResolution.ok ? 'resolution_product_mismatch' : taskResolution.reason };
+  } else {
+    validatedResolution = params.validatedProductResolution?.productId === productId
+      ? { ok: true }
+      : await resolveProductForAdd({
+          productId,
+          businessId: params.businessId,
+          conversationId: params.conversationId,
+          resolutionId:
+            typeof params.callArgs.resolutionId === 'string'
+              ? params.callArgs.resolutionId
+              : undefined,
+          turnId: params.turnId,
+          pendingResolutionId: pendingResolutionId(metadata, productId),
+        });
+  }
 
   if (!validatedResolution.ok) {
     return {

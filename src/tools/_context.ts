@@ -11,6 +11,8 @@ export interface ReactAgentContext {
   turnStartedAt?: string;
   /** Identifica este turno para limitar resoluciones internas de catálogo. */
   turnId?: string;
+  /** Línea de fulfillment explícitamente asociada a la operación actual. */
+  orderLineId?: string | null;
   /** Texto del mensaje del usuario en este turno (validar quantity vs prosa). */
   userMessage?: string;
   /** Resolución validada entregada por el execution plan actual, no por el modelo. */

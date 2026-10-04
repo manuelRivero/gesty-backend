@@ -136,9 +136,12 @@ const CONFIG = {
 };
 
 const PRODUCT_ID = '11111111-1111-1111-1111-111111111111';
+const OTHER_PRODUCT_ID = '22222222-2222-2222-2222-222222222222';
+const PAPAS_RESOLUTION_ID = 'pr1:biz-1:conv-1:papas';
+const CHICHA_RESOLUTION_ID = 'pr1:biz-1:conv-1:chicha';
 
-const menuItem = (name: string) => ({
-  id: PRODUCT_ID,
+const menuItem = (name: string, id = PRODUCT_ID) => ({
+  id,
   name,
   serves_people: 1,
   discount_type: null,
@@ -163,18 +166,49 @@ const metadataWithQueue = (over?: {
         requestedQuantity:
           over && 'requestedQuantity' in over ? over.requestedQuantity! : 2,
         status: 'active' as const,
+        currentResolutionId: PAPAS_RESOLUTION_ID,
       },
-      { id: 'line-chicha', hint: 'una chicha morada', requestedQuantity: 1, status: 'queued' as const },
+      {
+        id: 'line-chicha', hint: 'una chicha morada', requestedQuantity: 1,
+        status: 'queued' as const, currentResolutionId: CHICHA_RESOLUTION_ID,
+      },
     ],
     sourceMessage: '1 ceviche, 2 papas a la huancaína y una chicha',
     createdAt: new Date().toISOString(),
   },
+  productResolutions: [
+    {
+      resolutionId: PAPAS_RESOLUTION_ID, productId: PRODUCT_ID, businessId: 'biz-1',
+      conversationId: 'conv-1', source: 'search_products', status: 'selected',
+      scope: 'conversation', createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    },
+    {
+      resolutionId: CHICHA_RESOLUTION_ID, productId: PRODUCT_ID, businessId: 'biz-1',
+      conversationId: 'conv-1', source: 'search_products', status: 'selected',
+      scope: 'conversation', createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    },
+  ],
 });
 
 const metaWithPartyAndQueue = () => metadataWithQueue({ partySize: 4 });
 
-const callTool = (input: { productId: string; quantity?: number }) =>
-  addCartItemTool.func(input, undefined, CONFIG);
+const callTool = (input: {
+  productId: string;
+  quantity?: number;
+  orderLineId?: string;
+  resolutionId?: string;
+}) =>
+  addCartItemTool.func(
+    {
+      ...input,
+      orderLineId: input.orderLineId ?? 'line-papas',
+      resolutionId: input.resolutionId ?? PAPAS_RESOLUTION_ID,
+    },
+    undefined,
+    CONFIG
+  );
 
 describe('add_cart_item — cola de pedido y cantidad por línea', () => {
   beforeEach(() => {
@@ -275,7 +309,7 @@ describe('add_cart_item — cola de pedido y cantidad por línea', () => {
 
   it('producto ajeno a la cola: no toma la cantidad de otra línea', async () => {
     vi.mocked(prisma.menu_item.findFirst).mockResolvedValue(
-      menuItem('Lomo saltado') as never
+      menuItem('Lomo saltado', OTHER_PRODUCT_ID) as never
     );
 
     const result = JSON.parse((await callTool({ productId: PRODUCT_ID })) as string);
@@ -290,7 +324,11 @@ describe('add_cart_item — cola de pedido y cantidad por línea', () => {
       menuItem('Chicha morada') as never
     );
 
-    await callTool({ productId: PRODUCT_ID });
+    await callTool({
+      productId: PRODUCT_ID,
+      orderLineId: 'line-chicha',
+      resolutionId: CHICHA_RESOLUTION_ID,
+    });
 
     expect(advanceAfterLineClose).toHaveBeenCalledWith(
       expect.objectContaining({ lineId: 'line-chicha', closeStatus: 'done' })

@@ -48,6 +48,23 @@ vi.mock('../../repositories', async (importOriginal) => {
     patchConversationMetadata: (...args: unknown[]) => patchConversationMetadata(...args),
     omitConversationMetadataKeys: (...args: unknown[]) =>
       omitConversationMetadataKeys(...args),
+    mutateConversationMetadata: async (
+      conversationId: string,
+      mutate: (metadata: Record<string, unknown>) => {
+        metadata: Record<string, unknown> | null;
+        result: unknown;
+      }
+    ) => {
+      const state = await findOrCreateConversationState();
+      const mutation = mutate(state.metadata as Record<string, unknown>);
+      if (mutation.metadata) {
+        await patchConversationMetadata(conversationId, {
+          pendingOrderLines: mutation.metadata.pendingOrderLines,
+        });
+        findOrCreateConversationState.mockResolvedValue({ metadata: mutation.metadata });
+      }
+      return mutation.result;
+    },
   };
 });
 

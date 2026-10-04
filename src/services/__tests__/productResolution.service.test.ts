@@ -64,6 +64,7 @@ const consume = (params: {
   resolutionId?: string;
   turnId?: string;
   pendingResolutionId?: string;
+  orderLineId?: string;
 }) =>
   consumeProductResolution(fakeDb.tx as never, {
     productId: params.productId ?? PRODUCT_ID,
@@ -72,6 +73,7 @@ const consume = (params: {
     resolutionId: params.resolutionId,
     turnId: params.turnId,
     pendingResolutionId: params.pendingResolutionId,
+    orderLineId: params.orderLineId,
   });
 
 describe('ProductResolution', () => {
@@ -152,6 +154,34 @@ describe('ProductResolution', () => {
       ok: false,
       reason: 'resolution_consumed',
     });
+  });
+
+  it('requiere Task ID con cola abierta y rechaza consumir la resolución de otra Task', async () => {
+    const resolutionA = await issue();
+    const resolutionB = await issue();
+    fakeDb.state.metadata.pendingOrderLines = {
+      lines: [
+        { id: 'task-a', hint: 'ceviche', requestedQuantity: 2, status: 'active', currentResolutionId: resolutionA.resolutionId },
+        { id: 'task-b', hint: 'ceviche', requestedQuantity: 1, status: 'queued', currentResolutionId: resolutionB.resolutionId },
+      ],
+      sourceMessage: 'mismo producto, Tasks independientes',
+      createdAt: new Date().toISOString(),
+    };
+
+    await expect(consume({ resolutionId: resolutionA.resolutionId })).resolves.toMatchObject({
+      ok: false,
+      reason: 'order_line_id_required',
+    });
+    await expect(consume({
+      resolutionId: resolutionA.resolutionId,
+      orderLineId: 'task-b',
+    })).resolves.toMatchObject({ ok: false, reason: 'task_resolution_mismatch' });
+    expect(fakeDb.state.metadata.productResolutions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ resolutionId: resolutionA.resolutionId, status: 'resolved' }),
+        expect.objectContaining({ resolutionId: resolutionB.resolutionId, status: 'resolved' }),
+      ])
+    );
   });
 
   it('extiende cantidad/variación pendiente sin consumir la resolución', async () => {

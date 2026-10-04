@@ -16,13 +16,19 @@ export type OrderQuantityGoalFacts = {
   checkoutActive: boolean;
   partySizeKnown: boolean;
   metadata: unknown;
+  businessId?: string;
+  conversationId?: string;
 };
 
 export const deriveOrderQuantityGoalTarget = (
   facts: OrderQuantityGoalFacts
 ) => {
   if (!facts.activePedir || facts.checkoutActive || !facts.partySizeKnown) return null;
-  return getNextOrderLineRequiringQuantity(getPendingOrderLines(facts.metadata));
+  return getNextOrderLineRequiringQuantity(getPendingOrderLines(facts.metadata), {
+    metadata: facts.metadata,
+    businessId: facts.businessId,
+    conversationId: facts.conversationId,
+  });
 };
 
 export const deriveOrderQuantityGoalCandidate = (

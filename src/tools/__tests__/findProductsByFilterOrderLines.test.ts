@@ -14,13 +14,27 @@ const countMenuItems = vi.fn();
 const findManyMenuItems = vi.fn();
 
 vi.mock('../../lib/prisma', () => ({
-  prisma: {
+  prisma: (() => {
+    const metadata = { value: {} as Record<string, unknown> };
+    const prisma: any = {
     business: { findUnique: (...args: unknown[]) => findUniqueBusiness(...args) },
     menu_item: {
       count: (...args: unknown[]) => countMenuItems(...args),
       findMany: (...args: unknown[]) => findManyMenuItems(...args),
     },
-  },
+      conversation_state: {
+        upsert: vi.fn(),
+        findUnique: vi.fn(async () => ({ metadata: metadata.value })),
+        update: vi.fn(async ({ data }: { data: { metadata: Record<string, unknown> } }) => {
+          metadata.value = data.metadata;
+          return { metadata: metadata.value };
+        }),
+      },
+      $queryRaw: vi.fn(async () => []),
+    };
+    prisma.$transaction = vi.fn(async (callback: (tx: typeof prisma) => unknown) => callback(prisma));
+    return prisma;
+  })(),
 }));
 
 vi.mock('../../services/menu.service', () => ({ MenuService: {} }));
@@ -49,6 +63,8 @@ const CONFIG = {
 };
 
 const papasQueue = {
+  peopleCount: 1,
+  requestedPartySize: 1,
   pendingOrderLines: {
     lines: [
       {
@@ -106,6 +122,8 @@ describe('find_products_by_filter + cola de pedido', () => {
   it('hint de sección "algo de beber" + containsIngredient beber no bloquea', async () => {
     findOrCreateConversationState.mockResolvedValue({
       metadata: {
+        peopleCount: 1,
+        requestedPartySize: 1,
         pendingOrderLines: {
           lines: [
             {

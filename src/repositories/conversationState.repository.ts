@@ -107,6 +107,43 @@ export const patchConversationMetadata = async (
   });
 };
 
+export const mutateConversationMetadata = async <T>(
+  conversationId: string,
+  mutate: (current: Record<string, unknown>) => {
+    metadata: Record<string, unknown> | null;
+    result: T;
+  }
+): Promise<T> => {
+  return prisma.$transaction(async (tx) => {
+    await tx.conversation_state.upsert({
+      where: { conversation_id: conversationId },
+      update: {},
+      create: { conversation_id: conversationId },
+    });
+    await tx.$queryRaw`
+      SELECT conversation_id
+      FROM conversation_state
+      WHERE conversation_id = ${conversationId}::uuid
+      FOR UPDATE
+    `;
+    const row = await tx.conversation_state.findUnique({
+      where: { conversation_id: conversationId },
+      select: { metadata: true },
+    });
+    const current = asMetadataRecord(row?.metadata);
+    const mutation = mutate(current);
+    if (mutation.metadata) {
+      await tx.conversation_state.update({
+        where: { conversation_id: conversationId },
+        data: {
+          metadata: preserveConsumedProductResolutions(mutation.metadata, current),
+        },
+      });
+    }
+    return mutation.result;
+  });
+};
+
 export const omitConversationMetadataKeys = async (
   conversationId: string,
   keys: string[]

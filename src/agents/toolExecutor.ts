@@ -13,6 +13,7 @@ export type ToolExecutionContext = {
   businessId?: string;
   conversationId?: string;
   turnId?: string;
+  orderLineId?: string | null;
   humanIntent?: HumanIntentRecord | null;
   state?: HumanIntentStateV1 | null;
   results?: ExecutorResult[];
@@ -154,6 +155,7 @@ export class ToolExecutor {
             businessId: context.businessId ?? '',
             conversationId: context.conversationId ?? '',
             turnId: context.turnId,
+            orderLineId: context.orderLineId,
             humanIntent: context.humanIntent,
             state: context.state,
             context: stepContext,

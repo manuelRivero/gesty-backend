@@ -12,11 +12,13 @@
 
 import { randomUUID } from 'node:crypto';
 import {
+  mutateConversationMetadata,
   omitConversationMetadataKeys,
   patchConversationMetadata,
 } from '../repositories';
 import { normalizeMetadata } from './productQuery/utils';
 import type { ConversationMetadata } from './productQuery/types';
+import type { ProductResolution } from './productResolution.service';
 
 export const PENDING_ORDER_LINES_KEY = 'pendingOrderLines' as const;
 
@@ -29,7 +31,10 @@ export type OrderLine = {
   hint: string;
   requestedQuantity: number | null;
   status: OrderLineStatus;
+  currentResolutionId: string | null;
 };
+
+export type FulfillmentTask = OrderLine;
 
 export type PendingOrderLines = {
   lines: OrderLine[];
@@ -55,11 +60,18 @@ const parseLine = (raw: unknown): OrderLine | null => {
     raw.status === 'cancelled'
       ? raw.status
       : 'queued';
+  const currentResolutionId =
+    typeof raw.currentResolutionId === 'string'
+      ? raw.currentResolutionId.trim() || null
+      : raw.currentResolutionId === null
+        ? null
+        : null;
   return {
     id: raw.id.trim(),
     hint: raw.hint.trim(),
     requestedQuantity,
     status,
+    currentResolutionId,
   };
 };
 
@@ -91,15 +103,213 @@ export const getActiveOrderLine = (pending: PendingOrderLines | null): OrderLine
   );
 };
 
-/** Quantity target: active UNKNOWN first, then the first queued UNKNOWN line. */
+/** Quantity target: only product-bound tasks may advance to quantity resolution. */
+export const validateCurrentProductResolutionForTask = (params: {
+  task: Pick<OrderLine, 'currentResolutionId'>;
+  businessId?: string;
+  conversationId?: string;
+  resolution?: Partial<ProductResolution> | null;
+}): { ok: true; resolution: Partial<ProductResolution> } | { ok: false; reason: string } => {
+  const candidate = typeof params.task.currentResolutionId === 'string'
+    ? params.task.currentResolutionId.trim()
+    : '';
+  if (!candidate) {
+    return { ok: false, reason: 'missing' };
+  }
+
+  const resolution = params.resolution ?? null;
+  if (!resolution || typeof resolution !== 'object') {
+    return { ok: false, reason: 'missing' };
+  }
+
+  if (
+    typeof resolution.resolutionId === 'string' &&
+    resolution.resolutionId.trim() !== candidate
+  ) {
+    return { ok: false, reason: 'missing' };
+  }
+
+  if (params.businessId && resolution.businessId && resolution.businessId !== params.businessId) {
+    return { ok: false, reason: 'wrong_business' };
+  }
+
+  if (
+    params.conversationId &&
+    typeof resolution.conversationId === 'string' &&
+    resolution.conversationId !== params.conversationId
+  ) {
+    return { ok: false, reason: 'wrong_conversation' };
+  }
+
+  if (resolution.status === 'consumed') return { ok: false, reason: 'consumed' };
+  if (resolution.status === 'candidate') return { ok: false, reason: 'not_selected' };
+  if (typeof resolution.expiresAt === 'string') {
+    const expiresAt = Date.parse(resolution.expiresAt);
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+      return { ok: false, reason: 'expired' };
+    }
+  }
+
+  return { ok: true, resolution };
+};
+
+export const getCurrentProductResolutionForTask = (params: {
+  task: Pick<OrderLine, 'currentResolutionId'>;
+  conversationId?: string;
+  businessId?: string;
+  metadata?: unknown;
+}): { ok: true; resolution: Partial<ProductResolution> } | { ok: false; reason: string } => {
+  const taskResolutionId = typeof params.task.currentResolutionId === 'string'
+    ? params.task.currentResolutionId.trim()
+    : '';
+  if (!taskResolutionId) return { ok: false, reason: 'missing' };
+
+  const meta = params.metadata && typeof params.metadata === 'object' ? params.metadata as Record<string, unknown> : {};
+  const resolutions = Array.isArray(meta.productResolutions)
+    ? (meta.productResolutions as Array<Partial<ProductResolution>>)
+    : [];
+  const match = resolutions.find(
+    (resolution) => typeof resolution.resolutionId === 'string' && resolution.resolutionId === taskResolutionId
+  );
+  return validateCurrentProductResolutionForTask({
+    task: params.task,
+    businessId: params.businessId,
+    conversationId: params.conversationId,
+    resolution: match ?? null,
+  });
+};
+
+export type TaskResolutionOwnershipFailure =
+  | 'task_not_found'
+  | 'task_not_open'
+  | 'task_resolution_mismatch'
+  | 'resolution_already_owned';
+
+export const validateTaskResolutionOwnership = (params: {
+  metadata: unknown;
+  taskId: string;
+  resolutionId: string;
+}):
+  | { ok: true; task: OrderLine }
+  | { ok: false; reason: TaskResolutionOwnershipFailure } => {
+  const pending = getPendingOrderLines(params.metadata);
+  const task = pending?.lines.find((line) => line.id === params.taskId);
+  if (!task) return { ok: false, reason: 'task_not_found' };
+  if (task.status !== 'active' && task.status !== 'queued') {
+    return { ok: false, reason: 'task_not_open' };
+  }
+  if (task.currentResolutionId !== params.resolutionId) {
+    return { ok: false, reason: 'task_resolution_mismatch' };
+  }
+  if (pending!.lines.some((line) =>
+    line.id !== params.taskId &&
+    line.currentResolutionId === params.resolutionId
+  )) {
+    return { ok: false, reason: 'resolution_already_owned' };
+  }
+  return { ok: true, task };
+};
+
+type ProductResolutionAssociationResult =
+  | { ok: true; pending: PendingOrderLines }
+  | { ok: false; reason: 'task_not_found' | 'task_not_open' | 'resolution_not_valid' | 'resolution_already_owned' | 'task_already_associated' };
+
+export const associateProductResolutionToTask = async (params: {
+  conversationId: string;
+  businessId: string;
+  taskId: string;
+  resolutionId: string;
+}): Promise<ProductResolutionAssociationResult> => {
+  return mutateConversationMetadata<ProductResolutionAssociationResult>(params.conversationId, (metadata) => {
+    const pending = getPendingOrderLines(metadata);
+    if (!pending) return { metadata: null, result: { ok: false, reason: 'task_not_found' } };
+    const target = pending.lines.find((line) => line.id === params.taskId);
+    if (!target) return { metadata: null, result: { ok: false, reason: 'task_not_found' } };
+    if (target.status !== 'active' && target.status !== 'queued') {
+      return { metadata: null, result: { ok: false, reason: 'task_not_open' } };
+    }
+
+    const resolutions = Array.isArray(metadata.productResolutions)
+      ? (metadata.productResolutions as Array<Partial<ProductResolution>>)
+      : [];
+    const resolution = resolutions.find((item) => item.resolutionId === params.resolutionId);
+    const validation = validateCurrentProductResolutionForTask({
+      task: { currentResolutionId: params.resolutionId },
+      businessId: params.businessId,
+      conversationId: params.conversationId,
+      resolution,
+    });
+    if (!validation.ok) {
+      return { metadata: null, result: { ok: false, reason: 'resolution_not_valid' } };
+    }
+    if (target.currentResolutionId && target.currentResolutionId !== params.resolutionId) {
+      const previousResolution = resolutions.find(
+        (item) => item.resolutionId === target.currentResolutionId
+      );
+      const previousValidation = validateCurrentProductResolutionForTask({
+        task: target,
+        businessId: params.businessId,
+        conversationId: params.conversationId,
+        resolution: previousResolution,
+      });
+      if (previousValidation.ok) {
+        return { metadata: null, result: { ok: false, reason: 'task_already_associated' } };
+      }
+    }
+    if (pending.lines.some((line) =>
+      line.id !== params.taskId &&
+      line.currentResolutionId === params.resolutionId
+    )) {
+      return { metadata: null, result: { ok: false, reason: 'resolution_already_owned' } };
+    }
+
+    const next: PendingOrderLines = {
+      ...pending,
+      lines: pending.lines.map((line) =>
+        line.id === params.taskId ? { ...line, currentResolutionId: params.resolutionId } : line
+      ),
+    };
+    return {
+      metadata: { ...metadata, pendingOrderLines: next },
+      result: { ok: true, pending: next },
+    };
+  });
+};
+
 export const getNextOrderLineRequiringQuantity = (
-  pending: PendingOrderLines | null
+  pending: PendingOrderLines | null,
+  validationContext?: { metadata?: unknown; businessId?: string; conversationId?: string }
 ): OrderLine | null => {
   if (!pending) return null;
   const open = pending.lines.filter((line) => line.status === 'active' || line.status === 'queued');
+  const isProductBound = (line: OrderLine): boolean => {
+    if (!line.currentResolutionId) return false;
+    const resolution = validationContext?.metadata && typeof validationContext.metadata === 'object'
+      ? (validationContext.metadata as Record<string, unknown>).productResolutions
+      : undefined;
+    const productResolutions = Array.isArray(resolution)
+      ? (resolution as Array<Partial<ProductResolution>>)
+      : [];
+    const match = productResolutions.find(
+      (candidate) =>
+        candidate.resolutionId === line.currentResolutionId &&
+        (candidate.businessId == null || !validationContext?.businessId || candidate.businessId === validationContext.businessId) &&
+        (candidate.conversationId == null || !validationContext?.conversationId || candidate.conversationId === validationContext.conversationId)
+    );
+    if (match) {
+      return validateCurrentProductResolutionForTask({
+        task: line,
+        businessId: validationContext?.businessId,
+        conversationId: validationContext?.conversationId,
+        resolution: match,
+      }).ok;
+    }
+    return Boolean(line.currentResolutionId);
+  };
+
   return (
-    open.find((line) => line.status === 'active' && line.requestedQuantity == null) ??
-    open.find((line) => line.status === 'queued' && line.requestedQuantity == null) ??
+    open.find((line) => line.status === 'active' && line.requestedQuantity == null && isProductBound(line)) ??
+    open.find((line) => line.status === 'queued' && line.requestedQuantity == null && isProductBound(line)) ??
     null
   );
 };
@@ -120,6 +330,19 @@ export const setOrderLineRequestedQuantity = async (params: {
       (line.status === 'active' || line.status === 'queued')
   );
   if (!target) return null;
+
+  const validation = validateCurrentProductResolutionForTask({
+    task: target,
+    conversationId: params.conversationId,
+    resolution:
+      (typeof (params.metadata as Record<string, unknown>)?.productResolutions === 'object' &&
+        Array.isArray((params.metadata as Record<string, unknown>).productResolutions))
+        ? ((params.metadata as Record<string, unknown>).productResolutions as Array<Partial<ProductResolution>>).find(
+            (candidate) => candidate.resolutionId === target.currentResolutionId
+          ) ?? null
+        : null,
+  });
+  if (!validation.ok) return null;
 
   const next: PendingOrderLines = {
     ...pending,
@@ -180,19 +403,18 @@ const matchTokens = (value: string): Set<string> => {
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/)
-    .filter((t) => t.length >= 3 && !STOPWORDS.has(t))
-    .map((t) => (t.endsWith('s') ? t.slice(0, -1) : t));
+    .filter((token) => token.length >= 3 && !STOPWORDS.has(token))
+    .map((token) => (token.endsWith('s') ? token.slice(0, -1) : token));
   return new Set(tokens);
 };
 
 const dishTokens = (value: string): Set<string> => {
   const out = new Set<string>();
-  for (const t of matchTokens(value)) {
-    if (!HINT_SECTION_FILLERS.has(t)) out.add(t);
+  for (const token of matchTokens(value)) {
+    if (!HINT_SECTION_FILLERS.has(token)) out.add(token);
   }
   return out;
 };
-
 /**
  * `containsIngredient` está recortando un hint de plato ("papa" ⊂ "papas a
  * la huancaína"). Parsing de argumento de tool vs Fact de sesión — no del
@@ -391,6 +613,7 @@ export const setPendingOrderLines = async (params: {
     hint: l.hint,
     requestedQuantity: l.requestedQuantity,
     status: idx === 0 ? 'active' : 'queued',
+    currentResolutionId: null,
   }));
 
   const pending: PendingOrderLines = {
@@ -447,30 +670,74 @@ export const clearPendingOrderLines = async (conversationId: string): Promise<vo
  * `queued` — NO la activa todavía (D6): eso pasa recién cuando el cliente
  * dice que sigue.
  */
+export type OrderLineCloseFailure =
+  | 'order_line_id_required'
+  | 'order_line_not_found'
+  | 'order_line_not_open'
+  | 'order_line_ambiguous';
+
+export class OrderLineCloseError extends Error {
+  constructor(readonly reason: OrderLineCloseFailure) {
+    super(reason);
+    this.name = 'OrderLineCloseError';
+  }
+}
+
+/** Closes one exact Task; active-line fallback requires explicit generic-flow opt-in. */
 export const advanceAfterLineClose = async (params: {
   conversationId: string;
-  metadata: unknown;
   lineId?: string | null;
+  allowActiveFallback?: boolean;
   closeStatus: 'done' | 'cancelled';
 }): Promise<PendingOrderLines | null> => {
-  const pending = getPendingOrderLines(params.metadata);
-  if (!pending) return null;
-  const target =
-    (params.lineId && pending.lines.find((l) => l.id === params.lineId)) ??
-    getActiveOrderLine(pending);
-  if (!target) return null;
+  const result = await mutateConversationMetadata<
+    | { ok: true; pending: PendingOrderLines | null }
+    | { ok: false; reason: OrderLineCloseFailure }
+  >(params.conversationId, (metadata) => {
+    const pending = getPendingOrderLines(metadata);
+    if (!pending) {
+      return params.lineId != null
+        ? { metadata: null, result: { ok: false, reason: 'order_line_not_found' } }
+        : { metadata: null, result: { ok: true, pending: null } };
+    }
 
-  const nextLines = pending.lines.map((l) =>
-    l.id === target.id ? { ...l, status: params.closeStatus } : l
-  );
-  const stillOpen = nextLines.some((l) => l.status === 'queued' || l.status === 'active');
-  if (!stillOpen) {
-    await clearPendingOrderLines(params.conversationId);
-    return null;
-  }
-  const next: PendingOrderLines = { ...pending, lines: nextLines };
-  await patchConversationMetadata(params.conversationId, { pendingOrderLines: next });
-  return next;
+    let target: OrderLine | null;
+    if (params.lineId != null) {
+      target = pending.lines.find((line) => line.id === params.lineId) ?? null;
+      if (!target) {
+        return { metadata: null, result: { ok: false, reason: 'order_line_not_found' } };
+      }
+    } else if (params.allowActiveFallback) {
+      target = getActiveOrderLine(pending);
+    } else {
+      return { metadata: null, result: { ok: false, reason: 'order_line_id_required' } };
+    }
+
+    if (!target) return { metadata: null, result: { ok: true, pending: null } };
+    if (target.status !== 'active' && target.status !== 'queued') {
+      return { metadata: null, result: { ok: false, reason: 'order_line_not_open' } };
+    }
+
+    const next: PendingOrderLines = {
+      ...pending,
+      lines: pending.lines.map((line) =>
+        line.id === target.id ? { ...line, status: params.closeStatus } : line
+      ),
+    };
+    const stillOpen = next.lines.some((line) => line.status === 'queued' || line.status === 'active');
+    if (!stillOpen) {
+      const nextMetadata = { ...metadata };
+      delete nextMetadata[PENDING_ORDER_LINES_KEY];
+      return { metadata: nextMetadata, result: { ok: true, pending: null } };
+    }
+    return {
+      metadata: { ...metadata, pendingOrderLines: next },
+      result: { ok: true, pending: next },
+    };
+  });
+
+  if (!result.ok) throw new OrderLineCloseError(result.reason);
+  return result.pending;
 };
 
 /** El cliente confirma que sigue con la cola: activa la próxima `queued`. */
@@ -499,21 +766,40 @@ export const cancelOrderLine = async (params: {
   lineId?: string | null;
   hint?: string | null;
 }): Promise<PendingOrderLines | null> => {
+  if (params.lineId != null) {
+    return advanceAfterLineClose({
+      conversationId: params.conversationId,
+      lineId: params.lineId,
+      closeStatus: 'cancelled',
+    });
+  }
+
+  const hint = params.hint?.trim();
+  if (params.hint != null && !hint) {
+    throw new OrderLineCloseError('order_line_not_found');
+  }
   const pending = getPendingOrderLines(params.metadata);
-  if (!pending) return null;
-  const target =
-    (params.lineId && pending.lines.find((l) => l.id === params.lineId)) ??
-    (params.hint &&
-      pending.lines.find(
-        (l) =>
-          (l.status === 'queued' || l.status === 'active') &&
-          l.hint.toLowerCase().includes(params.hint!.toLowerCase())
-      )) ??
-    getActiveOrderLine(pending);
+  if (!pending) {
+    if (hint) throw new OrderLineCloseError('order_line_not_found');
+    return null;
+  }
+  const matchingHintLines = hint
+    ? pending.lines.filter(
+        (line) =>
+          (line.status === 'queued' || line.status === 'active') &&
+          line.hint.toLowerCase().includes(hint.toLowerCase())
+      )
+    : [];
+  if (hint && matchingHintLines.length === 0) {
+    throw new OrderLineCloseError('order_line_not_found');
+  }
+  if (matchingHintLines.length > 1) {
+    throw new OrderLineCloseError('order_line_ambiguous');
+  }
+  const target = hint ? matchingHintLines[0] : getActiveOrderLine(pending);
   if (!target) return null;
   return advanceAfterLineClose({
     conversationId: params.conversationId,
-    metadata: params.metadata,
     lineId: target.id,
     closeStatus: 'cancelled',
   });

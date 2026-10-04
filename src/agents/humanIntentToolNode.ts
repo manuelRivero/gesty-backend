@@ -7,6 +7,7 @@ import { prisma } from '../lib/prisma';
 import { getHumanIntentState, type HumanIntentRecord } from '../services/humanIntentState.service';
 import { resolveProductForAdd } from '../services/productResolution.service';
 import type { ProductResolution } from '../services/productResolution.service';
+import { getPendingOrderLines } from '../services/pendingOrderLines.service';
 import { evaluateToolRequirement } from '../services/requirementEvaluator';
 import {
   partySizeRequiredPayload,
@@ -378,6 +379,7 @@ export class HumanIntentToolNode extends PostEffectToolNode {
             businessId?: unknown;
             conversationId?: unknown;
             turnId?: unknown;
+            orderLineId?: unknown;
             humanIntentGateRevision?: unknown;
             turnStartedAt?: unknown;
           }
@@ -386,6 +388,7 @@ export class HumanIntentToolNode extends PostEffectToolNode {
       const businessId = typeof configurable?.businessId === 'string' ? configurable.businessId : undefined;
       const conversationId = typeof configurable?.conversationId === 'string' ? configurable.conversationId : undefined;
       const turnId = typeof configurable?.turnId === 'string' ? configurable.turnId : undefined;
+      const configuredOrderLineId = typeof configurable?.orderLineId === 'string' ? configurable.orderLineId.trim() || undefined : undefined;
 
       const executor = new ToolExecutor({
         runner: async (call, context) => {
@@ -431,6 +434,7 @@ export class HumanIntentToolNode extends PostEffectToolNode {
         businessId,
         conversationId,
         turnId,
+        orderLineId: configuredOrderLineId,
         humanIntent: (await (conversationId ? getHumanIntentState(conversationId).catch(() => null) : null))?.records.find((record) => record.status === 'ACTIVE') ?? null,
         state: conversationId ? await getHumanIntentState(conversationId).catch(() => null) : null,
       });
@@ -490,10 +494,22 @@ export class HumanIntentToolNode extends PostEffectToolNode {
           businessId?: unknown;
           conversationId?: unknown;
           turnId?: unknown;
+          orderLineId?: unknown;
           humanIntentGateRevision?: unknown;
           turnStartedAt?: unknown;
         }
       | undefined;
+    const orderMetadata = typeof configurable?.conversationId === 'string'
+      ? (await prisma.conversation_state.findUnique({
+          where: { conversation_id: configurable.conversationId },
+          select: { metadata: true },
+        }))?.metadata
+      : null;
+    const hasOpenTaskQueue = Boolean(
+      getPendingOrderLines(orderMetadata)?.lines.some(
+        (line) => line.status === 'active' || line.status === 'queued'
+      )
+    );
 
     const resolutionByAdd = new Map<ToolCall, ToolCall | undefined>();
     for (const addCall of addCalls) {
@@ -520,11 +536,22 @@ export class HumanIntentToolNode extends PostEffectToolNode {
     >();
     await Promise.all(addCalls.map(async (call) => {
       if (resolutionByAdd.has(call)) return;
+      const args = call.args as Record<string, unknown>;
+      const explicitTaskId = typeof args.orderLineId === 'string'
+        ? args.orderLineId.trim()
+        : typeof configurable?.orderLineId === 'string'
+          ? configurable.orderLineId.trim()
+          : '';
+      if (hasOpenTaskQueue || explicitTaskId) {
+        if (!explicitTaskId || typeof args.resolutionId !== 'string') {
+          deferredAdds.add(call);
+        }
+        return;
+      }
       if (hasMissingResolutionContext) {
         deferredAdds.add(call);
         return;
       }
-      const args = call.args as Record<string, unknown>;
       const productId = productIdFrom(call);
       if (!productId) {
         deferredAdds.add(call);
@@ -619,6 +646,7 @@ export class HumanIntentToolNode extends PostEffectToolNode {
       | {
           conversationId?: unknown;
           businessId?: unknown;
+          orderLineId?: unknown;
           humanIntentGateRevision?: unknown;
           turnId?: unknown;
           turnStartedAt?: unknown;
@@ -629,18 +657,29 @@ export class HumanIntentToolNode extends PostEffectToolNode {
     const expectedRevision = configurable?.humanIntentGateRevision;
     const turnId = configurable?.turnId;
     const turnStartedAt = configurable?.turnStartedAt;
+    const explicitOrderLineId =
+      typeof (call.args as Record<string, unknown>)?.orderLineId === 'string'
+        ? String((call.args as Record<string, unknown>).orderLineId).trim() || undefined
+        : typeof configurable?.orderLineId === 'string'
+          ? String(configurable.orderLineId).trim() || undefined
+          : undefined;
     const toolConfig =
-      call.name === 'add_cart_item' &&
+      (call.name === 'add_cart_item' &&
       validatedResolutionFromExecutionContext?.productId === productIdFrom(call) &&
       validatedResolutionFromExecutionContext.resolutionId ===
         (typeof (call.args as Record<string, unknown>).resolutionId === 'string'
           ? (call.args as Record<string, unknown>).resolutionId
-          : validatedResolutionFromExecutionContext.resolutionId)
+          : validatedResolutionFromExecutionContext.resolutionId)) ||
+      (call.name === 'add_cart_item' && explicitOrderLineId) ||
+      (call.name === 'resolve_product' && explicitOrderLineId)
         ? {
             ...config,
             configurable: {
               ...config.configurable,
-              validatedProductResolutionFromExecutionContext: validatedResolutionFromExecutionContext,
+              ...(call.name === 'add_cart_item'
+                ? { validatedProductResolutionFromExecutionContext: validatedResolutionFromExecutionContext }
+                : {}),
+              ...(explicitOrderLineId ? { orderLineId: explicitOrderLineId } : {}),
             },
           }
         : config;
