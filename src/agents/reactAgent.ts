@@ -12,8 +12,10 @@
  */
 
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
+import { BaseCallbackHandler } from '@langchain/core/callbacks/base';
 import { HumanIntentToolNode } from './humanIntentToolNode';
-import { HumanMessage, type BaseMessage } from '@langchain/core/messages';
+import { AIMessage, HumanMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
+import type { LLMResult } from '@langchain/core/outputs';
 import { getHybridReasonerLlm } from '../config/llm';
 import { buildAgentHistoryMessages } from './conversationHistory';
 import { buildContextMessage } from './contextMessage';
@@ -83,6 +85,81 @@ const markHybridResult = (result: HandlerResult): HandlerResult => ({
 });
 
 let cachedAgents = new Map<string, ReturnType<typeof createReactAgent>>();
+
+const diagnosticValue = (value: unknown, maxLength = 2400): string => {
+  let serialized: string;
+  try {
+    serialized = typeof value === 'string' ? value : JSON.stringify(value) ?? String(value);
+  } catch {
+    serialized = String(value);
+  }
+  return serialized.length > maxLength
+    ? `${serialized.slice(0, maxLength)}…[truncated]`
+    : serialized;
+};
+
+class ReactCycleTraceCallback extends BaseCallbackHandler {
+  name = 'react-cycle-trace';
+  private iteration = 0;
+  private messageIndex: number;
+  private readonly loggedToolCallIds = new Set<string>();
+
+  constructor(
+    private readonly turnId: string | undefined,
+    private readonly conversationId: string,
+    initialMessageCount: number
+  ) {
+    super();
+    this.messageIndex = initialMessageCount;
+  }
+
+  handleLLMEnd(output: LLMResult): void {
+    const message = output.generations[0]?.[0];
+    if (!message || !('message' in message) || !(message.message instanceof AIMessage)) return;
+
+    this.iteration += 1;
+    const toolCalls = message.message.tool_calls ?? [];
+    console.log(JSON.stringify({
+      event: `[REACT ${this.iteration}]`,
+      turnId: this.turnId,
+      conversationId: this.conversationId,
+      iteration: this.iteration,
+      messageIndex: this.messageIndex++,
+      type: 'AIMessage',
+      terminal: toolCalls.length === 0,
+      content: message.message.content,
+      tool_calls: toolCalls.map((call) => ({
+        id: call.id ?? null,
+        name: call.name ?? null,
+        args: call.args ?? null,
+      })),
+      invalid_tool_calls: message.message.invalid_tool_calls ?? [],
+    }));
+  }
+
+  handleChainEnd(outputs: Record<string, unknown>): void {
+    const messages = outputs.messages;
+    if (!Array.isArray(messages)) return;
+
+    for (const message of messages) {
+      if (!(message instanceof ToolMessage)) continue;
+      const toolCallId = message.tool_call_id;
+      if (this.loggedToolCallIds.has(toolCallId)) continue;
+      this.loggedToolCallIds.add(toolCallId);
+      console.log(JSON.stringify({
+        event: `[TOOLS ${this.iteration}]`,
+        turnId: this.turnId,
+        conversationId: this.conversationId,
+        iteration: this.iteration,
+        messageIndex: this.messageIndex++,
+        type: 'ToolMessage',
+        tool_call_id: toolCallId,
+        name: message.name ?? null,
+        result: diagnosticValue(message.content),
+      }));
+    }
+  }
+}
 
 /** Payload que emite la tool `present_product_cta`. */
 export type PresentProductCtaSignal = {
@@ -1353,8 +1430,14 @@ export const runHybridReactAgent = async (
 
   const turnStartedAt = new Date().toISOString();
   const userMessageForTools = ctx.message?.text?.body ?? '';
+  const reactCycleTrace = new ReactCycleTraceCallback(
+    ctx.turnId,
+    conversationId,
+    inputs.messages.length
+  );
   const out = await agent.invoke(inputs, {
     recursionLimit: 12,
+    callbacks: [reactCycleTrace],
     configurable: {
       businessId,
       customerId,

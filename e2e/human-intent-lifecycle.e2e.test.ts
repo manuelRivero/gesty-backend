@@ -25,6 +25,7 @@ import {
 
 const preflightObservations = vi.hoisted(() => ({
   entries: [] as Array<{ input: unknown; decision: unknown }>,
+  overrides: [] as Array<(input: HumanIntentPreflightInput) => unknown>,
 }));
 
 vi.mock('../src/services/humanIntentPreflight.service', async (importOriginal) => {
@@ -32,7 +33,10 @@ vi.mock('../src/services/humanIntentPreflight.service', async (importOriginal) =
   return {
     ...actual,
     runHumanIntentPreflight: async (input: HumanIntentPreflightInput) => {
-      const decision = await actual.runHumanIntentPreflight(input);
+      const override = preflightObservations.overrides.shift();
+      const decision = override
+        ? override(input)
+        : await actual.runHumanIntentPreflight(input);
       preflightObservations.entries.push({ input, decision });
       return decision;
     },
@@ -162,7 +166,11 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
   const runCase = async (
     caseName: string,
     messages: string[],
-    options?: { requirePartySize?: boolean }
+    options?: {
+      requirePartySize?: boolean;
+      clearPartySizeBeforeTurn?: number[];
+      preflightOverrides?: Array<(input: HumanIntentPreflightInput) => unknown>;
+    }
   ): Promise<HumanIntentCaseTrace> => {
     const reset = await resetE2eCustomer();
     conversationId = reset.conversationId;
@@ -178,10 +186,15 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
       },
     });
     preflightObservations.entries.length = 0;
+    preflightObservations.overrides.length = 0;
+    preflightObservations.overrides.push(...(options?.preflightOverrides ?? []));
 
     const trace: HumanIntentCaseTrace = { caseName, status: 'RUNNING', turns: [] };
     traces.push(trace);
     for (let index = 0; index < messages.length; index += 1) {
+      if (options?.clearPartySizeBeforeTurn?.includes(index)) {
+        await clearPartySize(conversationId);
+      }
       const userMessage = messages[index];
       const payload = buildTextPayload(userMessage);
       const messageId = payload.entry[0].changes[0].value.messages?.[0].id ?? '';
@@ -401,18 +414,77 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
     trace.status = 'PASS';
   }, 600_000);
 
-  it('P0 — ceviche + papas conserva el protocolo tool_call_id', async () => {
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  it('REGRESSION — SELECT_FROM_LIST ignores long primaryLabel and completes ReAct', async () => {
+    const errorSpy = vi.spyOn(console, 'error');
+    const logSpy = vi.spyOn(console, 'log');
+    let turnErrors = '';
+    let reactEvents: Array<Record<string, unknown>> = [];
+    let toolEvents: Array<Record<string, unknown>> = [];
     let trace: HumanIntentCaseTrace;
     try {
-      trace = await runCase('P0 — ceviche + papas a la huacaina', [
-        'Hola buenas quiero un ceviche y unas papas a la huacaina',
-      ]);
+      trace = await runCase('REGRESSION — ceviche + papas then party size', [
+        'Quiero un ceviche y unas papas a la huacaina',
+        'Somos 4',
+      ], {
+        requirePartySize: true,
+        clearPartySizeBeforeTurn: [1],
+        preflightOverrides: [
+          () => ({
+            decision: 'NEW_INTENT',
+            intents: [{ goal: 'PEDIR', request: { products: ['ceviche', 'papas a la huacaina'] } }],
+          }),
+          (input) => ({
+            decision: 'CONTINUE_ACTIVE',
+            intentId: input.state.active?.id,
+            answeredBlockerIds: [],
+            fulfillmentCandidate: { goalType: 'OBTENER_PERSONAS_DEL_PEDIDO' },
+          }),
+        ],
+      });
     } finally {
-      const errors = errorSpy.mock.calls.flat().map(String).join('\n');
+      turnErrors = errorSpy.mock.calls.map((args) => args.map(String).join(' ')).join('\n');
+      const events = logSpy.mock.calls.flatMap(([entry]) => {
+        if (typeof entry !== 'string') return [];
+        try {
+          const event = JSON.parse(entry) as Record<string, unknown>;
+          return typeof event.event === 'string' ? [event] : [];
+        } catch {
+          return [];
+        }
+      });
+      const secondTurnId = [...events].reverse().find(
+        (event) => event.event === '[turn]' && event.user === 'Somos 4'
+      )?.turnId;
+      reactEvents = events.filter(
+        (event) => typeof event.event === 'string' &&
+          event.event.startsWith('[REACT ') && event.turnId === secondTurnId
+      );
+      toolEvents = events.filter(
+        (event) => typeof event.event === 'string' &&
+          event.event.startsWith('[TOOLS ') && event.turnId === secondTurnId
+      );
+      logSpy.mockRestore();
       errorSpy.mockRestore();
-      expect(errors).not.toMatch(/Invalid parameter:[\s\S]*tool_call_id/);
     }
-    expect(trace!.turns[0].assistantResponse).not.toMatch(/Invalid parameter:[\s\S]*tool_call_id/);
-  }, 480_000);
+
+    const secondTurn = trace!.turns[1];
+    const toolCalls = reactEvents.flatMap((event) =>
+      Array.isArray(event.tool_calls) ? event.tool_calls as Array<Record<string, unknown>> : []
+    );
+    const partySizeCall = toolCalls.find((call) => call.name === 'save_party_size');
+    const searchCall = toolCalls.find((call) => call.name === 'search_products');
+    const ctaCalls = toolCalls.filter((call) => call.name === 'present_product_cta');
+    const ctaResult = toolEvents.find((event) => event.tool_call_id === ctaCalls[0]?.id);
+
+    expect(decisionName(secondTurn)).toBe('CONTINUE_ACTIVE');
+    expect(partySizeCall?.args).toMatchObject({ count: 4 });
+    expect(searchCall?.args).toMatchObject({ keyword: 'ceviche' });
+    expect(ctaCalls).toHaveLength(1);
+    expect(ctaCalls[0].args).toMatchObject({ primaryKind: 'SELECT_FROM_LIST' });
+    expect(ctaResult?.result).toContain('"primaryLabel":null');
+    expect(reactEvents.some((event) => event.terminal === true)).toBe(true);
+    expect(turnErrors).not.toMatch(/GRAPH_RECURSION_LIMIT|Recursion limit/i);
+    expect(secondTurn.conversationMetadataAfter?.peopleCount).toBe(4);
+    trace!.status = 'PASS';
+  }, 600_000);
 });

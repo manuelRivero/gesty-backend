@@ -531,6 +531,7 @@ describe('runHybridReactAgent', () => {
       invoke: makeAgentInvokeWithPresentCta(introText, {
         primaryKind: 'SELECT_FROM_LIST',
         productIds: [idA, idB],
+        primaryLabel: 'Elegí el ceviche que querés',
         secondaryKind: 'VIEW_MENU',
         secondaryLabel: 'Ver menú',
       }),

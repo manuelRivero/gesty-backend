@@ -4385,13 +4385,7 @@ export const presentWelcomeOptionsTool = new DynamicStructuredTool<
 // present_product_cta (señal-UI — el agente decide si ofrecer botones/lista)
 // ---------------------------------------------------------------------------
 
-const presentProductCtaSchema = z.object({
-  primaryKind: z
-    .enum(['ADD_ITEM', 'SELECT_FROM_LIST', 'VIEW_MENU', 'VIEW_FEATURED'])
-    .describe(
-      'ADD_ITEM: un solo producto para sumar. SELECT_FROM_LIST: 2+ productos para elegir. ' +
-        'VIEW_MENU / VIEW_FEATURED: explorar sin producto concreto.'
-    ),
+const presentProductCtaFields = {
   productHint: z
     .string()
     .nullable()
@@ -4425,17 +4419,31 @@ const presentProductCtaSchema = z.object({
     .max(99)
     .optional()
     .describe('Cantidad para ADD_ITEM (default 1).'),
-  primaryLabel: z
-    .string()
-    .max(20)
-    .optional()
-    .describe('Texto del botón primario (máx 20). Ej: "Agregar 🛒", "Ver menú".'),
   secondaryKind: z
     .enum(['VIEW_MENU', 'VIEW_FEATURED'])
     .nullable()
     .optional()
     .describe('Botón de escape. Obligatorio en la práctica con ADD_ITEM.'),
   secondaryLabel: z.string().max(20).nullable().optional(),
+};
+
+const buttonPrimaryLabel = z
+  .string()
+  .max(20)
+  .optional()
+  .describe('Etiqueta visual corta del botón primario (máx 20), no el nombre del producto.');
+
+const presentProductCtaSchema = z.object({
+  ...presentProductCtaFields,
+  primaryKind: z
+    .enum(['ADD_ITEM', 'SELECT_FROM_LIST', 'VIEW_MENU', 'VIEW_FEATURED'])
+    .describe(
+      'ADD_ITEM: un producto para sumar. SELECT_FROM_LIST: lista ambigua elegida por productIds, sin etiqueta primaria. ' +
+        'VIEW_MENU / VIEW_FEATURED: explorar opciones.'
+    ),
+  primaryLabel: z.string().optional().describe(
+    'Solo para CTA con botón: etiqueta visual corta (máx 20), nunca el nombre del producto. Omitir en SELECT_FROM_LIST.'
+  ),
 });
 type PresentProductCtaInput = z.infer<typeof presentProductCtaSchema>;
 
@@ -4449,11 +4457,16 @@ export const presentProductCtaTool = new DynamicStructuredTool<
     'SELECT_FROM_LIST es EXCLUSIVO de un solo plato ambiguo: una búsqueda (search_products o ' +
     'find_products_by_filter) devolvió count ≥ 2 para ESE plato. productIds = esos ids; tu texto es SOLO ' +
     'la intro (sin listar platos, porciones ni precios: el sistema los pone en los atajos). ' +
+    'En SELECT_FROM_LIST omití primaryLabel: la selección va en productIds. En CTA con botón, primaryLabel es una etiqueta visual corta (máx. 20), no el nombre del producto. ' +
     'Nunca agrupes en SELECT_FROM_LIST platos distintos que el cliente ya pidió juntos ' +
     '("un arroz y un ají"): en ese caso add_cart_item una vez por plato. ' +
     'NO la uses si ya resolviste sin UI (nota, quitar ítem, cierre "¿algo más?").',
   schema: presentProductCtaSchema,
   func: async (input: PresentProductCtaInput, _runManager, config?: RunnableConfig) => {
+    if (input.primaryKind !== 'SELECT_FROM_LIST') {
+      const primaryLabel = buttonPrimaryLabel.safeParse(input.primaryLabel);
+      if (!primaryLabel.success) throw primaryLabel.error;
+    }
     const { businessId, conversationId } = getReactContext(config);
     const partyGate = await partySizeOrderingGateJson(conversationId);
     if (partyGate) return partyGate;
@@ -4473,7 +4486,7 @@ export const presentProductCtaTool = new DynamicStructuredTool<
       productIds: input.productIds ?? null,
       productId: input.productId ?? null,
       quantity: input.quantity ?? 1,
-      primaryLabel: input.primaryLabel ?? null,
+      primaryLabel: input.primaryKind === 'SELECT_FROM_LIST' ? null : input.primaryLabel ?? null,
       secondaryKind: input.secondaryKind ?? null,
       secondaryLabel: input.secondaryLabel ?? null,
     });
