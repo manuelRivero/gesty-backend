@@ -11,6 +11,7 @@ import {
   getPendingOrderLines,
   validateTaskResolutionOwnership,
 } from './pendingOrderLines.service';
+import type { OrderLine } from './pendingOrderLines.service';
 
 export type RequirementDecision =
   | { type: 'ALLOW' }
@@ -83,7 +84,7 @@ export const evaluateToolRequirement = async (
   const taskBound = Boolean(taskId) || Boolean(
     pendingLines?.lines.some((line) => line.status === 'active' || line.status === 'queued')
   );
-  let taskLine: ReturnType<typeof getPendingOrderLines>['lines'][number] | null = null;
+  let taskLine: OrderLine | null = null;
   let validatedResolution: { ok: true } | { ok: false; reason: string };
   if (taskBound) {
     const resolutionId = typeof params.callArgs.resolutionId === 'string'
