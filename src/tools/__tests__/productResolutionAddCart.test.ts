@@ -237,6 +237,68 @@ describe('search_products → ProductResolution → add_cart_item', () => {
     });
   });
 
+  it('interpreta “Para N” como cantidad solo con el Goal de cantidad activo', async () => {
+    const resolutionId = `pr1:${BUSINESS_ID}:${CONVERSATION_ID}:quantity-goal-reply`;
+    database.state.metadata = {
+      peopleCount: 4,
+      requestedPartySize: 4,
+      pendingOrderLines: {
+        sourceMessage: 'ceviche',
+        createdAt: new Date().toISOString(),
+        lines: [{
+          id: 'task-quantity',
+          hint: 'ceviche',
+          requestedQuantity: null,
+          status: 'active',
+          currentResolutionId: resolutionId,
+        }],
+      },
+      productResolutions: [{
+        resolutionId,
+        productId: PRODUCT_ID,
+        businessId: BUSINESS_ID,
+        conversationId: CONVERSATION_ID,
+        source: 'search_products',
+        status: 'selected',
+        scope: 'conversation',
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }],
+    };
+
+    const withoutGoal = JSON.parse((await setOrderLineQuantityTool.func(
+      { orderLineId: 'task-quantity', quantity: 3 },
+      undefined,
+      { ...CONFIG, configurable: { ...CONFIG.configurable, userMessage: 'Para 3' } }
+    )) as string);
+    expect(withoutGoal).toMatchObject({
+      success: false,
+      error: 'quantity_not_confirmed_by_user_message',
+    });
+
+    const withGoal = JSON.parse((await setOrderLineQuantityTool.func(
+      { orderLineId: 'task-quantity', quantity: 3 },
+      undefined,
+      {
+        ...CONFIG,
+        configurable: {
+          ...CONFIG.configurable,
+          userMessage: 'Para 3',
+          activeBlockingGoal: 'OBTENER_CANTIDAD_DEL_PRODUCTO',
+        },
+      }
+    )) as string);
+
+    expect(withGoal).toMatchObject({
+      success: true,
+      orderLine: { id: 'task-quantity', requestedQuantity: 3 },
+    });
+    expect(database.state.metadata.pendingOrderLines).toMatchObject({
+      lines: [{ id: 'task-quantity', requestedQuantity: 3 }],
+    });
+    expect(database.state.metadata.requestedPartySize).toBe(4);
+  });
+
   it('aísla dos Tasks del mismo producto con resoluciones propias', async () => {
     database.state.metadata.pendingOrderLines = {
       lines: [

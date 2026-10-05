@@ -273,6 +273,92 @@ describe('HumanIntentToolNode', () => {
     ]);
   });
 
+  it('revalida add después de resolve y difiere si requestedQuantity sigue UNKNOWN', async () => {
+    const resolutionId = 'pr1:biz-1:conv-1:resolution-unknown-quantity';
+    const productResolution = {
+      resolutionId,
+      productId: PRODUCT_ID,
+      businessId: 'biz-1',
+      conversationId: 'conv-1',
+      source: 'search_products',
+      status: 'candidate',
+      scope: 'conversation',
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    };
+    persistedConversationMetadata = {
+      peopleCount: 4,
+      requestedPartySize: 4,
+      pendingOrderLines: {
+        sourceMessage: 'ceviche',
+        createdAt: new Date().toISOString(),
+        lines: [{
+          id: 'line-ceviche',
+          hint: 'ceviche',
+          requestedQuantity: null,
+          status: 'active',
+          currentResolutionId: null,
+        }],
+      },
+      productResolutions: [productResolution],
+    };
+    conversationStateFindUniqueMock.mockImplementation(async () => ({
+      metadata: persistedConversationMetadata,
+    }));
+    const addEffect = vi.fn();
+    const resolveEffect = vi.fn(() => {
+      const metadata = persistedConversationMetadata;
+      const pendingOrderLines = metadata.pendingOrderLines as {
+        lines: Array<Record<string, unknown>>;
+      };
+      persistedConversationMetadata = {
+        ...metadata,
+        pendingOrderLines: {
+          ...pendingOrderLines,
+          lines: pendingOrderLines.lines.map((line) =>
+            line.id === 'line-ceviche' ? { ...line, currentResolutionId: resolutionId } : line
+          ),
+        },
+        productResolutions: [{ ...productResolution, status: 'selected' }],
+      };
+    });
+    const node = new HumanIntentToolNode([
+      makeResolveProductTool(resolveEffect, true),
+      makeAddCartItemTool(addEffect),
+    ]);
+
+    const result = await node.invoke(
+      {
+        messages: [toolCalls([
+          {
+            id: 'resolve-1',
+            name: 'resolve_product',
+            args: { productId: PRODUCT_ID, resolutionId, orderLineId: 'line-ceviche' },
+          },
+          {
+            id: 'add-1',
+            name: 'add_cart_item',
+            args: { productId: PRODUCT_ID, resolutionId, orderLineId: 'line-ceviche', quantity: 3 },
+          },
+        ])],
+      },
+      config()
+    );
+
+    expect(resolveEffect).toHaveBeenCalledOnce();
+    expect((persistedConversationMetadata.pendingOrderLines as { lines: Array<Record<string, unknown>> }).lines[0])
+      .toMatchObject({ currentResolutionId: resolutionId, requestedQuantity: null });
+    expect(addEffect).not.toHaveBeenCalled();
+    const addResult = result.messages[1] as ToolMessage;
+    expect(addResult.tool_call_id).toBe('add-1');
+    expect(JSON.parse(String(addResult.content))).toMatchObject({
+      success: false,
+      error: 'order_line_quantity_required',
+      missingRequirements: ['ORDER_LINE_QUANTITY_PERSISTED'],
+      askMessage: expect.stringMatching(/ceviche/i),
+    });
+  });
+
   it('usa runTool para add aislado y acepta una ProductResolution persistida', async () => {
     const planSpy = vi.spyOn(ToolPlanner.prototype, 'plan');
     const effect = vi.fn();

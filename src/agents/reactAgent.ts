@@ -326,6 +326,8 @@ export interface HybridAgentSignals {
   cartAddSucceeded: boolean;
   /** Un add fallido no puede quedar cubierto por prosa afirmativa del LLM. */
   cartAddFailed: boolean;
+  /** Pregunta específica cuando un ADD se difiere porque la línea sigue UNKNOWN. */
+  cartAddQuantityAskMessage: string | null;
   /** Resultado ausente/no booleano: dejar que dispatch verifique el draft persistido. */
   cartAddUnknown: boolean;
   /** Effects exitosos observados en ToolMessages de este turno. */
@@ -574,6 +576,7 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
     presentationCommands: [],
     cartAddSucceeded: false,
       cartAddFailed: false,
+    cartAddQuantityAskMessage: null,
     cartAddUnknown: false,
     successfulEffectCount: 0,
     nextQuantityTarget: null,
@@ -638,6 +641,9 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
       }
       if (m.name === 'add_cart_item' && data.success === false) {
         signals.cartAddFailed = true;
+        if (data.error === 'order_line_quantity_required' && typeof data.askMessage === 'string') {
+          signals.cartAddQuantityAskMessage = data.askMessage;
+        }
       }
       if (
         data.success === true &&
@@ -1447,6 +1453,7 @@ export const runHybridReactAgent = async (
       turnStartedAt,
       turnId: ctx.turnId,
       userMessage: userMessageForTools,
+      activeBlockingGoal,
       ...(typeof ctx.humanIntentGateRevision === 'number'
         ? { humanIntentGateRevision: ctx.humanIntentGateRevision }
         : {}),
@@ -1906,6 +1913,19 @@ export const runHybridReactAgent = async (
   }
 
   if (signals.cartAddFailed && !signals.cartAddSucceeded) {
+    if (signals.cartAddQuantityAskMessage) {
+      return {
+        kind: 'response',
+        handlerResult: markHybridResult({
+          content: formatBotUserMessage(
+            '¿Cuántas unidades?',
+            '🔢',
+            signals.cartAddQuantityAskMessage
+          ),
+          isInteractive: false,
+        }),
+      };
+    }
     return {
       kind: 'response',
       handlerResult: markHybridResult({

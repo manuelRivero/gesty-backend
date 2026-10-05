@@ -3536,7 +3536,14 @@ export const setOrderLineQuantityTool = new DynamicStructuredTool<
   func: async ({ orderLineId, quantity }: SetOrderLineQuantityInput, _runManager, config?: RunnableConfig) => {
     const { conversationId, userMessage } = getReactContext(config);
     if (!conversationId) return toJson({ success: false, error: 'no_conversation' });
-    const bareReply = parseBareQuantityReply(userMessage);
+    const activeBlockingGoal = (config?.configurable as { activeBlockingGoal?: unknown } | undefined)
+      ?.activeBlockingGoal;
+    const quantityGoalReply =
+      activeBlockingGoal === 'OBTENER_CANTIDAD_DEL_PRODUCTO' &&
+      userMessage?.trim().toLowerCase().startsWith('para ')
+        ? parseBareQuantityReply(userMessage.trim().slice('para '.length))
+        : null;
+    const bareReply = parseBareQuantityReply(userMessage) ?? quantityGoalReply;
     const messageConfirmsQuantity =
       bareReply != null || userMessageStatesUnitQuantity(userMessage, quantity);
     if (!messageConfirmsQuantity) {

@@ -35,6 +35,8 @@ vi.mock('../partySizeGoal.service', () => ({
 import { evaluateToolRequirement } from '../requirementEvaluator';
 
 const PRODUCT_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const ORDER_LINE_ID = 'line-ceviche';
+const RESOLUTION_ID = 'pr1:biz-1:conv-1:resolution-1';
 const PEDIR = {
   id: 'intent-order',
   sequence: 1,
@@ -108,5 +110,48 @@ describe('evaluateToolRequirement', () => {
       }))
     ).resolves.toEqual({ type: 'ALLOW' });
     expect(resolveProductForAddMock).not.toHaveBeenCalled();
+  });
+
+  it('difiere add después de validar la resolución si la OrderLine sigue UNKNOWN', async () => {
+    const metadata = {
+      peopleCount: 4,
+      requestedPartySize: 4,
+      pendingOrderLines: {
+        sourceMessage: 'ceviche',
+        createdAt: new Date().toISOString(),
+        lines: [{
+          id: ORDER_LINE_ID,
+          hint: 'ceviche',
+          requestedQuantity: null,
+          status: 'active',
+          currentResolutionId: RESOLUTION_ID,
+        }],
+      },
+      productResolutions: [{
+        resolutionId: RESOLUTION_ID,
+        productId: PRODUCT_ID,
+        businessId: 'biz-1',
+        conversationId: 'conv-1',
+        source: 'search_products',
+        status: 'selected',
+        scope: 'conversation',
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }],
+    };
+    conversationFindUniqueMock.mockResolvedValue({ metadata });
+
+    await expect(evaluateToolRequirement(params({
+      callArgs: {
+        productId: PRODUCT_ID,
+        resolutionId: RESOLUTION_ID,
+        orderLineId: ORDER_LINE_ID,
+        quantity: 3,
+      },
+    }))).resolves.toEqual({
+      type: 'DEFER',
+      reason: 'order_line_quantity_required',
+      missingRequirements: ['ORDER_LINE_QUANTITY_PERSISTED'],
+    });
   });
 });

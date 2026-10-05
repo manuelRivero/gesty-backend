@@ -308,15 +308,17 @@ const deferredProductAdd = (call: ToolCall): ToolMessage =>
 const deferredRequirement = (
   call: ToolCall,
   reason: string,
-  missingRequirements: string[] = []
+  missingRequirements: string[] = [],
+  askMessage?: string
 ): ToolMessage => {
-  const normalizedReason = reason === 'quantity_required' || reason === 'variation_required' || reason === 'party_size_required'
+  const normalizedReason = reason === 'quantity_required' || reason === 'order_line_quantity_required' || reason === 'variation_required' || reason === 'party_size_required'
     ? reason
     : 'product_resolution_required';
 
   const labels: Record<string, string> = {
     product_resolution_required: 'El producto todavía no tiene una resolución vigente.',
     quantity_required: 'Falta la cantidad del producto.',
+    order_line_quantity_required: 'La línea del pedido todavía no tiene una cantidad confirmada.',
     variation_required: 'Falta la variación del producto.',
     party_size_required: 'Falta la cantidad de personas para el pedido.',
     product_id_required: 'Falta identificar el producto.',
@@ -333,7 +335,10 @@ const deferredRequirement = (
       reason,
       missingRequirements,
       message: labels[normalizedReason] ?? 'La operación todavía no está autorizada.',
-      instruction: 'Esperá a que se satisfagan los requisitos del flujo antes de ejecutar esta tool.',
+      ...(askMessage ? { askMessage } : {}),
+      instruction: normalizedReason === 'order_line_quantity_required'
+        ? 'No agregues el producto. Preguntá cuántas unidades quiere y esperá su respuesta; la cantidad se persiste con set_order_line_quantity.'
+        : 'Esperá a que se satisfagan los requisitos del flujo antes de ejecutar esta tool.',
     }),
   });
 };
@@ -762,7 +767,10 @@ export class HumanIntentToolNode extends PostEffectToolNode {
           return deferredRequirement(
             call,
             requirementDecision.reason,
-            requirementDecision.missingRequirements
+            requirementDecision.missingRequirements,
+            requirementDecision.reason === 'order_line_quantity_required'
+              ? `¿Cuántas unidades${addProductName ? ` de ${addProductName}` : ''} querés agregar?`
+              : undefined
           );
         }
         if (requirementDecision.type === 'REJECT') {

@@ -414,79 +414,57 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
     trace.status = 'PASS';
   }, 600_000);
 
-  it('REGRESSION — SELECT_FROM_LIST ignores long primaryLabel and completes ReAct', async () => {
-    const errorSpy = vi.spyOn(console, 'error');
-    const logSpy = vi.spyOn(console, 'log');
-    let turnErrors = '';
-    let reactEvents: Array<Record<string, unknown>> = [];
-    let toolEvents: Array<Record<string, unknown>> = [];
-    let trace: HumanIntentCaseTrace;
-    try {
-      trace = await runCase('REGRESSION — ceviche + papas then party size', [
-        'Quiero un ceviche y unas papas a la huacaina',
-        'Somos 4',
-      ], {
-        requirePartySize: true,
-        clearPartySizeBeforeTurn: [1],
-        preflightOverrides: [
-          () => ({
-            decision: 'NEW_INTENT',
-            intents: [{ goal: 'PEDIR', request: { products: ['ceviche', 'papas a la huacaina'] } }],
-          }),
-          (input) => ({
-            decision: 'CONTINUE_ACTIVE',
-            intentId: input.state.active?.id,
-            answeredBlockerIds: [],
-            fulfillmentCandidate: { goalType: 'OBTENER_PERSONAS_DEL_PEDIDO' },
-          }),
-        ],
-      });
-    } finally {
-      turnErrors = errorSpy.mock.calls.map((args) => args.map(String).join(' ')).join('\n');
-      const events = logSpy.mock.calls.flatMap(([entry]) => {
-        if (typeof entry !== 'string') return [];
-        try {
-          const event = JSON.parse(entry) as Record<string, unknown>;
-          return typeof event.event === 'string' ? [event] : [];
-        } catch {
-          return [];
-        }
-      });
-      const secondTurnId = [...events].reverse().find(
-        (event) => event.event === '[turn]' && event.user === 'Somos 4'
-      )?.turnId;
-      reactEvents = events.filter(
-        (event) => typeof event.event === 'string' &&
-          event.event.startsWith('[REACT ') && event.turnId === secondTurnId
-      );
-      toolEvents = events.filter(
-        (event) => typeof event.event === 'string' &&
-          event.event.startsWith('[TOOLS ') && event.turnId === secondTurnId
-      );
-      logSpy.mockRestore();
-      errorSpy.mockRestore();
-    }
+  it('REGRESSION — selected OrderLine resolves quantity before add', async () => {
+    const trace = await runCase('REGRESSION — selected OrderLine resolves quantity before add', [
+      'Quiero un ceviche y unas papas a la huacaina',
+      'Somos 4',
+      'Quiero el Ceviche Clásico',
+      'Para 3',
+    ], { requirePartySize: true, clearPartySizeBeforeTurn: [1] });
 
-    const secondTurn = trace!.turns[1];
-    const toolCalls = reactEvents.flatMap((event) =>
-      Array.isArray(event.tool_calls) ? event.tool_calls as Array<Record<string, unknown>> : []
-    );
-    const partySizeCall = toolCalls.find((call) => call.name === 'save_party_size');
-    const searchCall = toolCalls.find((call) => call.name === 'search_products');
-    const ctaCalls = toolCalls.filter((call) => call.name === 'present_product_cta');
-    const ctaResult = toolEvents.find((event) => event.tool_call_id === ctaCalls[0]?.id);
+    const firstTurn = trace.turns[0];
+    const partyTurn = trace.turns[1];
+    const selectionTurn = trace.turns[2];
+    const quantityTurn = trace.turns[3];
 
-    expect(decisionName(secondTurn)).toBe('CONTINUE_ACTIVE');
-    expect(partySizeCall?.args).toMatchObject({ count: 4 });
-    expect(searchCall?.args).toMatchObject({ keyword: 'ceviche' });
-    expect(ctaCalls).toHaveLength(1);
-    expect(ctaCalls[0].args).toMatchObject({ primaryKind: 'SELECT_FROM_LIST' });
-    expect(ctaResult?.result).toContain('"primaryLabel":null');
-    expect(reactEvents.some((event) => event.terminal === true)).toBe(true);
-    expect(turnErrors).not.toMatch(/GRAPH_RECURSION_LIMIT|Recursion limit/i);
-    expect(secondTurn.assistantResponse).toMatch(/ceviche/i);
-    expect(secondTurn.assistantResponse).not.toContain('El cambio quedó guardado.');
-    expect(secondTurn.conversationMetadataAfter?.peopleCount).toBe(4);
-    trace!.status = 'PASS';
-  }, 600_000);
+    expect(decisionName(firstTurn)).toBe('NEW_INTENT');
+    expect(decisionName(partyTurn)).toBe('CONTINUE_ACTIVE');
+    expect(partyTurn.conversationMetadataAfter?.peopleCount).toBe(4);
+    expect(selectionTurn.humanIntentBefore.active.length).toBe(1);
+    expect(selectionTurn.humanIntentBefore.active[0]?.id).toBe(partyTurn.humanIntentAfter.active[0]?.id);
+    expect(selectionTurn.preflight).toMatchObject({
+      decision: {
+        decision: 'CONTINUE_ACTIVE',
+        intentId: selectionTurn.humanIntentBefore.active[0]?.id,
+      },
+    });
+
+    const lineResolution = selectionTurn.conversationMetadataAfter?.pendingOrderLines as {
+      lines?: Array<{
+        id?: string;
+        currentResolutionId?: string | null;
+        hint?: string;
+        requestedQuantity?: number | null;
+      }>;
+    } | undefined;
+    const activeLine = lineResolution?.lines?.find((line) => line.hint === 'ceviche' || normalize(line.hint ?? '').includes('ceviche'));
+
+    expect(activeLine?.currentResolutionId).toBeTruthy();
+    expect(activeLine?.requestedQuantity).toBeNull();
+    expect(selectionTurn.assistantResponse).toMatch(/cu[aá]ntas unidades|cantidad/i);
+    expect(
+      (quantityTurn.preflight as { decision?: { fulfillmentCandidate?: { goalType?: string } } } | null)
+        ?.decision?.fulfillmentCandidate?.goalType
+    ).toBe('OBTENER_CANTIDAD_DEL_PRODUCTO');
+    expect(quantityTurn.humanIntentAfter.active.length).toBe(1);
+    expect(quantityTurn.humanIntentAfter.active[0]?.id).toBe(selectionTurn.humanIntentAfter.active[0]?.id);
+    expect(quantityTurn.conversationMetadataAfter?.peopleCount).toBe(4);
+    const quantityLine = (quantityTurn.conversationMetadataAfter?.pendingOrderLines as {
+      lines?: Array<{ id?: string; currentResolutionId?: string | null; requestedQuantity?: number | null }>;
+    } | undefined)?.lines?.find((line) => line.id === activeLine?.id);
+    expect(quantityLine?.requestedQuantity).toBe(3);
+    expect(quantityLine?.currentResolutionId).toBe(activeLine?.currentResolutionId);
+
+    trace.status = 'PASS';
+  }, 900_000);
 });

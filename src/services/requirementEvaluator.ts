@@ -83,6 +83,7 @@ export const evaluateToolRequirement = async (
   const taskBound = Boolean(taskId) || Boolean(
     pendingLines?.lines.some((line) => line.status === 'active' || line.status === 'queued')
   );
+  let taskLine: ReturnType<typeof getPendingOrderLines>['lines'][number] | null = null;
   let validatedResolution: { ok: true } | { ok: false; reason: string };
   if (taskBound) {
     const resolutionId = typeof params.callArgs.resolutionId === 'string'
@@ -103,6 +104,7 @@ export const evaluateToolRequirement = async (
         missingRequirements: ['TASK_RESOLUTION_PAIR'],
       };
     }
+    taskLine = ownership.task;
     const taskResolution = getCurrentProductResolutionForTask({
       task: ownership.task,
       metadata,
@@ -141,6 +143,14 @@ export const evaluateToolRequirement = async (
       type: 'DEFER',
       reason: 'party_size_required',
       missingRequirements: ['PARTY_SIZE_OBTAINED'],
+    };
+  }
+
+  if (taskLine && taskLine.requestedQuantity == null) {
+    return {
+      type: 'DEFER',
+      reason: 'order_line_quantity_required',
+      missingRequirements: ['ORDER_LINE_QUANTITY_PERSISTED'],
     };
   }
 
