@@ -416,6 +416,103 @@ describe('runHybridReactAgent', () => {
     }
   });
 
+  it('prioriza el AI terminal y la presentación tras save_party_size exitoso', async () => {
+    const productA = '11111111-1111-4111-8111-111111111111';
+    const productB = '22222222-2222-4222-8222-222222222222';
+    const terminalText =
+      '🤖\n\n*Elegí el ceviche* 🐟\n\nTenés dos opciones. Decime cuál preferís.';
+    vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
+    vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
+    vi.mocked(prisma.menu_item.findMany).mockResolvedValue([
+      { id: productA, name: 'Ceviche Clásico', description: null, menu_item_price: [{ amount: 100 }] },
+      { id: productB, name: 'Ceviche clásico con variaciones', description: null, menu_item_price: [{ amount: 25000 }] },
+    ] as any);
+    vi.mocked(buildHybridCtaInteractive).mockImplementation((bodyText) => ({
+      content: bodyText,
+      isInteractive: false,
+    }) as any);
+    vi.mocked(createReactAgent).mockReturnValue({
+      invoke: vi.fn().mockResolvedValue({
+        messages: [
+          {
+            tool_calls: [{ id: 'tc-party', name: 'save_party_size', args: { count: 4 } }],
+          },
+          {
+            tool_call_id: 'tc-party',
+            name: 'save_party_size',
+            status: 'success',
+            content: JSON.stringify({
+              success: true,
+              effect: { kind: 'party_size_persisted' },
+              partySize: 4,
+            }),
+          },
+          {
+            tool_calls: [{ id: 'tc-search', name: 'search_products', args: { keyword: 'ceviche' } }],
+          },
+          {
+            tool_call_id: 'tc-search',
+            name: 'search_products',
+            status: 'success',
+            content: JSON.stringify({ count: 2, items: [{ id: productA }, { id: productB }] }),
+          },
+          {
+            tool_calls: [{
+              id: 'tc-cta',
+              name: 'present_product_cta',
+              args: { primaryKind: 'SELECT_FROM_LIST', productIds: [productA, productB] },
+            }],
+          },
+          {
+            tool_call_id: 'tc-cta',
+            name: 'present_product_cta',
+            status: 'success',
+            content: JSON.stringify({
+              signal: 'present_product_cta',
+              primaryKind: 'SELECT_FROM_LIST',
+              productIds: [productA, productB],
+              primaryLabel: null,
+            }),
+          },
+          { content: terminalText },
+        ],
+      }),
+    } as any);
+
+    const result = unwrap(await runHybridReactAgent(makeCtx({
+      activeBlockingGoal: 'OBTENER_PERSONAS_DEL_PEDIDO',
+      goalFulfillmentCandidate: { goalType: 'OBTENER_PERSONAS_DEL_PEDIDO' },
+    }) as any));
+
+    expect(result?.content).toBe(terminalText);
+    expect(String(result?.content)).not.toContain('El cambio quedó guardado.');
+    expect(buildHybridCtaInteractive).toHaveBeenCalledWith(
+      terminalText,
+      expect.objectContaining({ primary: expect.objectContaining({ kind: 'SELECT_FROM_LIST' }) })
+    );
+  });
+
+  it('usa la confirmación de successfulEffectCount solo si no hay texto terminal', async () => {
+    vi.mocked(createReactAgent).mockReturnValue({
+      invoke: vi.fn().mockResolvedValue({
+        messages: [
+          { tool_calls: [{ id: 'tc-party', name: 'save_party_size', args: { count: 4 } }] },
+          {
+            tool_call_id: 'tc-party',
+            name: 'save_party_size',
+            status: 'success',
+            content: JSON.stringify({ success: true, effect: { kind: 'party_size_persisted' } }),
+          },
+          { content: '' },
+        ],
+      }),
+    } as any);
+
+    const result = unwrap(await runHybridReactAgent(makeCtx() as any));
+
+    expect(result?.content).toContain('El cambio quedó guardado.');
+  });
+
   it('instala el gate central y propaga la revision solo cuando viene del preflight', async () => {
     await runHybridReactAgent(
       makeCtx({

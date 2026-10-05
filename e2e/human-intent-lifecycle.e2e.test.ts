@@ -484,6 +484,8 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
     expect(ctaResult?.result).toContain('"primaryLabel":null');
     expect(reactEvents.some((event) => event.terminal === true)).toBe(true);
     expect(turnErrors).not.toMatch(/GRAPH_RECURSION_LIMIT|Recursion limit/i);
+    expect(secondTurn.assistantResponse).toMatch(/ceviche/i);
+    expect(secondTurn.assistantResponse).not.toContain('El cambio quedó guardado.');
     expect(secondTurn.conversationMetadataAfter?.peopleCount).toBe(4);
     trace!.status = 'PASS';
   }, 600_000);

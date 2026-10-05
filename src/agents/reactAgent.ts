@@ -1921,30 +1921,6 @@ export const runHybridReactAgent = async (
 
   if (signals.cartAddUnknown) return null;
 
-  if (signals.successfulEffectCount > 0) {
-    if (signals.nextQuantityTarget) {
-      const target = signals.nextQuantityTarget;
-      return {
-        kind: 'response',
-        handlerResult: markHybridResult({
-          content: formatBotUserMessage(
-            `¿Cuántas unidades de ${target.hint} querés?`,
-            '🔢',
-            `La cantidad de *${target.hint}* todavía no está confirmada.`
-          ),
-          isInteractive: false,
-        }),
-      };
-    }
-    return {
-      kind: 'response',
-      handlerResult: markHybridResult({
-        content: formatBotUserMessage('Listo', '✅', 'El cambio quedó guardado.'),
-        isInteractive: false,
-      }),
-    };
-  }
-
   // Varias presentaciones del turno (categoría y/o CTA) salen en el orden de
   // tool_calls: la primera es el mensaje, el resto followUps. Un CTA solo sigue
   // más abajo, después del saludo, para no cambiar ese caso.
@@ -2012,11 +1988,9 @@ export const runHybridReactAgent = async (
   }
 
   const rawText = llmProse;
-  if (!rawText) return null;
+  if (rawText) guardJsonRegression(rawText, ctx.conversationId);
 
-  guardJsonRegression(rawText, ctx.conversationId);
-
-  const formattedText = ensureWhatsAppBotFormat(rawText);
+  const formattedText = rawText ? ensureWhatsAppBotFormat(rawText) : '';
   const userMessage = ctx.message?.text?.body ?? '';
 
   const detectedProductName = ctx.detection?.detectedProductName ?? null;
@@ -2067,6 +2041,32 @@ export const runHybridReactAgent = async (
       })
     );
   }
+
+  if (!rawText && signals.successfulEffectCount > 0) {
+    if (signals.nextQuantityTarget) {
+      const target = signals.nextQuantityTarget;
+      return {
+        kind: 'response',
+        handlerResult: markHybridResult({
+          content: formatBotUserMessage(
+            `¿Cuántas unidades de ${target.hint} querés?`,
+            '🔢',
+            `La cantidad de *${target.hint}* todavía no está confirmada.`
+          ),
+          isInteractive: false,
+        }),
+      };
+    }
+    return {
+      kind: 'response',
+      handlerResult: markHybridResult({
+        content: formatBotUserMessage('Listo', '✅', 'El cambio quedó guardado.'),
+        isInteractive: false,
+      }),
+    };
+  }
+
+  if (!rawText) return null;
 
   return {
     kind: 'response',
