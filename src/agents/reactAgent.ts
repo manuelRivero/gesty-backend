@@ -1067,14 +1067,33 @@ const parseToolPayload = (msg: unknown): Record<string, unknown> | null => {
  * input humano (`requiresUserInput`) y no persistió ningún efecto. Un paso con
  * un efecto exitoso sigue en manos del modelo, que debe comunicar ambos.
  */
-export const stepAwaitsUserInput = (messages: unknown[], firstRunIndex: number): boolean => {
-  const stepPayloads: Array<Record<string, unknown> | null> = [];
+const lastStepToolPayloads = (messages: unknown[], firstRunIndex: number): Array<Record<string, unknown> | null> => {
+  const payloads: Array<Record<string, unknown> | null> = [];
   for (let index = messages.length - 1; index >= firstRunIndex; index -= 1) {
     if (messageRole(messages[index]) !== 'tool') break;
-    stepPayloads.push(parseToolPayload(messages[index]));
+    payloads.push(parseToolPayload(messages[index]));
   }
+  return payloads;
+};
+
+export const stepAwaitsUserInput = (messages: unknown[], firstRunIndex: number): boolean => {
+  const stepPayloads = lastStepToolPayloads(messages, firstRunIndex);
   if (stepPayloads.some((payload) => payload?.success === true && payload.effect != null)) return false;
   return stepPayloads.some((payload) => requiresUserInput(payload));
+};
+
+/**
+ * askMessage del último step de tools si ese step quedó esperando input humano
+ * (mismo criterio que stepAwaitsUserInput: un efecto exitoso en el mismo step lo
+ * excluye). Es la señal terminal más reciente del turno — precede a cualquier
+ * señal de presentación (present_cart, queueFollowUp, confirmación genérica)
+ * acumulada antes, sin importar qué tool la produjo ni su posición en el array.
+ */
+export const lastStepAskMessage = (messages: unknown[], firstRunIndex: number): string | null => {
+  if (!stepAwaitsUserInput(messages, firstRunIndex)) return null;
+  const hit = lastStepToolPayloads(messages, firstRunIndex)
+    .find((payload): payload is { askMessage: string } => requiresUserInput(payload));
+  return hit?.askMessage ?? null;
 };
 
 /** Por qué termina el turno tras el último paso de tools, o null si el modelo sigue. */
@@ -1787,6 +1806,23 @@ export const runHybridReactAgent = async (
         isInteractive: false,
       }),
     };
+  }
+  // Precedencia de respuesta terminal: si el último step de tools de este turno quedó
+  // esperando input humano (mismo criterio que corta el grafo en runAgentUntilUserInput),
+  // esa pregunta es la respuesta, sin importar qué señales de presentación (present_cart,
+  // queueFollowUp, confirmaciones genéricas) se hayan acumulado antes en el mismo turno.
+  // Un step con efecto exitoso + askMessage no entra acá (lastStepAskMessage ya lo excluye).
+  if (!signals.cartAddSucceeded) {
+    const terminalAskMessage = lastStepAskMessage(agentMessages, inputs.messages.length);
+    if (terminalAskMessage) {
+      return {
+        kind: 'response',
+        handlerResult: markHybridResult({
+          content: formatBotUserMessage('¿Cuántas unidades?', '🔢', terminalAskMessage),
+          isInteractive: false,
+        }),
+      };
+    }
   }
   // "Cantidad anotada" solo si la cantidad quedó persistida sin fulfillment posterior
   // en este turno: un add exitoso (resumen de carrito) o un ask del add tienen su propia rama.

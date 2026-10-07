@@ -331,6 +331,118 @@ describe('runHybridReactAgent', () => {
     expect(buildHybridCtaInteractive).not.toHaveBeenCalled();
   });
 
+  describe('precedencia de respuesta terminal: askMessage posterior gana a señales de presentación previas', () => {
+    const toolMessage = (name: string, content: Record<string, unknown>, id = `tc-${name}-${Math.random()}`) => ({
+      tool_call_id: id,
+      name,
+      content: JSON.stringify(content),
+    });
+    // Separador de iteración (sin tool_call_id → messageRole lo clasifica 'assistant'), para que
+    // cada ToolMessage simule su propio step de ReAct, igual que en una corrida real con varias
+    // idas y vueltas al modelo. Sin esto, lastStepToolPayloads trataría todos los tool messages
+    // como un único step y el efecto exitoso más antiguo taparía el askMessage más reciente.
+    const step = () => ({});
+    const quantityRequiredAsk = '¿Cuántas unidades de Papa a la huancaina querés agregar?';
+
+    it('TEST A — askMessage posterior a present_cart_signal gana: no se envía el resumen del carrito', async () => {
+      // Reproduce el caso real: update_cart_item_quantity (→ present_cart_signal) + continue_order_line,
+      // ambos exitosos, seguidos por add_cart_item que todavía necesita la cantidad.
+      mockAgent({ invoke: vi.fn().mockResolvedValue({
+        messages: [
+          step(),
+          toolMessage('update_cart_item_quantity', { success: true, effect: { kind: 'cart_quantity_persisted' }, followUp: { nextAction: 'present_cart' } }),
+          step(),
+          toolMessage('continue_order_line', { success: true, effect: { kind: 'order_plan_advanced' }, activeLine: { hint: 'papas a la huancaína' } }),
+          step(),
+          toolMessage('search_products', { count: 1, items: [{ id: 'papas-1' }] }),
+          step(),
+          toolMessage('resolve_product', { success: true, orderLineId: 'line-papas', currentResolutionId: 'res-papas' }),
+          step(),
+          toolMessage('add_cart_item', { success: false, error: 'order_line_quantity_required', askMessage: quantityRequiredAsk }),
+        ],
+      }) });
+
+      const result = unwrap(await runHybridReactAgent(makeCtx({ message: { text: { body: 'Sí' } } }) as any));
+      const visible = JSON.stringify(result?.content ?? '');
+
+      expect(visible).toContain(quantityRequiredAsk);
+      expect(buildCartSummaryMessage).not.toHaveBeenCalled();
+      expect(visible).not.toMatch(/Ceviche Clásico|Total:/);
+    });
+
+    it('TEST B — askMessage sin present_cart previo sigue funcionando igual que antes', async () => {
+      mockAgent({ invoke: vi.fn().mockResolvedValue({
+        messages: [toolMessage('add_cart_item', { success: false, error: 'order_line_quantity_required', askMessage: quantityRequiredAsk })],
+      }) });
+
+      const result = unwrap(await runHybridReactAgent(makeCtx() as any));
+      const visible = JSON.stringify(result?.content ?? '');
+
+      expect(visible).toContain(quantityRequiredAsk);
+      expect(buildCartSummaryMessage).not.toHaveBeenCalled();
+    });
+
+    it('TEST C — present_cart sin askMessage posterior: sigue mostrando el carrito (sin regresión)', async () => {
+      mockAgent({ invoke: vi.fn().mockResolvedValue({
+        messages: [toolMessage('update_cart_item_quantity', { success: true, effect: { kind: 'cart_quantity_persisted' }, followUp: { nextAction: 'present_cart' } })],
+      }) });
+
+      await runHybridReactAgent(makeCtx() as any);
+
+      expect(buildCartSummaryMessage).toHaveBeenCalled();
+    });
+
+    it('TEST E — la precedencia no depende de present_cart específicamente: otras señales de éxito tampoco tapan el askMessage', async () => {
+      // tool A y tool B no tocan presentCart/cartMutatedThisTurn ni add_cart_item en absoluto.
+      mockAgent({ invoke: vi.fn().mockResolvedValue({
+        messages: [
+          step(),
+          toolMessage('save_party_size', { success: true, effect: { kind: 'party_size_persisted' }, partySize: 3 }),
+          step(),
+          toolMessage('set_order_line_quantity', {
+            success: true,
+            effect: { kind: 'order_line_quantity_persisted' },
+            orderLine: { id: 'line-ceviche', hint: 'ceviche', requestedQuantity: 2 },
+          }),
+          step(),
+          toolMessage('add_cart_item', { success: false, error: 'order_line_quantity_required', askMessage: quantityRequiredAsk }),
+        ],
+      }) });
+
+      const result = unwrap(await runHybridReactAgent(makeCtx() as any));
+      const visible = JSON.stringify(result?.content ?? '');
+
+      expect(visible).toContain(quantityRequiredAsk);
+      expect(buildCartSummaryMessage).not.toHaveBeenCalled();
+    });
+
+    it('TEST F — ninguna confirmación falsa ("Cantidad anotada", "Listo", "Agregado") acompaña al askMessage', async () => {
+      mockAgent({ invoke: vi.fn().mockResolvedValue({
+        messages: [
+          step(),
+          toolMessage('update_cart_item_quantity', { success: true, effect: { kind: 'cart_quantity_persisted' }, followUp: { nextAction: 'present_cart' } }),
+          step(),
+          toolMessage('set_order_line_quantity', {
+            success: true,
+            effect: { kind: 'order_line_quantity_persisted' },
+            orderLine: { id: 'line-ceviche', hint: 'ceviche', requestedQuantity: 2 },
+          }),
+          step(),
+          toolMessage('add_cart_item', { success: false, error: 'order_line_quantity_required', askMessage: quantityRequiredAsk }),
+        ],
+      }) });
+
+      const result = unwrap(await runHybridReactAgent(makeCtx() as any));
+      const visible = JSON.stringify(result?.content ?? '');
+
+      expect(visible).toContain(quantityRequiredAsk);
+      expect(visible).not.toMatch(/Cantidad anotada|Cambio guardado|Carrito actualizado/i);
+      // "Listo"/"Agregado" no aparecen salvo que sean parte del propio askMessage (no lo son acá).
+      const withoutAsk = visible.replace(quantityRequiredAsk, '');
+      expect(withoutAsk).not.toMatch(/Listo|Agregado/i);
+    });
+  });
+
   describe('queueFollowUp del add_cart_item llega a la respuesta final (sin ejecutar la siguiente línea)', () => {
     const addToolMessage = (queueFollowUp?: { nextHint: string; remaining: number }) => ({
       tool_call_id: 'tc-add',
