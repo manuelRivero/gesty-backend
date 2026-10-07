@@ -130,9 +130,9 @@ export function userMessageStatesUnitQuantity(
 
   const tok = quantityToken(q);
   const patterns = [
-    // dame/sumá/quiero + N
+    // dame/sumá/quiero + N; "mejor N" corrige una cantidad ya dicha
     new RegExp(
-      `\\b(?:dame|damelo|sumame|sumamele|suma|sumá|agrega|agregame|agregá|agregalo|poneme|ponele|poné|pone|quiero|pedime|pedimele|traeme|me\\s+das|me\\s+pones)\\s+${tok}\\b`,
+      `\\b(?:dame|damelo|sumame|sumamele|suma|sumá|agrega|agregame|agregá|agregalo|poneme|ponele|poné|pone|quiero|pedime|pedimele|traeme|mejor|me\\s+das|me\\s+pones)\\s+${tok}\\b`,
       'i'
     ),
     // N de / N x / N×

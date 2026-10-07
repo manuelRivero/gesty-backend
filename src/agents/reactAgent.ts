@@ -14,7 +14,13 @@
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { BaseCallbackHandler } from '@langchain/core/callbacks/base';
 import { DynamicStructuredTool } from '@langchain/core/tools';
-import { HumanIntentToolNode, requiresUserInput } from './humanIntentToolNode';
+import {
+  HumanIntentToolNode,
+  canonicalRecoveryOrderLineId,
+  completesTask,
+  isFailClosedTaskRejection,
+  requiresUserInput,
+} from './humanIntentToolNode';
 import { AIMessage, HumanMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
 import type { LLMResult } from '@langchain/core/outputs';
 import { z } from 'zod';
@@ -80,7 +86,10 @@ import {
   isWelcomeEligible,
   isWelcomeEligibleGreeting,
 } from '../services/welcomeEligible.service';
-import { normalizeMetadata } from '../services/productQuery/utils';
+import { getRequestedPartySize, normalizeMetadata } from '../services/productQuery/utils';
+import { getPendingOrderLines, getTaskCanonicalResolution } from '../services/pendingOrderLines.service';
+import { deriveOrderQuantityGoalTarget } from '../services/orderQuantityGoal.service';
+import { hasActivePedirHumanIntent } from '../services/partySizeGoal.service';
 const markHybridResult = (result: HandlerResult): HandlerResult => ({
   ...result,
   skipBodyHumanization: true,
@@ -297,7 +306,8 @@ const buildAgent = (
                   return setOrderLineQuantityTool.invoke({ orderLineId, quantity }, config);
                 },
               });
-          (boundQuantityTool as typeof boundQuantityTool & { returnDirect: boolean }).returnDirect = true;
+          // Sin returnDirect: persistir la cantidad satisface el Goal, no termina el turno.
+          // Si la Task queda lista, el resultado trae nextRequiredTool = add_cart_item.
           return boundQuantityTool;
         })
       : availableTools;
@@ -1047,6 +1057,70 @@ export const stepAwaitsUserInput = (messages: unknown[], firstRunIndex: number):
   return stepPayloads.some((payload) => requiresUserInput(payload));
 };
 
+/** Por qué termina el turno tras el último paso de tools, o null si el modelo sigue. */
+export const stepEndsTurn = (
+  messages: unknown[],
+  firstRunIndex: number
+): 'fulfillment_completed' | 'awaits_user_input' | 'task_recovery_failed' | null => {
+  const stepPayloads: Array<Record<string, unknown> | null> = [];
+  let stepStart = messages.length;
+  for (let index = messages.length - 1; index >= firstRunIndex; index -= 1) {
+    if (messageRole(messages[index]) !== 'tool') break;
+    stepPayloads.push(parseToolPayload(messages[index]));
+    stepStart = index;
+  }
+  if (stepPayloads.some((payload) => completesTask(payload))) return 'fulfillment_completed';
+  if (stepAwaitsUserInput(messages, firstRunIndex)) return 'awaits_user_input';
+  // Rechazo de resolución Task-bound sin recuperación, o la recuperación canónica de esa
+  // Task ya se ofreció antes en este turno: respuesta segura en vez de reintentar.
+  if (stepPayloads.some((payload) => isFailClosedTaskRejection(payload))) return 'task_recovery_failed';
+  const recoveredBefore = new Set(
+    messages
+      .slice(firstRunIndex, stepStart)
+      .filter((message) => messageRole(message) === 'tool')
+      .map((message) => canonicalRecoveryOrderLineId(parseToolPayload(message)))
+      .filter((orderLineId): orderLineId is string => orderLineId != null)
+  );
+  if (stepPayloads.some((payload) => {
+    const orderLineId = canonicalRecoveryOrderLineId(payload);
+    return orderLineId != null && recoveredBefore.has(orderLineId);
+  })) {
+    return 'task_recovery_failed';
+  }
+  return null;
+};
+
+/**
+ * Pregunta de cantidad de la OrderLine ACTIVE cuando el Goal de cantidad está abierto
+ * para ella: resolución canónica válida, cantidad desconocida y misma Task como target
+ * del Goal. Todo sale del estado persistido; si algo no cierra, null (fallback seguro).
+ */
+export const activeLineQuantityAsk = async (
+  conversationId: string,
+  businessId: string
+): Promise<string | null> => {
+  const metadata = (await findOrCreateConversationState(conversationId)).metadata;
+  const active = getPendingOrderLines(metadata)?.lines.find((line) => line.status === 'active');
+  if (!active || active.requestedQuantity != null) return null;
+  const canonical = getTaskCanonicalResolution(active, metadata, { businessId, conversationId });
+  if (!canonical) return null;
+  const normalized = normalizeMetadata(metadata);
+  const target = deriveOrderQuantityGoalTarget({
+    activePedir: hasActivePedirHumanIntent(normalized),
+    checkoutActive: normalized.checkout_active === true,
+    partySizeKnown: getRequestedPartySize(normalized) != null,
+    metadata,
+    businessId,
+    conversationId,
+  });
+  if (target?.id !== active.id) return null;
+  const product = await prisma.menu_item.findFirst({
+    where: { id: canonical.productId, business_id: businessId },
+    select: { name: true },
+  });
+  return product?.name ? `¿Cuántas unidades de ${product.name} querés agregar?` : null;
+};
+
 type StreamableAgent = {
   stream: (
     input: { messages: BaseMessage[] },
@@ -1056,8 +1130,9 @@ type StreamableAgent = {
 
 /**
  * Equivalente a `agent.invoke` (el último estado de `streamMode: 'values'`),
- * pero termina el turno apenas un paso de tools pide input humano: cancela el
- * grafo antes de otra llamada al modelo, sin depender del recursionLimit.
+ * pero termina el turno apenas un paso de tools pide input humano o completa
+ * el fulfillment de una Task: cancela el grafo antes de otra llamada al
+ * modelo, sin depender del recursionLimit.
  */
 export const runAgentUntilUserInput = async (
   agent: StreamableAgent,
@@ -1069,9 +1144,14 @@ export const runAgentUntilUserInput = async (
   let finalState: { messages?: unknown[] } = { messages: inputs.messages };
   for await (const state of stream) {
     finalState = state;
-    if (stepAwaitsUserInput(state.messages ?? [], inputs.messages.length)) {
+    const endReason = stepEndsTurn(state.messages ?? [], inputs.messages.length);
+    if (endReason) {
       console.log(JSON.stringify({
-        event: '[hybrid-agent] turn_awaits_user_input',
+        event: endReason === 'fulfillment_completed'
+          ? '[hybrid-agent] turn_ends_after_fulfillment'
+          : endReason === 'task_recovery_failed'
+            ? '[hybrid-agent] turn_ends_task_recovery_failed'
+            : '[hybrid-agent] turn_awaits_user_input',
         conversationId: trace.conversationId ?? null,
         turnId: trace.turnId ?? null,
       }));
@@ -1659,7 +1739,43 @@ export const runHybridReactAgent = async (
     }));
   }
   const signals = extractHybridSignals(agentMessages);
-  if (signals.orderLineQuantityPersisted) {
+  // Rechazo de resolución Task-bound sin recuperación: respuesta segura, nunca silencio
+  // ni confirmación falsa (el add no ocurrió). Si la Task ACTIVE espera su cantidad,
+  // la siguiente pregunta correcta sale del estado persistido, no de la operación rechazada.
+  if (
+    !signals.cartAddSucceeded &&
+    stepEndsTurn(agentMessages, inputs.messages.length) === 'task_recovery_failed'
+  ) {
+    const activeAsk = await activeLineQuantityAsk(conversationId, businessId);
+    if (activeAsk) {
+      return {
+        kind: 'response',
+        handlerResult: markHybridResult({
+          content: formatBotUserMessage('¿Cuántas unidades?', '🔢', activeAsk),
+          isInteractive: false,
+        }),
+      };
+    }
+    return {
+      kind: 'response',
+      handlerResult: markHybridResult({
+        content: formatBotUserMessage(
+          'No pude confirmar el agregado',
+          '⚠️',
+          'No pude completar la carga de ese producto en este momento. Intentemos nuevamente.'
+        ),
+        isInteractive: false,
+      }),
+    };
+  }
+  // "Cantidad anotada" solo si la cantidad quedó persistida sin fulfillment posterior
+  // en este turno: un add exitoso (resumen de carrito) o un ask del add tienen su propia rama.
+  if (
+    signals.orderLineQuantityPersisted &&
+    !signals.cartAddSucceeded &&
+    !signals.cartAddQuantityAskMessage &&
+    !signals.cartAddPendingAskMessage
+  ) {
     const { hint, quantity } = signals.orderLineQuantityPersisted;
     return {
       kind: 'response',

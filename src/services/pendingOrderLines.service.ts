@@ -19,6 +19,8 @@ import {
 import { normalizeMetadata } from './productQuery/utils';
 import type { ConversationMetadata } from './productQuery/types';
 import type { ProductResolution } from './productResolution.service';
+// Ciclo de módulos solo en tiempo de llamada (productResolution.service importa este módulo).
+import { taskBoundResolutionFailure } from './productResolution.service';
 
 export const PENDING_ORDER_LINES_KEY = 'pendingOrderLines' as const;
 
@@ -968,11 +970,18 @@ export const buildOrderLinesContinueOrCancelHint = (
  * vigente y propia, y cantidad conocida. Solo expone lo persistido en la Task:
  * sin inferencia por nombre, posición ni última resolución.
  */
-const getFulfillmentReadyOrderLine = (
+/**
+ * Resolución canónica de una Task: ACTIVE, con currentResolutionId vigente,
+ * propia (exclusiva) y consumible por add_cart_item según la misma regla que
+ * consumeProductResolution. Los IDs salen del estado persistido; si algo no
+ * cierra, null (fail closed, nunca otra resolución como reemplazo).
+ */
+export const getTaskCanonicalResolution = (
   line: OrderLine,
-  metadata: unknown
-): { productId: string; resolutionId: string; quantity: number } | null => {
-  if (line.requestedQuantity == null || !line.currentResolutionId) return null;
+  metadata: unknown,
+  context: { businessId?: string; conversationId?: string } = {}
+): { orderLineId: string; productId: string; resolutionId: string } | null => {
+  if (line.status !== 'active' || !line.currentResolutionId) return null;
   const current = getCurrentProductResolutionForTask({ task: line, metadata });
   if (!current.ok || typeof current.resolution.productId !== 'string') return null;
   const ownership = validateTaskResolutionOwnership({
@@ -981,9 +990,34 @@ const getFulfillmentReadyOrderLine = (
     resolutionId: line.currentResolutionId,
   });
   if (!ownership.ok) return null;
+  // Coherente con consumeProductResolution: si el add sería rechazado, no hay resolución canónica.
+  const resolution = current.resolution as ProductResolution;
+  const consumable = taskBoundResolutionFailure(resolution, {
+    productId: current.resolution.productId,
+    businessId: context.businessId ?? resolution.businessId,
+    conversationId: context.conversationId ?? resolution.conversationId,
+    metadata,
+  });
+  if (consumable) return null;
   return {
+    orderLineId: line.id,
     productId: current.resolution.productId,
     resolutionId: line.currentResolutionId,
+  };
+};
+
+/** Task lista para fulfillment: resolución canónica + cantidad persistida. */
+export const getFulfillmentReadyOrderLine = (
+  line: OrderLine,
+  metadata: unknown,
+  context: { businessId?: string; conversationId?: string } = {}
+): { productId: string; resolutionId: string; quantity: number } | null => {
+  if (line.requestedQuantity == null) return null;
+  const canonical = getTaskCanonicalResolution(line, metadata, context);
+  if (!canonical) return null;
+  return {
+    productId: canonical.productId,
+    resolutionId: canonical.resolutionId,
     quantity: line.requestedQuantity,
   };
 };
@@ -1019,8 +1053,10 @@ export const buildPendingOrderLinesContextLines = (
         .map((line) => `${line.id}=${line.hint} (quantity=${line.requestedQuantity ?? 'UNKNOWN'}, status=${line.status})`)
         .join('; ')}. ` +
         `El Goal de cantidad determina el target: ${quantityTarget.id} (${quantityTarget.hint}). ` +
-        'En este turno resolvé SOLO la cantidad que responde al Goal; no busques ni agregues líneas ' +
-        'hasta que el Goal deje de estar abierto.',
+        'Mientras el Goal de cantidad esté abierto, resolvé SOLO la cantidad que responde al Goal ' +
+        '(set_order_line_quantity); no busques ni agregues otras líneas. ' +
+        'Cuando set_order_line_quantity persista la cantidad, el Goal queda satisfecho: si su resultado trae ' +
+        'nextRequiredTool, ejecutalo en este mismo turno con exactamente nextRequiredToolArgs.',
     ];
   }
 

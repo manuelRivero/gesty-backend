@@ -48,6 +48,9 @@ const { database } = vi.hoisted(() => {
 });
 
 vi.mock('../../lib/prisma', () => ({ prisma: database.prisma }));
+vi.mock('../../services/humanIntentReconciliation.service', () => ({
+  reconcileHumanIntentAfterToolEffect: vi.fn().mockResolvedValue(null),
+}));
 vi.mock('../../services/menu.service', () => ({
   MenuService: { searchMenuItemsByKeyword: vi.fn() },
 }));
@@ -123,12 +126,16 @@ import { MenuService } from '../../services/menu.service';
 import * as productResolutionService from '../../services/productResolution.service';
 import {
   addCartItemTool,
-  continueOrderLineTool,
+  continueOrderLineTool as continueOrderLineToolForTests,
   resolveProductTool,
   searchProductsTool,
   setOrderLineQuantityTool,
 } from '../index';
 import { prisma } from '../../lib/prisma';
+import { AIMessage, ToolMessage } from '@langchain/core/messages';
+import { PostEffectToolNode } from '../../agents/postEffectToolNode';
+import { completesTask } from '../../agents/humanIntentToolNode';
+import { getFulfillmentReadyOrderLine, getPendingOrderLines } from '../../services/pendingOrderLines.service';
 
 const BUSINESS_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const CONVERSATION_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -397,7 +404,7 @@ describe('search_products → ProductResolution → add_cart_item', () => {
       ],
     });
 
-    const continued = JSON.parse((await continueOrderLineTool.func({}, undefined, CONFIG)) as string);
+    const continued = JSON.parse((await continueOrderLineToolForTests.func({}, undefined, CONFIG)) as string);
     expect(continued).toMatchObject({ success: true, effect: { kind: 'order_plan_advanced' } });
 
     // La resolución de task-a ya fue consumida: no se reutiliza para task-b.
@@ -563,6 +570,304 @@ describe('search_products → ProductResolution → add_cart_item', () => {
       const resolutionId = await search();
 
       expect(await resolve('task-b', resolutionId)).toEqual({ success: false, error: 'order_line_not_open' });
+    });
+  });
+
+  describe('Quantity Goal → fulfillment en el mismo turno (PostEffectToolNode + tools reales)', () => {
+    const lines = () =>
+      (database.state.metadata.pendingOrderLines as { lines: Array<Record<string, unknown>> }).lines;
+    const seedTwoLines = () => {
+      database.state.metadata.pendingOrderLines = {
+        lines: [
+          { id: 'task-a', hint: 'Producto de prueba', requestedQuantity: null, status: 'active', currentResolutionId: null },
+          { id: 'task-b', hint: 'Otro producto', requestedQuantity: null, status: 'queued', currentResolutionId: null },
+        ],
+        sourceMessage: 'Producto de prueba y otro producto',
+        createdAt: new Date().toISOString(),
+      };
+    };
+    const resolveTaskA = async () => {
+      const search = JSON.parse(
+        (await searchProductsTool.func({ keyword: 'producto de prueba' }, undefined, CONFIG)) as string
+      );
+      const resolutionId = search.items[0].resolutionId as string;
+      const resolved = JSON.parse(
+        (await resolveProductTool.func({ productId: PRODUCT_ID, resolutionId, orderLineId: 'task-a' }, undefined, CONFIG)) as string
+      );
+      expect(resolved.success).toBe(true);
+      return resolutionId;
+    };
+    const node = () => new PostEffectToolNode([setOrderLineQuantityTool, addCartItemTool]);
+    const runCall = async (name: string, args: Record<string, unknown>, userMessage: string) => {
+      const result = await node().invoke(
+        { messages: [new AIMessage({ content: '', tool_calls: [{ id: `call-${name}`, name, args, type: 'tool_call' }] })] },
+        { ...CONFIG, configurable: { ...CONFIG.configurable, userMessage } }
+      );
+      return JSON.parse(String((result.messages[0] as ToolMessage).content)) as Record<string, unknown>;
+    };
+
+    it('A — "Dame 2": cantidad persistida → nextRequiredTool add_cart_item → add → Task DONE y draft con 2', async () => {
+      seedTwoLines();
+      const resolutionId = await resolveTaskA();
+
+      const persisted = await runCall('set_order_line_quantity', { orderLineId: 'task-a', quantity: 2 }, 'Dame 2');
+
+      expect(persisted).toMatchObject({
+        success: true,
+        effect: { kind: 'order_line_quantity_persisted', reference: 'task-a' },
+        nextRequiredTool: 'add_cart_item',
+        nextRequiredToolArgs: { orderLineId: 'task-a', productId: PRODUCT_ID, resolutionId, quantity: 2 },
+      });
+      // set_order_line_quantity solo persiste: la Task sigue ACTIVE y no hay draft.
+      expect(lines()[0]).toMatchObject({ status: 'active', requestedQuantity: 2, currentResolutionId: resolutionId });
+      expect(prisma.draft_order_item.create).not.toHaveBeenCalled();
+
+      const added = await runCall('add_cart_item', persisted.nextRequiredToolArgs as Record<string, unknown>, 'Dame 2');
+
+      expect(added).toMatchObject({ success: true, effect: { kind: 'cart_item_persisted' }, added: { quantity: 2 } });
+      expect(prisma.draft_order_item.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ quantity: 2 }) })
+      );
+      expect(lines()[0]).toMatchObject({ status: 'done', requestedQuantity: 2 });
+      expect(lines()[1]).toMatchObject({ status: 'queued', currentResolutionId: null });
+      expect(database.state.metadata.productResolutions).toEqual(
+        expect.arrayContaining([expect.objectContaining({ resolutionId, status: 'consumed' })])
+      );
+    });
+
+    it('B — sin ProductResolution: la cantidad no se persiste y no hay nextRequiredTool', async () => {
+      seedTwoLines();
+
+      const result = await runCall('set_order_line_quantity', { orderLineId: 'task-a', quantity: 2 }, 'Dame 2');
+
+      expect(result).toMatchObject({ success: false, error: 'product_resolution_required' });
+      expect(result.nextRequiredTool).toBeUndefined();
+      expect(prisma.draft_order_item.create).not.toHaveBeenCalled();
+    });
+
+    it('C — cantidad no confirmada por el mensaje: Goal sigue abierto y no hay nextRequiredTool', async () => {
+      seedTwoLines();
+      await resolveTaskA();
+
+      const result = await runCall('set_order_line_quantity', { orderLineId: 'task-a', quantity: 2 }, 'Sí, seguí');
+
+      expect(result).toMatchObject({ success: false, error: 'quantity_not_confirmed_by_user_message' });
+      expect(result.nextRequiredTool).toBeUndefined();
+      expect(lines()[0]).toMatchObject({ status: 'active', requestedQuantity: null });
+    });
+
+    it('D — ProductResolution vencida: fail closed, sin nextRequiredTool ni add', async () => {
+      seedTwoLines();
+      const resolutionId = await resolveTaskA();
+      database.state.metadata.productResolutions = (
+        database.state.metadata.productResolutions as Array<Record<string, unknown>>
+      ).map((entry) => (entry.resolutionId === resolutionId
+        ? { ...entry, expiresAt: new Date(Date.now() - 1_000).toISOString() }
+        : entry));
+
+      const result = await runCall('set_order_line_quantity', { orderLineId: 'task-a', quantity: 2 }, 'Dame 2');
+
+      expect(result.success).toBe(false);
+      expect(result.nextRequiredTool).toBeUndefined();
+      expect(prisma.draft_order_item.create).not.toHaveBeenCalled();
+    });
+
+    it('E — Task QUEUED: la cantidad puede persistir pero nunca hay transición a add_cart_item', async () => {
+      seedTwoLines();
+      const resolutionId = await resolveTaskA();
+      // Estado heredado (previo a la invariante ACTIVE): una QUEUED con resolución propia.
+      lines()[0].status = 'queued';
+      lines()[1].status = 'done';
+
+      const result = await runCall('set_order_line_quantity', { orderLineId: 'task-a', quantity: 2 }, 'Dame 2');
+
+      expect(result).toMatchObject({ success: true, effect: { kind: 'order_line_quantity_persisted' } });
+      expect(result.nextRequiredTool).toBeUndefined();
+      expect(lines()[0]).toMatchObject({ status: 'queued', currentResolutionId: resolutionId });
+      expect(prisma.draft_order_item.create).not.toHaveBeenCalled();
+    });
+
+    it('F — resolución compartida con otra Task: sin transición y sin reasociar currentResolutionId', async () => {
+      seedTwoLines();
+      const resolutionId = await resolveTaskA();
+      lines()[1].status = 'done';
+      lines()[1].currentResolutionId = resolutionId;
+
+      const result = await runCall('set_order_line_quantity', { orderLineId: 'task-a', quantity: 2 }, 'Dame 2');
+
+      expect(result).toMatchObject({ success: true, effect: { kind: 'order_line_quantity_persisted' } });
+      expect(result.nextRequiredTool).toBeUndefined();
+      expect(lines()[0].currentResolutionId).toBe(resolutionId);
+      expect(lines()[1].currentResolutionId).toBe(resolutionId);
+      expect(prisma.draft_order_item.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('vigencia Task-bound, fin de turno y corrección de cantidad', () => {
+    const lines = () =>
+      (database.state.metadata.pendingOrderLines as { lines: Array<Record<string, unknown>> }).lines;
+    const inTurn = (turnId: string, userMessage = 'Quiero 4 productos de prueba') => ({
+      ...CONFIG,
+      configurable: { ...CONFIG.configurable, turnId, userMessage },
+    });
+    const seed = () => {
+      database.state.metadata.pendingOrderLines = {
+        lines: [
+          { id: 'task-a', hint: 'Producto de prueba', requestedQuantity: null, status: 'active', currentResolutionId: null },
+          { id: 'task-b', hint: 'Otro producto', requestedQuantity: null, status: 'queued', currentResolutionId: null },
+        ],
+        sourceMessage: 'Producto de prueba y otro producto',
+        createdAt: new Date().toISOString(),
+      };
+    };
+    // search_products con un único match emite una resolución scope "turn".
+    const resolveInTurn = async (turnId: string, orderLineId = 'task-a') => {
+      const search = JSON.parse(
+        (await searchProductsTool.func({ keyword: 'producto de prueba' }, undefined, inTurn(turnId))) as string
+      );
+      const resolutionId = search.items[0].resolutionId as string;
+      const resolved = JSON.parse(
+        (await resolveProductTool.func({ productId: PRODUCT_ID, resolutionId, orderLineId }, undefined, inTurn(turnId))) as string
+      );
+      return { resolutionId, resolved };
+    };
+    const ledgerEntry = (resolutionId: string) =>
+      (database.state.metadata.productResolutions as Array<Record<string, unknown>>)
+        .find((entry) => entry.resolutionId === resolutionId);
+    const add = async (args: Record<string, unknown>, turnId: string) => JSON.parse(
+      (await addCartItemTool.func(args as never, undefined, inTurn(turnId))) as string
+    );
+
+    it('TEST 1 — resolución scope "turn" asociada a la Task sobrevive al cambio de turno y se consume', async () => {
+      seed();
+      const { resolutionId, resolved } = await resolveInTurn('turn-5');
+      expect(resolved.success).toBe(true);
+      expect(ledgerEntry(resolutionId)).toMatchObject({ scope: 'turn', turnId: 'turn-5', status: 'selected' });
+      lines()[0].requestedQuantity = 3;
+
+      const result = await add({ productId: PRODUCT_ID, orderLineId: 'task-a', resolutionId }, 'turn-7');
+
+      expect(result).toMatchObject({ success: true, effect: { kind: 'cart_item_persisted' }, added: { quantity: 3 } });
+      expect(prisma.draft_order_item.create).toHaveBeenCalledOnce();
+      expect(ledgerEntry(resolutionId)).toMatchObject({ status: 'consumed' });
+      expect(lines()[0]).toMatchObject({ status: 'done' });
+    });
+
+    it('TEST 2 — la resolución de la Task A no la puede usar otra Task ni se reasocia', async () => {
+      seed();
+      const { resolutionId } = await resolveInTurn('turn-5');
+      lines()[1].requestedQuantity = 1;
+
+      const result = await add({ productId: PRODUCT_ID, orderLineId: 'task-b', resolutionId }, 'turn-7');
+
+      expect(result).toMatchObject({ success: false, error: 'product_resolution_required' });
+      expect(lines()[0].currentResolutionId).toBe(resolutionId);
+      expect(lines()[1].currentResolutionId).toBeNull();
+      expect(ledgerEntry(resolutionId)).toMatchObject({ status: 'selected' });
+      expect(prisma.draft_order_item.create).not.toHaveBeenCalled();
+    });
+
+    it('TEST 3 — una resolución scope "turn" sin Task sigue venciendo en el turno siguiente', async () => {
+      const search = JSON.parse(
+        (await searchProductsTool.func({ keyword: 'producto de prueba' }, undefined, inTurn('turn-5'))) as string
+      );
+      const resolutionId = search.items[0].resolutionId as string;
+      expect(ledgerEntry(resolutionId)).toMatchObject({ scope: 'turn', turnId: 'turn-5' });
+
+      const result = await add({ productId: PRODUCT_ID, resolutionId, quantity: 1 }, 'turn-7');
+
+      expect(result).toMatchObject({ success: false, error: 'product_resolution_required' });
+      expect(prisma.draft_order_item.create).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['scope turn de un turno anterior (asociada)', (entry: Record<string, unknown>) => entry],
+      ['vencida por TTL', (entry: Record<string, unknown>) => ({ ...entry, expiresAt: new Date(Date.now() - 1_000).toISOString() })],
+      ['consumida', (entry: Record<string, unknown>) => ({ ...entry, status: 'consumed' })],
+      ['scope pending sin entrada pendiente', (entry: Record<string, unknown>) => ({ ...entry, scope: 'pending' })],
+    ])('TEST 4 — getFulfillmentReadyOrderLine coincide con lo que acepta add_cart_item: %s', async (_label, mutate) => {
+      seed();
+      const { resolutionId } = await resolveInTurn('turn-5');
+      lines()[0].requestedQuantity = 2;
+      database.state.metadata.productResolutions = (
+        database.state.metadata.productResolutions as Array<Record<string, unknown>>
+      ).map((entry) => (entry.resolutionId === resolutionId ? mutate(entry) : entry));
+
+      const line = getPendingOrderLines(database.state.metadata)!.lines[0];
+      const ready = getFulfillmentReadyOrderLine(line, database.state.metadata, {
+        businessId: BUSINESS_ID,
+        conversationId: CONVERSATION_ID,
+      });
+      const result = await add({ productId: PRODUCT_ID, orderLineId: 'task-a', resolutionId }, 'turn-7');
+
+      expect(ready != null).toBe(result.success === true);
+    });
+
+    it('TEST 6/7 — el add cierra solo la Task A (señal de fin de turno) y B se activa recién con continue_order_line', async () => {
+      seed();
+      const { resolutionId } = await resolveInTurn('turn-4');
+      lines()[0].requestedQuantity = 2;
+
+      const result = await add({ productId: PRODUCT_ID, orderLineId: 'task-a', resolutionId }, 'turn-4');
+
+      expect(result).toMatchObject({ success: true, closedOrderLine: { id: 'task-a', status: 'done' } });
+      expect(completesTask(result)).toBe(true);
+      expect(lines()[0]).toMatchObject({ status: 'done' });
+      expect(lines()[1]).toMatchObject({ status: 'queued', currentResolutionId: null });
+
+      const continued = JSON.parse(
+        (await continueOrderLineToolForTests.func({}, undefined, inTurn('turn-5', 'Sí, seguí'))) as string
+      );
+      expect(continued).toMatchObject({ success: true, effect: { kind: 'order_plan_advanced' } });
+      expect(lines()[1]).toMatchObject({ status: 'active' });
+    });
+
+    it('CASO B — resolve_product con una resolución nueva sobre una Task ya asociada devuelve la recuperación canónica', async () => {
+      seed();
+      const { resolutionId: r1 } = await resolveInTurn('turn-5');
+      const search = JSON.parse(
+        (await searchProductsTool.func({ keyword: 'producto de prueba' }, undefined, inTurn('turn-6'))) as string
+      );
+      const r2 = search.items[0].resolutionId as string;
+
+      const result = JSON.parse(
+        (await resolveProductTool.func({ productId: PRODUCT_ID, resolutionId: r2, orderLineId: 'task-a' }, undefined, inTurn('turn-6'))) as string
+      );
+
+      expect(result).toMatchObject({
+        success: false,
+        reason: 'task_already_associated',
+        nextRequiredTool: 'add_cart_item',
+        nextRequiredToolArgs: { orderLineId: 'task-a', productId: PRODUCT_ID, resolutionId: r1 },
+      });
+      expect((result.nextRequiredToolArgs as { resolutionId: string }).resolutionId === r1).toBe(true);
+      expect(lines()[0].currentResolutionId).toBe(r1);
+    });
+
+    it('TEST 8 — "Mejor 3" corrige una cantidad ya persistida', async () => {
+      seed();
+      await resolveInTurn('turn-4');
+      lines()[0].requestedQuantity = 2;
+
+      const result = JSON.parse(
+        (await setOrderLineQuantityTool.func({ orderLineId: 'task-a', quantity: 3 }, undefined, inTurn('turn-5', 'Mejor 3'))) as string
+      );
+
+      expect(result).toMatchObject({ success: true, orderLine: { id: 'task-a', requestedQuantity: 3 } });
+      expect(lines()[0].requestedQuantity).toBe(3);
+    });
+
+    it('TEST 10 — sin respaldo del mensaje ("Perfecto") la cantidad persistida no cambia', async () => {
+      seed();
+      await resolveInTurn('turn-4');
+      lines()[0].requestedQuantity = 2;
+
+      const result = JSON.parse(
+        (await setOrderLineQuantityTool.func({ orderLineId: 'task-a', quantity: 5 }, undefined, inTurn('turn-5', 'Perfecto'))) as string
+      );
+
+      expect(result).toMatchObject({ success: false, error: 'quantity_not_confirmed_by_user_message' });
+      expect(lines()[0].requestedQuantity).toBe(2);
     });
   });
 

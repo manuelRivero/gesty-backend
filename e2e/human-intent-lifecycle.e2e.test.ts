@@ -206,6 +206,8 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
           events: entry.events.filter((event) =>
             event.event === '[TRACE-ORDERLINE]' ||
             event.event === '[hybrid-agent] turn_awaits_user_input' ||
+            event.event === '[hybrid-agent] turn_ends_after_fulfillment' ||
+            event.event === '[hybrid-agent] turn_ends_task_recovery_failed' ||
             (typeof event.event === 'string' && (event.event.startsWith('[TOOLS ') || event.event.startsWith('[REACT ')))
           ),
         })),
@@ -460,52 +462,68 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
       'Quiero papas a la huancaína y ceviche',
       'Para 3 personas',
       '2',
-    ], { requirePartySize: true });
-    const orderPlanTurn = trace.turns[1];
-    const partyTurn = trace.turns[2];
-    const quantityTurn = trace.turns[3];
-    const metadata = await (await import('./helpers/graphHarness'))
-      .getFreshConversationMetadata(conversationId);
-    const partyMetadata = partyTurn.conversationMetadataAfter;
-    const plannedLines = (orderPlanTurn.conversationMetadataAfter?.pendingOrderLines as {
-      lines?: Array<{ hint: string; requestedQuantity: number | null }>;
-    } | undefined)?.lines;
-    const pending = metadata?.pendingOrderLines as {
-      lines?: Array<{ id: string; hint: string; requestedQuantity: number | null; status: string }>;
-    } | undefined;
-    const papas = pending?.lines?.find((line) => normalize(line.hint).includes('papas'));
-    const ceviche = pending?.lines?.find((line) => normalize(line.hint).includes('ceviche'));
-    const quantityCall = quantityTurn.toolCalls.find((call) => call.name === 'set_order_line_quantity');
-    const partySizeCall = partyTurn.toolCalls.find((call) => call.name === 'save_party_size');
-    let quantityToolResult: Record<string, unknown> = {};
-    try {
-      quantityToolResult = JSON.parse(quantityCall?.result ?? '{}') as Record<string, unknown>;
-    } catch {
-      quantityToolResult = {};
-    }
-    const persistedLine = quantityToolResult.orderLine as { requestedQuantity?: number } | undefined;
-    const quantityArgs = quantityCall?.args as { orderLineId?: string } | undefined;
-    const nextQuantityTarget = quantityToolResult.nextQuantityTarget as { id?: string } | undefined;
+    ], { requirePartySize: true, captureTurnLogs: true });
+    // Evidencia de tools: logs [TRACE-ORDERLINE] / [TOOLS n] capturados por turno
+    // (ToolTraceCallback no recibe las tools que ejecuta HumanIntentToolNode).
+    const turnLogs = turnLogsByTrace.get(trace) ?? [];
+    type Line = { id: string; hint: string; requestedQuantity: number | null; status: string; currentResolutionId: string | null };
+    const linesAt = (turn: number): Line[] =>
+      ((trace.turns[turn - 1]?.conversationMetadataAfter?.pendingOrderLines as { lines?: Line[] } | undefined)?.lines) ?? [];
+    const stageEvents = (turn: number, stage: string): TraceEvent[] =>
+      (turnLogs[turn - 1]?.events ?? []).filter((event) => event.event === '[TRACE-ORDERLINE]' && event.stage === stage);
+    const executed = (turn: number, toolName: string): TraceEvent[] =>
+      stageEvents(turn, 'HumanIntentToolNode.before_runTool').filter((event) => event.toolName === toolName);
+    const succeeded = (turn: number, toolName: string): TraceEvent[] =>
+      stageEvents(turn, 'ToolMessage.after_tool').filter((event) => event.toolName === toolName && event.success === true);
+    const payloads = (turn: number, toolName: string): Array<Record<string, unknown>> =>
+      (turnLogs[turn - 1]?.events ?? [])
+        .filter((event) => typeof event.event === 'string' && event.event.startsWith('[TOOLS ') && event.name === toolName)
+        .flatMap((event) => {
+          try {
+            return [JSON.parse(String(event.result)) as Record<string, unknown>];
+          } catch {
+            return [];
+          }
+        });
+
+    const PLAN_TURN = 2;
+    const PARTY_TURN = 3;
+    const QUANTITY_TURN = 4;
+    const quantityTurn = trace.turns[QUANTITY_TURN - 1];
+    const plannedLines = linesAt(PLAN_TURN);
+    const linesAfterParty = linesAt(PARTY_TURN);
+    const papasBefore = linesAfterParty.find((line) => normalize(line.hint).includes('papas'));
+    const linesAfterQuantity = linesAt(QUANTITY_TURN);
+    const papas = linesAfterQuantity.find((line) => normalize(line.hint).includes('papas'));
+    const ceviche = linesAfterQuantity.find((line) => normalize(line.hint).includes('ceviche'));
+    const partyMetadata = trace.turns[PARTY_TURN - 1]?.conversationMetadataAfter;
     const quantityGoalType = (
       quantityTurn.preflight as { decision?: { fulfillmentCandidate?: { goalType?: string } } } | null
     )?.decision?.fulfillmentCandidate?.goalType;
+    const quantityEntry = stageEvents(QUANTITY_TURN, 'set_order_line_quantity.entry').at(-1);
+    const quantityPayload = payloads(QUANTITY_TURN, 'set_order_line_quantity').find((payload) => payload.success === true);
+    const addCalls = executed(QUANTITY_TURN, 'add_cart_item');
+    const papasProductId = ((quantityTurn.conversationMetadataAfter?.productResolutions as
+      Array<{ resolutionId: string; productId: string }> | undefined) ?? [])
+      .find((entry) => entry.resolutionId === papas?.currentResolutionId)?.productId;
+    const draftAfterQuantity = turnLogs[QUANTITY_TURN - 1]?.draftItems ?? [];
 
-    const linesAfterParty = (partyMetadata?.pendingOrderLines as typeof pending)?.lines;
-    assertLifecycleInvariant(trace, 2, 'INV-QTY-00', Boolean(plannedLines?.length === 2 && plannedLines.every((line) => line.requestedQuantity === null)), 'pendingOrderLines conserva ambas cantidades como UNKNOWN desde el plan', compactValue(plannedLines));
+    assertLifecycleInvariant(trace, 2, 'INV-QTY-00', Boolean(plannedLines.length === 2 && plannedLines.every((line) => line.requestedQuantity === null)), 'pendingOrderLines conserva ambas cantidades como UNKNOWN desde el plan', compactValue(plannedLines));
     assertLifecycleInvariant(trace, 3, 'INV-QTY-01', partyMetadata?.peopleCount === 3 && partyMetadata?.requestedPartySize === 3, 'peopleCount y requestedPartySize persisten 3', compactValue(partyMetadata));
-    assertLifecycleInvariant(trace, 3, 'INV-QTY-02', Boolean(linesAfterParty?.length === 2 && linesAfterParty.every((line) => line.requestedQuantity === null)), 'ambas líneas siguen UNKNOWN tras guardar party size', compactValue(linesAfterParty));
-    assertLifecycleInvariant(trace, 3, 'INV-QTY-11', Boolean(partySizeCall) && quantityGoalType === 'OBTENER_CANTIDAD_DEL_PRODUCTO', 'el siguiente preflight deriva el Quantity Goal tras party_size_persisted', compactValue(quantityTurn.preflight));
-    assertLifecycleInvariant(trace, 3, 'INV-QTY-03', !partyTurn.toolCalls.some((call) => call.name === 'add_cart_item'), 'no hay ADD al guardar party size', compactValue(partyTurn.toolCalls));
-    assertLifecycleInvariant(trace, 4, 'INV-QTY-04', Boolean(quantityCall), 'el Goal usa la tool de persistencia de cantidad', compactValue(quantityTurn.toolCalls));
-    assertLifecycleInvariant(trace, 4, 'INV-QTY-12', quantityArgs?.orderLineId === papas?.id, 'la respuesta breve se vincula al id de la línea activa', compactValue(quantityCall));
-    assertLifecycleInvariant(trace, 4, 'INV-QTY-05', persistedLine?.requestedQuantity === 2, 'la respuesta 2 persiste solo la cantidad confirmada', compactValue(quantityCall));
-    assertLifecycleInvariant(trace, 4, 'INV-QTY-06', Boolean(papas && papas.requestedQuantity === 2 && papas.status === 'active'), 'papas conserva cantidad 2 y status active', compactValue(pending));
-    assertLifecycleInvariant(trace, 4, 'INV-QTY-07', Boolean(ceviche && ceviche.requestedQuantity == null && ceviche.status === 'queued'), 'ceviche sigue UNKNOWN y queued', compactValue(pending));
-    assertLifecycleInvariant(trace, 4, 'INV-QTY-08', quantityTurn.toolCalls.every((call) => call.name !== 'add_cart_item'), 'no se ejecuta ADD antes de obtener todas las cantidades', compactValue(quantityTurn.toolCalls));
-    // Contrato MVP: ceviche sigue queued sin ProductResolution, así que no puede
-    // ser Quantity Goal target; avanzar a ceviche es trabajo de add_cart_item +
-    // continue_order_line, no de set_order_line_quantity.
-    assertLifecycleInvariant(trace, 4, 'INV-QTY-13', nextQuantityTarget == null, 'sin siguiente Quantity Goal target para una línea sin ProductResolution', compactValue(quantityToolResult));
+    assertLifecycleInvariant(trace, 3, 'INV-QTY-02', Boolean(linesAfterParty.length === 2 && linesAfterParty.every((line) => line.requestedQuantity === null)), 'ambas líneas siguen UNKNOWN tras guardar party size', compactValue(linesAfterParty));
+    assertLifecycleInvariant(trace, 3, 'INV-QTY-11', succeeded(PARTY_TURN, 'save_party_size').length >= 1 && quantityGoalType === 'OBTENER_CANTIDAD_DEL_PRODUCTO', 'save_party_size exitoso y el siguiente preflight deriva el Quantity Goal', compactValue({ partySize: executed(PARTY_TURN, 'save_party_size'), preflight: quantityTurn.preflight }));
+    assertLifecycleInvariant(trace, 3, 'INV-QTY-03', succeeded(PARTY_TURN, 'add_cart_item').length === 0 && (turnLogs[PARTY_TURN - 1]?.draftItems ?? []).length === 0, 'no hay ADD persistido al guardar party size', compactValue(executed(PARTY_TURN, 'add_cart_item')));
+    assertLifecycleInvariant(trace, 4, 'INV-QTY-04', Boolean(quantityEntry), 'el Goal usa la tool de persistencia de cantidad', compactValue(stageEvents(QUANTITY_TURN, 'set_order_line_quantity.entry')));
+    assertLifecycleInvariant(trace, 4, 'INV-QTY-12', quantityEntry?.requestedOrderLineId === papasBefore?.id && quantityEntry?.goalTargetOrderLineId === papasBefore?.id, 'la respuesta breve se vincula al id de la línea activa (Goal target)', compactValue(quantityEntry));
+    assertLifecycleInvariant(trace, 4, 'INV-QTY-05', quantityEntry?.confirmedQuantity === 2 && (quantityPayload?.orderLine as { requestedQuantity?: number } | undefined)?.requestedQuantity === 2, 'la respuesta 2 persiste solo la cantidad confirmada (sin cantidad inventada)', compactValue(quantityPayload));
+    // Quantity Goal → fulfillment: con su cantidad persistida, la Task papas se agrega y cierra en el mismo turno.
+    assertLifecycleInvariant(trace, 4, 'INV-QTY-06', Boolean(papas && papas.id === papasBefore?.id && papas.requestedQuantity === 2 && papas.status === 'done'), 'papas persiste cantidad 2 y queda DONE por el add del mismo turno', compactValue(linesAfterQuantity));
+    assertLifecycleInvariant(trace, 4, 'INV-QTY-07', Boolean(ceviche && ceviche.requestedQuantity == null && ceviche.status === 'queued' && ceviche.currentResolutionId == null), 'ceviche sigue UNKNOWN, QUEUED y sin ProductResolution', compactValue(linesAfterQuantity));
+    assertLifecycleInvariant(trace, 4, 'INV-QTY-08', addCalls.length >= 1 && addCalls.every((call) => call.effectiveOrderLineId === papasBefore?.id) && succeeded(QUANTITY_TURN, 'add_cart_item').length === 1, 'un único ADD exitoso y solo de la línea cuya cantidad se persistió (nunca ceviche)', compactValue(addCalls));
+    assertLifecycleInvariant(trace, 4, 'INV-QTY-14', draftAfterQuantity.length === 1 && draftAfterQuantity[0]?.quantity === 2 && Boolean(papasProductId) && draftAfterQuantity[0]?.product_id === papasProductId, 'carrito: un solo ítem, el producto de papas, cantidad 2 (sin duplicado ni producto equivocado)', compactValue(draftAfterQuantity));
+    // Contrato MVP: ceviche sigue queued sin ProductResolution, así que no puede ser Quantity Goal
+    // target; la transición de la cantidad persistida es el fulfillment de papas.
+    assertLifecycleInvariant(trace, 4, 'INV-QTY-13', quantityPayload?.nextQuantityTarget == null && quantityPayload?.nextRequiredTool === 'add_cart_item' && (quantityPayload?.nextRequiredToolArgs as { orderLineId?: string } | undefined)?.orderLineId === papasBefore?.id, 'sin siguiente Quantity Goal target; la transición es add_cart_item de papas', compactValue(quantityPayload));
     trace.status = 'PASS';
   }, 600_000);
 
@@ -567,11 +585,11 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
   // add_cart_item hace el fulfillment y cierra la OrderLine; continue_order_line
   // activa la siguiente. Ninguno de esos pasos ocurre implícitamente.
   it('REGRESSION — multi-line quantity stays bound to the prompted OrderLine', async () => {
-    const trace = await runCase('REGRESSION — multi-line quantity target binding (MVP Opción A)', [
+    const trace = await runCase('REGRESSION — multi-line quantity target binding (Quantity Goal → fulfillment)', [
       'Quiero un ceviche y unas papas',
       'Para 3',
       'El primero',
-      '2',
+      'Dame 2',
       'Agregalo',
       'Sí, seguí',
       '3',
@@ -615,91 +633,111 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
     const lineByHint = (lines: Line[], hint: string): Line | undefined =>
       lines.find((line) => normalize(line.hint).includes(hint));
 
+    const toolPayloads = (turn: number, toolName: string): Array<Record<string, unknown>> =>
+      (turnLogs[turn - 1]?.events ?? [])
+        .filter((event) => typeof event.event === 'string' && event.event.startsWith('[TOOLS ') && event.name === toolName)
+        .flatMap((event) => {
+          try {
+            return [JSON.parse(String(event.result)) as Record<string, unknown>];
+          } catch {
+            return [];
+          }
+        });
+
     const QUANTITY_TURN = 4;
-    const ADD_TURN = 5;
+    const AGREGALO_TURN = 5;
     const CONTINUE_TURN = 6;
     const PAPAS_QUANTITY_TURN = trace.turns.length;
 
-    // --- TURN 4 ("2"): solo persistencia de cantidad del Ceviche ---
+    // --- TURN 3 ("El primero"): ceviche resuelto; aunque el modelo se adelante a papas (QUEUED),
+    // el turno termina preguntando la cantidad de la línea ACTIVE (ceviche).
+    expect(trace.turns[2]?.assistantResponse, 'T3 pregunta cantidad de ceviche').toMatch(/cu[aá]ntas unidades[\s\S]*ceviche/i);
+    expect(trace.turns[2]?.assistantResponse, 'T3 sin mensaje de error').not.toMatch(/No pude confirmar/i);
+
+    // --- TURN 4 ("Dame 2"): cantidad persistida → fulfillment del Ceviche en el mismo turno ---
     const linesAfterQuantity = linesAt(QUANTITY_TURN);
     const ceviche = lineByHint(linesAfterQuantity, 'ceviche');
     const papas = lineByHint(linesAfterQuantity, 'papa');
     expect(ceviche, 'línea ceviche presente').toBeDefined();
     expect(papas, 'línea papas presente').toBeDefined();
     const cevicheResolutionId = ceviche?.currentResolutionId ?? null;
-
-    expect(ceviche?.requestedQuantity, 'T4 ceviche.requestedQuantity').toBe(2);
-    expect(ceviche?.status, 'T4 ceviche sigue active (sin fulfillment)').toBe('active');
     expect(cevicheResolutionId, 'T4 ceviche.currentResolutionId válido').toBeTruthy();
-    expect(papas?.status, 'T4 papas queued').toBe('queued');
-    expect(papas?.requestedQuantity, 'T4 papas.requestedQuantity').toBeNull();
-    expect(papas?.currentResolutionId, 'T4 papas sin ProductResolution').toBeNull();
 
     const cevicheQuantityEntries = stageEvents(QUANTITY_TURN, 'set_order_line_quantity.entry');
     expect(cevicheQuantityEntries.length, 'T4 set_order_line_quantity ejecutado').toBeGreaterThanOrEqual(1);
     expect(cevicheQuantityEntries.every((entry) => entry.requestedOrderLineId === ceviche?.id), 'T4 set_order_line_quantity sobre ceviche').toBe(true);
     expect(cevicheQuantityEntries.at(-1)?.goalTargetOrderLineId, 'T4 Goal target == ceviche.id').toBe(ceviche?.id);
     expect(cevicheQuantityEntries.at(-1)?.confirmedQuantity, 'T4 quantity=2').toBe(2);
-    expect(toolResults(QUANTITY_TURN, 'set_order_line_quantity').some((event) => event.success === true), 'T4 set_order_line_quantity success').toBe(true);
-    // Un intento diferido sin mutación no viola el contrato; un add persistido sí.
-    expect(toolResults(QUANTITY_TURN, 'add_cart_item').filter((event) => event.success === true), 'T4 sin add_cart_item persistido').toHaveLength(0);
-    expect(modelToolCalls(QUANTITY_TURN, 'continue_order_line'), 'T4 sin continue_order_line').toHaveLength(0);
-    expect(turnLogs[QUANTITY_TURN - 1]?.lineCloses, 'T4 sin advanceAfterLineClose').toEqual([]);
-    expect((turnLogs[QUANTITY_TURN - 1]?.draftItems ?? []).length, 'T4 carrito vacío').toBe(0);
+    const quantityPayload = toolPayloads(QUANTITY_TURN, 'set_order_line_quantity').find((payload) => payload.success === true);
+    expect(quantityPayload?.nextRequiredTool, 'T4 fulfillment ready → nextRequiredTool add_cart_item').toBe('add_cart_item');
+    expect(quantityPayload?.nextRequiredToolArgs, 'T4 nextRequiredToolArgs del estado persistido').toMatchObject({
+      orderLineId: ceviche?.id,
+      resolutionId: cevicheResolutionId,
+      quantity: 2,
+    });
 
-    // --- TURN 5 ("Agregalo"): fulfillment del Ceviche vía add_cart_item ---
-    const addCalls = executedTools(ADD_TURN, 'add_cart_item');
-    expect(addCalls.length, 'T5 add_cart_item ejecutado').toBeGreaterThanOrEqual(1);
-    expect(addCalls.every((call) => call.orderLineId === ceviche?.id), 'T5 add_cart_item con orderLineId ceviche').toBe(true);
-    expect(addCalls.at(-1)?.resolutionId, 'T5 add_cart_item con resolutionId del ceviche').toBe(cevicheResolutionId);
-    expect(toolResults(ADD_TURN, 'add_cart_item').some((event) => event.success === true), 'T5 add_cart_item success').toBe(true);
-    expect(turnLogs[ADD_TURN - 1]?.lineCloses, 'T5 cierre exacto de ceviche').toEqual([
+    const addCalls = executedTools(QUANTITY_TURN, 'add_cart_item');
+    expect(addCalls.length, 'T4 add_cart_item ejecutado').toBeGreaterThanOrEqual(1);
+    expect(addCalls.every((call) => call.orderLineId === ceviche?.id), 'T4 add_cart_item con orderLineId ceviche').toBe(true);
+    expect(addCalls.at(-1)?.resolutionId, 'T4 add_cart_item con resolutionId del ceviche').toBe(cevicheResolutionId);
+    expect(toolResults(QUANTITY_TURN, 'add_cart_item').some((event) => event.success === true), 'T4 add_cart_item success').toBe(true);
+    expect(turnLogs[QUANTITY_TURN - 1]?.lineCloses, 'T4 cierre exacto de ceviche').toEqual([
       { lineId: ceviche?.id ?? null, closeStatus: 'done' },
     ]);
-    // continue_order_line puede emitirse en el lote del add, pero no debe producir transición (order_line_still_active).
-    expect(toolResults(ADD_TURN, 'continue_order_line').filter((event) => event.success === true), 'T5 sin continue_order_line exitoso').toHaveLength(0);
+    expect(toolResults(QUANTITY_TURN, 'continue_order_line').filter((event) => event.success === true), 'T4 sin continue_order_line exitoso').toHaveLength(0);
 
-    const linesAfterAdd = linesAt(ADD_TURN);
-    const cevicheAfterAdd = linesAfterAdd.find((line) => line.id === ceviche?.id);
-    const papasAfterAdd = linesAfterAdd.find((line) => line.id === papas?.id);
-    expect(cevicheAfterAdd?.status, 'T5 ceviche done').toBe('done');
-    expect(cevicheAfterAdd?.requestedQuantity, 'T5 ceviche.requestedQuantity').toBe(2);
-    expect(papasAfterAdd?.status, 'T5 papas sigue queued').toBe('queued');
-    expect(papasAfterAdd?.currentResolutionId, 'T5 papas sin ProductResolution').toBeNull();
+    expect(ceviche?.status, 'T4 ceviche DONE').toBe('done');
+    expect(ceviche?.requestedQuantity, 'T4 ceviche.requestedQuantity').toBe(2);
+    expect(papas?.status, 'T4 papas QUEUED').toBe('queued');
+    expect(papas?.requestedQuantity, 'T4 papas.requestedQuantity').toBeNull();
+    expect(papas?.currentResolutionId, 'T4 papas sin ProductResolution').toBeNull();
 
-    const cevicheResolution = resolutionsAt(ADD_TURN).find((entry) => entry.resolutionId === cevicheResolutionId);
-    expect(cevicheResolution?.status, 'T5 ProductResolution del ceviche consumida').toBe('consumed');
-    const draftItems = turnLogs[ADD_TURN - 1]?.draftItems ?? [];
-    expect(draftItems, 'T5 draft_order_item del ceviche').toHaveLength(1);
-    expect(draftItems[0]?.product_id, 'T5 draft_order_item.product_id == ceviche').toBe(cevicheResolution?.productId);
-    expect(draftItems[0]?.quantity, 'T5 draft_order_item.quantity').toBe(2);
+    const cevicheResolution = resolutionsAt(QUANTITY_TURN).find((entry) => entry.resolutionId === cevicheResolutionId);
+    expect(cevicheResolution?.status, 'T4 ProductResolution del ceviche consumida').toBe('consumed');
+    const draftItems = turnLogs[QUANTITY_TURN - 1]?.draftItems ?? [];
+    expect(draftItems, 'T4 draft_order_item del ceviche').toHaveLength(1);
+    expect(draftItems[0]?.product_id, 'T4 draft_order_item.product_id == ceviche').toBe(cevicheResolution?.productId);
+    expect(draftItems[0]?.quantity, 'T4 draft_order_item.quantity').toBe(2);
+    expect(trace.turns[QUANTITY_TURN - 1]?.assistantResponse, 'T4 sin "Cantidad anotada" tras el agregado').not.toMatch(/Cantidad anotada/i);
 
-    // --- TURN 6 ("Sí, seguí"): continue_order_line activa Papas ---
-    expect(executedTools(CONTINUE_TURN, 'continue_order_line').length, 'T6 continue_order_line ejecutado').toBeGreaterThanOrEqual(1);
-    expect(toolResults(CONTINUE_TURN, 'continue_order_line').some((event) => event.success === true), 'T6 continue_order_line success').toBe(true);
-    const papasAfterContinue = linesAt(CONTINUE_TURN).find((line) => line.id === papas?.id);
-    expect(papasAfterContinue?.status, 'T6 papas active').toBe('active');
-    expect(modelToolCalls(CONTINUE_TURN, 'search_products').length, 'T6 search_products(papas)').toBeGreaterThanOrEqual(1);
-    const continueTurnEvents = turnLogs[CONTINUE_TURN - 1]?.events ?? [];
-    const continueDoneIndex = continueTurnEvents.findIndex((event) =>
+    // --- TURN 5 ("Agregalo"): ceviche ya está cerrado; no hay add duplicado ni contaminación de papas ---
+    const draftAfterAgregalo = turnLogs[AGREGALO_TURN - 1]?.draftItems ?? [];
+    expect(draftAfterAgregalo, 'T5 carrito sigue con un único ceviche').toHaveLength(1);
+    expect(draftAfterAgregalo[0]?.quantity, 'T5 ceviche sigue en 2 en el carrito').toBe(2);
+    const cevicheAfterAgregalo = linesAt(AGREGALO_TURN).find((line) => line.id === ceviche?.id);
+    expect(cevicheAfterAgregalo?.status, 'T5 ceviche sigue DONE').toBe('done');
+    const papasAfterAgregalo = linesAt(AGREGALO_TURN).find((line) => line.id === papas?.id);
+    if (papasAfterAgregalo?.status === 'queued') {
+      expect(papasAfterAgregalo.currentResolutionId, 'T5 papas QUEUED sin ProductResolution').toBeNull();
+    }
+
+    // --- Activación de Papas: continue_order_line exitoso en T5 o T6, antes de cualquier resolve de papas ---
+    const activationTurns = [AGREGALO_TURN, CONTINUE_TURN].filter((turn) =>
+      toolResults(turn, 'continue_order_line').some((event) => event.success === true)
+    );
+    expect(activationTurns, 'papas activada por un único continue_order_line exitoso').toHaveLength(1);
+    const activationTurn = activationTurns[0] ?? CONTINUE_TURN;
+    const activationEvents = turnLogs[activationTurn - 1]?.events ?? [];
+    const continueDoneIndex = activationEvents.findIndex((event) =>
       event.stage === 'ToolMessage.after_tool' && event.toolName === 'continue_order_line' && event.success === true
     );
-    const firstLineWorkIndex = continueTurnEvents.findIndex((event) =>
-      event.stage === 'HumanIntentToolNode.before_runTool' &&
-      (event.toolName === 'search_products' || event.toolName === 'resolve_product')
+    const firstPapasResolveIndex = activationEvents.findIndex((event) =>
+      event.stage === 'associateProductResolutionToTask.result' && event.taskId === papas?.id
     );
-    expect(continueDoneIndex, 'T6 continue_order_line completado').toBeGreaterThanOrEqual(0);
-    expect(firstLineWorkIndex, 'T6 search/resolve de papas solo después de continue_order_line').toBeGreaterThan(continueDoneIndex);
-    expect(toolResults(CONTINUE_TURN, 'add_cart_item').filter((event) => event.success === true), 'T6 sin add_cart_item persistido de papas').toHaveLength(0);
+    if (firstPapasResolveIndex >= 0) {
+      expect(firstPapasResolveIndex, 'resolve de papas solo después de continue_order_line').toBeGreaterThan(continueDoneIndex);
+    }
+    for (let turn = QUANTITY_TURN; turn < activationTurn; turn += 1) {
+      expect(
+        stageEvents(turn, 'associateProductResolutionToTask.result').some((event) => event.taskId === papas?.id && event.success === true),
+        `T${turn} papas sin ProductResolution antes de activarse`
+      ).toBe(false);
+    }
+    expect(linesAt(CONTINUE_TURN).find((line) => line.id === papas?.id)?.status, 'T6 papas active').toBe('active');
     expect((turnLogs[CONTINUE_TURN - 1]?.draftItems ?? []).length, 'T6 carrito solo con ceviche').toBe(1);
-    // DEFER order_line_quantity_required necesita input humano: el turno termina con su askMessage.
-    expect(trace.turns[CONTINUE_TURN - 1]?.assistantResponse, 'T6 pregunta cantidad de papas').toMatch(/cu[aá]ntas unidades[\s\S]*papa/i);
-    expect(executedTools(CONTINUE_TURN, 'set_order_line_quantity'), 'T6 sin set_order_line_quantity').toHaveLength(0);
-    expect(executedTools(CONTINUE_TURN, 'clear_pending_add_quantity'), 'T6 sin clear_pending_add_quantity').toHaveLength(0);
 
-    // ProductResolution asociada a Papas (puede requerir turnos de elección
-    // si la búsqueda devuelve shortlist; nunca antes de continue_order_line).
-    const papasResolutionTurn = Array.from({ length: PAPAS_QUANTITY_TURN - CONTINUE_TURN }, (_, i) => CONTINUE_TURN + i)
+    // ProductResolution asociada a Papas y pregunta de cantidad en ese turno (nunca antes de activarse).
+    const papasResolutionTurn = Array.from({ length: PAPAS_QUANTITY_TURN - activationTurn }, (_, i) => activationTurn + i)
       .find((turn) => linesAt(turn).find((line) => line.id === papas?.id)?.currentResolutionId);
     expect(papasResolutionTurn, 'papas obtiene ProductResolution antes del turno de cantidad').toBeDefined();
     const papasBeforeQuantity = linesAt(PAPAS_QUANTITY_TURN - 1).find((line) => line.id === papas?.id);
@@ -707,10 +745,14 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
     expect(papasBeforeQuantity?.currentResolutionId, 'papas.currentResolutionId válido antes de "3"').toBeTruthy();
     expect(papasBeforeQuantity?.requestedQuantity, 'papas UNKNOWN antes de "3"').toBeNull();
     expect(
-      stageEvents(papasResolutionTurn ?? CONTINUE_TURN, 'associateProductResolutionToTask.result')
+      stageEvents(papasResolutionTurn ?? activationTurn, 'associateProductResolutionToTask.result')
         .some((event) => event.taskId === papas?.id && event.success === true),
       'ProductResolution asociada a la Task papas'
     ).toBe(true);
+    // DEFER order_line_quantity_required necesita input humano: el turno termina con su askMessage.
+    expect(trace.turns[(papasResolutionTurn ?? activationTurn) - 1]?.assistantResponse, 'pregunta cantidad de papas').toMatch(/cu[aá]ntas unidades[\s\S]*papa/i);
+    expect(executedTools(papasResolutionTurn ?? activationTurn, 'set_order_line_quantity'), 'sin set_order_line_quantity al resolver papas').toHaveLength(0);
+    expect(executedTools(papasResolutionTurn ?? activationTurn, 'clear_pending_add_quantity'), 'sin clear_pending_add_quantity al resolver papas').toHaveLength(0);
 
     // --- TURN "3": cantidad de Papas ligada a su Quantity Goal ---
     const papasQuantityTurn = trace.turns[PAPAS_QUANTITY_TURN - 1];
@@ -730,15 +772,21 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
     ).toBe(false);
     expect(toolResults(PAPAS_QUANTITY_TURN, 'set_order_line_quantity').some((event) => event.success === true), 'set_order_line_quantity papas success').toBe(true);
 
+    // Con todas las líneas cerradas pendingOrderLines desaparece: las cantidades se verifican en el carrito.
+    const finalDraft = turnLogs[PAPAS_QUANTITY_TURN - 1]?.draftItems ?? [];
+    const papasProductId = resolutionsAt(PAPAS_QUANTITY_TURN - 1)
+      .find((entry) => entry.resolutionId === papasBeforeQuantity?.currentResolutionId)?.productId;
+    expect(finalDraft.find((item) => item.product_id === papasProductId)?.quantity, 'papas ×3 en el carrito').toBe(3);
+    expect(finalDraft.find((item) => item.product_id === cevicheResolution?.productId)?.quantity, 'ceviche sigue ×2 en el carrito').toBe(2);
     const finalLines = linesAt(PAPAS_QUANTITY_TURN);
-    expect(finalLines.find((line) => line.id === papas?.id)?.requestedQuantity, 'papas persistido=3').toBe(3);
-    expect(finalLines.find((line) => line.id === ceviche?.id)?.requestedQuantity, 'ceviche sigue en 2').toBe(2);
+    expect(finalLines.filter((line) => line.status === 'active' || line.status === 'queued'), 'sin líneas abiertas al final').toHaveLength(0);
 
     // --- Defensas: sin mismatches ni recursion limit en todo el escenario ---
     const allLogText = turnLogs.map((entry) => entry.rawText).join('\n');
     expect(allLogText.includes('goal_target_mismatch'), 'sin goal_target_mismatch').toBe(false);
-    // task_resolution_mismatch es recuperable: cada uno debe traer nextRequiredTool y quedar
-    // resuelto en el mismo turno por un resolve_product exitoso de esa Task y esa resolución.
+    // task_resolution_mismatch / task_already_associated son recuperables: cada uno debe traer
+    // nextRequiredTool y quedar resuelto en el mismo turno, por resolve_product (Task sin
+    // resolución) o por un add posterior con la resolución canónica de la Task (sin otro mismatch).
     turnLogs.forEach((entry, index) => {
       const results = entry.events
         .filter((event) => typeof event.event === 'string' && event.event.startsWith('[TOOLS '))
@@ -752,19 +800,33 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
           return { name: event.name, payload };
         });
       results.forEach((result, position) => {
-        if (result.name !== 'add_cart_item' || result.payload.reason !== 'task_resolution_mismatch') return;
+        const rejection = (result.name === 'add_cart_item' && result.payload.reason === 'task_resolution_mismatch') ||
+          (result.name === 'resolve_product' && result.payload.reason === 'task_already_associated');
+        if (!rejection) return;
         const required = result.payload.nextRequiredToolArgs as
           | { orderLineId?: string; resolutionId?: string }
           | undefined;
-        const recovered = result.payload.nextRequiredTool === 'resolve_product' &&
+        const later = results.slice(position + 1);
+        const recoveredByResolve = result.payload.nextRequiredTool === 'resolve_product' &&
           required != null &&
-          results.slice(position + 1).some((later) =>
-            later.name === 'resolve_product' &&
-            later.payload.success === true &&
-            later.payload.orderLineId === required.orderLineId &&
-            later.payload.currentResolutionId === required.resolutionId
+          later.some((next) =>
+            next.name === 'resolve_product' &&
+            next.payload.success === true &&
+            next.payload.orderLineId === required.orderLineId &&
+            next.payload.currentResolutionId === required.resolutionId
           );
-        expect(recovered, `T${index + 1} task_resolution_mismatch recuperado por resolve_product en el mismo turno`).toBe(true);
+        const recoveredCanonically = result.payload.nextRequiredTool === 'add_cart_item' &&
+          required != null &&
+          later.some((next) =>
+            next.name === 'add_cart_item' &&
+            next.payload.reason !== 'task_resolution_mismatch' &&
+            (next.payload.success === true || typeof next.payload.reason === 'string')
+          );
+        // Sin recuperación (fail closed, p. ej. Task QUEUED): válido solo si el turno terminó en ese
+        // rechazo con la respuesta de recuperación (pregunta de la Task ACTIVE o fallback seguro).
+        const endedSafely = result.payload.nextRequiredTool === undefined &&
+          entry.events.some((event) => event.event === '[hybrid-agent] turn_ends_task_recovery_failed');
+        expect(recoveredByResolve || recoveredCanonically || endedSafely, `T${index + 1} ${String(result.payload.reason)} recuperado o cerrado de forma segura en el mismo turno`).toBe(true);
       });
     });
     expect(/recursion limit|GraphRecursionError/i.test(allLogText), 'sin recursion limit').toBe(false);

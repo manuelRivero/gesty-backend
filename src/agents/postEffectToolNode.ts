@@ -8,6 +8,40 @@ import { getRequestedPartySize, normalizeMetadata } from '../services/productQue
 import { hasActivePedirHumanIntent } from '../services/partySizeGoal.service';
 import { getGoalFulfillmentContractsForTool } from '../domain/intent/family';
 import { reconcileHumanIntentAfterToolEffect } from '../services/humanIntentReconciliation.service';
+import { getFulfillmentReadyOrderLine, getPendingOrderLines } from '../services/pendingOrderLines.service';
+import { CART_ITEM_PERSISTED, DEFAULT_TOOL_CONTRACTS } from './toolContracts';
+
+/** Tool que el contrato declara como productora del fulfillment (CART_ITEM_PERSISTED). */
+const FULFILLMENT_TOOL = DEFAULT_TOOL_CONTRACTS.find((contract) =>
+  contract.produces?.some((capability) => capability.type === CART_ITEM_PERSISTED)
+)?.name;
+
+/**
+ * Tras persistir la cantidad, la Task exacta del efecto (reference = orderLineId)
+ * puede quedar lista para fulfillment: ACTIVE, cantidad conocida y resolución
+ * vigente y propia. Los argumentos salen del estado persistido; si la Task no
+ * está inequívocamente lista, no hay transición (fail closed).
+ */
+const fulfillmentTransitionFor = (
+  metadata: unknown,
+  orderLineId: string | undefined,
+  context: { businessId: string; conversationId: string }
+): { nextRequiredTool: string; nextRequiredToolArgs: Record<string, string | number> } | null => {
+  if (!orderLineId || !FULFILLMENT_TOOL) return null;
+  const line = getPendingOrderLines(metadata)?.lines.find((candidate) => candidate.id === orderLineId);
+  if (!line || line.status !== 'active') return null;
+  const ready = getFulfillmentReadyOrderLine(line, metadata, context);
+  if (!ready) return null;
+  return {
+    nextRequiredTool: FULFILLMENT_TOOL,
+    nextRequiredToolArgs: {
+      orderLineId: line.id,
+      productId: ready.productId,
+      resolutionId: ready.resolutionId,
+      quantity: ready.quantity,
+    },
+  };
+};
 
 export class PostEffectToolNode extends ToolNode {
   protected override async runTool(call: ToolCall, config: RunnableConfig) {
@@ -74,6 +108,23 @@ export class PostEffectToolNode extends ToolNode {
       if (kind === 'party_size_persisted' || kind === 'order_line_quantity_persisted') {
         const fresh = await prismaConversationMetadata(conversationId);
         const metadata = normalizeMetadata(fresh);
+        const fulfillment = kind === 'order_line_quantity_persisted'
+          ? fulfillmentTransitionFor(fresh, reference, { businessId, conversationId })
+          : null;
+        if (fulfillment) {
+          return new ToolMessage({
+            name: result.name,
+            tool_call_id: result.tool_call_id,
+            status: result.status,
+            content: JSON.stringify({
+              ...effectData,
+              ...fulfillment,
+              instruction:
+                `Cantidad persistida y la línea está lista: ejecutá ${fulfillment.nextRequiredTool} ahora ` +
+                'con exactamente nextRequiredToolArgs (copiá los valores sin modificarlos).',
+            }),
+          });
+        }
         const target = deriveOrderQuantityGoalTarget({
           activePedir: hasActivePedirHumanIntent(metadata),
           checkoutActive: metadata.checkout_active === true,

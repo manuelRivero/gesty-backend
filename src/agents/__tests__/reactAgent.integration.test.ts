@@ -281,6 +281,10 @@ describe('runHybridReactAgent', () => {
     }));
     const quantityTool = modelTools.find((tool: { name: string }) => tool.name === 'set_order_line_quantity');
     expect(Object.keys(quantityTool.schema.shape)).toEqual(['quantity']);
+    // Test H: persistir la cantidad no termina el grafo y el tool_choice queda libre después.
+    expect((quantityTool as { returnDirect?: boolean }).returnDirect).toBeFalsy();
+    createArgs.llm({ messages: [{ _getType: () => 'tool' }] });
+    expect(bindTools).toHaveBeenLastCalledWith(expect.any(Array), { parallel_tool_calls: true });
 
     const invokeSpy = vi.spyOn(setOrderLineQuantityTool, 'invoke').mockResolvedValue('persisted' as never);
     await quantityTool.invoke({ quantity: 3 }, {
@@ -1093,6 +1097,176 @@ describe('runHybridReactAgent', () => {
     expect(visible).toContain(askMessage);
     expect(visible).not.toMatch(/Cantidad anotada|Anoté/);
     expect(visible).not.toContain('order_line_quantity_required');
+  });
+
+  it('Test I — set_order_line_quantity + add_cart_item exitosos: responde el agregado, no "Cantidad anotada"', async () => {
+    const quantityResult = new ToolMessage({
+      tool_call_id: 'tc-qty',
+      name: 'set_order_line_quantity',
+      content: JSON.stringify({
+        success: true,
+        effect: { kind: 'order_line_quantity_persisted', reference: 'line-ceviche' },
+        orderLine: { id: 'line-ceviche', hint: 'ceviche', requestedQuantity: 2, status: 'active' },
+        nextRequiredTool: 'add_cart_item',
+        nextRequiredToolArgs: { orderLineId: 'line-ceviche', productId: 'prod-1', resolutionId: 'res-1', quantity: 2 },
+      }),
+    });
+    const addResult = new ToolMessage({
+      tool_call_id: 'tc-add',
+      name: 'add_cart_item',
+      content: JSON.stringify({
+        success: true,
+        effect: { kind: 'cart_item_persisted', reference: 'prod-1' },
+        added: { productId: 'prod-1', itemName: 'Ceviche Clásico', quantity: 2 },
+      }),
+    });
+    mockAgent({ invoke: vi.fn().mockResolvedValue({ messages: [quantityResult, addResult] }) });
+
+    const result = unwrap(await runHybridReactAgent(makeCtx({ message: { text: { body: 'Dame 2' } } }) as any));
+    const visible = JSON.stringify(result?.content ?? '');
+
+    expect(visible).not.toMatch(/Cantidad anotada/);
+    expect(buildCartSummaryMessage).toHaveBeenCalled();
+  });
+
+  it('cantidad persistida sin fulfillment posterior sigue respondiendo "Cantidad anotada"', async () => {
+    mockAgent({
+      invoke: vi.fn().mockResolvedValue({
+        messages: [new ToolMessage({
+          tool_call_id: 'tc-qty',
+          name: 'set_order_line_quantity',
+          content: JSON.stringify({
+            success: true,
+            effect: { kind: 'order_line_quantity_persisted', reference: 'line-ceviche' },
+            orderLine: { id: 'line-ceviche', hint: 'ceviche', requestedQuantity: 2, status: 'active' },
+          }),
+        })],
+      }),
+    });
+
+    const result = unwrap(await runHybridReactAgent(makeCtx({ message: { text: { body: 'Dame 2' } } }) as any));
+
+    expect(JSON.stringify(result?.content ?? '')).toMatch(/Cantidad anotada/);
+    expect(buildCartSummaryMessage).not.toHaveBeenCalled();
+  });
+
+  it('recuperación de task_resolution_mismatch agotada → respuesta segura, sin silencio ni confirmación falsa', async () => {
+    const mismatch = (id: string) => new ToolMessage({
+      tool_call_id: id,
+      name: 'add_cart_item',
+      content: JSON.stringify({ success: false, error: 'product_resolution_required', reason: 'task_resolution_mismatch' }),
+    });
+    // Estado completo como el grafo real: input del turno + AIMessage + resultado del paso de tools.
+    mockAgent({
+      invoke: vi.fn().mockImplementation(async (input: { messages: unknown[] }) => ({
+        messages: [
+          ...input.messages,
+          new AIMessage({
+            content: '',
+            tool_calls: [{ id: 'tc-add-1', name: 'add_cart_item', args: { orderLineId: 'line-papas' }, type: 'tool_call' }],
+          }),
+          mismatch('tc-add-1'),
+        ],
+      })),
+    });
+
+    const result = unwrap(await runHybridReactAgent(makeCtx({ message: { text: { body: 'Agregalo' } } }) as any));
+    const visible = JSON.stringify(result?.content ?? '');
+
+    expect(visible).toMatch(/No pude confirmar el agregado/);
+    expect(visible).toMatch(/No pude completar la carga/);
+    expect(visible).not.toMatch(/Agregué|Sumé|Listo/);
+  });
+
+  describe('rechazo sobre Task QUEUED → pregunta de cantidad de la Task ACTIVE (estado persistido)', () => {
+    const R1 = 'pr1:biz-1:conv-1:res-ceviche';
+    const resolution = (over: Record<string, unknown> = {}) => ({
+      resolutionId: R1,
+      productId: 'prod-1',
+      businessId: 'biz-1',
+      conversationId: 'conv-1',
+      source: 'search_products',
+      status: 'selected',
+      scope: 'turn',
+      turnId: 'turn-anterior',
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      ...over,
+    });
+    const persisted = (active: { currentResolutionId: string | null; requestedQuantity: number | null }, resolutions: unknown[]) => ({
+      peopleCount: 3,
+      requestedPartySize: 3,
+      humanIntentState: {
+        version: 1, revision: 3, nextSequence: 2, processedMessageIds: [],
+        records: [{ id: 'intent-1', sequence: 1, goal: 'PEDIR', request: { products: ['ceviche', 'papas'] }, status: 'ACTIVE', blockers: [], createdAt: '2026-10-07T00:00:00.000Z', updatedAt: '2026-10-07T00:00:00.000Z' }],
+      },
+      pendingOrderLines: {
+        lines: [
+          { id: 'line-ceviche', hint: 'ceviche', status: 'active', ...active },
+          { id: 'line-papas', hint: 'papas', requestedQuantity: null, status: 'queued', currentResolutionId: null },
+        ],
+        sourceMessage: 'Quiero un ceviche y unas papas',
+        createdAt: '2026-10-07T00:00:00.000Z',
+      },
+      productResolutions: resolutions,
+    });
+    // El modelo se adelanta a papas (QUEUED): resolve_product rechaza con task_not_active.
+    const queuedRejection = (input: { messages: unknown[] }) => ({
+      messages: [
+        ...input.messages,
+        new AIMessage({
+          content: '',
+          tool_calls: [{ id: 'tc-papas', name: 'resolve_product', args: { orderLineId: 'line-papas', productId: 'prod-papas', resolutionId: 'pr1:biz-1:conv-1:res-papas' }, type: 'tool_call' }],
+        }),
+        new ToolMessage({
+          tool_call_id: 'tc-papas',
+          name: 'resolve_product',
+          content: JSON.stringify({ success: false, error: 'task_not_active', instruction: 'Esta línea del pedido todavía no está activa' }),
+        }),
+      ],
+    });
+    const run = async (metadata: unknown) => {
+      vi.mocked(findOrCreateConversationState).mockResolvedValue({ metadata } as never);
+      mockAgent({ invoke: vi.fn().mockImplementation(async (input: { messages: unknown[] }) => queuedRejection(input)) });
+      const result = unwrap(await runHybridReactAgent(makeCtx({ message: { text: { body: 'El primero' } } }) as any));
+      return JSON.stringify(result?.content ?? '');
+    };
+
+    it('TEST A — Task ACTIVE con resolución válida y sin cantidad: pregunta la cantidad de esa Task (nunca de la QUEUED)', async () => {
+      const visible = await run(persisted({ currentResolutionId: R1, requestedQuantity: null }, [resolution()]));
+
+      expect(visible).toContain('¿Cuántas unidades de Ceviche Clásico querés agregar?');
+      expect(visible).not.toMatch(/papa/i);
+      expect(visible).not.toMatch(/No pude confirmar/);
+      expect(prisma.menu_item.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'prod-1', business_id: 'biz-1' } })
+      );
+    });
+
+    it('TEST B — la Task ACTIVE ya tiene cantidad: no pregunta cantidad, fallback seguro', async () => {
+      const visible = await run(persisted({ currentResolutionId: R1, requestedQuantity: 2 }, [resolution()]));
+
+      expect(visible).toMatch(/No pude confirmar el agregado/);
+      expect(visible).not.toMatch(/Cuántas unidades/);
+    });
+
+    it('TEST C — la Task ACTIVE no tiene ProductResolution: no construye pregunta, fallback seguro', async () => {
+      const visible = await run(persisted({ currentResolutionId: null, requestedQuantity: null }, []));
+
+      expect(visible).toMatch(/No pude confirmar el agregado/);
+      expect(visible).not.toMatch(/Cuántas unidades/);
+    });
+
+    it.each([
+      ['consumida', resolution({ status: 'consumed' })],
+      ['vencida', resolution({ expiresAt: new Date(Date.now() - 1_000).toISOString() })],
+      ['de otro business', resolution({ businessId: 'biz-otro' })],
+    ])('TEST D — resolución de la Task ACTIVE %s: fail closed sin pregunta de cantidad', async (_label, entry) => {
+      const visible = await run(persisted({ currentResolutionId: R1, requestedQuantity: null }, [entry]));
+
+      expect(visible).toMatch(/No pude confirmar el agregado/);
+      expect(visible).not.toMatch(/Cuántas unidades/);
+    });
   });
 
   it('askMessage de un gate de tool llega al usuario y el JSON de control no', async () => {

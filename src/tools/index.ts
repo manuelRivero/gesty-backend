@@ -102,6 +102,7 @@ import {
   getCurrentProductResolutionForTask,
   getNextOrderLineRequiringQuantity,
   getPendingOrderLines,
+  getTaskCanonicalResolution,
   hasOpenOrderLines,
   validateTaskResolutionOwnership,
   ingredientFilterCarvesDishHint,
@@ -642,13 +643,28 @@ export const resolveProductTool = new DynamicStructuredTool<
         traceId,
       });
       if (!association.ok) {
+        // La Task ya tiene su resolución: la recuperación es esa (estado persistido), no otra búsqueda.
+        let canonical: { orderLineId: string; productId: string; resolutionId: string } | null = null;
+        if (association.reason === 'task_already_associated') {
+          const freshMetadata = (await findOrCreateConversationState(conversationId)).metadata;
+          const task = getPendingOrderLines(freshMetadata)?.lines.find((line) => line.id === explicitOrderLineId);
+          canonical = task
+            ? getTaskCanonicalResolution(task, freshMetadata, { businessId, conversationId })
+            : null;
+        }
         return toJson({
           success: false,
           error: 'task_resolution_association_rejected',
           reason: association.reason,
+          ...(canonical ? { nextRequiredTool: 'add_cart_item', nextRequiredToolArgs: canonical } : {}),
           instruction: association.reason === 'task_not_active'
             ? TASK_NOT_ACTIVE_INSTRUCTION
-            : 'No agregues el producto. Resolvé una ProductResolution nueva para esta línea del pedido.',
+            : canonical
+              ? 'La línea ya tiene una resolución válida. Reintentá add_cart_item usando exactamente ' +
+                'nextRequiredToolArgs (copiá el resolutionId sin modificarlo). No vuelvas a buscar ni resolver el producto.'
+              : association.reason === 'task_already_associated'
+                ? 'La línea ya tiene una resolución asociada que no se puede usar. No agregues el producto ni vuelvas a resolverlo en este turno.'
+                : 'No agregues el producto. Resolvé una ProductResolution nueva para esta línea del pedido.',
         });
       }
     } else if (taskBound) {
@@ -2408,8 +2424,12 @@ export const addCartItemTool = new DynamicStructuredTool<
     const orderLineNeedsQuantity = orderLine != null && lineQuantity == null;
     const unitsFromClient =
       pendingReply || statedUnits || variationQtyCarry;
+    // Task-bound: la cantidad persistida en la OrderLine (validada por
+    // set_order_line_quantity) es la fuente de verdad; el argumento del modelo no la pisa.
     const qty = lineQuantity != null
-      ? Math.min(99, Math.max(1, Math.floor(modelQty ?? lineQuantity)))
+      ? taskBound
+        ? lineQuantity
+        : Math.min(99, Math.max(1, Math.floor(modelQty ?? lineQuantity)))
       : unitsFromClient && modelQty != null
         ? modelQty
         : suggestedQuantity;
@@ -2438,7 +2458,9 @@ export const addCartItemTool = new DynamicStructuredTool<
     if (lineQuantity != null && quantity != null && quantity !== lineQuantity) {
       console.debug(
         JSON.stringify({
-          event: '[add_cart_item] order_line_quantity_overridden',
+          event: taskBound
+            ? '[add_cart_item] order_line_quantity_arg_ignored'
+            : '[add_cart_item] order_line_quantity_overridden',
           conversationId,
           lineHint: orderLine?.hint ?? null,
           lineQuantity,
@@ -2722,6 +2744,7 @@ export const addCartItemTool = new DynamicStructuredTool<
     let postAddOpportunity: PostAddComplementOpportunity | null = null;
     let postAddPromotion: PostAddPromotion | null = null;
     let queueFollowUp: { nextHint: string; remaining: number; instruction: string } | null = null;
+    let closedOrderLineId: string | null = null;
     if (conversationId) {
       await clearPendingVariation(conversationId);
       await clearPendingAddQuantity(conversationId);
@@ -2754,6 +2777,8 @@ export const addCartItemTool = new DynamicStructuredTool<
           lineId: orderLine?.id ?? null,
           closeStatus: 'done',
         });
+        // advanceAfterLineClose falla cerrado (throw) si no puede cerrar la Task exacta.
+        closedOrderLineId = orderLine?.id ?? null;
         if (nextPending) {
           openOrderLinesAfterAdvance = true;
           queueFollowUp = buildOrderLinesContinueOrCancelHint(nextPending);
@@ -2790,6 +2815,8 @@ export const addCartItemTool = new DynamicStructuredTool<
     return toJson({
       success: true,
       effect: { kind: 'cart_item_persisted', reference: productId },
+      // Fulfillment de una Task: el turno termina acá (la próxima línea se trabaja en otro turno).
+      ...(closedOrderLineId ? { closedOrderLine: { id: closedOrderLineId, status: 'done' } } : {}),
       added: {
         productId,
         itemName: item.name,
@@ -3568,7 +3595,8 @@ export const setOrderLineQuantityTool = new DynamicStructuredTool<
 >({
   name: 'set_order_line_quantity',
   description:
-    'Persiste una cantidad confirmada para una línea UNKNOWN de pendingOrderLines. ' +
+    'Persiste una cantidad confirmada para una línea de pendingOrderLines (o la corrige si el cliente ' +
+    'dice otra en este mensaje, ej. "mejor 3"). ' +
     'Usá el orderLineId del Goal de cantidad; una respuesta corta corresponde a ese target. ' +
     'Si el usuario nombra explícitamente otra línea, usá el id de esa línea. ' +
     'No uses partySize ni suggestedQuantity como quantity.',
@@ -3655,9 +3683,8 @@ export const setOrderLineQuantityTool = new DynamicStructuredTool<
         instruction: 'La ProductResolution asociada a la línea quedó inválida. Vuelve a resolver el producto antes de guardar la cantidad.',
       });
     }
-    if (line.requestedQuantity != null) {
-      return toJson({ success: false, error: 'order_line_quantity_already_known' });
-    }
+    // Una cantidad ya conocida se puede corregir ("Mejor 3"): la nueva ya pasó la
+    // confirmación contra el mensaje actual de arriba; el modelo solo no la cambia.
     const updated = await setOrderLineRequestedQuantity({
       conversationId,
       metadata: state.metadata,

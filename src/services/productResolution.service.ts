@@ -222,6 +222,12 @@ const validateResolution = (
     turnId?: string;
     pendingResolutionId?: string | null;
     allowCandidate?: boolean;
+    /**
+     * La resolución ya está autorizada por ownership de una Task (asociada,
+     * exclusiva y abierta): el scope `turn` no la vence al cambiar de turno.
+     * TTL, consumo, producto, business y conversación se validan igual.
+     */
+    taskBound?: boolean;
   }
 ): ProductResolutionFailure | null => {
   if (resolution.businessId !== params.businessId) return 'resolution_wrong_business';
@@ -232,7 +238,7 @@ const validateResolution = (
     const expiresAt = Date.parse(resolution.expiresAt);
     if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return 'resolution_expired';
   }
-  if (resolution.scope === 'turn' && resolution.turnId !== params.turnId) {
+  if (resolution.scope === 'turn' && !params.taskBound && resolution.turnId !== params.turnId) {
     return 'resolution_expired';
   }
   if (resolution.scope === 'pending' && resolution.resolutionId !== params.pendingResolutionId) {
@@ -473,6 +479,8 @@ export const consumeProductResolution = async (
     ...params,
     pendingResolutionId: pendingResolutionForProduct(metadata, resolution.productId),
     allowCandidate: params.explicitButtonSelection === true,
+    // Ownership de la Task validado arriba (validateTaskResolutionOwnership).
+    taskBound: Boolean(params.orderLineId),
   });
   if (failure) return { ok: false, reason: failure };
 
@@ -486,6 +494,23 @@ export const consumeProductResolution = async (
   await writeResolutionLedger(tx, params.conversationId, resolutions);
   return { ok: true, resolution: consumed };
 };
+
+/**
+ * Misma regla de vigencia que aplica consumeProductResolution a una resolución
+ * Task-bound (ownership ya validado por el llamador). La usa la derivación de
+ * "fulfillment ready" para no declarar lista una Task cuyo add sería rechazado.
+ */
+export const taskBoundResolutionFailure = (
+  resolution: ProductResolution,
+  params: { productId: string; businessId: string; conversationId: string; metadata: unknown }
+): ProductResolutionFailure | null =>
+  validateResolution(resolution, {
+    productId: params.productId,
+    businessId: params.businessId,
+    conversationId: params.conversationId,
+    pendingResolutionId: pendingResolutionForProduct(params.metadata, params.productId),
+    taskBound: true,
+  });
 
 export const productResolutionErrorMessage = (reason: ProductResolutionFailure): string => {
   switch (reason) {

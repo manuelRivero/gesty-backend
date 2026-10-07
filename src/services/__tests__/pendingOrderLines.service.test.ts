@@ -686,7 +686,9 @@ describe('pendingOrderLines.service', () => {
       conversationId: 'conv-1',
       source: 'search_products',
       status: 'selected',
-      scope: 'pending',
+      // resolve_product conserva el scope de la búsqueda: un solo match → turn.
+      scope: 'turn',
+      turnId: 'turn-anterior',
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
       ...over,
@@ -718,6 +720,7 @@ describe('pendingOrderLines.service', () => {
       ['sin ProductResolution en el ledger', { pendingOrderLines: readyPending(), productResolutions: [] }],
       ['ProductResolution consumida', { pendingOrderLines: readyPending(), productResolutions: [resolution({ status: 'consumed' })] }],
       ['ProductResolution vencida', { pendingOrderLines: readyPending(), productResolutions: [resolution({ expiresAt: new Date(Date.now() - 1_000).toISOString() })] }],
+      ['ProductResolution pending sin entrada pendiente que la respalde', { pendingOrderLines: readyPending(), productResolutions: [resolution({ scope: 'pending' })] }],
       [
         'ProductResolution también asociada a otra Task',
         {

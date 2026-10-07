@@ -31,7 +31,8 @@ vi.mock('../../services/humanIntentReconciliation.service', () => ({
   reconcileHumanIntentAfterToolEffect: reconcileAfterToolMock,
 }));
 
-vi.mock('../../services/productResolution.service', () => ({
+vi.mock('../../services/productResolution.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../services/productResolution.service')>()),
   resolveProductForAdd: resolveProductForAddMock,
 }));
 
@@ -56,6 +57,7 @@ vi.mock('../../lib/prisma', () => ({
 
 import { ToolPlanner } from '../toolPlanner';
 import { findDeclaredProducer, PRODUCT_CANDIDATE, PRODUCT_RESOLUTION } from '../toolContracts';
+import { isFailClosedTaskRejection } from '../humanIntentToolNode';
 import {
   HUMAN_INTENT_STATE_STALE,
   HUMAN_INTENT_TOOL_DENIED,
@@ -1062,6 +1064,77 @@ describe('HumanIntentToolNode', () => {
       expect(payload.nextRequiredTool).toBeUndefined();
       expect(payload.nextRequiredToolArgs).toBeUndefined();
       expect(JSON.stringify(payload)).not.toContain('resolve_product');
+    });
+
+    describe('recuperación canónica de task_resolution_mismatch (Task ACTIVE con resolución propia)', () => {
+      const R1 =
+        'pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:aaaaaaaa-1111-4222-8333-444444444444';
+      const r1Entry = (over: Record<string, unknown> = {}) => ({
+        resolutionId: R1,
+        productId: PRODUCT_ID,
+        businessId: 'biz-1',
+        conversationId: 'conv-1',
+        source: 'search_products',
+        status: 'selected',
+        scope: 'turn',
+        turnId: 'turn-anterior',
+        createdAt: '2026-10-07T00:00:00.000Z',
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        ...over,
+      });
+      const metadataWithR1 = (entry: Record<string, unknown> | null, otherOwner = false) => {
+        const metadata = taskMetadata(R1);
+        if (otherOwner) metadata.pendingOrderLines.lines[0].currentResolutionId = R1;
+        return {
+          ...metadata,
+          productResolutions: [...metadata.productResolutions, ...(entry ? [entry] : [])],
+        };
+      };
+
+      it('TEST A/B/C — mismatch con R2: nextRequiredTool add_cart_item con exactamente R1 (nunca resolve_product)', async () => {
+        const metadata = metadataWithR1(r1Entry());
+        const before = structuredClone(metadata);
+        conversationStateFindUniqueMock.mockResolvedValue({ metadata });
+
+        const { payload, effect } = await invokeAdd({
+          orderLineId: ORDER_LINE_ID,
+          productId: PRODUCT_ID,
+          resolutionId: RESOLUTION_ID,
+        });
+        const args = payload.nextRequiredToolArgs as Record<string, string>;
+
+        expect(payload).toMatchObject({ success: false, reason: 'task_resolution_mismatch', nextRequiredTool: 'add_cart_item' });
+        expect(payload.nextRequiredTool).not.toBe('resolve_product');
+        expect(args.resolutionId === R1).toBe(true);
+        expect(args.resolutionId.length).toBe(R1.length);
+        expect(args.orderLineId === ORDER_LINE_ID).toBe(true);
+        expect(args.productId === PRODUCT_ID).toBe(true);
+        expect(String(payload.instruction)).toMatch(/No vuelvas a buscar ni resolver/);
+        expect(effect).not.toHaveBeenCalled();
+        expect(patchConversationMetadataMock).not.toHaveBeenCalled();
+        expect(metadata).toEqual(before);
+      });
+
+      it.each([
+        ['consumida', r1Entry({ status: 'consumed' }), false],
+        ['vencida por TTL', r1Entry({ expiresAt: new Date(Date.now() - 1_000).toISOString() }), false],
+        ['inexistente en el ledger', null, false],
+        ['de otro business', r1Entry({ businessId: 'biz-otro' }), false],
+        ['compartida con otra Task', r1Entry(), true],
+      ])('TEST F — R1 %s: fail closed, sin resolución de reemplazo', async (_label, entry, otherOwner) => {
+        conversationStateFindUniqueMock.mockResolvedValue({ metadata: metadataWithR1(entry as Record<string, unknown> | null, otherOwner as boolean) });
+
+        const { payload } = await invokeAdd({
+          orderLineId: ORDER_LINE_ID,
+          productId: PRODUCT_ID,
+          resolutionId: RESOLUTION_ID,
+        });
+
+        expect(payload.reason).toBe('task_resolution_mismatch');
+        expect(payload.nextRequiredTool).toBeUndefined();
+        expect(payload.nextRequiredToolArgs).toBeUndefined();
+        expect(isFailClosedTaskRejection(payload)).toBe(true);
+      });
     });
 
     it('Caso 3 — el DEFER no muta estado: sin add, sin consumo, sin asociación, Task y cantidad intactas', async () => {

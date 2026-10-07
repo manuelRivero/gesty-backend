@@ -7,7 +7,7 @@ import { prisma } from '../lib/prisma';
 import { getHumanIntentState, type HumanIntentRecord } from '../services/humanIntentState.service';
 import { resolveProductForAdd } from '../services/productResolution.service';
 import type { ProductResolution } from '../services/productResolution.service';
-import { getPendingOrderLines } from '../services/pendingOrderLines.service';
+import { getPendingOrderLines, getTaskCanonicalResolution } from '../services/pendingOrderLines.service';
 import { evaluateToolRequirement } from '../services/requirementEvaluator';
 import {
   partySizeRequiredPayload,
@@ -309,45 +309,58 @@ const deferredProductAdd = (call: ToolCall): ToolMessage =>
   });
 
 // Fallas del RequirementEvaluator que pueden significar "la capability declarada
-// en el contrato todavía no fue producida para esta Task". task_resolution_mismatch
-// solo es recuperable si la Task todavía no tiene resolución (ver
-// taskAwaitsResolution); con otra resolución asociada es fail closed.
+// en el contrato todavía no fue producida para esta Task" (task_resolution_mismatch).
 const UNMET_CAPABILITY_BY_DEFER_REASON: Record<string, ToolRequirementType> = {
   task_resolution_mismatch: PRODUCT_RESOLUTION,
 };
 
 const TASK_RESOLUTION_ARG_KEYS = ['orderLineId', 'productId', 'resolutionId'] as const;
+type TaskResolutionArgs = Record<(typeof TASK_RESOLUTION_ARG_KEYS)[number], string>;
 
 /**
- * La Task nombrada por el orderLineId exacto de la call existe, está ACTIVE y no
- * tiene resolución asociada (una QUEUED no puede recibir ProductResolution). Una Task con resolución A no se recupera asociándole B:
- * resolve_product la rechaza (task_already_associated).
+ * Recuperación posible para la Task del orderLineId exacto de la call:
+ * - resolve: ACTIVE sin resolución → el productor declarado (resolve_product).
+ * - canonical: ACTIVE con resolución canónica válida → reintentar la misma tool
+ *   con los IDs persistidos de la Task (nunca los del modelo).
+ * - null: QUEUED, cerrada o resolución inválida → fail closed.
  */
-const taskAwaitsResolution = async (conversationId: string, call: ToolCall): Promise<boolean> => {
+type TaskRecovery = { kind: 'resolve' } | { kind: 'canonical'; args: TaskResolutionArgs } | null;
+
+const taskRecoveryFor = async (
+  conversationId: string,
+  businessId: string,
+  call: ToolCall
+): Promise<TaskRecovery> => {
   const orderLineId = (call.args as Record<string, unknown> | undefined)?.orderLineId;
-  if (typeof orderLineId !== 'string') return false;
+  if (typeof orderLineId !== 'string') return null;
   const metadata = (await prisma.conversation_state.findUnique({
     where: { conversation_id: conversationId },
     select: { metadata: true },
   }))?.metadata;
   const task = getPendingOrderLines(metadata)?.lines.find((line) => line.id === orderLineId);
-  return task != null && task.status === 'active' && task.currentResolutionId == null;
+  if (!task || task.status !== 'active') return null;
+  if (task.currentResolutionId == null) return { kind: 'resolve' };
+  const canonical = getTaskCanonicalResolution(task, metadata, { businessId, conversationId });
+  return canonical ? { kind: 'canonical', args: canonical } : null;
 };
 
-/** Productor declarado + IDs copiados tal cual de la call diferida; nunca reconstruidos. */
 const nextRequiredToolFor = (
   call: ToolCall,
   reason: string,
-  recoverable: boolean
-): { tool: string; args: Record<(typeof TASK_RESOLUTION_ARG_KEYS)[number], string> } | null => {
-  if (!recoverable) return null;
+  recovery: TaskRecovery
+): { kind: 'resolve' | 'canonical'; tool: string; args: TaskResolutionArgs } | null => {
+  if (!recovery) return null;
   const capability = UNMET_CAPABILITY_BY_DEFER_REASON[reason];
   if (!capability) return null;
+  // La Task ya tiene la capability (resolución propia): se reintenta la misma tool con los IDs canónicos.
+  if (recovery.kind === 'canonical') return { kind: 'canonical', tool: call.name, args: recovery.args };
+  // Sin resolución: productor declarado + IDs copiados tal cual de la call diferida.
   const tool = findDeclaredProducer(call.name, capability);
   if (!tool) return null;
   const callArgs = (call.args ?? {}) as Record<string, unknown>;
   if (!TASK_RESOLUTION_ARG_KEYS.every((key) => typeof callArgs[key] === 'string')) return null;
   return {
+    kind: 'resolve',
     tool,
     args: {
       orderLineId: callArgs.orderLineId as string,
@@ -355,6 +368,40 @@ const nextRequiredToolFor = (
       resolutionId: callArgs.resolutionId as string,
     },
   };
+};
+
+const TASK_RESOLUTION_REJECTIONS = new Set(['task_resolution_mismatch', 'task_already_associated']);
+
+/**
+ * Rechazo de resolución Task-bound sin recuperación (fail closed): el turno
+ * termina con una respuesta segura en vez de reintentar hasta el recursionLimit.
+ * Incluye operar una Task no ACTIVE (task_not_active): esa línea se activa recién
+ * con continue_order_line en otro turno.
+ */
+export const isFailClosedTaskRejection = (payload: unknown): boolean => {
+  if (typeof payload !== 'object' || payload === null) return false;
+  const data = payload as Record<string, unknown>;
+  if (data.success !== false) return false;
+  if (data.reason === 'task_not_active' || data.error === 'task_not_active') return true;
+  return (
+    typeof data.reason === 'string' &&
+    TASK_RESOLUTION_REJECTIONS.has(data.reason) &&
+    data.nextRequiredTool === undefined
+  );
+};
+
+/** orderLineId de una recuperación canónica (reintento con la resolución de la Task), o null. */
+export const canonicalRecoveryOrderLineId = (payload: unknown): string | null => {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const data = payload as Record<string, unknown>;
+  const args = data.nextRequiredToolArgs as { orderLineId?: unknown } | undefined;
+  return data.success === false &&
+    typeof data.reason === 'string' &&
+    TASK_RESOLUTION_REJECTIONS.has(data.reason) &&
+    data.nextRequiredTool === 'add_cart_item' &&
+    typeof args?.orderLineId === 'string'
+    ? args.orderLineId
+    : null;
 };
 
 /**
@@ -374,12 +421,30 @@ export const requiresUserInput = (payload: unknown): payload is { askMessage: st
   );
 };
 
+/**
+ * Fulfillment de una Task: add_cart_item persistió el ítem y cerró la OrderLine
+ * exacta (DONE). Es límite de turno: la siguiente línea de la cola se trabaja
+ * recién en otro turno, vía continue_order_line.
+ */
+export const completesTask = (payload: unknown): boolean => {
+  if (typeof payload !== 'object' || payload === null) return false;
+  const data = payload as Record<string, unknown>;
+  const effect = data.effect as { kind?: unknown } | undefined;
+  const closed = data.closedOrderLine as { id?: unknown; status?: unknown } | undefined;
+  return (
+    data.success === true &&
+    effect?.kind === 'cart_item_persisted' &&
+    typeof closed?.id === 'string' &&
+    closed.status === 'done'
+  );
+};
+
 const deferredRequirement = (
   call: ToolCall,
   reason: string,
   missingRequirements: string[] = [],
   askMessage?: string,
-  recoverableTask = false
+  recovery: TaskRecovery = null
 ): ToolMessage => {
   const normalizedReason = reason === 'quantity_required' || reason === 'order_line_quantity_required' || reason === 'variation_required' || reason === 'party_size_required'
     ? reason
@@ -395,7 +460,7 @@ const deferredRequirement = (
     human_intent_incompatible: 'La operación no corresponde al HumanIntent activo.',
   };
 
-  const nextRequired = nextRequiredToolFor(call, reason, recoverableTask);
+  const nextRequired = nextRequiredToolFor(call, reason, recovery);
   return new ToolMessage({
     name: call.name,
     tool_call_id: call.id ?? '',
@@ -405,14 +470,19 @@ const deferredRequirement = (
       error: normalizedReason,
       reason,
       missingRequirements,
-      message: nextRequired
-        ? 'La resolución del producto todavía no está asociada a esta línea del pedido.'
-        : labels[normalizedReason] ?? 'La operación todavía no está autorizada.',
+      message: nextRequired?.kind === 'canonical'
+        ? 'La línea ya tiene una resolución válida asociada.'
+        : nextRequired
+          ? 'La resolución del producto todavía no está asociada a esta línea del pedido.'
+          : labels[normalizedReason] ?? 'La operación todavía no está autorizada.',
       ...(askMessage ? { askMessage } : {}),
       ...(nextRequired
         ? { nextRequiredTool: nextRequired.tool, nextRequiredToolArgs: nextRequired.args }
         : {}),
-      instruction: nextRequired
+      instruction: nextRequired?.kind === 'canonical'
+        ? `La línea ya tiene una resolución válida. Reintentá ${call.name} usando exactamente ` +
+          'nextRequiredToolArgs (copiá el resolutionId sin modificarlo). No vuelvas a buscar ni resolver el producto.'
+        : nextRequired
         ? `No reintentes ${call.name} todavía. Primero llamá ${nextRequired.tool} con exactamente ` +
           `nextRequiredToolArgs (copiá los valores sin modificarlos); después reintentá ${call.name} ` +
           'con los mismos identificadores.'
@@ -953,8 +1023,9 @@ export class HumanIntentToolNode extends PostEffectToolNode {
             requirementDecision.reason === 'order_line_quantity_required'
               ? `¿Cuántas unidades${addProductName ? ` de ${addProductName}` : ''} querés agregar?`
               : undefined,
-            requirementDecision.reason in UNMET_CAPABILITY_BY_DEFER_REASON &&
-              await taskAwaitsResolution(conversationId, call)
+            requirementDecision.reason in UNMET_CAPABILITY_BY_DEFER_REASON
+              ? await taskRecoveryFor(conversationId, businessId, call)
+              : null
           );
         }
         if (requirementDecision.type === 'REJECT') {
