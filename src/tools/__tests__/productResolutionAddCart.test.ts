@@ -726,6 +726,41 @@ describe('search_products → ProductResolution → add_cart_item', () => {
       );
     });
 
+    it('TEST E — regresión real (3 líneas): al cerrar ceviche, queueFollowUp nombra papas (nunca chicha) y no se toca ninguna otra línea', async () => {
+      database.state.metadata.pendingOrderLines = {
+        lines: [
+          { id: 'task-ceviche', hint: 'ceviche', requestedQuantity: null, status: 'active', currentResolutionId: null },
+          { id: 'task-papas', hint: 'papas a la huancaína', requestedQuantity: null, status: 'queued', currentResolutionId: null },
+          { id: 'task-chicha', hint: 'chicha morada', requestedQuantity: null, status: 'queued', currentResolutionId: null },
+        ],
+        sourceMessage: 'un ceviche, unas papas y una chicha',
+        createdAt: new Date().toISOString(),
+      };
+      const search = JSON.parse(
+        (await searchProductsTool.func({ keyword: 'producto de prueba' }, undefined, CONFIG)) as string
+      );
+      const resolutionId = search.items[0].resolutionId as string;
+      const resolved = JSON.parse(
+        (await resolveProductTool.func({ productId: PRODUCT_ID, resolutionId, orderLineId: 'task-ceviche' }, undefined, CONFIG)) as string
+      );
+      expect(resolved.success).toBe(true);
+
+      const persisted = await runCall('set_order_line_quantity', { orderLineId: 'task-ceviche', quantity: 2 }, 'Dame 2');
+      expect(persisted.nextRequiredTool).toBe('add_cart_item');
+
+      const added = await runCall('add_cart_item', persisted.nextRequiredToolArgs as Record<string, unknown>, 'Dame 2');
+
+      expect(added).toMatchObject({
+        success: true,
+        closedOrderLine: { id: 'task-ceviche', status: 'done' },
+        queueFollowUp: { nextHint: 'papas a la huancaína', remaining: 2 },
+      });
+      expect(JSON.stringify(added.queueFollowUp)).not.toContain('chicha');
+      // Ningún efecto en las otras líneas: ni resueltas ni activadas por el solo cierre de ceviche.
+      expect(lines()[1]).toMatchObject({ id: 'task-papas', status: 'queued', currentResolutionId: null });
+      expect(lines()[2]).toMatchObject({ id: 'task-chicha', status: 'queued', currentResolutionId: null });
+    });
+
     it('B — sin ProductResolution: la cantidad no se persiste y no hay nextRequiredTool', async () => {
       seedTwoLines();
 

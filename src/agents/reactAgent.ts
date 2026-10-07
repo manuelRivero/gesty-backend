@@ -443,6 +443,13 @@ export interface HybridAgentSignals {
   /** Producto del último add_cart_item exitoso de este turno. */
   lastAddedProductId: string | null;
   /**
+   * queueFollowUp del add_cart_item exitoso que cerró una OrderLine con cola
+   * restante (dato determinístico del tool, no inferencia del LLM). La
+   * respuesta final lo comunica; no dispara ninguna tool por sí solo — avanzar
+   * la cola sigue siendo continue_order_line en un turno posterior.
+   */
+  queueFollowUp: { nextHint: string; remaining: number } | null;
+  /**
    * add, update de cantidad o remove con success en este turno.
    * Checkout pedido en el mismo turno no se delega: el carrito se presenta primero.
    */
@@ -688,6 +695,7 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
     nextQuantityTarget: null,
     orderLineQuantityPersisted: null,
     lastAddedProductId: null,
+    queueFollowUp: null,
     cartMutatedThisTurn: false,
     cartAddPendingGate: false,
     cartAddPendingAskMessage: null,
@@ -744,6 +752,18 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
           typeof (added as { productId?: unknown }).productId === 'string'
         ) {
           signals.lastAddedProductId = (added as { productId: string }).productId;
+        }
+        const queueFollowUp = data.queueFollowUp;
+        if (
+          queueFollowUp &&
+          typeof queueFollowUp === 'object' &&
+          typeof (queueFollowUp as { nextHint?: unknown }).nextHint === 'string' &&
+          typeof (queueFollowUp as { remaining?: unknown }).remaining === 'number'
+        ) {
+          signals.queueFollowUp = {
+            nextHint: (queueFollowUp as { nextHint: string }).nextHint,
+            remaining: (queueFollowUp as { remaining: number }).remaining,
+          };
         }
       }
       if (m.name === 'add_cart_item' && data.success === false) {
@@ -2203,6 +2223,13 @@ export const runHybridReactAgent = async (
     try {
       const business = ctx.business as { id: string; currency_code?: string | null; street_address?: string | null };
       const customer = ctx.customer as { id: string };
+      // queueFollowUp es un dato determinístico del add_cart_item que cerró la OrderLine
+      // (no una inferencia del LLM): si queda cola, la respuesta la comunica acá y el
+      // turno igual termina — avanzar la cola sigue siendo continue_order_line en otro turno.
+      const followUpProse = signals.queueFollowUp && signals.queueFollowUp.remaining > 0
+        ? `Quedan ${signals.queueFollowUp.remaining} línea(s) de tu pedido por sumar. ` +
+          `¿Seguimos con *${signals.queueFollowUp.nextHint}*?`
+        : null;
       const cartMsg = await buildCartSummaryMessage({
         businessId,
         customerPhone,
@@ -2210,7 +2237,7 @@ export const runHybridReactAgent = async (
         customerId: customer.id,
         currencyCode: business.currency_code ?? null,
         businessStreetAddress: business.street_address ?? null,
-        llmProse: null,
+        llmProse: followUpProse,
       });
       console.debug(JSON.stringify({ event: '[hybrid-agent] post_effect_cart_summary', turnId: ctx.turnId, conversationId }));
       return { kind: 'response', handlerResult: markHybridResult({ content: cartMsg, isInteractive: true }) };

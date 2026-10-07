@@ -331,6 +331,60 @@ describe('runHybridReactAgent', () => {
     expect(buildHybridCtaInteractive).not.toHaveBeenCalled();
   });
 
+  describe('queueFollowUp del add_cart_item llega a la respuesta final (sin ejecutar la siguiente línea)', () => {
+    const addToolMessage = (queueFollowUp?: { nextHint: string; remaining: number }) => ({
+      tool_call_id: 'tc-add',
+      name: 'add_cart_item',
+      content: JSON.stringify({
+        success: true,
+        effect: { kind: 'cart_item_persisted', reference: 'ceviche-1' },
+        closedOrderLine: { id: 'line-ceviche', status: 'done' },
+        added: { productId: 'ceviche-1', itemName: 'Ceviche Clásico', quantity: 2 },
+        ...(queueFollowUp ? { queueFollowUp } : {}),
+      }),
+    });
+
+    it('TEST A/C — cola con 2 líneas pendientes: la respuesta nombra nextHint, sin tool para la siguiente línea', async () => {
+      mockAgent({ invoke: vi.fn().mockResolvedValue({
+        messages: [addToolMessage({ nextHint: 'papas a la huancaína', remaining: 2 })],
+      }) });
+
+      await runHybridReactAgent(makeCtx() as any);
+
+      // La respuesta final (vía llmProse → prependLlmProse, ya existente) incorpora exactamente
+      // el nextHint/remaining que devolvió add_cart_item — dato determinístico, no inferencia.
+      expect(buildCartSummaryMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ llmProse: expect.stringMatching(/papas a la huancaína/) })
+      );
+      const calls = vi.mocked(buildCartSummaryMessage).mock.calls;
+      const llmProse = calls[calls.length - 1]?.[0]?.llmProse ?? '';
+      expect(llmProse).toMatch(/2/);
+      // Ninguna tool se ejecutó para la siguiente línea: el mock de invoke solo devolvió el
+      // ToolMessage de add_cart_item, sin search_products/resolve_product/present_product_cta/continue_order_line.
+      expect(llmProse).not.toMatch(/search_products|resolve_product|present_product_cta|continue_order_line/);
+    });
+
+    it('TEST B — sin cola restante: comportamiento actual (llmProse: null), sin "¿algo más?" artificial', async () => {
+      mockAgent({ invoke: vi.fn().mockResolvedValue({ messages: [addToolMessage(undefined)] }) });
+
+      const result = unwrap(await runHybridReactAgent(makeCtx() as any));
+      const visible = JSON.stringify(result?.content ?? '');
+
+      expect(buildCartSummaryMessage).toHaveBeenCalledWith(expect.objectContaining({ llmProse: null }));
+      expect(visible).not.toMatch(/algo más/i);
+    });
+
+    it('no ofrece seguir si remaining llega en 0 (cola ya cerrada del todo)', async () => {
+      mockAgent({ invoke: vi.fn().mockResolvedValue({
+        messages: [addToolMessage({ nextHint: 'papas a la huancaína', remaining: 0 })],
+      }) });
+
+      await runHybridReactAgent(makeCtx() as any);
+
+      expect(buildCartSummaryMessage).toHaveBeenCalledWith(expect.objectContaining({ llmProse: null }));
+    });
+  });
+
   it('usa la cantidad persistida y no la prosa del modelo después de un add exitoso', async () => {
     mockAgent({
       invoke: vi.fn().mockResolvedValue({
