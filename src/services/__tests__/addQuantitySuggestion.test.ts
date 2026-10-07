@@ -15,6 +15,20 @@ describe('parseBareQuantityReply', () => {
     expect(parseBareQuantityReply('1.5')).toBeNull();
     expect(parseBareQuantityReply('100')).toBeNull();
   });
+
+  it('acepta un cardinal textual bare (toda la respuesta), reutilizando el mismo léxico que userMessageStatesUnitQuantity', () => {
+    expect(parseBareQuantityReply('Una')).toBe(1);
+    expect(parseBareQuantityReply('una')).toBe(1);
+    expect(parseBareQuantityReply(' Dos ')).toBe(2);
+    expect(parseBareQuantityReply('Tres.')).toBe(3);
+    expect(parseBareQuantityReply('¿Una?')).toBe(1);
+  });
+
+  it('no es bare si trae otras palabras: eso lo resuelve userMessageStatesUnitQuantity, no este parser', () => {
+    expect(parseBareQuantityReply('Quiero una')).toBeNull();
+    expect(parseBareQuantityReply('Para 3 personas')).toBeNull();
+    expect(parseBareQuantityReply('Una papa')).toBeNull();
+  });
 });
 
 describe('suggestAddQuantity', () => {

@@ -245,7 +245,95 @@ describe('search_products → ProductResolution → add_cart_item', () => {
     });
   });
 
-  it('interpreta “Para N” como cantidad solo con el Goal de cantidad activo', async () => {
+  describe('Fact semántico de cantidad del turno (parseBareQuantityReply) → autorización de set_order_line_quantity', () => {
+    // Misma línea ACTIVE + resolución propia para los 5 casos; cada test solo
+    // varía el userMessage y/o el quantity que "propone" el modelo.
+    const seedActiveTask = () => {
+      const resolutionId = `pr1:${BUSINESS_ID}:${CONVERSATION_ID}:bare-quantity-fact`;
+      database.state.metadata = {
+        peopleCount: 4,
+        requestedPartySize: 4,
+        pendingOrderLines: {
+          sourceMessage: 'ceviche',
+          createdAt: new Date().toISOString(),
+          lines: [{
+            id: 'task-quantity',
+            hint: 'ceviche',
+            requestedQuantity: null,
+            status: 'active',
+            currentResolutionId: resolutionId,
+          }],
+        },
+        productResolutions: [{
+          resolutionId,
+          productId: PRODUCT_ID,
+          businessId: BUSINESS_ID,
+          conversationId: CONVERSATION_ID,
+          source: 'search_products',
+          status: 'selected',
+          scope: 'conversation',
+          createdAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        }],
+      };
+    };
+    const setQuantity = (quantity: number, userMessage: string) => setOrderLineQuantityTool.func(
+      { orderLineId: 'task-quantity', quantity },
+      undefined,
+      { ...CONFIG, configurable: { ...CONFIG.configurable, userMessage } }
+    ) as Promise<string>;
+
+    it('TEST A — cantidad numérica ("1") persiste quantity=1', async () => {
+      seedActiveTask();
+
+      const result = JSON.parse(await setQuantity(1, '1'));
+
+      expect(result).toMatchObject({ success: true, orderLine: { id: 'task-quantity', requestedQuantity: 1 } });
+      expect(database.state.metadata.pendingOrderLines).toMatchObject({
+        lines: [{ id: 'task-quantity', requestedQuantity: 1 }],
+      });
+    });
+
+    it('TEST B — cardinal textual bare ("Una") persiste quantity=1 — el caso reportado', async () => {
+      seedActiveTask();
+
+      const result = JSON.parse(await setQuantity(1, 'Una'));
+
+      expect(result).toMatchObject({ success: true, orderLine: { id: 'task-quantity', requestedQuantity: 1 } });
+      expect(database.state.metadata.pendingOrderLines).toMatchObject({
+        lines: [{ id: 'task-quantity', requestedQuantity: 1 }],
+      });
+    });
+
+    it('TEST C — variante lingüística ("Dame una") ya resuelta por la capa semántica existente', async () => {
+      seedActiveTask();
+
+      const result = JSON.parse(await setQuantity(1, 'Dame una'));
+
+      expect(result).toMatchObject({ success: true, orderLine: { id: 'task-quantity', requestedQuantity: 1 } });
+    });
+
+    it('TEST D — cardinal textual bare ("Dos") persiste quantity=2', async () => {
+      seedActiveTask();
+
+      const result = JSON.parse(await setQuantity(2, 'Dos'));
+
+      expect(result).toMatchObject({ success: true, orderLine: { id: 'task-quantity', requestedQuantity: 2 } });
+    });
+
+    it('TEST E — sin Fact de cantidad en el mensaje, quantity=1 inventado por el modelo se rechaza', async () => {
+      seedActiveTask();
+
+      const result = JSON.parse(await setQuantity(1, 'Quiero el ceviche'));
+
+      expect(result).toMatchObject({ success: false, error: 'quantity_not_confirmed_by_user_message' });
+      expect(database.state.metadata.pendingOrderLines).toMatchObject({
+        lines: [{ id: 'task-quantity', requestedQuantity: null }],
+      });
+    });
+  });
+
+  it('TEST F — "Para N" nunca confirma CANTIDAD_DEL_PRODUCTO, ni con el Goal de cantidad activo', async () => {
     const resolutionId = `pr1:${BUSINESS_ID}:${CONVERSATION_ID}:quantity-goal-reply`;
     database.state.metadata = {
       peopleCount: 4,
@@ -284,6 +372,9 @@ describe('search_products → ProductResolution → add_cart_item', () => {
       error: 'quantity_not_confirmed_by_user_message',
     });
 
+    // El Fact de personas (PERSONAS_DEL_PEDIDO) sigue siendo distinto de
+    // CANTIDAD_DEL_PRODUCTO aunque el Goal de cantidad esté abierto y el modelo
+    // haya pasado quantity=3: "Para 3" no es una respuesta a "¿cuántas unidades?".
     const withGoal = JSON.parse((await setOrderLineQuantityTool.func(
       { orderLineId: 'task-quantity', quantity: 3 },
       undefined,
@@ -298,11 +389,11 @@ describe('search_products → ProductResolution → add_cart_item', () => {
     )) as string);
 
     expect(withGoal).toMatchObject({
-      success: true,
-      orderLine: { id: 'task-quantity', requestedQuantity: 3 },
+      success: false,
+      error: 'quantity_not_confirmed_by_user_message',
     });
     expect(database.state.metadata.pendingOrderLines).toMatchObject({
-      lines: [{ id: 'task-quantity', requestedQuantity: 3 }],
+      lines: [{ id: 'task-quantity', requestedQuantity: null }],
     });
     expect(database.state.metadata.requestedPartySize).toBe(4);
   });

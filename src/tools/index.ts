@@ -3618,14 +3618,9 @@ export const setOrderLineQuantityTool = new DynamicStructuredTool<
       : `${conversationId ?? 'no-conversation'}:${turnId ?? 'no-turn'}`;
     const toolCallId = typeof traceConfig?.toolCallId === 'string' ? traceConfig.toolCallId : null;
     if (!conversationId) return toJson({ success: false, error: 'no_conversation' });
-    const activeBlockingGoal = (config?.configurable as { activeBlockingGoal?: unknown } | undefined)
-      ?.activeBlockingGoal;
-    const quantityGoalReply =
-      activeBlockingGoal === 'OBTENER_CANTIDAD_DEL_PRODUCTO' &&
-      userMessage?.trim().toLowerCase().startsWith('para ')
-        ? parseBareQuantityReply(userMessage.trim().slice('para '.length))
-        : null;
-    const bareReply = parseBareQuantityReply(userMessage) ?? quantityGoalReply;
+    // El Fact de personas (PERSONAS_DEL_PEDIDO) nunca es evidencia de CANTIDAD_DEL_PRODUCTO,
+    // ni siquiera con el Goal de cantidad activo: "Para 3" no confirma quantity=3.
+    const bareReply = parseBareQuantityReply(userMessage);
     const messageConfirmsQuantity =
       bareReply != null || userMessageStatesUnitQuantity(userMessage, quantity);
     if (!messageConfirmsQuantity) {

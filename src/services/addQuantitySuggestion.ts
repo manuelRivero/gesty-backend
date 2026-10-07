@@ -144,11 +144,20 @@ export function userMessageStatesUnitQuantity(
   return patterns.some((re) => re.test(normalized));
 }
 
-/** Parses a bare numeric reply; its meaning comes from the active Goal target. */
+/**
+ * Parses a bare reply (digit or cardinal word, e.g. "2" / "Una" / "Dos") as the
+ * confirmed quantity Fact of this turn; its meaning comes from the active Goal
+ * target. A bare reply is the *entire* message — no verb, no other words — so
+ * it reuses the same UNIT_NUMBER_WORDS lexicon as userMessageStatesUnitQuantity
+ * instead of a separate parser: "Una" and "sumá una" resolve to the same 1.
+ */
 export function parseBareQuantityReply(userMessage: string | null | undefined): number | null {
   if (!userMessage?.trim()) return null;
-  const quantity = Number(userMessage.trim());
-  return Number.isInteger(quantity) && quantity >= 1 && quantity <= 99 ? quantity : null;
+  const trimmed = userMessage.trim();
+  const numeric = Number(trimmed);
+  if (Number.isInteger(numeric) && numeric >= 1 && numeric <= 99) return numeric;
+  const normalized = normalizeQtyMessage(trimmed).replace(/^[.!?¡¿,]+|[.!?¡¿,]+$/g, '').trim();
+  return UNIT_NUMBER_WORDS[normalized] ?? null;
 }
 
 /**

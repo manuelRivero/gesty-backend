@@ -822,10 +822,13 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
             next.payload.reason !== 'task_resolution_mismatch' &&
             (next.payload.success === true || typeof next.payload.reason === 'string')
           );
-        // Sin recuperación (fail closed, p. ej. Task QUEUED): válido solo si el turno terminó en ese
-        // rechazo con la respuesta de recuperación (pregunta de la Task ACTIVE o fallback seguro).
-        const endedSafely = result.payload.nextRequiredTool === undefined &&
-          entry.events.some((event) => event.event === '[hybrid-agent] turn_ends_task_recovery_failed');
+        // Sin recuperación explotable en este turno (fail closed, p. ej. Task QUEUED, o un segundo
+        // mismatch tras ya haber ofrecido la recuperación canónica): válido si el runtime detectó eso
+        // y cortó el turno con una respuesta segura (pregunta de la Task ACTIVE o fallback genérico),
+        // en vez de dejar que el modelo siguiera reintentando. El payload del rechazo puede seguir
+        // trayendo nextRequiredTool (es la misma recuperación ya ofrecida antes): lo que importa es que
+        // el turno, a nivel runtime, no permitió un tercer intento.
+        const endedSafely = entry.events.some((event) => event.event === '[hybrid-agent] turn_ends_task_recovery_failed');
         expect(recoveredByResolve || recoveredCanonically || endedSafely, `T${index + 1} ${String(result.payload.reason)} recuperado o cerrado de forma segura en el mismo turno`).toBe(true);
       });
     });
