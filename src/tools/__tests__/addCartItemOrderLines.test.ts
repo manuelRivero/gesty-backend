@@ -271,12 +271,17 @@ describe('add_cart_item — cola de pedido y cantidad por línea', () => {
     expect(prisma.draft_order_item.create).not.toHaveBeenCalled();
   });
 
-  it('quantity del turno gana a la de la línea (corrección "mejor 3 papas")', async () => {
+  it('Task-bound: la cantidad persistida de la línea gana a la quantity del modelo (Test G)', async () => {
+    // Estado por defecto: line-papas ACTIVE con requestedQuantity = 2.
     const result = JSON.parse(
-      (await callTool({ productId: PRODUCT_ID, quantity: 3 })) as string
+      (await callTool({ productId: PRODUCT_ID, quantity: 5 })) as string
     );
 
-    expect(result.added.quantity).toBe(3);
+    expect(result.success).toBe(true);
+    expect(result.added.quantity).toBe(2);
+    expect(prisma.draft_order_item.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ quantity: 2 }) })
+    );
     expect(setPendingAddQuantity).not.toHaveBeenCalled();
   });
 
