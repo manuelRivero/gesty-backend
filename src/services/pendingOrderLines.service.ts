@@ -212,21 +212,90 @@ export const validateTaskResolutionOwnership = (params: {
 
 type ProductResolutionAssociationResult =
   | { ok: true; pending: PendingOrderLines }
-  | { ok: false; reason: 'task_not_found' | 'task_not_open' | 'resolution_not_valid' | 'resolution_already_owned' | 'task_already_associated' };
+  | { ok: false; reason: 'task_not_found' | 'task_not_open' | 'task_not_active' | 'resolution_not_valid' | 'resolution_already_owned' | 'task_already_associated' };
 
 export const associateProductResolutionToTask = async (params: {
   conversationId: string;
   businessId: string;
   taskId: string;
   resolutionId: string;
+  turnId?: string;
+  toolCallId?: string;
+  traceId?: string;
 }): Promise<ProductResolutionAssociationResult> => {
   return mutateConversationMetadata<ProductResolutionAssociationResult>(params.conversationId, (metadata) => {
     const pending = getPendingOrderLines(metadata);
-    if (!pending) return { metadata: null, result: { ok: false, reason: 'task_not_found' } };
+    if (!pending) {
+      console.log(JSON.stringify({
+        event: '[TRACE-ORDERLINE]',
+        stage: 'associateProductResolutionToTask.result',
+        traceId: params.traceId ?? `${params.conversationId}:${params.turnId ?? 'no-turn'}`,
+        conversationId: params.conversationId,
+        turnId: params.turnId ?? null,
+        toolCallId: params.toolCallId ?? null,
+        taskId: params.taskId,
+        resolutionId: params.resolutionId,
+        previousCurrentResolutionId: null,
+        newCurrentResolutionId: null,
+        success: false,
+        reason: 'task_not_found',
+      }));
+      return { metadata: null, result: { ok: false, reason: 'task_not_found' } };
+    }
     const target = pending.lines.find((line) => line.id === params.taskId);
-    if (!target) return { metadata: null, result: { ok: false, reason: 'task_not_found' } };
+    if (!target) {
+      console.log(JSON.stringify({
+        event: '[TRACE-ORDERLINE]',
+        stage: 'associateProductResolutionToTask.result',
+        traceId: params.traceId ?? `${params.conversationId}:${params.turnId ?? 'no-turn'}`,
+        conversationId: params.conversationId,
+        turnId: params.turnId ?? null,
+        toolCallId: params.toolCallId ?? null,
+        taskId: params.taskId,
+        resolutionId: params.resolutionId,
+        previousCurrentResolutionId: null,
+        newCurrentResolutionId: null,
+        success: false,
+        reason: 'task_not_found',
+      }));
+      return { metadata: null, result: { ok: false, reason: 'task_not_found' } };
+    }
+    const previousCurrentResolutionId = target.currentResolutionId;
     if (target.status !== 'active' && target.status !== 'queued') {
+      console.log(JSON.stringify({
+        event: '[TRACE-ORDERLINE]',
+        stage: 'associateProductResolutionToTask.result',
+        traceId: params.traceId ?? `${params.conversationId}:${params.turnId ?? 'no-turn'}`,
+        conversationId: params.conversationId,
+        turnId: params.turnId ?? null,
+        toolCallId: params.toolCallId ?? null,
+        taskId: params.taskId,
+        resolutionId: params.resolutionId,
+        previousCurrentResolutionId,
+        newCurrentResolutionId: previousCurrentResolutionId,
+        success: false,
+        reason: 'task_not_open',
+      }));
       return { metadata: null, result: { ok: false, reason: 'task_not_open' } };
+    }
+    // Invariante: solo una Task ACTIVE recibe ProductResolution. Una QUEUED se
+    // activa con continue_order_line antes de resolverse.
+    if (target.status !== 'active') {
+      console.log(JSON.stringify({
+        event: '[TRACE-ORDERLINE]',
+        stage: 'associateProductResolutionToTask.result',
+        traceId: params.traceId ?? `${params.conversationId}:${params.turnId ?? 'no-turn'}`,
+        conversationId: params.conversationId,
+        turnId: params.turnId ?? null,
+        toolCallId: params.toolCallId ?? null,
+        taskId: params.taskId,
+        resolutionId: params.resolutionId,
+        previousCurrentResolutionId,
+        newCurrentResolutionId: previousCurrentResolutionId,
+        success: false,
+        reason: 'task_not_active',
+      }));
+      return { metadata: null, result: { ok: false, reason: 'task_not_active' } };
     }
 
     const resolutions = Array.isArray(metadata.productResolutions)
@@ -240,6 +309,20 @@ export const associateProductResolutionToTask = async (params: {
       resolution,
     });
     if (!validation.ok) {
+      console.log(JSON.stringify({
+        event: '[TRACE-ORDERLINE]',
+        stage: 'associateProductResolutionToTask.result',
+        traceId: params.traceId ?? `${params.conversationId}:${params.turnId ?? 'no-turn'}`,
+        conversationId: params.conversationId,
+        turnId: params.turnId ?? null,
+        toolCallId: params.toolCallId ?? null,
+        taskId: params.taskId,
+        resolutionId: params.resolutionId,
+        previousCurrentResolutionId,
+        newCurrentResolutionId: previousCurrentResolutionId,
+        success: false,
+        reason: 'resolution_not_valid',
+      }));
       return { metadata: null, result: { ok: false, reason: 'resolution_not_valid' } };
     }
     if (target.currentResolutionId && target.currentResolutionId !== params.resolutionId) {
@@ -253,6 +336,20 @@ export const associateProductResolutionToTask = async (params: {
         resolution: previousResolution,
       });
       if (previousValidation.ok) {
+        console.log(JSON.stringify({
+          event: '[TRACE-ORDERLINE]',
+          stage: 'associateProductResolutionToTask.result',
+          traceId: params.traceId ?? `${params.conversationId}:${params.turnId ?? 'no-turn'}`,
+          conversationId: params.conversationId,
+          turnId: params.turnId ?? null,
+          toolCallId: params.toolCallId ?? null,
+          taskId: params.taskId,
+          resolutionId: params.resolutionId,
+          previousCurrentResolutionId,
+          newCurrentResolutionId: previousCurrentResolutionId,
+          success: false,
+          reason: 'task_already_associated',
+        }));
         return { metadata: null, result: { ok: false, reason: 'task_already_associated' } };
       }
     }
@@ -260,6 +357,20 @@ export const associateProductResolutionToTask = async (params: {
       line.id !== params.taskId &&
       line.currentResolutionId === params.resolutionId
     )) {
+      console.log(JSON.stringify({
+        event: '[TRACE-ORDERLINE]',
+        stage: 'associateProductResolutionToTask.result',
+        traceId: params.traceId ?? `${params.conversationId}:${params.turnId ?? 'no-turn'}`,
+        conversationId: params.conversationId,
+        turnId: params.turnId ?? null,
+        toolCallId: params.toolCallId ?? null,
+        taskId: params.taskId,
+        resolutionId: params.resolutionId,
+        previousCurrentResolutionId,
+        newCurrentResolutionId: previousCurrentResolutionId,
+        success: false,
+        reason: 'resolution_already_owned',
+      }));
       return { metadata: null, result: { ok: false, reason: 'resolution_already_owned' } };
     }
 
@@ -269,6 +380,21 @@ export const associateProductResolutionToTask = async (params: {
         line.id === params.taskId ? { ...line, currentResolutionId: params.resolutionId } : line
       ),
     };
+    const newCurrentResolutionId = next.lines.find((line) => line.id === params.taskId)?.currentResolutionId ?? null;
+    console.log(JSON.stringify({
+      event: '[TRACE-ORDERLINE]',
+      stage: 'associateProductResolutionToTask.result',
+      traceId: params.traceId ?? `${params.conversationId}:${params.turnId ?? 'no-turn'}`,
+      conversationId: params.conversationId,
+      turnId: params.turnId ?? null,
+      toolCallId: params.toolCallId ?? null,
+      taskId: params.taskId,
+      resolutionId: params.resolutionId,
+      previousCurrentResolutionId,
+      newCurrentResolutionId,
+      success: true,
+      reason: null,
+    }));
     return {
       metadata: { ...metadata, pendingOrderLines: next },
       result: { ok: true, pending: next },
@@ -740,23 +866,30 @@ export const advanceAfterLineClose = async (params: {
   return result.pending;
 };
 
-/** El cliente confirma que sigue con la cola: activa la próxima `queued`. */
+export type ActivateNextOrderLineResult =
+  | { outcome: 'activated'; pending: PendingOrderLines; activatedLine: OrderLine }
+  | { outcome: 'already_active'; pending: PendingOrderLines; activeLine: OrderLine }
+  | { outcome: 'no_queued_lines'; pending: PendingOrderLines | null };
+
+/**
+ * El cliente confirma que sigue con la cola: activa la próxima `queued`.
+ * `activated` es el único resultado con transición QUEUED → ACTIVE persistida.
+ */
 export const activateNextOrderLine = async (
   conversationId: string,
   metadata: unknown
-): Promise<PendingOrderLines | null> => {
+): Promise<ActivateNextOrderLineResult> => {
   const pending = getPendingOrderLines(metadata);
-  if (!pending) return null;
-  const alreadyActive = pending.lines.some((l) => l.status === 'active');
-  if (alreadyActive) return pending;
+  if (!pending) return { outcome: 'no_queued_lines', pending: null };
+  const activeLine = pending.lines.find((l) => l.status === 'active');
+  if (activeLine) return { outcome: 'already_active', pending, activeLine };
   const nextQueuedIdx = pending.lines.findIndex((l) => l.status === 'queued');
-  if (nextQueuedIdx === -1) return pending;
-  const nextLines = pending.lines.map((l, idx) =>
-    idx === nextQueuedIdx ? { ...l, status: 'active' as const } : l
-  );
+  if (nextQueuedIdx === -1) return { outcome: 'no_queued_lines', pending };
+  const activatedLine: OrderLine = { ...pending.lines[nextQueuedIdx], status: 'active' };
+  const nextLines = pending.lines.map((l, idx) => (idx === nextQueuedIdx ? activatedLine : l));
   const next: PendingOrderLines = { ...pending, lines: nextLines };
   await patchConversationMetadata(conversationId, { pendingOrderLines: next });
-  return next;
+  return { outcome: 'activated', pending: next, activatedLine };
 };
 
 /** Cancela una línea puntual por id o por hint (match laxo, primera coincidencia). */
@@ -830,6 +963,31 @@ export const buildOrderLinesContinueOrCancelHint = (
   };
 };
 
+/**
+ * Identificadores para add_cart_item de una Task que ya tiene ProductResolution
+ * vigente y propia, y cantidad conocida. Solo expone lo persistido en la Task:
+ * sin inferencia por nombre, posición ni última resolución.
+ */
+const getFulfillmentReadyOrderLine = (
+  line: OrderLine,
+  metadata: unknown
+): { productId: string; resolutionId: string; quantity: number } | null => {
+  if (line.requestedQuantity == null || !line.currentResolutionId) return null;
+  const current = getCurrentProductResolutionForTask({ task: line, metadata });
+  if (!current.ok || typeof current.resolution.productId !== 'string') return null;
+  const ownership = validateTaskResolutionOwnership({
+    metadata,
+    taskId: line.id,
+    resolutionId: line.currentResolutionId,
+  });
+  if (!ownership.ok) return null;
+  return {
+    productId: current.resolution.productId,
+    resolutionId: line.currentResolutionId,
+    quantity: line.requestedQuantity,
+  };
+};
+
 /** Ledger para el híbrido (misma filosofía que pendingAddQuantity / pendingItemNote). */
 export const buildPendingOrderLinesContextLines = (
   metadata: unknown,
@@ -838,7 +996,9 @@ export const buildPendingOrderLinesContextLines = (
   const pending = getPendingOrderLines(metadata);
   if (!pending) return [];
   const quantityTarget = getNextOrderLineRequiringQuantity(pending);
-  const active = getActiveOrderLine(pending);
+  // Solo una línea ACTIVE es trabajo actual: una QUEUED se activa con
+  // continue_order_line(), no se presenta como activa en el contexto.
+  const active = pending.lines.find((l) => l.status === 'active') ?? null;
   const queued = pending.lines.filter(
     (l) => l.status === 'queued' && l.id !== active?.id
   );
@@ -861,6 +1021,37 @@ export const buildPendingOrderLinesContextLines = (
         `El Goal de cantidad determina el target: ${quantityTarget.id} (${quantityTarget.hint}). ` +
         'En este turno resolvé SOLO la cantidad que responde al Goal; no busques ni agregues líneas ' +
         'hasta que el Goal deje de estar abierto.',
+    ];
+  }
+
+  if (!active && queuedLabels.length > 0) {
+    return [
+      `- Cola de pedido: no hay una línea activa actualmente. Existe una línea pendiente en la cola: ` +
+        `${queuedLabels.join(', ')}. ` +
+        `Continuá con la siguiente línea usando continue_order_line() cuando el cliente confirme que sigue ` +
+        `("seguí", "dale", "sí"); la tool decide cuál activar. NO busques ni resuelvas productos de la cola ` +
+        `(search_products / resolve_product) antes de que continue_order_line() la active. ` +
+        `"cancelá el resto"/"nada más" → clear_pending_order_lines(). ` +
+        `PROHIBIDO ofrecer complementos (present_complement_suggestions) o abrir COMPLETAR_PEDIDO mientras esta cola siga abierta.`,
+    ];
+  }
+
+  const fulfillmentReady = active ? getFulfillmentReadyOrderLine(active, metadata) : null;
+  if (active && fulfillmentReady) {
+    return [
+      `- Cola de pedido: la línea activa *${active.hint}* ya tiene producto resuelto y cantidad confirmada ` +
+        `[orderLineId: ${active.id}, productId: ${fulfillmentReady.productId}, ` +
+        `resolutionId: ${fulfillmentReady.resolutionId}, quantity: ${fulfillmentReady.quantity}]` +
+        (queuedLabels.length > 0 ? `. Después faltan: ${queuedLabels.join(', ')}.` : '.') +
+        ` NO vuelvas a buscar ni listar este producto. Si el cliente confirma el agregado, llamá ` +
+        `add_cart_item(productId="${fulfillmentReady.productId}", resolutionId="${fulfillmentReady.resolutionId}", ` +
+        `orderLineId="${active.id}", quantity=${fulfillmentReady.quantity}) con esos identificadores exactos ` +
+        `(variación si el producto la requiere). ` +
+        `Al cerrar la línea (add exitoso o el cliente cancela esa línea), el sistema avanza la cola solo; ` +
+        `en tu último mensaje del turno ofrecé seguir con la próxima o cancelar el resto ` +
+        `(NO preguntes "¿algo más?" genérico, nombrá el hint siguiente). ` +
+        `"seguí"/"dale con..." → continuá con esa línea; "cancelá el resto"/"nada más" → clear_pending_order_lines(). ` +
+        `PROHIBIDO ofrecer complementos (present_complement_suggestions) o abrir COMPLETAR_PEDIDO mientras esta cola siga abierta.`,
     ];
   }
 

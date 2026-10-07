@@ -545,6 +545,10 @@ const resolveProductSchema = z.object({
 });
 type ResolveProductInput = z.infer<typeof resolveProductSchema>;
 
+const TASK_NOT_ACTIVE_INSTRUCTION =
+  'Esta línea del pedido todavía no está activa: no la resuelvas ni la agregues en este turno. ' +
+  'Se activa con continue_order_line() cuando el cliente confirme que sigue.';
+
 export const resolveProductTool = new DynamicStructuredTool<
   typeof resolveProductSchema,
   ResolveProductInput
@@ -559,19 +563,50 @@ export const resolveProductTool = new DynamicStructuredTool<
   schema: resolveProductSchema,
   func: async ({ productId, resolutionId, orderLineId }: ResolveProductInput, _runManager, config?: RunnableConfig) => {
     const { businessId, conversationId, turnId, orderLineId: configuredOrderLineId } = getReactContext(config);
+    const traceConfig = (config?.configurable as {
+      traceId?: unknown;
+      toolCallId?: unknown;
+    } | undefined);
+    const traceId = typeof traceConfig?.traceId === 'string'
+      ? traceConfig.traceId
+      : `${conversationId}:${turnId ?? 'no-turn'}`;
+    const toolCallId = typeof traceConfig?.toolCallId === 'string' ? traceConfig.toolCallId : null;
     const explicitOrderLineId = typeof orderLineId === 'string' ? orderLineId.trim() : (typeof configuredOrderLineId === 'string' ? configuredOrderLineId.trim() : '');
     const state = await findOrCreateConversationState(conversationId);
     const pending = getPendingOrderLines(state.metadata);
     const taskBound = Boolean(explicitOrderLineId) || Boolean(
       pending?.lines.some((line) => line.status === 'active' || line.status === 'queued')
     );
+
+    console.log(JSON.stringify({
+      event: '[TRACE-ORDERLINE]',
+      stage: 'resolve_product.entry',
+      traceId,
+      conversationId,
+      turnId,
+      toolCallId,
+      orderLineIdArg: typeof orderLineId === 'string' ? orderLineId : null,
+      productIdArg: productId,
+      resolutionIdArg: resolutionId,
+      resolvedOrderLineId: explicitOrderLineId || null,
+    }));
+
     if (taskBound && !explicitOrderLineId) {
       return toJson({ success: false, error: 'order_line_id_required' });
     }
-    if (taskBound && !pending?.lines.some(
-      (line) => line.id === explicitOrderLineId && (line.status === 'active' || line.status === 'queued')
-    )) {
+    const targetLine = taskBound
+      ? pending?.lines.find((line) => line.id === explicitOrderLineId)
+      : undefined;
+    if (taskBound && !(targetLine && (targetLine.status === 'active' || targetLine.status === 'queued'))) {
       return toJson({ success: false, error: 'order_line_not_open' });
+    }
+    // Antes de seleccionar (que escribe el ledger): una Task QUEUED no se resuelve.
+    if (taskBound && targetLine?.status !== 'active') {
+      return toJson({
+        success: false,
+        error: 'task_not_active',
+        instruction: TASK_NOT_ACTIVE_INSTRUCTION,
+      });
     }
     const result = await selectProductResolution({
       productId,
@@ -602,13 +637,18 @@ export const resolveProductTool = new DynamicStructuredTool<
         businessId,
         taskId: explicitOrderLineId,
         resolutionId: result.resolution.resolutionId,
+        turnId,
+        toolCallId: toolCallId ?? undefined,
+        traceId,
       });
       if (!association.ok) {
         return toJson({
           success: false,
           error: 'task_resolution_association_rejected',
           reason: association.reason,
-          instruction: 'No agregues el producto. Resolvé una ProductResolution nueva para esta línea del pedido.',
+          instruction: association.reason === 'task_not_active'
+            ? TASK_NOT_ACTIVE_INSTRUCTION
+            : 'No agregues el producto. Resolvé una ProductResolution nueva para esta línea del pedido.',
         });
       }
     } else if (taskBound) {
@@ -3535,6 +3575,20 @@ export const setOrderLineQuantityTool = new DynamicStructuredTool<
   schema: setOrderLineQuantitySchema,
   func: async ({ orderLineId, quantity }: SetOrderLineQuantityInput, _runManager, config?: RunnableConfig) => {
     const { conversationId, userMessage } = getReactContext(config);
+    const traceConfig = (config?.configurable as {
+      traceId?: unknown;
+      toolCallId?: unknown;
+      goalFulfillmentCandidate?: {
+        goalType?: unknown;
+        target?: { orderLineId?: unknown };
+      };
+      turnId?: unknown;
+    } | undefined);
+    const turnId = typeof traceConfig?.turnId === 'string' ? traceConfig.turnId : null;
+    const traceId = typeof traceConfig?.traceId === 'string'
+      ? traceConfig.traceId
+      : `${conversationId ?? 'no-conversation'}:${turnId ?? 'no-turn'}`;
+    const toolCallId = typeof traceConfig?.toolCallId === 'string' ? traceConfig.toolCallId : null;
     if (!conversationId) return toJson({ success: false, error: 'no_conversation' });
     const activeBlockingGoal = (config?.configurable as { activeBlockingGoal?: unknown } | undefined)
       ?.activeBlockingGoal;
@@ -3554,6 +3608,25 @@ export const setOrderLineQuantityTool = new DynamicStructuredTool<
       });
     }
     const confirmedQuantity = bareReply ?? quantity;
+    const goalTargetOrderLineId =
+      traceConfig?.goalFulfillmentCandidate?.goalType === 'OBTENER_CANTIDAD_DEL_PRODUCTO' &&
+      typeof traceConfig.goalFulfillmentCandidate.target?.orderLineId === 'string'
+        ? traceConfig.goalFulfillmentCandidate.target.orderLineId
+        : null;
+    console.log(JSON.stringify({
+      event: '[TRACE-ORDERLINE]',
+      stage: 'set_order_line_quantity.entry',
+      traceId,
+      conversationId,
+      turnId,
+      toolCallId,
+      requestedOrderLineId: orderLineId,
+      requestedQuantity: quantity,
+      confirmedQuantity,
+      userMessage: userMessage ?? null,
+      goalTargetOrderLineId,
+      effectiveOrderLineId: orderLineId,
+    }));
     const state = await findOrCreateConversationState(conversationId);
     const pending = getPendingOrderLines(state.metadata);
     const line = pending?.lines.find(
@@ -4193,7 +4266,8 @@ export const continueOrderLineTool = new DynamicStructuredTool<
     'Actívala (el sistema decide cuál es) y devuelve su hint/cantidad. ' +
     'Si el hint nombra un plato, llamá search_products(keyword=hint entero) en este mismo turno; ' +
     'si es sección/rol ("algo de beber"), get_categories + present_category o find_products_by_filter(categoryTag). ' +
-    'Si no hay cola o ya hay una línea activa, no hace nada.',
+    'Si ya hay una línea activa no activa nada y devuelve error order_line_still_active; ' +
+    'si no hay cola devuelve no_pending_order_lines.',
   schema: continueOrderLineSchema,
   func: async (
     _input: ContinueOrderLineInput,
@@ -4205,11 +4279,22 @@ export const continueOrderLineTool = new DynamicStructuredTool<
       return toJson({ success: false, error: 'no_conversation' });
     }
     const state = await findOrCreateConversationState(conversationId);
-    const pending = await activateNextOrderLine(conversationId, state.metadata);
-    const active = getActiveOrderLine(pending);
-    if (!active) {
+    const activation = await activateNextOrderLine(conversationId, state.metadata);
+    if (activation.outcome === 'already_active') {
+      // Sin transición: la línea ACTIVE se cierra con add_cart_item o cancel_order_line.
+      return toJson({
+        success: false,
+        error: 'order_line_still_active',
+        activeLine: { hint: activation.activeLine.hint, requestedQuantity: activation.activeLine.requestedQuantity },
+        instruction:
+          'No se activó ninguna línea: la línea activa sigue abierta. Cerrala (add_cart_item o cancel_order_line) ' +
+          'y ofrecé seguir con la próxima; no busques ni resuelvas productos de la cola en este turno.',
+      });
+    }
+    if (activation.outcome === 'no_queued_lines') {
       return toJson({ success: false, error: 'no_pending_order_lines' });
     }
+    const active = activation.activatedLine;
     return toJson({
       success: true,
       effect: { kind: 'order_plan_advanced' },

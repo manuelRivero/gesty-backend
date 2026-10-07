@@ -81,7 +81,13 @@ export type GoalFulfillmentContract = {
   completionPredicate: (facts: Readonly<Record<string, unknown>>) => boolean;
 };
 
-export type GoalFulfillmentCandidate = { goalType: IntentType };
+export type GoalFulfillmentCandidate = {
+  goalType: IntentType;
+  target?: {
+    orderLineId: string;
+    hint?: string;
+  };
+};
 
 const hasValidPartySizeFact = (facts: Readonly<Record<string, unknown>>): boolean =>
   isValidPartySize(facts.partySize);

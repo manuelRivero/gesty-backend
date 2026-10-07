@@ -55,6 +55,7 @@ vi.mock('../../lib/prisma', () => ({
 }));
 
 import { ToolPlanner } from '../toolPlanner';
+import { findDeclaredProducer, PRODUCT_CANDIDATE, PRODUCT_RESOLUTION } from '../toolContracts';
 import {
   HUMAN_INTENT_STATE_STALE,
   HUMAN_INTENT_TOOL_DENIED,
@@ -153,12 +154,13 @@ const makeResolveProductTool = (effect: () => unknown, success = true) =>
     },
   });
 
-const config = (revision = 7) => ({
+const config = (revision = 7, configurableOverrides: Record<string, unknown> = {}) => ({
   configurable: {
     conversationId: 'conv-1',
     customerPhone: '+5491100000000',
     businessId: 'biz-1',
     humanIntentGateRevision: revision,
+    ...configurableOverrides,
   },
 });
 
@@ -182,6 +184,47 @@ describe('HumanIntentToolNode', () => {
     conversationStateFindUniqueMock.mockResolvedValue({ metadata: { peopleCount: 2 } });
     itemFindFirstMock.mockResolvedValue({ name: 'Ceviche Clásico' });
     categoryFindFirstMock.mockResolvedValue({ name: 'Postres' });
+  });
+
+  it('rechaza un target quantity cruzado y termina el ciclo sin ejecutar otras tools', async () => {
+    const quantityEffect = vi.fn();
+    const addEffect = vi.fn();
+    const resolveEffect = vi.fn();
+    const node = new HumanIntentToolNode([
+      makeTool('set_order_line_quantity', quantityEffect),
+      makeAddCartItemTool(addEffect),
+      makeResolveProductTool(resolveEffect),
+    ]);
+    const result = await node.invoke({
+      messages: [toolCalls([
+        { id: 'quantity-a', name: 'set_order_line_quantity', args: { orderLineId: 'line-a', quantity: 2 } },
+        { id: 'add-crossed', name: 'add_cart_item', args: { productId: PRODUCT_ID, orderLineId: 'line-a' } },
+        { id: 'resolve-crossed', name: 'resolve_product', args: { productId: PRODUCT_ID, resolutionId: 'R' } },
+      ])],
+    }, config(7, {
+      activeBlockingGoal: 'OBTENER_CANTIDAD_DEL_PRODUCTO',
+      goalFulfillmentCandidate: {
+        goalType: 'OBTENER_CANTIDAD_DEL_PRODUCTO',
+        target: { orderLineId: 'line-b', hint: 'papas' },
+      },
+    }));
+
+    const toolMessages = result.messages.filter(ToolMessage.isInstance) as ToolMessage[];
+    expect(toolMessages).toHaveLength(3);
+    expect(JSON.parse(String(toolMessages[0].content))).toMatchObject({
+      success: false,
+      error: 'goal_target_mismatch',
+      expectedOrderLineId: 'line-b',
+      receivedOrderLineId: 'line-a',
+    });
+    expect(toolMessages.map((message) => message.tool_call_id)).toEqual([
+      'quantity-a', 'add-crossed', 'resolve-crossed',
+    ]);
+    expect(quantityEffect).not.toHaveBeenCalled();
+    expect(addEffect).not.toHaveBeenCalled();
+    expect(resolveEffect).not.toHaveBeenCalled();
+    expect(result.messages.at(-1)).toBeInstanceOf(AIMessage);
+    expect(String(result.messages.at(-1)?.content)).toContain('papas');
   });
 
   it('permite ejecutar una tool cuyo target coincide con ACTIVE', async () => {
@@ -888,5 +931,200 @@ describe('HumanIntentToolNode', () => {
     expect(resolveEffect).toHaveBeenCalledOnce();
     expect(addEffect).toHaveBeenCalledOnce();
     expect(resolveProductForAddMock).not.toHaveBeenCalled();
+  });
+  describe('DEFER accionable de add_cart_item Task-bound', () => {
+    const ORDER_LINE_ID = 'line-papas';
+    // Mismo formato largo que emite search_products (pr1:<business>:<conversation>:<uuid>).
+    const RESOLUTION_ID =
+      'pr1:e89dfb88-a409-4818-a01e-37d7d5ba2e11:e7a0c769-faf0-4940-a822-26f1389dc2bc:f07eccea-59e5-4805-863b-93daf538f44c';
+    const taskMetadata = (currentResolutionId: string | null) => ({
+      peopleCount: 3,
+      pendingOrderLines: {
+        lines: [
+          { id: 'line-ceviche', hint: 'ceviche', requestedQuantity: 2, status: 'done', currentResolutionId: 'pr1:biz-1:conv-1:res-ceviche' },
+          { id: ORDER_LINE_ID, hint: 'papas', requestedQuantity: null, status: 'active', currentResolutionId },
+        ],
+        sourceMessage: 'Quiero un ceviche y unas papas',
+        createdAt: '2026-10-07T00:00:00.000Z',
+      },
+      productResolutions: [{
+        resolutionId: RESOLUTION_ID,
+        productId: PRODUCT_ID,
+        businessId: 'biz-1',
+        conversationId: 'conv-1',
+        source: 'search_products',
+        status: 'candidate',
+        scope: 'conversation',
+        createdAt: '2026-10-07T00:00:00.000Z',
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }],
+    });
+    const invokeAdd = async (args: Record<string, unknown>) => {
+      const effect = vi.fn();
+      const node = new HumanIntentToolNode([makeAddCartItemTool(effect)]);
+      const result = await node.invoke(
+        { messages: [toolCalls([{ id: 'add-papas', name: 'add_cart_item', args }])] },
+        config()
+      );
+      const message = result.messages[0] as ToolMessage;
+      return { effect, message, payload: JSON.parse(String(message.content)) as Record<string, unknown> };
+    };
+
+    it('Caso 1 — sin asociación Task–ProductResolution difiere y señala resolve_product con los IDs de la call', async () => {
+      conversationStateFindUniqueMock.mockResolvedValue({ metadata: taskMetadata(null) });
+
+      const { payload, message } = await invokeAdd({
+        orderLineId: ORDER_LINE_ID,
+        productId: PRODUCT_ID,
+        resolutionId: RESOLUTION_ID,
+      });
+
+      expect(message.tool_call_id).toBe('add-papas');
+      expect(payload).toMatchObject({
+        success: false,
+        error: 'product_resolution_required',
+        reason: 'task_resolution_mismatch',
+        missingRequirements: ['TASK_RESOLUTION_PAIR'],
+        nextRequiredTool: 'resolve_product',
+        nextRequiredToolArgs: { orderLineId: ORDER_LINE_ID, productId: PRODUCT_ID, resolutionId: RESOLUTION_ID },
+      });
+      expect(payload.instruction).toMatch(/resolve_product/);
+    });
+
+    it('Caso 2A — Task sin resolución: conserva el resolutionId largo con igualdad exacta', async () => {
+      conversationStateFindUniqueMock.mockResolvedValue({ metadata: taskMetadata(null) });
+
+      const { payload } = await invokeAdd({
+        orderLineId: ORDER_LINE_ID,
+        productId: PRODUCT_ID,
+        resolutionId: RESOLUTION_ID,
+      });
+      const args = payload.nextRequiredToolArgs as Record<string, string>;
+
+      expect(payload.reason).toBe('task_resolution_mismatch');
+      expect(payload.nextRequiredTool).toBe('resolve_product');
+      expect(args.resolutionId === RESOLUTION_ID).toBe(true);
+      expect(args.resolutionId.length).toBe(RESOLUTION_ID.length);
+      expect(args.orderLineId === ORDER_LINE_ID).toBe(true);
+      expect(args.productId === PRODUCT_ID).toBe(true);
+    });
+
+    it('Caso 2B — Task con otra resolución: fail closed, sin nextRequiredTool ni mutaciones', async () => {
+      const EXISTING_RESOLUTION_ID = 'pr1:biz-1:conv-1:res-existente';
+      const metadata = taskMetadata(EXISTING_RESOLUTION_ID);
+      const before = structuredClone(metadata);
+      conversationStateFindUniqueMock.mockResolvedValue({ metadata });
+      const resolveEffect = vi.fn();
+      const addEffect = vi.fn();
+      const node = new HumanIntentToolNode([
+        makeAddCartItemTool(addEffect),
+        makeResolveProductTool(resolveEffect),
+      ]);
+
+      const result = await node.invoke(
+        { messages: [toolCalls([{
+          id: 'add-papas',
+          name: 'add_cart_item',
+          args: { orderLineId: ORDER_LINE_ID, productId: PRODUCT_ID, resolutionId: RESOLUTION_ID },
+        }])] },
+        config()
+      );
+      const payload = JSON.parse(String((result.messages[0] as ToolMessage).content)) as Record<string, unknown>;
+
+      expect(payload).toMatchObject({
+        success: false,
+        error: 'product_resolution_required',
+        reason: 'task_resolution_mismatch',
+        missingRequirements: ['TASK_RESOLUTION_PAIR'],
+      });
+      expect(payload.nextRequiredTool).toBeUndefined();
+      expect(payload.nextRequiredToolArgs).toBeUndefined();
+      expect(JSON.stringify(payload)).not.toContain('resolve_product');
+      expect(resolveEffect).not.toHaveBeenCalled();
+      expect(addEffect).not.toHaveBeenCalled();
+      expect(patchConversationMetadataMock).not.toHaveBeenCalled();
+      expect(metadata).toEqual(before);
+      expect(metadata.pendingOrderLines.lines[1].currentResolutionId).toBe(EXISTING_RESOLUTION_ID);
+    });
+
+    it('Caso 2C — Task QUEUED sin resolución: fail closed, sin nextRequiredTool', async () => {
+      const metadata = taskMetadata(null);
+      metadata.pendingOrderLines.lines[1].status = 'queued';
+      conversationStateFindUniqueMock.mockResolvedValue({ metadata });
+
+      const { payload } = await invokeAdd({
+        orderLineId: ORDER_LINE_ID,
+        productId: PRODUCT_ID,
+        resolutionId: RESOLUTION_ID,
+      });
+
+      expect(payload.reason).toBe('task_resolution_mismatch');
+      expect(payload.nextRequiredTool).toBeUndefined();
+      expect(payload.nextRequiredToolArgs).toBeUndefined();
+      expect(JSON.stringify(payload)).not.toContain('resolve_product');
+    });
+
+    it('Caso 3 — el DEFER no muta estado: sin add, sin consumo, sin asociación, Task y cantidad intactas', async () => {
+      const metadata = taskMetadata(null);
+      const before = structuredClone(metadata);
+      conversationStateFindUniqueMock.mockResolvedValue({ metadata });
+
+      const { effect, payload } = await invokeAdd({
+        orderLineId: ORDER_LINE_ID,
+        productId: PRODUCT_ID,
+        resolutionId: RESOLUTION_ID,
+      });
+
+      expect(payload.nextRequiredTool).toBe('resolve_product');
+      expect(effect).not.toHaveBeenCalled();
+      expect(patchConversationMetadataMock).not.toHaveBeenCalled();
+      expect(resolveProductForAddMock).not.toHaveBeenCalled();
+      expect(reconcileAfterToolMock).not.toHaveBeenCalled();
+      expect(metadata).toEqual(before);
+    });
+
+    it('Caso 4 — fuera del flujo Task-bound el DEFER conserva su shape previo', async () => {
+      conversationStateFindUniqueMock.mockResolvedValue({ metadata: { peopleCount: 2 } });
+
+      const { payload } = await invokeAdd({ productId: PRODUCT_ID, resolutionId: RESOLUTION_ID });
+
+      expect(payload).toEqual({
+        success: false,
+        error: 'product_resolution_required',
+        reason: 'resolution_missing',
+        missingRequirements: ['PRODUCT_RESOLVED'],
+        message: 'El producto todavía no tiene una resolución vigente.',
+        instruction: 'Esperá a que se satisfagan los requisitos del flujo antes de ejecutar esta tool.',
+      });
+    });
+
+    it('Caso 4b — otras fallas Task-bound no señalan resolve_product', async () => {
+      const metadata = taskMetadata(null);
+      (metadata.pendingOrderLines.lines[0] as { currentResolutionId: string | null }).currentResolutionId = RESOLUTION_ID;
+      conversationStateFindUniqueMock.mockResolvedValue({ metadata: { ...metadata, pendingOrderLines: {
+        ...metadata.pendingOrderLines,
+        lines: [
+          { ...metadata.pendingOrderLines.lines[0], status: 'active' },
+          { ...metadata.pendingOrderLines.lines[1], currentResolutionId: RESOLUTION_ID },
+        ],
+      } } });
+
+      const { payload } = await invokeAdd({
+        orderLineId: ORDER_LINE_ID,
+        productId: PRODUCT_ID,
+        resolutionId: RESOLUTION_ID,
+      });
+
+      expect(payload.reason).toBe('resolution_already_owned');
+      expect(payload.nextRequiredTool).toBeUndefined();
+      expect(payload.nextRequiredToolArgs).toBeUndefined();
+    });
+  });
+
+  it('findDeclaredProducer deriva el productor del contrato', () => {
+    expect(findDeclaredProducer('add_cart_item', PRODUCT_RESOLUTION)).toBe('resolve_product');
+    expect(findDeclaredProducer('resolve_product', PRODUCT_RESOLUTION)).toBeNull();
+    expect(findDeclaredProducer('add_cart_item', PRODUCT_CANDIDATE)).toBeNull();
+    expect(findDeclaredProducer('resolve_product', PRODUCT_CANDIDATE)).toBe('search_products');
   });
 });

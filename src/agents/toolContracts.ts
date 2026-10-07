@@ -59,6 +59,25 @@ export const DEFAULT_TOOL_CONTRACTS: ToolContract[] = [
   },
 ];
 
+/**
+ * Tool que el contrato declara como productora de una capability que `consumer`
+ * requiere. Null si `consumer` no la requiere o nadie la produce.
+ */
+export const findDeclaredProducer = (
+  consumer: string,
+  capabilityType: ToolRequirementType,
+  contracts: ToolContract[] = DEFAULT_TOOL_CONTRACTS
+): string | null => {
+  const consumerContract = contracts.find((contract) => contract.name === consumer);
+  if (!consumerContract?.requires?.some((requirement) => requirement.type === capabilityType)) {
+    return null;
+  }
+  return contracts.find((contract) =>
+    contract.name !== consumer &&
+    contract.produces?.some((capability) => capability.type === capabilityType)
+  )?.name ?? null;
+};
+
 export const scopeMatches = (left?: ToolScope, right?: ToolScope): boolean => {
   const entries = new Set<string>([
     ...Object.keys(left ?? {}),

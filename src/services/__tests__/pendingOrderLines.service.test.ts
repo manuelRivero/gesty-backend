@@ -131,7 +131,7 @@ describe('pendingOrderLines.service', () => {
     }).ok).toBe(true);
   });
 
-  it('rechaza asociar la misma resolución a otra task abierta', async () => {
+  it('rechaza asociar a una task ACTIVE una resolución que ya pertenece a otra task', async () => {
     const resolution = {
       resolutionId: 'pr1:biz-1:conv-1:shared',
       productId: 'prod-1',
@@ -143,8 +143,8 @@ describe('pendingOrderLines.service', () => {
     conversationMetadata.value = {
       pendingOrderLines: basePending({
         lines: [
-          { id: 'task-a', hint: 'ceviche', requestedQuantity: 2, status: 'active', currentResolutionId: resolution.resolutionId },
-          { id: 'task-b', hint: 'ceviche', requestedQuantity: 1, status: 'queued', currentResolutionId: null },
+          { id: 'task-a', hint: 'ceviche', requestedQuantity: 2, status: 'done', currentResolutionId: resolution.resolutionId },
+          { id: 'task-b', hint: 'ceviche', requestedQuantity: 1, status: 'active', currentResolutionId: null },
         ],
       }),
       productResolutions: [resolution],
@@ -162,6 +162,54 @@ describe('pendingOrderLines.service', () => {
       { id: 'task-a', currentResolutionId: resolution.resolutionId },
       { id: 'task-b', currentResolutionId: null },
     ]);
+  });
+
+  it('associateProductResolutionToTask rechaza una Task QUEUED con task_not_active y sin mutación', async () => {
+    const resolution = {
+      resolutionId: 'pr1:biz-1:conv-1:queued',
+      productId: 'prod-1',
+      businessId: 'biz-1',
+      conversationId: 'conv-1',
+      status: 'selected',
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    };
+    conversationMetadata.value = {
+      pendingOrderLines: basePending({
+        lines: [
+          { id: 'task-a', hint: 'ceviche', requestedQuantity: 2, status: 'active', currentResolutionId: null },
+          { id: 'task-b', hint: 'papas', requestedQuantity: null, status: 'queued', currentResolutionId: null },
+        ],
+      }),
+      productResolutions: [resolution],
+    };
+    const before = structuredClone(conversationMetadata.value);
+
+    const result = await associateProductResolutionToTask({
+      conversationId: 'conv-1',
+      businessId: 'biz-1',
+      taskId: 'task-b',
+      resolutionId: resolution.resolutionId,
+    });
+
+    expect(result).toEqual({ ok: false, reason: 'task_not_active' });
+    expect(conversationMetadata.value).toEqual(before);
+  });
+
+  it('associateProductResolutionToTask: una Task cerrada sigue siendo task_not_open', async () => {
+    conversationMetadata.value = {
+      pendingOrderLines: basePending({
+        lines: [{ id: 'task-a', hint: 'ceviche', requestedQuantity: 2, status: 'done', currentResolutionId: null }],
+      }),
+    };
+
+    const result = await associateProductResolutionToTask({
+      conversationId: 'conv-1',
+      businessId: 'biz-1',
+      taskId: 'task-a',
+      resolutionId: 'pr1:biz-1:conv-1:any',
+    });
+
+    expect(result).toEqual({ ok: false, reason: 'task_not_open' });
   });
 
   it('permite renovar solo la resolución inválida de la misma Task', async () => {
@@ -504,12 +552,17 @@ describe('pendingOrderLines.service', () => {
       ],
     });
     const next = await activateNextOrderLine('conv-1', { pendingOrderLines: noActive });
-    expect(next?.lines.find((l) => l.id === 'l2')?.status).toBe('active');
+    expect(next.outcome).toBe('activated');
+    expect(next.pending?.lines.find((l) => l.id === 'l2')?.status).toBe('active');
+    expect(next.outcome === 'activated' && next.activatedLine.id).toBe('l2');
 
     patchConversationMetadata.mockClear();
     const alreadyActive = basePending();
     const unchanged = await activateNextOrderLine('conv-1', { pendingOrderLines: alreadyActive });
-    expect(unchanged).toEqual(alreadyActive);
+    expect(unchanged).toEqual({ outcome: 'already_active', pending: alreadyActive, activeLine: alreadyActive.lines[0] });
+    expect(patchConversationMetadata).not.toHaveBeenCalled();
+
+    expect(await activateNextOrderLine('conv-1', {})).toEqual({ outcome: 'no_queued_lines', pending: null });
     expect(patchConversationMetadata).not.toHaveBeenCalled();
   });
 
@@ -606,7 +659,7 @@ describe('pendingOrderLines.service', () => {
     expect(text).toMatch(/PROHIBIDO ofrecer complementos/);
   });
 
-  it('después de cerrar A, la siguiente derivación señala B como trabajo activo', () => {
+  it('después de cerrar A, B queda pendiente y el contexto indica continue_order_line', () => {
     const lines = buildPendingOrderLinesContextLines({
       pendingOrderLines: basePending({
         lines: [
@@ -616,8 +669,72 @@ describe('pendingOrderLines.service', () => {
       }),
     });
 
-    expect(lines.join('\n')).toContain('línea activa ahora → *B* (2×) [orderLineId: l2]');
-    expect(lines.join('\n')).not.toContain('línea activa ahora → *A*');
+    const text = lines.join('\n');
+    expect(text).toContain('no hay una línea activa actualmente');
+    expect(text).toContain('*B* (2×) [orderLineId: l2]');
+    expect(text).toContain('continue_order_line()');
+    expect(text).not.toContain('línea activa ahora');
+    expect(text).not.toMatch(/search_products\(keyword=/);
+    expect(text).not.toContain('*A*');
+  });
+
+  describe('buildPendingOrderLinesContextLines con línea lista para fulfillment', () => {
+    const resolution = (over: Record<string, unknown> = {}) => ({
+      resolutionId: 'pr1:biz-1:conv-1:res-1',
+      productId: 'prod-ceviche',
+      businessId: 'biz-1',
+      conversationId: 'conv-1',
+      source: 'search_products',
+      status: 'selected',
+      scope: 'pending',
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      ...over,
+    });
+    const readyPending = (over: Partial<PendingOrderLines['lines'][number]> = {}) => basePending({
+      lines: [
+        { id: 'l1', hint: 'ceviche', requestedQuantity: 2, status: 'active', currentResolutionId: 'pr1:biz-1:conv-1:res-1', ...over },
+        { id: 'l2', hint: 'papas', requestedQuantity: null, status: 'queued', currentResolutionId: null },
+      ],
+    });
+
+    it('expone orderLineId, productId, resolutionId y cantidad persistida sin instrucción de búsqueda', () => {
+      const text = buildPendingOrderLinesContextLines({
+        pendingOrderLines: readyPending(),
+        productResolutions: [resolution()],
+      }).join('\n');
+
+      expect(text).toContain('orderLineId: l1');
+      expect(text).toContain('productId: prod-ceviche');
+      expect(text).toContain('resolutionId: pr1:biz-1:conv-1:res-1');
+      expect(text).toContain('quantity: 2');
+      expect(text).toContain('add_cart_item(productId="prod-ceviche", resolutionId="pr1:biz-1:conv-1:res-1", orderLineId="l1", quantity=2)');
+      expect(text).toContain('*papas* [orderLineId: l2]');
+      expect(text).not.toMatch(/search_products\(keyword=/);
+    });
+
+    it.each([
+      ['sin cantidad conocida', { pendingOrderLines: readyPending({ requestedQuantity: null }), productResolutions: [resolution()] }],
+      ['sin ProductResolution en el ledger', { pendingOrderLines: readyPending(), productResolutions: [] }],
+      ['ProductResolution consumida', { pendingOrderLines: readyPending(), productResolutions: [resolution({ status: 'consumed' })] }],
+      ['ProductResolution vencida', { pendingOrderLines: readyPending(), productResolutions: [resolution({ expiresAt: new Date(Date.now() - 1_000).toISOString() })] }],
+      [
+        'ProductResolution también asociada a otra Task',
+        {
+          pendingOrderLines: basePending({
+            lines: [
+              { id: 'l1', hint: 'ceviche', requestedQuantity: 2, status: 'active', currentResolutionId: 'pr1:biz-1:conv-1:res-1' },
+              { id: 'l2', hint: 'papas', requestedQuantity: null, status: 'queued', currentResolutionId: 'pr1:biz-1:conv-1:res-1' },
+            ],
+          }),
+          productResolutions: [resolution()],
+        },
+      ],
+    ])('mantiene la instrucción de búsqueda %s', (_label, metadata) => {
+      const text = buildPendingOrderLinesContextLines(metadata).join('\n');
+      expect(text).toMatch(/search_products\(keyword="ceviche"\)/);
+      expect(text).not.toContain('productId: prod-ceviche');
+    });
   });
 
   it('buildPendingOrderLinesContextLines vacío sin cola', () => {

@@ -16,6 +16,9 @@ import {
 } from '../services/partySizeGoal.service';
 import {
   DEFAULT_TOOL_CONTRACTS,
+  findDeclaredProducer,
+  PRODUCT_RESOLUTION,
+  type ToolRequirementType,
 } from './toolContracts';
 import { ToolExecutor } from './toolExecutor';
 import { planToolCalls } from './toolPlanner';
@@ -305,11 +308,78 @@ const deferredProductAdd = (call: ToolCall): ToolMessage =>
     }),
   });
 
+// Fallas del RequirementEvaluator que pueden significar "la capability declarada
+// en el contrato todavía no fue producida para esta Task". task_resolution_mismatch
+// solo es recuperable si la Task todavía no tiene resolución (ver
+// taskAwaitsResolution); con otra resolución asociada es fail closed.
+const UNMET_CAPABILITY_BY_DEFER_REASON: Record<string, ToolRequirementType> = {
+  task_resolution_mismatch: PRODUCT_RESOLUTION,
+};
+
+const TASK_RESOLUTION_ARG_KEYS = ['orderLineId', 'productId', 'resolutionId'] as const;
+
+/**
+ * La Task nombrada por el orderLineId exacto de la call existe, está ACTIVE y no
+ * tiene resolución asociada (una QUEUED no puede recibir ProductResolution). Una Task con resolución A no se recupera asociándole B:
+ * resolve_product la rechaza (task_already_associated).
+ */
+const taskAwaitsResolution = async (conversationId: string, call: ToolCall): Promise<boolean> => {
+  const orderLineId = (call.args as Record<string, unknown> | undefined)?.orderLineId;
+  if (typeof orderLineId !== 'string') return false;
+  const metadata = (await prisma.conversation_state.findUnique({
+    where: { conversation_id: conversationId },
+    select: { metadata: true },
+  }))?.metadata;
+  const task = getPendingOrderLines(metadata)?.lines.find((line) => line.id === orderLineId);
+  return task != null && task.status === 'active' && task.currentResolutionId == null;
+};
+
+/** Productor declarado + IDs copiados tal cual de la call diferida; nunca reconstruidos. */
+const nextRequiredToolFor = (
+  call: ToolCall,
+  reason: string,
+  recoverable: boolean
+): { tool: string; args: Record<(typeof TASK_RESOLUTION_ARG_KEYS)[number], string> } | null => {
+  if (!recoverable) return null;
+  const capability = UNMET_CAPABILITY_BY_DEFER_REASON[reason];
+  if (!capability) return null;
+  const tool = findDeclaredProducer(call.name, capability);
+  if (!tool) return null;
+  const callArgs = (call.args ?? {}) as Record<string, unknown>;
+  if (!TASK_RESOLUTION_ARG_KEYS.every((key) => typeof callArgs[key] === 'string')) return null;
+  return {
+    tool,
+    args: {
+      orderLineId: callArgs.orderLineId as string,
+      productId: callArgs.productId as string,
+      resolutionId: callArgs.resolutionId as string,
+    },
+  };
+};
+
+/**
+ * Única representación de "este turno necesita input humano": un resultado de
+ * tool fallido que trae la pregunta para el cliente (askMessage) y ningún paso
+ * de tool pendiente (nextRequiredTool). Un DEFER con nextRequiredTool sigue
+ * siendo accionable por el modelo en el mismo turno.
+ */
+export const requiresUserInput = (payload: unknown): payload is { askMessage: string } => {
+  if (typeof payload !== 'object' || payload === null) return false;
+  const data = payload as Record<string, unknown>;
+  return (
+    data.success === false &&
+    typeof data.askMessage === 'string' &&
+    data.askMessage.trim().length > 0 &&
+    data.nextRequiredTool === undefined
+  );
+};
+
 const deferredRequirement = (
   call: ToolCall,
   reason: string,
   missingRequirements: string[] = [],
-  askMessage?: string
+  askMessage?: string,
+  recoverableTask = false
 ): ToolMessage => {
   const normalizedReason = reason === 'quantity_required' || reason === 'order_line_quantity_required' || reason === 'variation_required' || reason === 'party_size_required'
     ? reason
@@ -325,6 +395,7 @@ const deferredRequirement = (
     human_intent_incompatible: 'La operación no corresponde al HumanIntent activo.',
   };
 
+  const nextRequired = nextRequiredToolFor(call, reason, recoverableTask);
   return new ToolMessage({
     name: call.name,
     tool_call_id: call.id ?? '',
@@ -334,14 +405,26 @@ const deferredRequirement = (
       error: normalizedReason,
       reason,
       missingRequirements,
-      message: labels[normalizedReason] ?? 'La operación todavía no está autorizada.',
+      message: nextRequired
+        ? 'La resolución del producto todavía no está asociada a esta línea del pedido.'
+        : labels[normalizedReason] ?? 'La operación todavía no está autorizada.',
       ...(askMessage ? { askMessage } : {}),
-      instruction: normalizedReason === 'order_line_quantity_required'
-        ? 'No agregues el producto. Preguntá cuántas unidades quiere y esperá su respuesta; la cantidad se persiste con set_order_line_quantity.'
-        : 'Esperá a que se satisfagan los requisitos del flujo antes de ejecutar esta tool.',
+      ...(nextRequired
+        ? { nextRequiredTool: nextRequired.tool, nextRequiredToolArgs: nextRequired.args }
+        : {}),
+      instruction: nextRequired
+        ? `No reintentes ${call.name} todavía. Primero llamá ${nextRequired.tool} con exactamente ` +
+          `nextRequiredToolArgs (copiá los valores sin modificarlos); después reintentá ${call.name} ` +
+          'con los mismos identificadores.'
+        : normalizedReason === 'order_line_quantity_required'
+          ? 'No agregues el producto. Preguntá cuántas unidades quiere y esperá su respuesta; la cantidad se persiste con set_order_line_quantity.'
+          : 'Esperá a que se satisfagan los requisitos del flujo antes de ejecutar esta tool.',
     }),
   });
 };
+
+const traceIdFor = (conversationId?: string, turnId?: string): string | null =>
+  conversationId ? `${conversationId}:${turnId ?? 'no-turn'}` : null;
 
 export class HumanIntentToolNode extends PostEffectToolNode {
   protected override async run(input: unknown, config: RunnableConfig) {
@@ -362,13 +445,61 @@ export class HumanIntentToolNode extends PostEffectToolNode {
     const pendingCalls = calls.filter((call) => call.id == null || !completedCallIds.has(call.id));
     if (pendingCalls.length === 0) return super.run(input, config);
 
+    const goalConfig = config.configurable as {
+      activeBlockingGoal?: unknown;
+      goalFulfillmentCandidate?: {
+        goalType?: unknown;
+        target?: { orderLineId?: unknown; hint?: unknown };
+      };
+    } | undefined;
+    const quantityGoalActive =
+      goalConfig?.activeBlockingGoal === 'OBTENER_CANTIDAD_DEL_PRODUCTO' &&
+      goalConfig.goalFulfillmentCandidate?.goalType === 'OBTENER_CANTIDAD_DEL_PRODUCTO';
+    const targetOrderLineId = typeof goalConfig?.goalFulfillmentCandidate?.target?.orderLineId === 'string'
+      ? goalConfig.goalFulfillmentCandidate.target.orderLineId
+      : undefined;
+    const mismatchedQuantityCall = quantityGoalActive
+      ? pendingCalls.find((call) => {
+          if (call.name !== 'set_order_line_quantity') return false;
+          const suppliedId = (call.args as Record<string, unknown>).orderLineId;
+          return typeof suppliedId === 'string' && suppliedId !== targetOrderLineId;
+        })
+      : undefined;
+    const missingQuantityTarget = quantityGoalActive && !targetOrderLineId &&
+      pendingCalls.some((call) => call.name === 'set_order_line_quantity');
+    if (mismatchedQuantityCall || missingQuantityTarget) {
+      const receivedOrderLineId = (mismatchedQuantityCall?.args as Record<string, unknown> | undefined)
+        ?.orderLineId;
+      const reason = mismatchedQuantityCall ? 'goal_target_mismatch' : 'goal_target_missing';
+      const outputs = pendingCalls.map((call) => new ToolMessage({
+        name: call.name,
+        tool_call_id: call.id ?? '',
+        status: 'error',
+        content: JSON.stringify({
+          success: false,
+          error: reason,
+          ...(targetOrderLineId ? { expectedOrderLineId: targetOrderLineId } : {}),
+          ...(call === mismatchedQuantityCall && typeof receivedOrderLineId === 'string'
+            ? { receivedOrderLineId }
+            : {}),
+          instruction: 'No ejecutes otras tools en este turno. Conservá el target explícito del Quantity Goal.',
+        }),
+      }));
+      const hint = typeof goalConfig?.goalFulfillmentCandidate?.target?.hint === 'string'
+        ? goalConfig.goalFulfillmentCandidate.target.hint
+        : 'el producto pendiente';
+      const finalResponse = new AIMessage({
+        content: `No pude registrar la cantidad de ${hint}. La cantidad sigue pendiente; indicá nuevamente cuántas unidades querés.`,
+      });
+      return Array.isArray(input)
+        ? [...outputs, finalResponse]
+        : { messages: [...outputs, finalResponse] };
+    }
+
     const hasSearchResolutionChain =
       pendingCalls.some((call) => PRODUCT_SEARCH_TOOLS.has(call.name)) &&
       pendingCalls.some((call) => call.name === 'resolve_product');
     if (hasSearchResolutionChain) {
-      const plannerPlan = planToolCalls(pendingCalls, {
-        contracts: DEFAULT_TOOL_CONTRACTS,
-      });
       const configurable = config.configurable as
         | {
             businessId?: unknown;
@@ -379,6 +510,17 @@ export class HumanIntentToolNode extends PostEffectToolNode {
             turnStartedAt?: unknown;
           }
         | undefined;
+      const traceConversationId = typeof configurable?.conversationId === 'string' ? configurable.conversationId : undefined;
+      const traceTurnId = typeof configurable?.turnId === 'string' ? configurable.turnId : undefined;
+      const traceId = traceIdFor(traceConversationId, traceTurnId) ?? undefined;
+      const plannerPlan = planToolCalls(pendingCalls, {
+        contracts: DEFAULT_TOOL_CONTRACTS,
+        traceContext: {
+          traceId,
+          conversationId: traceConversationId,
+          turnId: traceTurnId,
+        },
+      });
 
       const businessId = typeof configurable?.businessId === 'string' ? configurable.businessId : undefined;
       const conversationId = typeof configurable?.conversationId === 'string' ? configurable.conversationId : undefined;
@@ -429,6 +571,7 @@ export class HumanIntentToolNode extends PostEffectToolNode {
         businessId,
         conversationId,
         turnId,
+        traceId,
         orderLineId: configuredOrderLineId,
         humanIntent: (await (conversationId ? getHumanIntentState(conversationId).catch(() => null) : null))?.records.find((record) => record.status === 'ACTIVE') ?? null,
         state: conversationId ? await getHumanIntentState(conversationId).catch(() => null) : null,
@@ -653,6 +796,9 @@ export class HumanIntentToolNode extends PostEffectToolNode {
     const expectedRevision = configurable?.humanIntentGateRevision;
     const turnId = configurable?.turnId;
     const turnStartedAt = configurable?.turnStartedAt;
+    const traceConversationId = typeof conversationId === 'string' ? conversationId : undefined;
+    const traceTurnId = typeof turnId === 'string' ? turnId : undefined;
+    const traceId = traceIdFor(traceConversationId, traceTurnId);
     const explicitOrderLineId =
       typeof (call.args as Record<string, unknown>)?.orderLineId === 'string'
         ? String((call.args as Record<string, unknown>).orderLineId).trim() || undefined
@@ -676,9 +822,45 @@ export class HumanIntentToolNode extends PostEffectToolNode {
                 ? { validatedProductResolutionFromExecutionContext: validatedResolutionFromExecutionContext }
                 : {}),
               ...(explicitOrderLineId ? { orderLineId: explicitOrderLineId } : {}),
+              ...(call.id ? { toolCallId: call.id } : {}),
+              ...(traceId ? { traceId } : {}),
             },
           }
         : config;
+    const tracedToolConfig: RunnableConfig = {
+      ...toolConfig,
+      configurable: {
+        ...(toolConfig.configurable as Record<string, unknown> | undefined),
+        ...(call.id ? { toolCallId: call.id } : {}),
+        ...(traceId ? { traceId } : {}),
+      },
+    };
+
+    const modelArgs = (call.args ?? {}) as Record<string, unknown>;
+    const configurableOrderLineId =
+      typeof configurable?.orderLineId === 'string'
+        ? String(configurable.orderLineId).trim() || null
+        : null;
+    const effectiveOrderLineId = explicitOrderLineId ?? null;
+    const source =
+      typeof modelArgs.orderLineId === 'string'
+        ? 'call.args'
+        : configurableOrderLineId
+          ? 'configurable'
+          : 'none';
+    console.log(JSON.stringify({
+      event: '[TRACE-ORDERLINE]',
+      stage: 'HumanIntentToolNode.before_runTool',
+      traceId,
+      conversationId: traceConversationId ?? null,
+      turnId: traceTurnId ?? null,
+      toolCallId: call.id ?? null,
+      toolName: call.name,
+      modelArgs,
+      configurableOrderLineId,
+      effectiveOrderLineId,
+      source,
+    }));
 
     // Handoffs and legacy direct invocations do not carry a preflight revision.
     if (
@@ -686,7 +868,7 @@ export class HumanIntentToolNode extends PostEffectToolNode {
       typeof businessId !== 'string' ||
       typeof expectedRevision !== 'number'
     ) {
-      return super.runTool(call, toolConfig);
+      return super.runTool(call, tracedToolConfig);
     }
 
     let state;
@@ -703,7 +885,7 @@ export class HumanIntentToolNode extends PostEffectToolNode {
     const active = state.records.find((intent) => intent.status === 'ACTIVE');
     const pending = state.records.filter((intent) => intent.status === 'PENDING');
     if (!active) {
-      return super.runTool(call, toolConfig);
+      return super.runTool(call, tracedToolConfig);
     }
 
     if (call.name === 'add_cart_item') {
@@ -770,32 +952,34 @@ export class HumanIntentToolNode extends PostEffectToolNode {
             requirementDecision.missingRequirements,
             requirementDecision.reason === 'order_line_quantity_required'
               ? `¿Cuántas unidades${addProductName ? ` de ${addProductName}` : ''} querés agregar?`
-              : undefined
+              : undefined,
+            requirementDecision.reason in UNMET_CAPABILITY_BY_DEFER_REASON &&
+              await taskAwaitsResolution(conversationId, call)
           );
         }
         if (requirementDecision.type === 'REJECT') {
           return internalToolError(call, requirementDecision.reason);
         }
       }
-      return super.runTool(call, toolConfig);
+      return super.runTool(call, tracedToolConfig);
     }
 
-    if (pending.length === 0) return super.runTool(call, toolConfig);
+    if (pending.length === 0) return super.runTool(call, tracedToolConfig);
 
     try {
       const targets = await toolTargets(call.name, call.args, businessId);
       if (!targets || targets.length === 0) {
-        return super.runTool(call, toolConfig);
+        return super.runTool(call, tracedToolConfig);
       }
 
       const pendingMatch = pending.find((intent) => matchesIntent(intent, targets));
       if (!pendingMatch || matchesIntent(active, targets)) {
-        return super.runTool(call, toolConfig);
+        return super.runTool(call, tracedToolConfig);
       }
       return internalToolError(call, HUMAN_INTENT_TOOL_DENIED, pendingMatch.id);
     } catch {
       // A target that cannot be resolved is not clearly attributable to PENDING.
-      return super.runTool(call, toolConfig);
+      return super.runTool(call, tracedToolConfig);
     }
   }
 }

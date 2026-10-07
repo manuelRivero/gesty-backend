@@ -13,9 +13,11 @@
 
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { BaseCallbackHandler } from '@langchain/core/callbacks/base';
-import { HumanIntentToolNode } from './humanIntentToolNode';
+import { DynamicStructuredTool } from '@langchain/core/tools';
+import { HumanIntentToolNode, requiresUserInput } from './humanIntentToolNode';
 import { AIMessage, HumanMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
 import type { LLMResult } from '@langchain/core/outputs';
+import { z } from 'zod';
 import { getHybridReasonerLlm } from '../config/llm';
 import { buildAgentHistoryMessages } from './conversationHistory';
 import { buildContextMessage } from './contextMessage';
@@ -26,7 +28,7 @@ import {
 } from './checkoutTurnPolicy';
 import { buildHybridAgentSystemPrompt } from '../prompts/botPersonality';
 import { resolvePersonalityForBusiness } from '../services/botPersonality.service';
-import { allReactTools } from '../tools';
+import { allReactTools, setOrderLineQuantityTool } from '../tools';
 import { getGoalFulfillmentContract } from '../domain/intent/family';
 import type {
   EnrichedContext,
@@ -119,6 +121,7 @@ class ReactCycleTraceCallback extends BaseCallbackHandler {
 
     this.iteration += 1;
     const toolCalls = message.message.tool_calls ?? [];
+    const traceId = `${this.conversationId}:${this.turnId ?? 'no-turn'}`;
     console.log(JSON.stringify({
       event: `[REACT ${this.iteration}]`,
       turnId: this.turnId,
@@ -135,6 +138,24 @@ class ReactCycleTraceCallback extends BaseCallbackHandler {
       })),
       invalid_tool_calls: message.message.invalid_tool_calls ?? [],
     }));
+    for (const call of toolCalls) {
+      const args = (call.args ?? {}) as Record<string, unknown>;
+      console.log(JSON.stringify({
+        event: '[TRACE-ORDERLINE]',
+        stage: 'AIMessage.tool_call',
+        traceId,
+        conversationId: this.conversationId,
+        turnId: this.turnId ?? null,
+        toolCallId: typeof call.id === 'string' ? call.id : null,
+        toolName: typeof call.name === 'string' ? call.name : null,
+        rawArgs: {
+          orderLineId: typeof args.orderLineId === 'string' ? args.orderLineId : null,
+          productId: typeof args.productId === 'string' ? args.productId : null,
+          resolutionId: typeof args.resolutionId === 'string' ? args.resolutionId : null,
+          quantity: typeof args.quantity === 'number' ? args.quantity : null,
+        },
+      }));
+    }
   }
 
   handleChainEnd(outputs: Record<string, unknown>): void {
@@ -156,6 +177,38 @@ class ReactCycleTraceCallback extends BaseCallbackHandler {
         tool_call_id: toolCallId,
         name: message.name ?? null,
         result: diagnosticValue(message.content),
+      }));
+      let payload: Record<string, unknown> | null = null;
+      if (typeof message.content === 'string') {
+        try {
+          const parsed = JSON.parse(message.content) as unknown;
+          payload = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+        } catch {
+          payload = null;
+        }
+      }
+      const orderLine = payload?.orderLine as { id?: unknown; requestedQuantity?: unknown } | undefined;
+      console.log(JSON.stringify({
+        event: '[TRACE-ORDERLINE]',
+        stage: 'ToolMessage.after_tool',
+        traceId: `${this.conversationId}:${this.turnId ?? 'no-turn'}`,
+        conversationId: this.conversationId,
+        turnId: this.turnId ?? null,
+        toolCallId: toolCallId || null,
+        toolName: message.name ?? null,
+        success: payload?.success === true,
+        error: typeof payload?.error === 'string' ? payload.error : null,
+        orderLineId: typeof payload?.orderLineId === 'string'
+          ? payload.orderLineId
+          : typeof orderLine?.id === 'string'
+            ? orderLine.id
+            : null,
+        resolutionId: typeof payload?.resolutionId === 'string' ? payload.resolutionId : null,
+        quantity: typeof payload?.quantity === 'number'
+          ? payload.quantity
+          : typeof orderLine?.requestedQuantity === 'number'
+            ? orderLine.requestedQuantity
+            : null,
       }));
     }
   }
@@ -201,12 +254,53 @@ const buildAgent = (
   }:${cultureKey}:${requiredToolChoice ?? 'auto'}`;
   let agent = cachedAgents.get(cacheKey);
   if (!agent) {
-    const tools = [
+    const availableTools = [
       ...allReactTools,
       startAddressEditSessionTool,
       ...(checkoutDelegation ? [startCheckoutSessionTool] : []),
       ...(reservationDelegation ? [startReservationSessionTool] : []),
     ];
+    const tools = requiredToolChoice === 'set_order_line_quantity'
+      ? availableTools.map((tool) => {
+          if (tool.name !== 'set_order_line_quantity') return tool;
+          const boundQuantityTool = new DynamicStructuredTool({
+                name: tool.name,
+                description:
+                  'Persiste la cantidad confirmada para el target del Quantity Goal activo. ' +
+                  'El sistema vincula la línea; informá únicamente la cantidad confirmada por el usuario. ' +
+                  'No uses partySize ni suggestedQuantity como quantity.',
+                schema: z.object({
+                  quantity: z.number().int().min(1).max(99)
+                    .describe('Unidades confirmadas por el usuario para la línea indicada por el Goal.'),
+                }),
+                func: async (input, _runManager, config) => {
+                  const { quantity } = z.object({
+                    quantity: z.number().int().min(1).max(99),
+                  }).parse(input);
+                  const candidate = (config?.configurable as {
+                    goalFulfillmentCandidate?: {
+                      goalType?: unknown;
+                      target?: { orderLineId?: unknown };
+                    };
+                  } | undefined)?.goalFulfillmentCandidate;
+                  const orderLineId = candidate?.goalType === 'OBTENER_CANTIDAD_DEL_PRODUCTO' &&
+                    typeof candidate.target?.orderLineId === 'string'
+                    ? candidate.target.orderLineId
+                    : undefined;
+                  if (!orderLineId) {
+                    return JSON.stringify({
+                      success: false,
+                      error: 'goal_target_missing',
+                      instruction: 'El Quantity Goal no tiene un target OrderLine disponible. No intentes otra línea.',
+                    });
+                  }
+                  return setOrderLineQuantityTool.invoke({ orderLineId, quantity }, config);
+                },
+              });
+          (boundQuantityTool as typeof boundQuantityTool & { returnDirect: boolean }).returnDirect = true;
+          return boundQuantityTool;
+        })
+      : availableTools;
     const llm = getHybridReasonerLlm();
     if (typeof llm.bindTools !== 'function' && requiredToolChoice) {
       throw new Error('The configured ReAct model does not support required tool_choice');
@@ -334,6 +428,8 @@ export interface HybridAgentSignals {
   successfulEffectCount: number;
   /** Siguiente línea cuya cantidad UNKNOWN debe preguntarse tras un efecto. */
   nextQuantityTarget: { id: string; hint: string } | null;
+  /** Cantidad de OrderLine confirmada en este turno. */
+  orderLineQuantityPersisted: { hint: string; quantity: number } | null;
   /** Producto del último add_cart_item exitoso de este turno. */
   lastAddedProductId: string | null;
   /**
@@ -580,6 +676,7 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
     cartAddUnknown: false,
     successfulEffectCount: 0,
     nextQuantityTarget: null,
+    orderLineQuantityPersisted: null,
     lastAddedProductId: null,
     cartMutatedThisTurn: false,
     cartAddPendingGate: false,
@@ -676,6 +773,19 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
             };
           }
         }
+      }
+      if (
+        m.name === 'set_order_line_quantity' &&
+        data.success === true &&
+        typeof data.orderLine === 'object' &&
+        data.orderLine !== null &&
+        typeof (data.orderLine as { hint?: unknown }).hint === 'string' &&
+        typeof (data.orderLine as { requestedQuantity?: unknown }).requestedQuantity === 'number'
+      ) {
+        signals.orderLineQuantityPersisted = {
+          hint: (data.orderLine as { hint: string }).hint,
+          quantity: (data.orderLine as { requestedQuantity: number }).requestedQuantity,
+        };
       }
       if (toolMessageMutatedCart(m.name, data.success)) {
         signals.cartMutatedThisTurn = true;
@@ -909,6 +1019,68 @@ const readMessageContent = (msg: unknown): string | null => {
     );
   }
   return null;
+};
+
+const parseToolPayload = (msg: unknown): Record<string, unknown> | null => {
+  const content = (msg as { content?: unknown }).content;
+  if (typeof content !== 'string') return null;
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * El último paso de tools de esta corrida terminó en un DEFER que necesita
+ * input humano (`requiresUserInput`) y no persistió ningún efecto. Un paso con
+ * un efecto exitoso sigue en manos del modelo, que debe comunicar ambos.
+ */
+export const stepAwaitsUserInput = (messages: unknown[], firstRunIndex: number): boolean => {
+  const stepPayloads: Array<Record<string, unknown> | null> = [];
+  for (let index = messages.length - 1; index >= firstRunIndex; index -= 1) {
+    if (messageRole(messages[index]) !== 'tool') break;
+    stepPayloads.push(parseToolPayload(messages[index]));
+  }
+  if (stepPayloads.some((payload) => payload?.success === true && payload.effect != null)) return false;
+  return stepPayloads.some((payload) => requiresUserInput(payload));
+};
+
+type StreamableAgent = {
+  stream: (
+    input: { messages: BaseMessage[] },
+    options: Record<string, unknown>
+  ) => Promise<AsyncIterable<{ messages?: unknown[] }> & { cancel?: (reason?: unknown) => Promise<void> }>;
+};
+
+/**
+ * Equivalente a `agent.invoke` (el último estado de `streamMode: 'values'`),
+ * pero termina el turno apenas un paso de tools pide input humano: cancela el
+ * grafo antes de otra llamada al modelo, sin depender del recursionLimit.
+ */
+export const runAgentUntilUserInput = async (
+  agent: StreamableAgent,
+  inputs: { messages: BaseMessage[] },
+  options: Record<string, unknown>,
+  trace: { conversationId?: string; turnId?: string } = {}
+): Promise<{ messages?: unknown[] }> => {
+  const stream = await agent.stream(inputs, { ...options, streamMode: 'values' });
+  let finalState: { messages?: unknown[] } = { messages: inputs.messages };
+  for await (const state of stream) {
+    finalState = state;
+    if (stepAwaitsUserInput(state.messages ?? [], inputs.messages.length)) {
+      console.log(JSON.stringify({
+        event: '[hybrid-agent] turn_awaits_user_input',
+        conversationId: trace.conversationId ?? null,
+        turnId: trace.turnId ?? null,
+      }));
+      // break solo libera el reader externo; cancel() aborta los pasos pendientes del grafo.
+      await stream.cancel?.('awaiting_user_input');
+      break;
+    }
+  }
+  return finalState;
 };
 
 /**
@@ -1441,7 +1613,7 @@ export const runHybridReactAgent = async (
     conversationId,
     inputs.messages.length
   );
-  const out = await agent.invoke(inputs, {
+  const out = await runAgentUntilUserInput(agent as unknown as StreamableAgent, inputs, {
     recursionLimit: 12,
     callbacks: [reactCycleTrace],
     configurable: {
@@ -1454,11 +1626,15 @@ export const runHybridReactAgent = async (
       turnId: ctx.turnId,
       userMessage: userMessageForTools,
       activeBlockingGoal,
+      goalFulfillmentCandidate: fulfillmentCandidate,
+      ...(fulfillmentCandidate?.goalType === 'OBTENER_CANTIDAD_DEL_PRODUCTO' && typeof fulfillmentCandidate.target?.orderLineId === 'string'
+        ? { orderLineId: fulfillmentCandidate.target.orderLineId }
+        : {}),
       ...(typeof ctx.humanIntentGateRevision === 'number'
         ? { humanIntentGateRevision: ctx.humanIntentGateRevision }
         : {}),
     },
-  });
+  }, { conversationId, turnId: ctx.turnId });
 
   const agentMessages = (out as { messages?: unknown[] }).messages ?? [];
   const llmProse = extractFinalText(out);
@@ -1483,6 +1659,21 @@ export const runHybridReactAgent = async (
     }));
   }
   const signals = extractHybridSignals(agentMessages);
+  if (signals.orderLineQuantityPersisted) {
+    const { hint, quantity } = signals.orderLineQuantityPersisted;
+    return {
+      kind: 'response',
+      handlerResult: markHybridResult({
+        content: formatBotUserMessage(
+          'Cantidad anotada',
+          '✅',
+          `Anoté ${quantity} unidades de ${hint}.`,
+        ),
+        isInteractive: false,
+        skipBodyHumanization: true,
+      }),
+    };
+  }
   const metaAtTurnStart = normalizeMetadata(ctx.conversationState?.metadata);
   const pendingCancelAtTurnStart = metaAtTurnStart.pending_cancel_disambiguation;
 

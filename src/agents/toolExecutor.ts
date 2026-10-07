@@ -13,6 +13,7 @@ export type ToolExecutionContext = {
   businessId?: string;
   conversationId?: string;
   turnId?: string;
+  traceId?: string;
   orderLineId?: string | null;
   humanIntent?: HumanIntentRecord | null;
   state?: HumanIntentStateV1 | null;
@@ -182,6 +183,22 @@ export class ToolExecutor {
             };
           }
         }
+
+        const args = (call.args ?? {}) as Record<string, unknown>;
+        console.log(JSON.stringify({
+          event: '[TRACE-ORDERLINE]',
+          stage: 'ToolExecutor.before_invoke',
+          traceId: context.traceId ?? (context.conversationId ? `${context.conversationId}:${context.turnId ?? 'no-turn'}` : null),
+          conversationId: context.conversationId ?? null,
+          turnId: context.turnId ?? null,
+          toolCallId: typeof call.id === 'string' ? call.id : null,
+          toolName: call.name,
+          input: call.args ?? {},
+          orderLineId: typeof args.orderLineId === 'string' ? args.orderLineId : null,
+          productId: typeof args.productId === 'string' ? args.productId : null,
+          resolutionId: typeof args.resolutionId === 'string' ? args.resolutionId : null,
+          quantity: typeof args.quantity === 'number' ? args.quantity : null,
+        }));
 
         const value = await runner(call, stepContext);
         return { callName: call.name, call, status: 'EXECUTED', result: value };

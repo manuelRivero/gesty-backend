@@ -281,6 +281,72 @@ describe('nlpSubgraphNode — agent-first', () => {
     );
   });
 
+  it('adjunta al fulfillment quantity el target calculado desde la OrderLine', async () => {
+    const activeIntent = {
+      id: 'intent-order',
+      sequence: 1,
+      goal: 'PEDIR',
+      request: { products: ['ceviche', 'papas'] },
+      status: 'ACTIVE',
+      blockers: [],
+    };
+    const resolutionId = 'pr1:biz-1:conv-1:papas';
+    const metadata = {
+      peopleCount: 3,
+      requestedPartySize: 3,
+      humanIntentState: { ...lifecycleMock.state, records: [activeIntent] },
+      pendingOrderLines: {
+        sourceMessage: 'ceviche y papas',
+        createdAt: new Date().toISOString(),
+        lines: [
+          {
+            id: 'line-ceviche',
+            hint: 'ceviche',
+            status: 'active',
+            requestedQuantity: 2,
+            currentResolutionId: 'pr1:biz-1:conv-1:ceviche',
+          },
+          {
+            id: 'line-papas',
+            hint: 'papas',
+            status: 'queued',
+            requestedQuantity: null,
+            currentResolutionId: resolutionId,
+          },
+        ],
+      },
+      productResolutions: [{
+        resolutionId,
+        productId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+        businessId: 'biz-1',
+        conversationId: 'conv-1',
+        source: 'search_products',
+        status: 'selected',
+        scope: 'conversation',
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }],
+    };
+    lifecycleMock.state.records = [activeIntent];
+    lifecycleMock.metadata = metadata;
+    vi.mocked(runHumanIntentPreflight).mockResolvedValueOnce({
+      decision: 'CONTINUE_ACTIVE',
+      intentId: activeIntent.id,
+      answeredBlockerIds: [],
+      fulfillmentCandidate: { goalType: 'OBTENER_CANTIDAD_DEL_PRODUCTO' },
+    });
+
+    await nlpSubgraphNode(nlpState('3', metadata));
+
+    expect(runHybridReactAgent).toHaveBeenCalledWith(expect.objectContaining({
+      activeBlockingGoal: 'OBTENER_CANTIDAD_DEL_PRODUCTO',
+      goalFulfillmentCandidate: {
+        goalType: 'OBTENER_CANTIDAD_DEL_PRODUCTO',
+        target: { orderLineId: 'line-papas', hint: 'papas' },
+      },
+    }));
+  });
+
   it('AMBIGUOUS no entra a ReAct ni al fallback legacy', async () => {
     vi.mocked(runHumanIntentPreflight).mockResolvedValueOnce({ decision: 'AMBIGUOUS' });
 

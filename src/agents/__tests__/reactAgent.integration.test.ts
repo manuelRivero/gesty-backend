@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { AIMessage, ToolMessage } from '@langchain/core/messages';
 
 vi.mock('@langchain/langgraph/prebuilt', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@langchain/langgraph/prebuilt')>();
@@ -122,6 +123,22 @@ import { prisma } from '../../lib/prisma';
 import { buildCategoryProductListMessage } from '../../services/category.service';
 import { HumanIntentToolNode } from '../humanIntentToolNode';
 import { buildCartSummaryMessage } from '../../services/cart.service';
+import { setOrderLineQuantityTool } from '../../tools';
+
+/**
+ * Double del grafo: runHybridReactAgent consume `stream` (modo values); el
+ * double deriva un único estado final de su `invoke`, igual que el grafo real.
+ */
+const mockAgent = (agent: { invoke: (...args: any[]) => Promise<unknown> }) =>
+  vi.mocked(createReactAgent).mockReturnValue({
+    ...agent,
+    stream: async (input: unknown, options: unknown) => {
+      const state = await agent.invoke(input, options);
+      return (async function* () {
+        yield state;
+      })();
+    },
+  } as any);
 
 const BOT_TEXT = '🤖\n\n*Ceviche Clásico* 🐟\n\nEs levemente picante.';
 
@@ -202,7 +219,7 @@ describe('runHybridReactAgent', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetAgentCacheForTesting();
-    vi.mocked(createReactAgent).mockReturnValue({
+    mockAgent({
       invoke: makeAgentInvoke(BOT_TEXT),
     } as any);
   });
@@ -243,6 +260,39 @@ describe('runHybridReactAgent', () => {
     }
   );
 
+  it('expone solo quantity y vincula el fulfillment al target estructurado', async () => {
+    const bindTools = vi.fn((tools) => tools);
+    vi.mocked(getHybridReasonerLlm).mockReturnValue({ bindTools } as never);
+    const target = { orderLineId: 'line-papas', hint: 'papas' };
+    await runHybridReactAgent(makeCtx({
+      activeBlockingGoal: 'OBTENER_CANTIDAD_DEL_PRODUCTO',
+      goalFulfillmentCandidate: {
+        goalType: 'OBTENER_CANTIDAD_DEL_PRODUCTO',
+        target,
+      },
+    }) as any);
+
+    const createCalls = vi.mocked(createReactAgent).mock.calls;
+    const createArgs = createCalls[createCalls.length - 1]?.[0] as any;
+    const modelTools = createArgs.llm({ messages: [{ _getType: () => 'human' }] });
+    expect(bindTools).toHaveBeenCalledWith(expect.any(Array), expect.objectContaining({
+      parallel_tool_calls: false,
+      tool_choice: 'set_order_line_quantity',
+    }));
+    const quantityTool = modelTools.find((tool: { name: string }) => tool.name === 'set_order_line_quantity');
+    expect(Object.keys(quantityTool.schema.shape)).toEqual(['quantity']);
+
+    const invokeSpy = vi.spyOn(setOrderLineQuantityTool, 'invoke').mockResolvedValue('persisted' as never);
+    await quantityTool.invoke({ quantity: 3 }, {
+      configurable: { goalFulfillmentCandidate: { goalType: 'OBTENER_CANTIDAD_DEL_PRODUCTO', target } },
+    });
+    expect(invokeSpy).toHaveBeenCalledWith(
+      { orderLineId: 'line-papas', quantity: 3 },
+      expect.objectContaining({ configurable: expect.objectContaining({ goalFulfillmentCandidate: expect.any(Object) }) })
+    );
+    invokeSpy.mockRestore();
+  });
+
   it('mantiene el binding estático sin candidate, con Goal activo o sin Goal', async () => {
     const bindTools = vi.fn().mockReturnValue({ invoke: vi.fn() });
     vi.mocked(getHybridReasonerLlm).mockReturnValue({ bindTools } as never);
@@ -278,7 +328,7 @@ describe('runHybridReactAgent', () => {
   });
 
   it('usa la cantidad persistida y no la prosa del modelo después de un add exitoso', async () => {
-    vi.mocked(createReactAgent).mockReturnValue({
+    mockAgent({
       invoke: vi.fn().mockResolvedValue({
         messages: [
           {
@@ -317,7 +367,7 @@ describe('runHybridReactAgent', () => {
   });
 
   it('procesa el efecto de un ToolMessage aunque falte tool_call_id', async () => {
-    vi.mocked(createReactAgent).mockReturnValue({
+    mockAgent({
       invoke: vi.fn().mockResolvedValue({
         messages: [
           {
@@ -343,7 +393,7 @@ describe('runHybridReactAgent', () => {
   });
 
   it('no afirma agregado cuando add_cart_item no devuelve success', async () => {
-    vi.mocked(createReactAgent).mockReturnValue({
+    mockAgent({
       invoke: vi.fn().mockResolvedValue({
         messages: [
           {
@@ -364,7 +414,7 @@ describe('runHybridReactAgent', () => {
   });
 
   it('success ausente se trata como desconocido, nunca como mutación exitosa', async () => {
-    vi.mocked(createReactAgent).mockReturnValue({
+    mockAgent({
       invoke: vi.fn().mockResolvedValue({
         messages: [
           {
@@ -385,7 +435,7 @@ describe('runHybridReactAgent', () => {
   it('la traza conserva count=3 de save_party_size y separa call de resultado', async () => {
     const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
     const info = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    vi.mocked(createReactAgent).mockReturnValue({
+    mockAgent({
       invoke: vi.fn().mockResolvedValue({
         messages: [
           {
@@ -431,7 +481,7 @@ describe('runHybridReactAgent', () => {
       content: bodyText,
       isInteractive: false,
     }) as any);
-    vi.mocked(createReactAgent).mockReturnValue({
+    mockAgent({
       invoke: vi.fn().mockResolvedValue({
         messages: [
           {
@@ -493,7 +543,7 @@ describe('runHybridReactAgent', () => {
   });
 
   it('usa la confirmación de successfulEffectCount solo si no hay texto terminal', async () => {
-    vi.mocked(createReactAgent).mockReturnValue({
+    mockAgent({
       invoke: vi.fn().mockResolvedValue({
         messages: [
           { tool_calls: [{ id: 'tc-party', name: 'save_party_size', args: { count: 4 } }] },
@@ -542,7 +592,7 @@ describe('runHybridReactAgent', () => {
   it('present_product_cta ADD_ITEM con productId → interactive sin planCta', async () => {
     vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
     vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
-    vi.mocked(createReactAgent).mockReturnValue({
+    mockAgent({
       invoke: makeAgentInvokeWithPresentCta(BOT_TEXT, {
         primaryKind: 'ADD_ITEM',
         productId: 'prod-1',
@@ -570,7 +620,7 @@ describe('runHybridReactAgent', () => {
   it('present_product_cta SELECT_FROM_LIST con productHints → resolveCta + interactive', async () => {
     vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
     vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
-    vi.mocked(createReactAgent).mockReturnValue({
+    mockAgent({
       invoke: makeAgentInvokeWithPresentCta(BOT_TEXT, {
         primaryKind: 'SELECT_FROM_LIST',
         productHints: ['Ceviche clásico', 'Ceviche mixto'],
@@ -624,7 +674,7 @@ describe('runHybridReactAgent', () => {
         menu_item_price: [{ amount: 1300 }],
       },
     ] as any);
-    vi.mocked(createReactAgent).mockReturnValue({
+    mockAgent({
       invoke: makeAgentInvokeWithPresentCta(introText, {
         primaryKind: 'SELECT_FROM_LIST',
         productIds: [idA, idB],
@@ -664,7 +714,7 @@ describe('runHybridReactAgent', () => {
   it('update_item_note sin present_product_cta → texto solo (caso poca sal)', async () => {
     vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
     vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
-    vi.mocked(createReactAgent).mockReturnValue({
+    mockAgent({
       invoke: makeAgentInvokeWithNote(
         '🤖\n\n*Respuesta* 💬\n\n¡Anotado! El lomo va con poca sal.'
       ),
@@ -689,7 +739,7 @@ describe('runHybridReactAgent', () => {
       total_amount: 4100,
       fulfillment_type: null,
     } as never);
-    vi.mocked(createReactAgent).mockReturnValue({
+    mockAgent({
       invoke: makeAgentInvokeWithNote(
         '¡Listo! Anoté que el Lomo saltado es con poca sal y acá van unos platos.'
       ),
@@ -716,7 +766,7 @@ describe('runHybridReactAgent', () => {
   it('flag CTA off + present_product_cta → texto plano', async () => {
     vi.mocked(isHybridCtaEnabled).mockReturnValue(false);
     vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(false);
-    vi.mocked(createReactAgent).mockReturnValue({
+    mockAgent({
       invoke: makeAgentInvokeWithPresentCta(BOT_TEXT, {
         primaryKind: 'ADD_ITEM',
         productId: 'prod-1',
@@ -730,7 +780,7 @@ describe('runHybridReactAgent', () => {
   });
 
   it('agent sin texto útil → retorna null', async () => {
-    vi.mocked(createReactAgent).mockReturnValue({
+    mockAgent({
       invoke: vi.fn().mockResolvedValue({ messages: [] }),
     } as any);
 
@@ -740,7 +790,7 @@ describe('runHybridReactAgent', () => {
 
   it('present_category → lista de categoría sin present_product_cta', async () => {
     const categoryId = '33333333-3333-3333-3333-333333333333';
-    vi.mocked(createReactAgent).mockReturnValue({
+    mockAgent({
       invoke: vi.fn().mockResolvedValue({
         messages: [
           {
@@ -782,7 +832,7 @@ describe('runHybridReactAgent', () => {
 
     const introText =
       '🤖\n\n*Opciones* 🍽️\n\n¡Qué buena idea! Hay varias pizzanesas que te pueden gustar.';
-    vi.mocked(createReactAgent).mockReturnValue({
+    mockAgent({
       invoke: makeAgentInvokeWithProductSearch(introText, [
         { id: 'prod-a', name: 'Pizzanesa Napolitana', price: { amount: '1200', currency: 'ARS' } },
         { id: 'prod-b', name: 'Pizzanesa Fugazzeta', price: { amount: '1300', currency: 'ARS' } },
@@ -800,7 +850,7 @@ describe('runHybridReactAgent', () => {
   });
 
   it('start_reservation_session → delegate_reservation (el nodo abre la sesión)', async () => {
-    vi.mocked(createReactAgent).mockReturnValue({
+    mockAgent({
       invoke: vi.fn().mockResolvedValue({
         messages: [
           {
@@ -827,7 +877,7 @@ describe('runHybridReactAgent', () => {
   });
 
   it('request_human_support → responde el mensaje de derivación y no sigue conversando', async () => {
-    vi.mocked(createReactAgent).mockReturnValue({
+    mockAgent({
       invoke: vi.fn().mockResolvedValue({
         messages: [
           {
@@ -853,7 +903,7 @@ describe('runHybridReactAgent', () => {
   });
 
   it('pending_cancel_disambiguation sin cancel_order → re-muestra botones (no prosa)', async () => {
-    vi.mocked(createReactAgent).mockReturnValue({
+    mockAgent({
       invoke: makeAgentInvoke(
         '🤖\n\nNo tenés un carrito activo 🛒\n\n¿Te gustaría ver el menú?'
       ),
@@ -917,7 +967,7 @@ describe('runHybridReactAgent', () => {
       id: 'draft-1',
       draft_order_item: [{ product_id: productId }],
     } as never);
-    vi.mocked(createReactAgent).mockReturnValue({
+    mockAgent({
       invoke: vi.fn().mockResolvedValue({
         messages: [
           {
@@ -969,7 +1019,7 @@ describe('runHybridReactAgent', () => {
 
   it('la prosa del asistente posterior a una tool sigue llegando a WhatsApp', async () => {
     const userFacing = '¡Listo! Agregué 1 Arroz con leche.';
-    vi.mocked(createReactAgent).mockReturnValue({
+    mockAgent({
       invoke: vi.fn().mockResolvedValue({
         messages: [
           {
@@ -995,9 +1045,59 @@ describe('runHybridReactAgent', () => {
     expect(visible).not.toContain('get_business_hours');
   });
 
+  it('DEFER order_line_quantity_required corta el turno: responde el askMessage y no consume más pasos', async () => {
+    const askMessage = '¿Cuántas unidades de Papa a la huancaina querés agregar?';
+    const deferState = {
+      messages: [
+        new AIMessage({
+          content: '',
+          tool_calls: [{ id: 'tc-add', name: 'add_cart_item', args: { orderLineId: 'line-papas', productId: 'prod-1', resolutionId: 'res-1' }, type: 'tool_call' }],
+        }),
+        new ToolMessage({
+          tool_call_id: 'tc-add',
+          name: 'add_cart_item',
+          content: JSON.stringify({ success: false, error: 'order_line_quantity_required', askMessage }),
+        }),
+      ],
+    };
+    const laterState = {
+      messages: [
+        ...deferState.messages,
+        new ToolMessage({
+          tool_call_id: 'tc-qty',
+          name: 'set_order_line_quantity',
+          content: JSON.stringify({
+            success: true,
+            effect: { kind: 'order_line_quantity_persisted', reference: 'line-papas' },
+            orderLine: { id: 'line-papas', hint: 'papas', requestedQuantity: 2, status: 'active' },
+          }),
+        }),
+      ],
+    };
+    const consumed: string[] = [];
+    const cancel = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(createReactAgent).mockReturnValue({
+      stream: vi.fn().mockResolvedValue(Object.assign((async function* () {
+        consumed.push('defer');
+        yield deferState;
+        consumed.push('later');
+        yield laterState;
+      })(), { cancel })),
+    } as any);
+
+    const result = unwrap(await runHybridReactAgent(makeCtx({ message: { text: { body: 'Sí, seguí' } } }) as any));
+    const visible = JSON.stringify(result?.content ?? '');
+
+    expect(consumed).toEqual(['defer']);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(visible).toContain(askMessage);
+    expect(visible).not.toMatch(/Cantidad anotada|Anoté/);
+    expect(visible).not.toContain('order_line_quantity_required');
+  });
+
   it('askMessage de un gate de tool llega al usuario y el JSON de control no', async () => {
     const askMessage = '¿Cuántas unidades de arroz con leche querés?';
-    vi.mocked(createReactAgent).mockReturnValue({
+    mockAgent({
       invoke: vi.fn().mockResolvedValue({
         messages: [
           {
@@ -1042,7 +1142,7 @@ describe('runHybridReactAgent', () => {
   it('present_category(A) luego present_category(B) conserva ambas, en el orden de tool_calls', async () => {
     const categoryA = 'e61a490b-72d1-4a88-be5a-97e31ea1ec1c';
     const categoryB = 'a7f6a71e-1574-41d9-bf3a-b3b411dc25af';
-    vi.mocked(createReactAgent).mockReturnValue({
+    mockAgent({
       invoke: vi.fn().mockResolvedValue({
         messages: [
           {
@@ -1132,7 +1232,7 @@ describe('runHybridReactAgent', () => {
         conversationUpdated: true,
       })
     );
-    vi.mocked(createReactAgent).mockReturnValue({
+    mockAgent({
       invoke: vi.fn().mockResolvedValue({
         messages: [
           {
@@ -1219,7 +1319,7 @@ describe('runHybridReactAgent', () => {
 
   it('una sola present_category sigue siendo un mensaje, sin followUps ni JSON de señal', async () => {
     const categoryId = '33333333-3333-3333-3333-333333333333';
-    vi.mocked(createReactAgent).mockReturnValue({
+    mockAgent({
       invoke: vi.fn().mockResolvedValue({
         messages: [
           {
@@ -1248,7 +1348,7 @@ describe('runHybridReactAgent', () => {
   it('una sola present_product_cta sigue siendo un mensaje, sin followUps ni JSON de señal', async () => {
     vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
     vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
-    vi.mocked(createReactAgent).mockReturnValue({
+    mockAgent({
       invoke: makeAgentInvokeWithPresentCta(BOT_TEXT, {
         primaryKind: 'ADD_ITEM',
         productId: 'prod-1',

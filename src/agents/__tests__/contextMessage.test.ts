@@ -278,7 +278,9 @@ describe('buildContextMessage', () => {
 
     expect(msg).toContain('solicitud: PEDIR');
     expect(msg).toContain('no son confirmación de efectos ni contenido del carrito');
-    expect(msg).toContain('línea activa ahora → *B* (2×)');
+    expect(msg).toContain('no hay una línea activa actualmente');
+    expect(msg).toContain('*B* (2×)');
+    expect(msg).toContain('continue_order_line()');
     expect(cartSection).toContain('A');
     expect(cartSection).not.toContain('B');
     expect(msg.endsWith('¿Qué tengo?')).toBe(true);

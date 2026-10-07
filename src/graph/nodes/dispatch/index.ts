@@ -864,14 +864,15 @@ export const nlpSubgraphNode = async (
         },
         getPartySizeGoalLedger(metadataBeforePreflight)
       ).open;
-      const quantityGoalActive = !partySizeGoalActive && active?.goal === 'PEDIR' && Boolean(
-        deriveOrderQuantityGoalTarget({
+      const quantityGoalTarget = !partySizeGoalActive && active?.goal === 'PEDIR'
+        ? deriveOrderQuantityGoalTarget({
           activePedir: true,
           checkoutActive: metadataBeforePreflight.checkout_active === true,
           partySizeKnown: getRequestedPartySize(metadataBeforePreflight) != null,
           metadata: metadataBeforePreflight,
         })
-      );
+        : null;
+      const quantityGoalActive = Boolean(quantityGoalTarget);
       const activeBlockingGoal = partySizeGoalActive
         ? 'OBTENER_PERSONAS_DEL_PEDIDO'
         : quantityGoalActive
@@ -961,7 +962,12 @@ export const nlpSubgraphNode = async (
             ? decision.fulfillmentCandidate
             : undefined;
         if (fulfillmentCandidate) {
-          enrichedBase.goalFulfillmentCandidate = fulfillmentCandidate;
+          enrichedBase.goalFulfillmentCandidate = {
+            ...fulfillmentCandidate,
+            ...(fulfillmentCandidate.goalType === 'OBTENER_CANTIDAD_DEL_PRODUCTO' && quantityGoalTarget
+              ? { target: { orderLineId: quantityGoalTarget.id, hint: quantityGoalTarget.hint } }
+              : {}),
+          };
         }
         allowLegacyFallback = false;
         console.log(

@@ -40,6 +40,11 @@ export type ToolPlannerOptions = {
   contracts?: ToolContract[];
   currentState?: PlannerState;
   previousToolResults?: PlannerToolResult[];
+  traceContext?: {
+    traceId?: string;
+    conversationId?: string;
+    turnId?: string;
+  };
 };
 
 const withProductScope = (scope: ToolScope | undefined, call: ToolCallLike): ToolScope | undefined => {
@@ -196,7 +201,29 @@ export class ToolPlanner {
       pending = pending.filter((call) => !scheduled.some((scheduledCall) => scheduledCall.id === call.id));
     }
 
-    return { steps, status: overallStatus === 'READY' ? 'READY' : overallStatus };
+    const result: ToolPlan = { steps, status: overallStatus === 'READY' ? 'READY' : overallStatus };
+    for (const call of toolCalls) {
+      const args = (call.args ?? {}) as Record<string, unknown>;
+      const orderLineId = typeof args.orderLineId === 'string' ? args.orderLineId : null;
+      const productId = typeof args.productId === 'string' ? args.productId : null;
+      const resolutionId = typeof args.resolutionId === 'string' ? args.resolutionId : null;
+      const quantity = typeof args.quantity === 'number' ? args.quantity : null;
+      console.log(JSON.stringify({
+        event: '[TRACE-ORDERLINE]',
+        stage: 'ToolPlanner.plan.result',
+        traceId: options.traceContext?.traceId ?? null,
+        conversationId: options.traceContext?.conversationId ?? null,
+        turnId: options.traceContext?.turnId ?? null,
+        toolCallId: typeof call.id === 'string' ? call.id : null,
+        toolName: call.name,
+        input: call.args ?? {},
+        orderLineId,
+        productId,
+        resolutionId,
+        quantity,
+      }));
+    }
+    return result;
   }
 }
 
