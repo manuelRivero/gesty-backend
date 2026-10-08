@@ -129,6 +129,7 @@ import * as productResolutionService from '../../services/productResolution.serv
 import {
   addCartItemTool,
   continueOrderLineTool as continueOrderLineToolForTests,
+  planOrderLinesTool,
   resolveProductTool,
   searchProductsTool,
   setOrderLineQuantityTool,
@@ -1292,6 +1293,67 @@ describe('search_products → ProductResolution → add_cart_item', () => {
       );
     });
 
+    it('TEST 4 — plan_order_lines(pendingNote) → OrderLine.pendingNote → draft_order_item.notes, sin contaminación cruzada', async () => {
+      const planned = JSON.parse(
+        (await planOrderLinesTool.func(
+          {
+            lines: [
+              { hint: 'ceviche', requestedQuantity: 1, pendingNote: 'poca cebolla' },
+              { hint: 'papas a la huancaína', requestedQuantity: 1, pendingNote: 'no muy picantes' },
+            ],
+          },
+          undefined,
+          CONFIG
+        )) as string
+      );
+      expect(planned.success).toBe(true);
+
+      const pendingAfterPlan = database.state.metadata.pendingOrderLines as {
+        lines: Array<{ id: string; hint: string; pendingNote: string | null; status: string }>;
+      };
+      const cevicheLine = pendingAfterPlan.lines.find((l) => l.hint.includes('ceviche'))!;
+      const papasLine = pendingAfterPlan.lines.find((l) => l.hint.includes('papas'))!;
+      expect(cevicheLine.pendingNote).toBe('poca cebolla');
+      expect(papasLine.pendingNote).toBe('no muy picantes');
+      expect(cevicheLine.status).toBe('active');
+      expect(papasLine.status).toBe('queued');
+
+      const resolutionCeviche = await resolveTaskNote(cevicheLine.id, 'ceviche');
+      const addCeviche = JSON.parse(
+        (await addCartItemTool.func(
+          { productId: PRODUCT_ID, resolutionId: resolutionCeviche, orderLineId: cevicheLine.id, quantity: 1 },
+          undefined,
+          CONFIG
+        )) as string
+      );
+      expect(addCeviche.success).toBe(true);
+      expect(prisma.draft_order_item.create).toHaveBeenLastCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ notes: 'poca cebolla' }) })
+      );
+
+      const continued = JSON.parse(
+        (await continueOrderLineToolForTests.func({}, undefined, CONFIG)) as string
+      );
+      expect(continued.success).toBe(true);
+
+      const resolutionPapas = await resolveTaskNote(papasLine.id, 'papas a la huancaína');
+      const addPapas = JSON.parse(
+        (await addCartItemTool.func(
+          { productId: PRODUCT_ID, resolutionId: resolutionPapas, orderLineId: papasLine.id, quantity: 1 },
+          undefined,
+          CONFIG
+        )) as string
+      );
+      expect(addPapas.success).toBe(true);
+      // La nota de papas llega intacta y nunca es la de ceviche (sin contaminación).
+      expect(prisma.draft_order_item.create).toHaveBeenLastCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ notes: 'no muy picantes' }) })
+      );
+      expect(prisma.draft_order_item.create).not.toHaveBeenLastCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ notes: 'poca cebolla' }) })
+      );
+    });
+
     it('G — update_item_note posterior con el mismo texto no duplica la nota ya persistida por add_cart_item', async () => {
       seedTaskWithNote('poco picante');
       const resolutionId = await resolveTaskNote('task-note');
@@ -1359,6 +1421,146 @@ describe('search_products → ProductResolution → add_cart_item', () => {
       expect(prisma.draft_order_item.update).toHaveBeenCalledWith({
         where: { id: 'line-existing' },
         data: { notes: 'sin sal' },
+      });
+    });
+  });
+
+  describe('add_cart_item devuelve draftOrderItemId real (fix identidad pre-cart/post-cart)', () => {
+    const REAL_DRAFT_ORDER_ITEM_ID = '9f1e2d3c-4b5a-4678-9abc-def012345678';
+
+    it('TEST 1 — added.draftOrderItemId es exactamente el id persistido (no un UUID "parecido")', async () => {
+      vi.mocked(prisma.draft_order_item.create).mockResolvedValueOnce({
+        id: REAL_DRAFT_ORDER_ITEM_ID,
+        quantity: 1,
+      } as never);
+
+      const search = JSON.parse(
+        (await searchProductsTool.func({ keyword: 'producto de prueba' }, undefined, CONFIG)) as string
+      );
+      const resolutionId = search.items[0].resolutionId as string;
+      const add = JSON.parse(
+        (await addCartItemTool.func(
+          { productId: PRODUCT_ID, resolutionId, quantity: 1 },
+          undefined,
+          CONFIG
+        )) as string
+      );
+
+      expect(add.success).toBe(true);
+      expect(add.added.draftOrderItemId).toBe(REAL_DRAFT_ORDER_ITEM_ID);
+      // No es solo "parece un UUID": es el mismo id que recibió el create real.
+      expect(prisma.draft_order_item.create).toHaveBeenCalledOnce();
+      const createCall = vi.mocked(prisma.draft_order_item.create).mock.results[0];
+      await expect(createCall!.value).resolves.toMatchObject({ id: REAL_DRAFT_ORDER_ITEM_ID });
+    });
+
+    it('TEST 2 — add_cart_item → update_item_note encadenados con added.draftOrderItemId (sin productId)', async () => {
+      vi.mocked(prisma.draft_order_item.create).mockResolvedValueOnce({
+        id: REAL_DRAFT_ORDER_ITEM_ID,
+        quantity: 1,
+      } as never);
+
+      const search = JSON.parse(
+        (await searchProductsTool.func({ keyword: 'producto de prueba' }, undefined, CONFIG)) as string
+      );
+      const resolutionId = search.items[0].resolutionId as string;
+      const add = JSON.parse(
+        (await addCartItemTool.func(
+          { productId: PRODUCT_ID, resolutionId, quantity: 1 },
+          undefined,
+          CONFIG
+        )) as string
+      );
+      expect(add.added.draftOrderItemId).toBe(REAL_DRAFT_ORDER_ITEM_ID);
+
+      vi.mocked(prisma.draft_order.findFirst).mockResolvedValueOnce({
+        id: 'draft-1',
+        draft_order_item: [
+          {
+            id: add.added.draftOrderItemId,
+            product_id: PRODUCT_ID,
+            variation: null,
+            notes: null,
+            menu_item: { id: PRODUCT_ID, name: PRODUCT.name },
+          },
+        ],
+      } as never);
+
+      // Deliberadamente NO se pasa productId: el contrato nuevo no lo necesita.
+      const updated = JSON.parse(
+        (await updateItemNoteTool.func(
+          { draftOrderItemId: add.added.draftOrderItemId, note: 'poco picante' },
+          undefined,
+          CONFIG
+        )) as string
+      );
+
+      expect(updated.success).toBe(true);
+      expect(prisma.draft_order_item.update).toHaveBeenCalledWith({
+        where: { id: REAL_DRAFT_ORDER_ITEM_ID },
+        data: { notes: 'poco picante' },
+      });
+    });
+
+    it('TEST 3 — un OrderLine.id (8 chars) NUNCA es válido como draftOrderItemId (falla por schema)', () => {
+      const orderLineShapedId = 'f9ec0782'; // randomUUID().slice(0, 8), como genera setPendingOrderLines
+      const parsed = updateItemNoteTool.schema.safeParse({
+        draftOrderItemId: orderLineShapedId,
+        note: 'poco picante',
+      });
+      expect(parsed.success).toBe(false);
+    });
+
+    it('TEST 6 — single-product: add_cart_item → update_item_note con el id real, nunca con un OrderLine.id', async () => {
+      // Sin cola de pedido (taskBound = false): no existe ninguna OrderLine en
+      // juego para este caso, confirmando que el flujo funciona igual sin ella.
+      expect(database.state.metadata.pendingOrderLines).toBeUndefined();
+
+      vi.mocked(prisma.draft_order_item.create).mockResolvedValueOnce({
+        id: REAL_DRAFT_ORDER_ITEM_ID,
+        quantity: 1,
+      } as never);
+
+      const search = JSON.parse(
+        (await searchProductsTool.func({ keyword: 'producto de prueba' }, undefined, CONFIG)) as string
+      );
+      const resolutionId = search.items[0].resolutionId as string;
+      const add = JSON.parse(
+        (await addCartItemTool.func(
+          { productId: PRODUCT_ID, resolutionId, quantity: 1 },
+          undefined,
+          CONFIG
+        )) as string
+      );
+
+      expect(add.added.draftOrderItemId).toMatch(/^[0-9a-f-]{36}$/);
+      expect(add.closedOrderLine).toBeUndefined();
+
+      vi.mocked(prisma.draft_order.findFirst).mockResolvedValueOnce({
+        id: 'draft-1',
+        draft_order_item: [
+          {
+            id: add.added.draftOrderItemId,
+            product_id: PRODUCT_ID,
+            variation: null,
+            notes: null,
+            menu_item: { id: PRODUCT_ID, name: PRODUCT.name },
+          },
+        ],
+      } as never);
+
+      const updated = JSON.parse(
+        (await updateItemNoteTool.func(
+          { draftOrderItemId: add.added.draftOrderItemId, note: 'poca cebolla' },
+          undefined,
+          CONFIG
+        )) as string
+      );
+
+      expect(updated.success).toBe(true);
+      expect(prisma.draft_order_item.update).toHaveBeenCalledWith({
+        where: { id: REAL_DRAFT_ORDER_ITEM_ID },
+        data: { notes: 'poca cebolla' },
       });
     });
   });

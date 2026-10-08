@@ -161,6 +161,34 @@ describe('pedido en espera cuando falta el número', () => {
     });
   });
 
+  it('save_party_size no cruza las notas de dos líneas distintas ("ceviche con poca cebolla" + "papas no muy picantes")', async () => {
+    metadata = {
+      pendingPartySizeOrder: {
+        source: 'plan',
+        summary: '1× ceviche, 1× papas a la huancaína',
+        setAt: '2026-09-27T16:00:00.000Z',
+        turnStartedAt: TURN_1.configurable.turnStartedAt,
+        lines: [
+          { hint: 'ceviche', requestedQuantity: 1, pendingNote: 'poca cebolla' },
+          { hint: 'papas a la huancaína', requestedQuantity: 1, pendingNote: 'no muy picantes' },
+        ],
+      },
+    };
+
+    const saved = JSON.parse(
+      (await savePartySizeTool.func({ count: 3 }, undefined, TURN_2)) as string
+    );
+
+    expect(saved.success).toBe(true);
+    const lines = (metadata.pendingOrderLines as {
+      lines: Array<{ hint: string; pendingNote: string | null }>;
+    }).lines;
+    const ceviche = lines.find((l) => l.hint === 'ceviche');
+    const papas = lines.find((l) => l.hint === 'papas a la huancaína');
+    expect(ceviche?.pendingNote).toBe('poca cebolla');
+    expect(papas?.pendingNote).toBe('no muy picantes');
+  });
+
   it('save_party_size sin count rechaza la llamada sin producir efectos', async () => {
     const result = JSON.parse(
       (await savePartySizeTool.func({} as never, undefined, TURN_2)) as string

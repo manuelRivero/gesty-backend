@@ -570,9 +570,11 @@ export const getOfferedE2ePayButtonId = async (
 };
 
 export type E2eDraftLine = {
+  id: string;
   product_id: string | null;
   quantity: number;
   variation: string | null;
+  notes: string | null;
 };
 
 /** Misma lectura que add_cart_item / get_cart: el draft active más reciente. */
@@ -590,7 +592,7 @@ export const getActiveDraftSnapshot = async (
     select: {
       id: true,
       draft_order_item: {
-        select: { product_id: true, quantity: true, variation: true },
+        select: { id: true, product_id: true, quantity: true, variation: true, notes: true },
       },
     },
   });

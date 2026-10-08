@@ -25,6 +25,7 @@ import {
   getActiveHumanIntent,
   getHumanIntentState,
   getPendingHumanIntents,
+  mergeEquivalentPedirRequest,
   removeHumanIntentBlocker,
   reconcileActiveHumanIntent,
   replaceHumanIntent,
@@ -702,5 +703,50 @@ describe('humanIntentState V1', () => {
     };
 
     expect(await getHumanIntentState(CONVERSATION_ID)).toMatchObject({ revision: 0 });
+  });
+
+  describe('mergeEquivalentPedirRequest — products string vs {name, note}', () => {
+    it('E — "ceviche" y {name:"ceviche", note:"poca cebolla"} son el mismo producto (merge)', () => {
+      const merged = mergeEquivalentPedirRequest(
+        { products: ['ceviche'] },
+        { products: [{ name: 'ceviche', note: 'poca cebolla' }] }
+      );
+      expect(merged).not.toBeNull();
+      expect(merged?.products).toEqual([{ name: 'ceviche', note: 'poca cebolla' }]);
+    });
+
+    it('E bis — la nota no participa de la identidad: distinta nota, mismo producto sigue fusionando', () => {
+      const merged = mergeEquivalentPedirRequest(
+        { products: [{ name: 'ceviche', note: 'poca cebolla' }] },
+        { products: [{ name: 'ceviche', note: 'sin sal' }] }
+      );
+      expect(merged).not.toBeNull();
+      expect(merged?.products).toEqual([{ name: 'ceviche', note: 'sin sal' }]);
+    });
+
+    it('F — "ceviche" y "papas" NO se fusionan (productos distintos)', () => {
+      const merged = mergeEquivalentPedirRequest(
+        { products: ['ceviche'] },
+        { products: ['papas'] }
+      );
+      expect(merged).toBeNull();
+    });
+
+    it('F bis — {name:"ceviche"} y {name:"papas"} tampoco se fusionan', () => {
+      const merged = mergeEquivalentPedirRequest(
+        { products: [{ name: 'ceviche' }] },
+        { products: [{ name: 'papas', note: 'sin sal' }] }
+      );
+      expect(merged).toBeNull();
+    });
+
+    it('legacy: dos arrays de strings siguen fusionando como antes (no-regresión)', () => {
+      const merged = mergeEquivalentPedirRequest(
+        { products: ['ceviche'] },
+        { products: ['ceviche', 'papas'] }
+      );
+      expect(merged).not.toBeNull();
+      expect(merged?.products).toEqual(['ceviche', 'papas']);
+    });
   });
 });

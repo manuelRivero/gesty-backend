@@ -2087,7 +2087,8 @@ export const addCartItemTool = new DynamicStructuredTool<
     'ACCIÓN INMEDIATA: EJECUTÁ add_cart_item en este turno, sin preguntar "¿te lo sumo?", si el cliente pide el plato o pregunta por disponibilidad para comerlo ya: "mandame", "quiero", "dame", "agregame", "¿tenés...?", "¿hay...?", "para picar", "al toque", "un par de". Si hay stock, eso es la orden. "¿Tenés un par de causas para picar?" = add_cart_item con quantity 2. PROHIBIDO responder solo "tengo 1, ¿la sumo?". ' +
     'LENGUAJE: Si el cliente pide "un par", asume siempre `quantity: 2`. ' +
     'PERSISTENCIA AUTOMÁTICA: Los platos en el carrito NO se borran solos. TIENES ESTRICTAMENTE PROHIBIDO usar esta tool para \'mantener\' o \'reafirmar\' otros platos que el usuario no pidió agregar. Si el plato ya está, cambiar cuántas unidades tiene es update_cart_item_quantity, no esta tool. ' +
-    'CÓMO AÑADIR ALGO NUEVO: Si el cliente pide un plato nuevo (ej. \'Suspiro\') y NO tienes su `productId`, NO repitas las herramientas de los platos viejos. Llama a `search_products` INMEDIATAMENTE para buscar el nuevo plato. NUNCA inventes un ID.',
+    'CÓMO AÑADIR ALGO NUEVO: Si el cliente pide un plato nuevo (ej. \'Suspiro\') y NO tienes su `productId`, NO repitas las herramientas de los platos viejos. Llama a `search_products` INMEDIATAMENTE para buscar el nuevo plato. NUNCA inventes un ID. ' +
+    'La respuesta trae `added.draftOrderItemId`: si en este mismo turno el cliente dejó una instrucción para este plato, usá exactamente ese valor en update_item_note(draftOrderItemId=...). `added.draftOrderItemId` es el único ID válido para esa tool; nunca uses orderLineId, closedOrderLine.id ni ningún otro valor en su lugar.',
   schema: addCartItemSchema,
   func: async (
     { productId, resolutionId, orderLineId, quantity, variation }: AddCartItemInput,
@@ -2633,8 +2634,10 @@ export const addCartItemTool = new DynamicStructuredTool<
       const pendingNoteToApply = orderLine?.pendingNote ?? null;
 
       let lineQty: number;
+      let lineId: string;
       if (existing) {
         lineQty = qty;
+        lineId = existing.id;
         await tx.draft_order_item.update({
           where: { id: existing.id },
           data: {
@@ -2648,7 +2651,7 @@ export const addCartItemTool = new DynamicStructuredTool<
         });
       } else {
         lineQty = qty;
-        await tx.draft_order_item.create({
+        const created = await tx.draft_order_item.create({
           data: {
             draft_order_id: row.id,
             product_id: productId,
@@ -2661,6 +2664,7 @@ export const addCartItemTool = new DynamicStructuredTool<
             notes: pendingNoteToApply,
           },
         });
+        lineId = created.id;
       }
 
       const agg = await tx.draft_order_item.aggregate({
@@ -2672,7 +2676,7 @@ export const addCartItemTool = new DynamicStructuredTool<
         where: { id: row.id },
         data: { total_amount: total },
       });
-      return { draft: row, newQty: lineQty, newTotal: total, createdDraft };
+      return { draft: row, newQty: lineQty, newTotal: total, createdDraft, draftOrderItemId: lineId };
     };
 
     if (conversationId) {
@@ -2739,7 +2743,7 @@ export const addCartItemTool = new DynamicStructuredTool<
           'No agregues el producto. Volvé a resolverlo/seleccionarlo y llamá add_cart_item una sola vez.',
       });
     }
-    const { draft, newQty, newTotal, createdDraft } = writeResult.result;
+    const { draft, newQty, newTotal, createdDraft, draftOrderItemId } = writeResult.result;
 
     if (createdDraft) {
       // Inicialización (no renovación): fija el primer expires_at del draft
@@ -2825,6 +2829,7 @@ export const addCartItemTool = new DynamicStructuredTool<
       // Fulfillment de una Task: el turno termina acá (la próxima línea se trabaja en otro turno).
       ...(closedOrderLineId ? { closedOrderLine: { id: closedOrderLineId, status: 'done' } } : {}),
       added: {
+        draftOrderItemId,
         productId,
         itemName: item.name,
         variation: resolvedVariation,
@@ -3296,7 +3301,11 @@ export const updateItemNoteTool = new DynamicStructuredTool<
 >({
   name: 'update_item_note',
   description:
-    'Guarda (o reemplaza) la nota/instrucción especial de una o más líneas del carrito. ' +
+    'Guarda (o reemplaza) la nota/instrucción especial de una o más líneas que YA ESTÁN en el carrito. ' +
+    'SOLO para productos ya agregados. NO la uses para una instrucción sobre un producto que todavía ' +
+    'no fue agregado al carrito (ej. dentro del mismo mensaje que lo pide por primera vez, o mientras ' +
+    'planificás varias líneas con plan_order_lines) — para eso existe pendingNote en plan_order_lines, ' +
+    'que persiste la instrucción sola cuando esa línea se agregue; no la repitas acá. ' +
     'Para modificar o quitar "el de pollo", leé los ítems actuales en [ESTADO DEL CLIENTE] ' +
     'y usá get_cart para obtener su ID exacto. ' +
     'Usá get_cart: cada ítem trae id (línea), productId, variation. ' +
@@ -4237,7 +4246,13 @@ export const planOrderLinesTool = new DynamicStructuredTool<
     'y resolve_product con el orderLineId de esa línea, incluso si hay un solo resultado; ' +
     'si es sección/rol ("algo de beber", "postre"), get_categories + present_category o ' +
     'find_products_by_filter(categoryTag). PROHIBIDO containsIngredient recortando un nombre de plato. ' +
-    'Las demás líneas esperan en cola, no las menciones como shortlist.',
+    'Las demás líneas esperan en cola, no las menciones como shortlist. ' +
+    'Si en ESTE MISMO MENSAJE el cliente da una instrucción/preparación para uno de los productos ' +
+    'que estás planificando (ej. "ceviche con poca cebolla", "papas sin sal", "milanesa bien cocida"), ' +
+    'guardala en pendingNote de ESA línea — es el mecanismo PRE-CART para instrucciones por producto: ' +
+    'viaja con la línea y se persiste sola cuando esa línea se agregue al carrito. Si la línea no trae ' +
+    'instrucción, omití pendingNote. NO uses update_item_note para esto: esa tool es solo para un producto ' +
+    'que YA está en el carrito.',
   schema: planOrderLinesSchema,
   func: async (
     { lines }: PlanOrderLinesInput,

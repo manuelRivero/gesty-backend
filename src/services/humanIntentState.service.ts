@@ -323,6 +323,25 @@ const canonicalJson = (value: unknown): string => {
   return JSON.stringify(value) ?? 'null';
 };
 
+/**
+ * Identidad de un elemento de `request.products` para merge/dedup: solo el
+ * nombre del producto. Acepta tanto el shape legacy (string) como el shape
+ * enriquecido (`{name|hint|product, quantity?, note?}`); `note`/`quantity`
+ * nunca participan de la identidad, solo `name`.
+ */
+const productEntryName = (product: unknown): string | null => {
+  if (typeof product === 'string') {
+    const trimmed = product.trim();
+    return trimmed || null;
+  }
+  if (isRecord(product)) {
+    const name = [product.name, product.hint, product.product]
+      .find((value): value is string => typeof value === 'string' && value.trim().length > 0);
+    return name ? name.trim() : null;
+  }
+  return null;
+};
+
 export const mergeEquivalentPedirRequest = (
   existing: Record<string, unknown>,
   incoming: Record<string, unknown>
@@ -333,12 +352,12 @@ export const mergeEquivalentPedirRequest = (
 
   const existingProducts = existing.products;
   const incomingProducts = incoming.products;
-  if (
-    !Array.isArray(existingProducts) ||
-    !Array.isArray(incomingProducts) ||
-    !existingProducts.every((product) => typeof product === 'string') ||
-    !incomingProducts.every((product) => typeof product === 'string')
-  ) {
+  if (!Array.isArray(existingProducts) || !Array.isArray(incomingProducts)) {
+    return null;
+  }
+  const existingNames = existingProducts.map(productEntryName);
+  const incomingNames = incomingProducts.map(productEntryName);
+  if (existingNames.some((name) => name === null) || incomingNames.some((name) => name === null)) {
     return null;
   }
 
@@ -346,16 +365,26 @@ export const mergeEquivalentPedirRequest = (
   const { products: _incomingProducts, ...incomingDetails } = incoming;
   if (canonicalJson(existingDetails) !== canonicalJson(incomingDetails)) return null;
 
-  const existingSet = new Set(existingProducts as string[]);
-  const incomingSet = new Set(incomingProducts as string[]);
+  const existingSet = new Set(existingNames as string[]);
+  const incomingSet = new Set(incomingNames as string[]);
   const isSubset = (subset: Set<string>, superset: Set<string>): boolean =>
-    [...subset].every((product) => superset.has(product));
+    [...subset].every((name) => superset.has(name));
   if (!isSubset(existingSet, incomingSet) && !isSubset(incomingSet, existingSet)) return null;
+
+  // Dedupe por nombre; incoming (turno más reciente) prevalece sobre existing
+  // para el mismo producto, preservando quantity/note si los trae.
+  const mergedByName = new Map<string, unknown>();
+  existingProducts.forEach((product, index) => {
+    mergedByName.set(existingNames[index] as string, product);
+  });
+  incomingProducts.forEach((product, index) => {
+    mergedByName.set(incomingNames[index] as string, product);
+  });
 
   return {
     ...existing,
     ...incoming,
-    products: [...new Set([...existingProducts, ...incomingProducts])],
+    products: [...mergedByName.values()],
   };
 };
 

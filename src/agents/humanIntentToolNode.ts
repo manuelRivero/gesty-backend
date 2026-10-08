@@ -43,14 +43,30 @@ const matchesPhrase = (candidate: string, requestValue: string): boolean => {
   return target.startsWith(`${request} `) || target.endsWith(` ${request}`);
 };
 
-const collectRequestTargets = (value: unknown, key = ''): string[] => {
+const REQUEST_TARGET_KEY_RE =
+  /product|plato|dish|category|categoria|tag|keyword|query|ingredient|producto|target/i;
+
+export const collectRequestTargets = (value: unknown, key = ''): string[] => {
   if (Array.isArray(value)) {
-    return value.flatMap((item) => collectRequestTargets(item, key));
+    // Elemento enriquecido de un array ya identificado como "de productos"
+    // (ej. request.products = [{name, note?, quantity?}]): el target es el
+    // nombre del producto, no "note"/"quantity" — no ampliamos la regex a
+    // "name" en general para no generar falsos positivos en otros campos.
+    const isProductArray = REQUEST_TARGET_KEY_RE.test(key);
+    return value.flatMap((item) => {
+      if (isProductArray && typeof item === 'object' && item !== null && !Array.isArray(item)) {
+        const name = [
+          (item as Record<string, unknown>).name,
+          (item as Record<string, unknown>).hint,
+          (item as Record<string, unknown>).product,
+        ].find((v): v is string => typeof v === 'string' && v.trim().length > 0);
+        if (name) return [name];
+      }
+      return collectRequestTargets(item, key);
+    });
   }
   if (typeof value === 'string') {
-    return /product|plato|dish|category|categoria|tag|keyword|query|ingredient|producto|target/i.test(key)
-      ? [value]
-      : [];
+    return REQUEST_TARGET_KEY_RE.test(key) ? [value] : [];
   }
   if (typeof value !== 'object' || value === null) return [];
   return Object.entries(value as Record<string, unknown>).flatMap(([childKey, child]) =>

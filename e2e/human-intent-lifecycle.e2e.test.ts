@@ -845,4 +845,77 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
 
     trace.status = 'PASS';
   }, 900_000);
+
+  // Mecanismo determinista verificado por separado (productResolutionAddCart.test.ts).
+  // Este test mide adherencia real del LLM a pendingNote en plan_order_lines.
+  it('CASE 08 — Notas por línea en pedido multi-producto no se cruzan', async () => {
+    const trace = await runCase('CASE 08 — pendingNote multi-línea', [
+      'Quiero un ceviche con poca cebolla y unas papas a la huancaína no muy picantes',
+      'Para 3',
+      '2',
+      'Seguí',
+      '1',
+    ], { requirePartySize: true, captureTurnLogs: true });
+    const turnLogs = turnLogsByTrace.get(trace) ?? [];
+    type Line = {
+      id: string;
+      hint: string;
+      requestedQuantity: number | null;
+      status: string;
+      currentResolutionId: string | null;
+      pendingNote: string | null;
+    };
+    const linesAt = (turn: number): Line[] =>
+      ((trace.turns[turn - 1]?.conversationMetadataAfter?.pendingOrderLines as { lines?: Line[] } | undefined)?.lines) ?? [];
+    const productIdForResolution = (turn: number, resolutionId: string | null): string | null => {
+      if (!resolutionId) return null;
+      const resolutions = (trace.turns[turn - 1]?.conversationMetadataAfter?.productResolutions as
+        Array<{ resolutionId: string; productId: string }> | undefined) ?? [];
+      return resolutions.find((entry) => entry.resolutionId === resolutionId)?.productId ?? null;
+    };
+
+    const PLAN_TURN = 1;
+    const CEVICHE_QUANTITY_TURN = 3;
+    const CONTINUE_TURN = 4;
+    const PAPAS_QUANTITY_TURN = 5;
+
+    const plannedLines = linesAt(PLAN_TURN);
+    const ceviche = plannedLines.find((line) => normalize(line.hint).includes('ceviche'));
+    const papas = plannedLines.find((line) => normalize(line.hint).includes('papas'));
+
+    // FLUJO A — plan_order_lines asocia la nota correcta a cada línea desde el alta,
+    // antes de que exista ningún draft_order_item.
+    assertLifecycleInvariant(trace, PLAN_TURN, 'INV-NOTE-01', normalize(ceviche?.pendingNote).includes('cebolla'), 'pendingNote de ceviche menciona cebolla', compactValue(plannedLines));
+    assertLifecycleInvariant(trace, PLAN_TURN, 'INV-NOTE-01', normalize(papas?.pendingNote).includes('picante'), 'pendingNote de papas menciona picante', compactValue(plannedLines));
+    assertLifecycleInvariant(trace, PLAN_TURN, 'INV-NOTE-02', !normalize(ceviche?.pendingNote).includes('picante'), 'la nota de ceviche NO contiene la instrucción de papas', compactValue(plannedLines));
+    assertLifecycleInvariant(trace, PLAN_TURN, 'INV-NOTE-02', !normalize(papas?.pendingNote).includes('cebolla'), 'la nota de papas NO contiene la instrucción de ceviche', compactValue(plannedLines));
+
+    // Tras guardar personas, la cola real conserva ambas notas intactas (sobrevive
+    // la reconstrucción vía save_party_size → pendingPartySizeOrder.lines).
+    const linesAfterParty = linesAt(2);
+    const cevicheAfterParty = linesAfterParty.find((line) => line.id === ceviche?.id || normalize(line.hint).includes('ceviche'));
+    const papasAfterParty = linesAfterParty.find((line) => line.id === papas?.id || normalize(line.hint).includes('papas'));
+    assertLifecycleInvariant(trace, 2, 'INV-NOTE-03', normalize(cevicheAfterParty?.pendingNote).includes('cebolla'), 'pendingNote de ceviche sobrevive save_party_size', compactValue(linesAfterParty));
+    assertLifecycleInvariant(trace, 2, 'INV-NOTE-03', normalize(papasAfterParty?.pendingNote).includes('picante'), 'pendingNote de papas sobrevive save_party_size', compactValue(linesAfterParty));
+
+    const cevicheProductId = productIdForResolution(2, cevicheAfterParty?.currentResolutionId ?? null);
+    const draftAfterCeviche = turnLogs[CEVICHE_QUANTITY_TURN - 1]?.draftItems ?? [];
+    const cevicheItem = draftAfterCeviche.find((item) => item.product_id === cevicheProductId);
+    assertLifecycleInvariant(trace, CEVICHE_QUANTITY_TURN, 'INV-NOTE-04', Boolean(cevicheItem) && normalize(cevicheItem?.notes).includes('cebolla'), 'draft_order_item.notes del ceviche agregado contiene la nota correcta', compactValue(draftAfterCeviche));
+    assertLifecycleInvariant(trace, CEVICHE_QUANTITY_TURN, 'INV-NOTE-05', !normalize(cevicheItem?.notes).includes('picante'), 'la nota persistida del ceviche NO es la de las papas', compactValue(cevicheItem));
+
+    const linesAfterContinue = linesAt(CONTINUE_TURN);
+    const papasAfterContinue = linesAfterContinue.find((line) => line.id === papas?.id || normalize(line.hint).includes('papas'));
+    const papasProductId = productIdForResolution(CONTINUE_TURN, papasAfterContinue?.currentResolutionId ?? null);
+
+    const draftFinal = turnLogs[PAPAS_QUANTITY_TURN - 1]?.draftItems ?? [];
+    const papasItem = draftFinal.find((item) => item.product_id === papasProductId);
+    const cevicheItemFinal = draftFinal.find((item) => item.product_id === cevicheProductId);
+    assertLifecycleInvariant(trace, PAPAS_QUANTITY_TURN, 'INV-NOTE-06', draftFinal.length === 2, 'ambos productos terminan en el carrito', compactValue(draftFinal));
+    assertLifecycleInvariant(trace, PAPAS_QUANTITY_TURN, 'INV-NOTE-07', Boolean(papasItem) && normalize(papasItem?.notes).includes('picante'), 'draft_order_item.notes de papas contiene la nota correcta', compactValue(draftFinal));
+    assertLifecycleInvariant(trace, PAPAS_QUANTITY_TURN, 'INV-NOTE-08', !normalize(papasItem?.notes).includes('cebolla'), 'la nota persistida de papas NO es la del ceviche (sin contaminación)', compactValue(papasItem));
+    assertLifecycleInvariant(trace, PAPAS_QUANTITY_TURN, 'INV-NOTE-09', Boolean(cevicheItemFinal) && normalize(cevicheItemFinal?.notes).includes('cebolla') && !normalize(cevicheItemFinal?.notes).includes('picante'), 'la nota del ceviche sigue intacta al cerrar la segunda línea', compactValue(cevicheItemFinal));
+
+    trace.status = 'PASS';
+  }, 900_000);
 });

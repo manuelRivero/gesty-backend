@@ -790,7 +790,10 @@ export const ensurePendingOrderLinesFromRequest = async (params: {
             product.quantity >= 1 && product.quantity <= 99
               ? product.quantity
               : null;
-          if (hint) return [{ hint: hint.trim(), requestedQuantity }];
+          const pendingNote = [product.note, product.pendingNote]
+            .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+            ?.trim() ?? null;
+          if (hint) return [{ hint: hint.trim(), requestedQuantity, pendingNote }];
         }
         return [];
       })

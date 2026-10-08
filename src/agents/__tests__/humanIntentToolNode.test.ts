@@ -57,7 +57,7 @@ vi.mock('../../lib/prisma', () => ({
 
 import { ToolPlanner } from '../toolPlanner';
 import { findDeclaredProducer, PRODUCT_CANDIDATE, PRODUCT_RESOLUTION } from '../toolContracts';
-import { isFailClosedTaskRejection } from '../humanIntentToolNode';
+import { collectRequestTargets, isFailClosedTaskRejection } from '../humanIntentToolNode';
 import {
   HUMAN_INTENT_STATE_STALE,
   HUMAN_INTENT_TOOL_DENIED,
@@ -1199,5 +1199,35 @@ describe('HumanIntentToolNode', () => {
     expect(findDeclaredProducer('resolve_product', PRODUCT_RESOLUTION)).toBeNull();
     expect(findDeclaredProducer('add_cart_item', PRODUCT_CANDIDATE)).toBeNull();
     expect(findDeclaredProducer('resolve_product', PRODUCT_CANDIDATE)).toBe('search_products');
+  });
+
+  describe('collectRequestTargets — products enriquecidos {name, note}', () => {
+    it('G — products:[{name,note}] expone el nombre del producto como target', () => {
+      const targets = collectRequestTargets({
+        products: [{ name: 'ceviche', note: 'poca cebolla' }],
+      });
+      expect(targets).toContain('ceviche');
+      expect(targets).not.toContain('poca cebolla');
+    });
+
+    it('legacy: products:string[] sigue exponiendo cada string como target', () => {
+      const targets = collectRequestTargets({ products: ['ceviche', 'papas a la huancaína'] });
+      expect(targets).toEqual(['ceviche', 'papas a la huancaína']);
+    });
+
+    it('products:[{name,note}] con dos líneas expone ambos nombres sin mezclar notas', () => {
+      const targets = collectRequestTargets({
+        products: [
+          { name: 'ceviche', note: 'poca cebolla' },
+          { name: 'papas a la huancaína', note: 'no muy picantes' },
+        ],
+      });
+      expect(targets).toEqual(['ceviche', 'papas a la huancaína']);
+    });
+
+    it('no amplía "name" como target fuera de un array de products (sin falsos positivos)', () => {
+      const targets = collectRequestTargets({ category: { name: 'postres' } });
+      expect(targets).toEqual([]);
+    });
   });
 });

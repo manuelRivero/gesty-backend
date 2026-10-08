@@ -329,6 +329,81 @@ describe('pendingOrderLines.service', () => {
     ]);
   });
 
+  describe('ensurePendingOrderLinesFromRequest — shapes de request.products', () => {
+    it('A — legacy: products como string[] sigue creando OrderLines (sin nota)', async () => {
+      const pending = await ensurePendingOrderLinesFromRequest({
+        conversationId: 'conv-1',
+        request: { products: ['ceviche', 'papas a la huancaína'] },
+        sourceMessage: 'Quiero ceviche y papas a la huancaína',
+        metadata: {},
+      });
+      expect(pending?.lines).toMatchObject([
+        { hint: 'ceviche', requestedQuantity: null, pendingNote: null },
+        { hint: 'papas a la huancaína', requestedQuantity: null, pendingNote: null },
+      ]);
+    });
+
+    it('B — quantity existente: products como [{name, quantity}] mantiene el comportamiento actual', async () => {
+      const pending = await ensurePendingOrderLinesFromRequest({
+        conversationId: 'conv-1',
+        request: { products: [{ name: 'ceviche', quantity: 2 }] },
+        sourceMessage: 'Quiero 2 ceviches',
+        metadata: {},
+      });
+      expect(pending?.lines).toMatchObject([
+        { hint: 'ceviche', requestedQuantity: 2, pendingNote: null },
+      ]);
+    });
+
+    it('C — nota: products como [{name, note}] produce pendingNote correctamente', async () => {
+      const pending = await ensurePendingOrderLinesFromRequest({
+        conversationId: 'conv-1',
+        request: {
+          products: [
+            { name: 'ceviche', note: 'poca cebolla' },
+            { name: 'papas a la huancaína', note: 'no muy picantes' },
+          ],
+        },
+        sourceMessage: 'Quiero un ceviche con poca cebolla y unas papas a la huancaína no muy picantes',
+        metadata: {},
+      });
+      expect(pending?.lines).toMatchObject([
+        { hint: 'ceviche', requestedQuantity: null, pendingNote: 'poca cebolla' },
+        { hint: 'papas a la huancaína', requestedQuantity: null, pendingNote: 'no muy picantes' },
+      ]);
+    });
+
+    it('D — quantity + note sobreviven simultáneamente en la misma línea', async () => {
+      const pending = await ensurePendingOrderLinesFromRequest({
+        conversationId: 'conv-1',
+        request: { products: [{ name: 'ceviche', quantity: 2, note: 'poca cebolla' }] },
+        sourceMessage: 'Quiero 2 ceviches con poca cebolla',
+        metadata: {},
+      });
+      expect(pending?.lines).toMatchObject([
+        { hint: 'ceviche', requestedQuantity: 2, pendingNote: 'poca cebolla' },
+      ]);
+    });
+
+    it('H — producto sin note conserva pendingNote: null (no inventa notas)', async () => {
+      const pending = await ensurePendingOrderLinesFromRequest({
+        conversationId: 'conv-1',
+        request: {
+          products: [
+            { name: 'ceviche', note: 'poca cebolla' },
+            { name: 'papas a la huancaína' },
+          ],
+        },
+        sourceMessage: 'Quiero un ceviche con poca cebolla y unas papas a la huancaína',
+        metadata: {},
+      });
+      expect(pending?.lines).toMatchObject([
+        { hint: 'ceviche', pendingNote: 'poca cebolla' },
+        { hint: 'papas a la huancaína', pendingNote: null },
+      ]);
+    });
+  });
+
   describe('normalizeOrderLineInput (cantidad dentro del hint)', () => {
     it('extrae el número que el modelo dejó en el hint', () => {
       expect(normalizeOrderLineInput({ hint: '2 papas a la huancaína' })).toEqual({

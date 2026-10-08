@@ -61,6 +61,10 @@ NEW_INTENT con un objetivo. Para "Quiero hacer un pedido", request vacío es vá
 NEW_INTENT con varios objetivos para "Ceviche, postre y bebidas":
 {"decision":"NEW_INTENT","intents":[{"goal":"PEDIR","request":{"products":["ceviche"]}},{"goal":"EXPLORAR","request":{"category":"postres"}},{"goal":"EXPLORAR","request":{"category":"bebidas"}}]}
 
+Si el mensaje da una instrucción/preferencia específica para un producto puntual (ej. "poca cebolla", "no muy picante", "bien cocido"), cada elemento de products puede ser un objeto {"name","note"} en vez de un string plano. Para "Quiero un ceviche con poca cebolla y unas papas a la huancaína no muy picantes":
+{"decision":"NEW_INTENT","intents":[{"goal":"PEDIR","request":{"products":[{"name":"ceviche","note":"poca cebolla"},{"name":"papas a la huancaína","note":"no muy picantes"}]}}]}
+note pertenece exclusivamente al producto de ESE objeto — nunca la repitas en otro ni la inventes si el cliente no dio instrucción para ese producto (en ese caso, products puede seguir siendo un string plano, sin note). La nota no es un objetivo nuevo, no es un Goal, y en esta etapa no es update_item_note: es un dato que viaja junto al producto dentro de request.
+
 RESUME_PENDING (usa el ID PENDING exacto de la entrada):
 {"decision":"RESUME_PENDING","intentId":"<ID_PENDING>"}
 

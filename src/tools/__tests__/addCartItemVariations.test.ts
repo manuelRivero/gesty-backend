@@ -19,7 +19,7 @@ vi.mock('../../lib/prisma', () => {
     },
     draft_order_item: {
       findFirst: vi.fn(),
-      create: vi.fn(),
+      create: vi.fn(async () => ({ id: 'created-line-id' })),
       update: vi.fn(),
       aggregate: vi.fn(),
       findMany: vi.fn(),

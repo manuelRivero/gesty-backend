@@ -15,7 +15,7 @@ vi.mock('../../lib/prisma', () => {
     menu_item: { findFirst: vi.fn() },
     draft_order_item: {
       findFirst: vi.fn(),
-      create: vi.fn(),
+      create: vi.fn(async () => ({ id: 'created-line-id' })),
       update: vi.fn(),
       aggregate: vi.fn(),
       findMany: vi.fn(),
