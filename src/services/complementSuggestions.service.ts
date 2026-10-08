@@ -27,6 +27,7 @@ import {
   buildShortcutsThenListBody,
   buildSuggestionsThenManagementThenListBody,
   shortcutBullet,
+  DIRECT_MODIFY_OR_NOTE_HINT_LINE,
 } from '../whatsappBuilders/listShortcutsBody';
 import {
   COMPLEMENT_MANAGEMENT_TIPABLES,
@@ -79,7 +80,9 @@ export function buildAddItemShortcutsFollowUpBody(options?: {
 }): string {
   const bullets = [
     shortcutBullet('Menú'),
-    shortcutBullet('Modificar', 'pedido'),
+    // Oculto a propósito: POC del flujo conversacional directo de eliminación/
+    // modificación de cantidades del carrito (ver DIRECT_MODIFY_OR_NOTE_HINT_LINE).
+    // shortcutBullet('Modificar', 'pedido'),
     shortcutBullet('Finalizar', 'pedido'),
     shortcutBullet('Nota', 'del pedido'),
   ];
@@ -89,7 +92,7 @@ export function buildAddItemShortcutsFollowUpBody(options?: {
   if (options?.includeCancelHint) {
     bullets.push(shortcutBullet('Cancelar', 'pedido'));
   }
-  return buildShortcutsThenListBody('Escribí:', bullets);
+  return `${buildShortcutsThenListBody('Escribí:', bullets)}\n\n${DIRECT_MODIFY_OR_NOTE_HINT_LINE}`;
 }
 /**
  * Segundo mensaje tras agregar al carrito: gestión del pedido (menú, carrito, checkout, zonas por tag).
@@ -105,11 +108,13 @@ export function buildAddItemShortcutsFollowUpList(
       title: 'Ver menú completo',
       description: 'Todas las categorías',
     },
-    {
-      id: 'VIEW_CART_FOR_EDITION',
-      title: 'Modificar pedido',
-      description: 'Cantidades, ítems y revisión',
-    },
+    // Oculto a propósito: POC del flujo conversacional directo de eliminación/
+    // modificación de cantidades del carrito (ver DIRECT_MODIFY_OR_NOTE_HINT_LINE).
+    // {
+    //   id: 'VIEW_CART_FOR_EDITION',
+    //   title: 'Modificar pedido',
+    //   description: 'Cantidades, ítems y revisión',
+    // },
     {
       id: 'CHECKOUT',
       title: 'Finalizar pedido',
@@ -271,19 +276,25 @@ export function buildComplementSuggestionsListMessage(params: {
     ? [
         shortcutBullet('Menú'),
         '• Ver *pedido*',
-        shortcutBullet('Modificar', 'pedido'),
+        // Oculto a propósito: POC del flujo conversacional directo de eliminación/
+        // modificación de cantidades del carrito (ver DIRECT_MODIFY_OR_NOTE_HINT_LINE).
+        // shortcutBullet('Modificar', 'pedido'),
         shortcutBullet('Finalizar', 'pedido'),
         shortcutBullet('Nota', 'del pedido'),
       ]
     : [shortcutBullet('Menú')];
 
   const pitchIntro = bodyPlain.trim();
-  const managementBody = (intro: string) =>
-    buildSuggestionsThenManagementThenListBody({
+  const managementBody = (intro: string) => {
+    const body = buildSuggestionsThenManagementThenListBody({
       intro,
       suggestionBullets,
       managementBullets,
     });
+    return includeManagementRows
+      ? `${body}\n\n${DIRECT_MODIFY_OR_NOTE_HINT_LINE}`
+      : body;
+  };
   const withProse = formatBotUserMessage(
     title,
     titleEmoji,
@@ -311,12 +322,14 @@ export function buildComplementSuggestionsListMessage(params: {
         description: 'Detalle y total del carrito',
         sectionTitle: 'Pedido',
       },
-      {
-        title: 'Modificar pedido',
-        payload: 'VIEW_CART_FOR_EDITION',
-        description: 'Cantidades, ítems y revisión',
-        sectionTitle: 'Pedido',
-      },
+      // Oculto a propósito: POC del flujo conversacional directo de eliminación/
+      // modificación de cantidades del carrito (ver DIRECT_MODIFY_OR_NOTE_HINT_LINE).
+      // {
+      //   title: 'Modificar pedido',
+      //   payload: 'VIEW_CART_FOR_EDITION',
+      //   description: 'Cantidades, ítems y revisión',
+      //   sectionTitle: 'Pedido',
+      // },
       {
         title: 'Finalizar pedido',
         payload: 'CHECKOUT',

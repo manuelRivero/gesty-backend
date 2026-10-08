@@ -95,13 +95,15 @@ export const processDraftOrderTimeouts = async () => {
                         description: 'Ir al checkout',
                         sectionTitle: 'Opciones'
                     },
+                    // Oculto a propósito: POC del flujo conversacional directo de
+                    // eliminación/modificación de cantidades del carrito.
+                    // {
+                    //     title: 'Modificar pedido',
+                    //     payload: 'VIEW_CART_FOR_EDITION',
+                    //     description: 'Editar items del pedido',
+                    //     sectionTitle: 'Opciones'
+                    // },
                     {
-                        title: 'Modificar pedido',
-                        payload: 'VIEW_CART_FOR_EDITION',
-                        description: 'Editar items del pedido',
-                        sectionTitle: 'Opciones'
-                        },
-                        {
                             title: 'Cancelar pedido',
                             payload: 'CANCEL_ORDER',
                             description: 'Eliminar el pedido actual',

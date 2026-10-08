@@ -1226,11 +1226,13 @@ export const buildCartSummaryMessage = async (params: {
 
   const rows: WhatsAppListMessage['action']['sections'][0]['rows'] = [
     { id: 'VIEW_MENU', title: 'Ver menú completo', description: 'Todas las categorías' },
-    {
-      id: 'VIEW_CART_FOR_EDITION',
-      title: 'Modificar pedido',
-      description: 'Cantidades, ítems y revisión',
-    },
+    // Oculto a propósito: POC del flujo conversacional directo de eliminación/
+    // modificación de cantidades del carrito (ver DIRECT_MODIFY_OR_NOTE_HINT_LINE).
+    // {
+    //   id: 'VIEW_CART_FOR_EDITION',
+    //   title: 'Modificar pedido',
+    //   description: 'Cantidades, ítems y revisión',
+    // },
     { id: 'CHECKOUT', title: 'Finalizar pedido', description: 'Ir al checkout' },
     {
       id: 'ITEM_NOTE',

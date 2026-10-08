@@ -13,6 +13,13 @@ export const MANAGEMENT_CONTINUE_LINE =
   'O podés continuar con la gestión de tu pedido.';
 
 /**
+ * Invita a modificar/notar por chat directo mientras el botón «Modificar pedido»
+ * está oculto (POC flujo conversacional de eliminación/cambio de cantidades).
+ */
+export const DIRECT_MODIFY_OR_NOTE_HINT_LINE =
+  'Si querés modificar algo en tu pedido o dejar una nota para cocina, solo decímelo.';
+
+/**
  * Arma el body: intro opcional → viñetas (atajos).
  * `bulletLines` ya vienen formateadas (ej. "• *Menú*" o "• *Modificar* pedido").
  */
