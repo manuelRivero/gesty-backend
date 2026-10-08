@@ -140,6 +140,27 @@ describe('pedido en espera cuando falta el número', () => {
     });
   });
 
+  it('save_party_size no pierde pendingNote al reconstruir la cola ("ceviche con poco picante" + "Para 3")', async () => {
+    metadata = {
+      pendingPartySizeOrder: {
+        source: 'plan',
+        summary: '1× ceviche',
+        setAt: '2026-09-27T16:00:00.000Z',
+        turnStartedAt: TURN_1.configurable.turnStartedAt,
+        lines: [{ hint: 'ceviche', requestedQuantity: 1, pendingNote: 'poco picante' }],
+      },
+    };
+
+    const saved = JSON.parse(
+      (await savePartySizeTool.func({ count: 3 }, undefined, TURN_2)) as string
+    );
+
+    expect(saved.success).toBe(true);
+    expect(metadata.pendingOrderLines).toMatchObject({
+      lines: [{ hint: 'ceviche', requestedQuantity: 1, pendingNote: 'poco picante', status: 'active' }],
+    });
+  });
+
   it('save_party_size sin count rechaza la llamada sin producir efectos', async () => {
     const result = JSON.parse(
       (await savePartySizeTool.func({} as never, undefined, TURN_2)) as string

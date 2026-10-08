@@ -43,7 +43,9 @@ const { database } = vi.hoisted(() => {
       return 1;
     }),
   };
-  prisma.$transaction = vi.fn(async (callback: (tx: typeof prisma) => unknown) => callback(prisma));
+  prisma.$transaction = vi.fn(async (arg: ((tx: typeof prisma) => unknown) | Promise<unknown>[]) =>
+    Array.isArray(arg) ? Promise.all(arg) : arg(prisma)
+  );
   return { database: { prisma, state } };
 });
 
@@ -130,6 +132,7 @@ import {
   resolveProductTool,
   searchProductsTool,
   setOrderLineQuantityTool,
+  updateItemNoteTool,
 } from '../index';
 import { prisma } from '../../lib/prisma';
 import { AIMessage, ToolMessage } from '@langchain/core/messages';
@@ -1161,5 +1164,202 @@ describe('search_products → ProductResolution → add_cart_item', () => {
     );
     expect(added.success).toBe(true);
     expect(prisma.draft_order_item.create).toHaveBeenCalledTimes(1);
+  });
+
+  describe('OrderLine.pendingNote persistido por add_cart_item', () => {
+    const seedTaskWithNote = (note: string | null) => {
+      database.state.metadata.pendingOrderLines = {
+        lines: [
+          {
+            id: 'task-note',
+            hint: 'producto de prueba',
+            requestedQuantity: 1,
+            status: 'active',
+            currentResolutionId: null,
+            pendingNote: note,
+          },
+        ],
+        sourceMessage: 'producto de prueba',
+        createdAt: new Date().toISOString(),
+      };
+    };
+
+    const resolveTaskNote = async (orderLineId: string, keyword = 'producto de prueba') => {
+      const search = JSON.parse(
+        (await searchProductsTool.func({ keyword }, undefined, CONFIG)) as string
+      );
+      const resolutionId = search.items[0].resolutionId as string;
+      await resolveProductTool.func(
+        { productId: PRODUCT_ID, resolutionId, orderLineId },
+        undefined,
+        CONFIG
+      );
+      return resolutionId;
+    };
+
+    it('A — "ceviche con poco picante": pendingNote llega a draft_order_item.notes', async () => {
+      seedTaskWithNote('poco picante');
+      const resolutionId = await resolveTaskNote('task-note');
+
+      const add = JSON.parse(
+        (await addCartItemTool.func(
+          { productId: PRODUCT_ID, resolutionId, orderLineId: 'task-note', quantity: 1 },
+          undefined,
+          CONFIG
+        )) as string
+      );
+
+      expect(add.success).toBe(true);
+      expect(prisma.draft_order_item.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ notes: 'poco picante' }) })
+      );
+    });
+
+    it('C — sin nota, add_cart_item persiste notes: null (no inventa notas)', async () => {
+      seedTaskWithNote(null);
+      const resolutionId = await resolveTaskNote('task-note');
+
+      const add = JSON.parse(
+        (await addCartItemTool.func(
+          { productId: PRODUCT_ID, resolutionId, orderLineId: 'task-note', quantity: 1 },
+          undefined,
+          CONFIG
+        )) as string
+      );
+
+      expect(add.success).toBe(true);
+      expect(prisma.draft_order_item.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ notes: null }) })
+      );
+    });
+
+    it('B/E — dos OrderLines con notas distintas no se cruzan ("ceviche con poco picante" + "papas sin cebolla")', async () => {
+      database.state.metadata.pendingOrderLines = {
+        lines: [
+          {
+            id: 'task-a',
+            hint: 'producto de prueba',
+            requestedQuantity: 1,
+            status: 'active',
+            currentResolutionId: null,
+            pendingNote: 'poco picante',
+          },
+          {
+            id: 'task-b',
+            hint: 'otro producto',
+            requestedQuantity: 1,
+            status: 'queued',
+            currentResolutionId: null,
+            pendingNote: 'sin cebolla',
+          },
+        ],
+        sourceMessage: 'producto de prueba y otro producto',
+        createdAt: new Date().toISOString(),
+      };
+
+      const resolutionA = await resolveTaskNote('task-a');
+      const addA = JSON.parse(
+        (await addCartItemTool.func(
+          { productId: PRODUCT_ID, resolutionId: resolutionA, orderLineId: 'task-a', quantity: 1 },
+          undefined,
+          CONFIG
+        )) as string
+      );
+      expect(addA.success).toBe(true);
+      expect(prisma.draft_order_item.create).toHaveBeenLastCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ notes: 'poco picante' }) })
+      );
+      expect((database.state.metadata.pendingOrderLines as { lines: Array<{ id: string; status: string }> })
+        .lines.find((l) => l.id === 'task-a')?.status
+      ).toBe('done');
+
+      const continued = JSON.parse(
+        (await continueOrderLineToolForTests.func({}, undefined, CONFIG)) as string
+      );
+      expect(continued.success).toBe(true);
+
+      const resolutionB = await resolveTaskNote('task-b', 'otro producto');
+      const addB = JSON.parse(
+        (await addCartItemTool.func(
+          { productId: PRODUCT_ID, resolutionId: resolutionB, orderLineId: 'task-b', quantity: 1 },
+          undefined,
+          CONFIG
+        )) as string
+      );
+      expect(addB.success).toBe(true);
+      expect(prisma.draft_order_item.create).toHaveBeenLastCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ notes: 'sin cebolla' }) })
+      );
+    });
+
+    it('G — update_item_note posterior con el mismo texto no duplica la nota ya persistida por add_cart_item', async () => {
+      seedTaskWithNote('poco picante');
+      const resolutionId = await resolveTaskNote('task-note');
+
+      await addCartItemTool.func(
+        { productId: PRODUCT_ID, resolutionId, orderLineId: 'task-note', quantity: 1 },
+        undefined,
+        CONFIG
+      );
+      // El mock de draft_order_item.create siempre devuelve este id estático.
+      const createdLineId = 'line-1';
+
+      vi.mocked(prisma.draft_order.findFirst).mockResolvedValueOnce({
+        id: 'draft-1',
+        draft_order_item: [
+          {
+            id: createdLineId,
+            product_id: PRODUCT_ID,
+            variation: null,
+            notes: 'poco picante',
+            menu_item: { id: PRODUCT_ID, name: PRODUCT.name },
+          },
+        ],
+      } as never);
+
+      const updated = JSON.parse(
+        (await updateItemNoteTool.func(
+          { draftOrderItemId: createdLineId, note: 'poco picante' },
+          undefined,
+          CONFIG
+        )) as string
+      );
+
+      expect(updated.success).toBe(true);
+      expect(updated.note).toBe('poco picante');
+      expect(prisma.draft_order_item.update).toHaveBeenCalledWith({
+        where: { id: createdLineId },
+        data: { notes: 'poco picante' },
+      });
+    });
+
+    it('F — update_item_note sobre un ítem sin pendingNote sigue funcionando igual (no se tocó su contrato)', async () => {
+      vi.mocked(prisma.draft_order.findFirst).mockResolvedValueOnce({
+        id: 'draft-1',
+        draft_order_item: [
+          {
+            id: 'line-existing',
+            product_id: PRODUCT_ID,
+            variation: null,
+            notes: null,
+            menu_item: { id: PRODUCT_ID, name: PRODUCT.name },
+          },
+        ],
+      } as never);
+
+      const updated = JSON.parse(
+        (await updateItemNoteTool.func(
+          { draftOrderItemId: 'line-existing', note: 'sin sal' },
+          undefined,
+          CONFIG
+        )) as string
+      );
+
+      expect(updated.success).toBe(true);
+      expect(prisma.draft_order_item.update).toHaveBeenCalledWith({
+        where: { id: 'line-existing' },
+        data: { notes: 'sin sal' },
+      });
+    });
   });
 });

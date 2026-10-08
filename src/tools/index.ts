@@ -201,7 +201,7 @@ const rejectMissingPartySize = async (
   food?: {
     source: PartySizeBlockedFoodSource;
     summary: string;
-    lines?: Array<{ hint: string; requestedQuantity: number | null }>;
+    lines?: Array<{ hint: string; requestedQuantity: number | null; pendingNote?: string | null }>;
   } | null,
   turnStartedAt?: string | null
 ): Promise<string | null> => {
@@ -221,7 +221,7 @@ const partySizeOrderingGateJson = async (
   food?: {
     source: PartySizeBlockedFoodSource;
     summary: string;
-    lines?: Array<{ hint: string; requestedQuantity: number | null }>;
+    lines?: Array<{ hint: string; requestedQuantity: number | null; pendingNote?: string | null }>;
   } | null,
   turnStartedAt?: string | null
 ): Promise<string | null> => {
@@ -2627,6 +2627,11 @@ export const addCartItemTool = new DynamicStructuredTool<
         where: { draft_order_id: row.id, product_id: productId, variation: resolvedVariation },
       });
 
+      // Instrucción dicha antes de que el ítem exista (ej. "poco picante" en
+      // el mismo mensaje que el pedido): se persiste junto con el alta/merge
+      // de esta línea. Null no pisa una nota ya aplicada por update_item_note.
+      const pendingNoteToApply = orderLine?.pendingNote ?? null;
+
       let lineQty: number;
       if (existing) {
         lineQty = qty;
@@ -2638,6 +2643,7 @@ export const addCartItemTool = new DynamicStructuredTool<
             total_price: unitPrice.mul(lineQty),
             list_price: resolved.hasDiscount ? resolved.listPrice : null,
             discount_amount: resolved.hasDiscount ? resolved.discountAmount : null,
+            ...(pendingNoteToApply ? { notes: pendingNoteToApply } : {}),
           },
         });
       } else {
@@ -2652,6 +2658,7 @@ export const addCartItemTool = new DynamicStructuredTool<
             list_price: resolved.hasDiscount ? resolved.listPrice : null,
             discount_amount: resolved.hasDiscount ? resolved.discountAmount : null,
             variation: resolvedVariation,
+            notes: pendingNoteToApply,
           },
         });
       }
@@ -4194,6 +4201,15 @@ const planOrderLinesSchema = z.object({
               'la cantidad queda UNKNOWN y se preguntará antes de agregar. ' +
               'Un número de comensales ("para 3", "somos 3") nunca es cantidad de esta línea.'
           ),
+        pendingNote: z
+          .string()
+          .max(300)
+          .optional()
+          .describe(
+            'Instrucción/preferencia sobre ESTE plato si el cliente la dio en el mismo mensaje ' +
+              '(ej. "poco picante", "sin cebolla", "bien cocido"). Omití si no dijo ninguna. ' +
+              'Se persiste junto con el producto cuando se agregue al carrito.'
+          ),
       })
     )
     .min(2)
@@ -4228,12 +4244,15 @@ export const planOrderLinesTool = new DynamicStructuredTool<
     _runManager,
     config?: RunnableConfig
   ) => {
-    const plannedLines: Array<{ hint: string; requestedQuantity: number | null }> = lines.map(
-      (line) => ({
-        hint: line.hint,
-        requestedQuantity: line.requestedQuantity ?? null,
-      })
-    );
+    const plannedLines: Array<{
+      hint: string;
+      requestedQuantity: number | null;
+      pendingNote: string | null;
+    }> = lines.map((line) => ({
+      hint: line.hint,
+      requestedQuantity: line.requestedQuantity ?? null,
+      pendingNote: line.pendingNote?.trim() || null,
+    }));
     const { conversationId, turnStartedAt } = getReactContext(config);
     if (!conversationId) {
       return toJson({ success: false, error: 'no_conversation' });

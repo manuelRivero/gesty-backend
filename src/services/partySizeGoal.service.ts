@@ -102,7 +102,7 @@ export type PendingPartySizeOrder = {
   /** Inicio del turno ReAct que escribió este pending. Cruza turnos, no el texto. */
   turnStartedAt?: string | null;
   /** Líneas estructuradas de plan_order_lines, preservadas mientras se pide party size. */
-  lines?: Array<{ hint: string; requestedQuantity: number | null }>;
+  lines?: Array<{ hint: string; requestedQuantity: number | null; pendingNote?: string | null }>;
 };
 
 const collapseFoodText = (value: string): string => value.replace(/\s+/g, ' ').trim();
@@ -130,14 +130,21 @@ export const getPendingPartySizeOrder = (
       : {}),
     ...(Array.isArray(rawRecord.lines)
       ? {
-          lines: rawRecord.lines.filter(
-            (line): line is { hint: string; requestedQuantity: number | null } =>
-              typeof line === 'object' &&
-              line !== null &&
-              typeof (line as { hint?: unknown }).hint === 'string' &&
-              ((line as { requestedQuantity?: unknown }).requestedQuantity === null ||
-                typeof (line as { requestedQuantity?: unknown }).requestedQuantity === 'number')
-          ),
+          lines: rawRecord.lines
+            .filter(
+              (line): line is { hint: string; requestedQuantity: number | null; pendingNote?: unknown } =>
+                typeof line === 'object' &&
+                line !== null &&
+                typeof (line as { hint?: unknown }).hint === 'string' &&
+                ((line as { requestedQuantity?: unknown }).requestedQuantity === null ||
+                  typeof (line as { requestedQuantity?: unknown }).requestedQuantity === 'number')
+            )
+            .map((line) => ({
+              hint: line.hint,
+              requestedQuantity: line.requestedQuantity,
+              pendingNote:
+                typeof line.pendingNote === 'string' ? line.pendingNote.trim() || null : null,
+            })),
         }
       : {}),
   };
@@ -208,7 +215,7 @@ export const mergePartySizeBlockedFood = (
     source: PartySizeBlockedFoodSource;
     summary: string;
     turnStartedAt?: string | null;
-    lines?: Array<{ hint: string; requestedQuantity: number | null }>;
+    lines?: Array<{ hint: string; requestedQuantity: number | null; pendingNote?: string | null }>;
   }
 ): PendingPartySizeOrder | null => {
   const piece = clipFoodSummary(collapseFoodText(incoming.summary));
@@ -294,7 +301,7 @@ export const rememberPartySizeBlockedFood = async (
   incoming: {
     source: PartySizeBlockedFoodSource;
     summary: string;
-    lines?: Array<{ hint: string; requestedQuantity: number | null }>;
+    lines?: Array<{ hint: string; requestedQuantity: number | null; pendingNote?: string | null }>;
   },
   turnStartedAt?: string | null
 ): Promise<string | null> =>

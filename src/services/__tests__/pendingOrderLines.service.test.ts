@@ -48,9 +48,9 @@ vi.mock('../../repositories', () => ({
 
 const basePending = (over: Partial<PendingOrderLines> = {}): PendingOrderLines => ({
   lines: [
-    { id: 'l1', hint: 'lomo saltado', requestedQuantity: 3, status: 'active', currentResolutionId: 'pr1:biz-1:conv-1:res-1' },
-    { id: 'l2', hint: 'ceviche', requestedQuantity: 2, status: 'queued', currentResolutionId: 'pr1:biz-1:conv-1:res-2' },
-    { id: 'l3', hint: 'bebida', requestedQuantity: null, status: 'queued', currentResolutionId: 'pr1:biz-1:conv-1:res-3' },
+    { id: 'l1', hint: 'lomo saltado', requestedQuantity: 3, status: 'active', currentResolutionId: 'pr1:biz-1:conv-1:res-1', pendingNote: null },
+    { id: 'l2', hint: 'ceviche', requestedQuantity: 2, status: 'queued', currentResolutionId: 'pr1:biz-1:conv-1:res-2', pendingNote: null },
+    { id: 'l3', hint: 'bebida', requestedQuantity: null, status: 'queued', currentResolutionId: 'pr1:biz-1:conv-1:res-3', pendingNote: null },
   ],
   sourceMessage: '3 lomos, 2 ceviches y una bebida',
   createdAt: new Date().toISOString(),
@@ -73,8 +73,8 @@ describe('pendingOrderLines.service', () => {
     expect(getActiveOrderLine(basePending())).toMatchObject({ id: 'l1', status: 'active' });
     const noActive = basePending({
       lines: [
-        { id: 'l1', hint: 'lomo', requestedQuantity: null, status: 'done', currentResolutionId: 'pr1:biz-1:conv-1:res-1' },
-        { id: 'l2', hint: 'ceviche', requestedQuantity: null, status: 'queued', currentResolutionId: 'pr1:biz-1:conv-1:res-2' },
+        { id: 'l1', hint: 'lomo', requestedQuantity: null, status: 'done', currentResolutionId: 'pr1:biz-1:conv-1:res-1', pendingNote: null },
+        { id: 'l2', hint: 'ceviche', requestedQuantity: null, status: 'queued', currentResolutionId: 'pr1:biz-1:conv-1:res-2', pendingNote: null },
       ],
     });
     expect(getActiveOrderLine(noActive)).toMatchObject({ id: 'l2', status: 'queued' });
@@ -84,8 +84,8 @@ describe('pendingOrderLines.service', () => {
   it('requiere currentResolutionId válida para abrir Quantity Goal', () => {
     const pending = basePending({
       lines: [
-        { id: 'papas', hint: 'papas', requestedQuantity: null, status: 'active', currentResolutionId: null },
-        { id: 'ceviche', hint: 'ceviche', requestedQuantity: null, status: 'queued', currentResolutionId: 'pr1:b:conv:valid' },
+        { id: 'papas', hint: 'papas', requestedQuantity: null, status: 'active', currentResolutionId: null, pendingNote: null },
+        { id: 'ceviche', hint: 'ceviche', requestedQuantity: null, status: 'queued', currentResolutionId: 'pr1:b:conv:valid', pendingNote: null },
       ],
     });
     expect(getNextOrderLineRequiringQuantity(pending)?.id).toBe('ceviche');
@@ -97,7 +97,7 @@ describe('pendingOrderLines.service', () => {
 
   it('permite asociar y validar currentResolutionId explícita para una task', async () => {
     const pending = basePending({
-      lines: [{ id: 'task-1', hint: 'ceviche', requestedQuantity: null, status: 'active', currentResolutionId: null }],
+      lines: [{ id: 'task-1', hint: 'ceviche', requestedQuantity: null, status: 'active', currentResolutionId: null, pendingNote: null }],
     });
     const resolution = {
       resolutionId: 'pr1:biz-1:conv-1:resolution-1',
@@ -143,8 +143,8 @@ describe('pendingOrderLines.service', () => {
     conversationMetadata.value = {
       pendingOrderLines: basePending({
         lines: [
-          { id: 'task-a', hint: 'ceviche', requestedQuantity: 2, status: 'done', currentResolutionId: resolution.resolutionId },
-          { id: 'task-b', hint: 'ceviche', requestedQuantity: 1, status: 'active', currentResolutionId: null },
+          { id: 'task-a', hint: 'ceviche', requestedQuantity: 2, status: 'done', currentResolutionId: resolution.resolutionId, pendingNote: null },
+          { id: 'task-b', hint: 'ceviche', requestedQuantity: 1, status: 'active', currentResolutionId: null, pendingNote: null },
         ],
       }),
       productResolutions: [resolution],
@@ -176,8 +176,8 @@ describe('pendingOrderLines.service', () => {
     conversationMetadata.value = {
       pendingOrderLines: basePending({
         lines: [
-          { id: 'task-a', hint: 'ceviche', requestedQuantity: 2, status: 'active', currentResolutionId: null },
-          { id: 'task-b', hint: 'papas', requestedQuantity: null, status: 'queued', currentResolutionId: null },
+          { id: 'task-a', hint: 'ceviche', requestedQuantity: 2, status: 'active', currentResolutionId: null, pendingNote: null },
+          { id: 'task-b', hint: 'papas', requestedQuantity: null, status: 'queued', currentResolutionId: null, pendingNote: null },
         ],
       }),
       productResolutions: [resolution],
@@ -198,7 +198,7 @@ describe('pendingOrderLines.service', () => {
   it('associateProductResolutionToTask: una Task cerrada sigue siendo task_not_open', async () => {
     conversationMetadata.value = {
       pendingOrderLines: basePending({
-        lines: [{ id: 'task-a', hint: 'ceviche', requestedQuantity: 2, status: 'done', currentResolutionId: null }],
+        lines: [{ id: 'task-a', hint: 'ceviche', requestedQuantity: 2, status: 'done', currentResolutionId: null, pendingNote: null }],
       }),
     };
 
@@ -216,7 +216,7 @@ describe('pendingOrderLines.service', () => {
     const expiredId = 'pr1:biz-1:conv-1:expired';
     const freshId = 'pr1:biz-1:conv-1:fresh';
     const pending = basePending({
-      lines: [{ id: 'task-a', hint: 'ceviche', requestedQuantity: null, status: 'active', currentResolutionId: expiredId }],
+      lines: [{ id: 'task-a', hint: 'ceviche', requestedQuantity: null, status: 'active', currentResolutionId: expiredId, pendingNote: null }],
     });
     conversationMetadata.value = {
       pendingOrderLines: pending,
@@ -249,8 +249,8 @@ describe('pendingOrderLines.service', () => {
   it('selecciona la línea UNKNOWN activa y luego la primera queued UNKNOWN', () => {
     const pending = basePending({
       lines: [
-        { id: 'papas', hint: 'papas', requestedQuantity: null, status: 'active', currentResolutionId: 'pr1:biz-1:conv-1:res-1' },
-        { id: 'ceviche', hint: 'ceviche', requestedQuantity: null, status: 'queued', currentResolutionId: 'pr1:biz-1:conv-1:res-2' },
+        { id: 'papas', hint: 'papas', requestedQuantity: null, status: 'active', currentResolutionId: 'pr1:biz-1:conv-1:res-1', pendingNote: null },
+        { id: 'ceviche', hint: 'ceviche', requestedQuantity: null, status: 'queued', currentResolutionId: 'pr1:biz-1:conv-1:res-2', pendingNote: null },
       ],
     });
     expect(getNextOrderLineRequiringQuantity(pending)?.id).toBe('papas');
@@ -265,8 +265,8 @@ describe('pendingOrderLines.service', () => {
   it('persiste cantidad confirmada sin alterar status ni convertir otros UNKNOWN', async () => {
     const pending = basePending({
       lines: [
-        { id: 'papas', hint: 'papas', requestedQuantity: null, status: 'active', currentResolutionId: 'pr1:biz-1:conv-1:res-1' },
-        { id: 'ceviche', hint: 'ceviche', requestedQuantity: null, status: 'queued', currentResolutionId: 'pr1:biz-1:conv-1:res-2' },
+        { id: 'papas', hint: 'papas', requestedQuantity: null, status: 'active', currentResolutionId: 'pr1:biz-1:conv-1:res-1', pendingNote: null },
+        { id: 'ceviche', hint: 'ceviche', requestedQuantity: null, status: 'queued', currentResolutionId: 'pr1:biz-1:conv-1:res-2', pendingNote: null },
       ],
     });
     const next = await setOrderLineRequestedQuantity({
@@ -294,8 +294,8 @@ describe('pendingOrderLines.service', () => {
       hasOpenOrderLines({
         pendingOrderLines: basePending({
           lines: [
-            { id: 'l1', hint: 'lomo', requestedQuantity: null, status: 'done', currentResolutionId: 'pr1:biz-1:conv-1:res-1' },
-            { id: 'l2', hint: 'ceviche', requestedQuantity: null, status: 'cancelled', currentResolutionId: 'pr1:biz-1:conv-1:res-2' },
+            { id: 'l1', hint: 'lomo', requestedQuantity: null, status: 'done', currentResolutionId: 'pr1:biz-1:conv-1:res-1', pendingNote: null },
+            { id: 'l2', hint: 'ceviche', requestedQuantity: null, status: 'cancelled', currentResolutionId: 'pr1:biz-1:conv-1:res-2', pendingNote: null },
           ],
         }),
       })
@@ -324,8 +324,8 @@ describe('pendingOrderLines.service', () => {
       metadata: {},
     });
     expect(pending?.lines).toMatchObject([
-      { hint: 'papas a la huancaína', requestedQuantity: null, status: 'active' },
-      { hint: 'ceviche', requestedQuantity: null, status: 'queued' },
+      { hint: 'papas a la huancaína', requestedQuantity: null, status: 'active', currentResolutionId: null, pendingNote: null },
+      { hint: 'ceviche', requestedQuantity: null, status: 'queued', currentResolutionId: null, pendingNote: null },
     ]);
   });
 
@@ -417,8 +417,8 @@ describe('pendingOrderLines.service', () => {
     it('resolveMissedSearchOrderLine con empate prefiere la línea activa', () => {
       const pending = basePending({
         lines: [
-          { id: 'q', hint: 'lomo', requestedQuantity: null, status: 'queued' },
-          { id: 'a', hint: 'lomo', requestedQuantity: null, status: 'active' },
+          { id: 'q', hint: 'lomo', requestedQuantity: null, status: 'queued', currentResolutionId: null, pendingNote: null },
+          { id: 'a', hint: 'lomo', requestedQuantity: null, status: 'active', currentResolutionId: null, pendingNote: null },
         ],
       });
       expect(resolveMissedSearchOrderLine(pending, 'lomo')?.id).toBe('a');
@@ -459,7 +459,7 @@ describe('pendingOrderLines.service', () => {
 
   it('advanceAfterLineClose limpia la cola entera cuando no queda nada abierto', async () => {
     const oneLine = basePending({
-      lines: [{ id: 'l1', hint: 'lomo', requestedQuantity: null, status: 'active', currentResolutionId: 'pr1:biz-1:conv-1:res-1' }],
+      lines: [{ id: 'l1', hint: 'lomo', requestedQuantity: null, status: 'active', currentResolutionId: 'pr1:biz-1:conv-1:res-1', pendingNote: null }],
     });
     conversationMetadata.value = { pendingOrderLines: oneLine };
     const next = await advanceAfterLineClose({
@@ -474,7 +474,7 @@ describe('pendingOrderLines.service', () => {
   it('rechaza un orderLineId stale sin cerrar el Task active', async () => {
     const pending = basePending({
       lines: [
-        { id: 'task-b', hint: 'ceviche', requestedQuantity: 2, status: 'active', currentResolutionId: 'r-b' },
+        { id: 'task-b', hint: 'ceviche', requestedQuantity: 2, status: 'active', currentResolutionId: 'r-b', pendingNote: null },
       ],
     });
     conversationMetadata.value = { pendingOrderLines: pending };
@@ -490,8 +490,8 @@ describe('pendingOrderLines.service', () => {
   it('rechaza un orderLineId stale sin cerrar active ni queued Tasks', async () => {
     const pending = basePending({
       lines: [
-        { id: 'task-b', hint: 'ceviche', requestedQuantity: 2, status: 'active', currentResolutionId: 'r-b' },
-        { id: 'task-c', hint: 'milanesa', requestedQuantity: 1, status: 'queued', currentResolutionId: 'r-c' },
+        { id: 'task-b', hint: 'ceviche', requestedQuantity: 2, status: 'active', currentResolutionId: 'r-b', pendingNote: null },
+        { id: 'task-c', hint: 'milanesa', requestedQuantity: 1, status: 'queued', currentResolutionId: 'r-c', pendingNote: null },
       ],
     });
     conversationMetadata.value = { pendingOrderLines: pending };
@@ -507,8 +507,8 @@ describe('pendingOrderLines.service', () => {
   it('no sustituye un ID inexistente por la primera Task del array', async () => {
     const pending = basePending({
       lines: [
-        { id: 'task-y', hint: 'milanesa', requestedQuantity: 1, status: 'active', currentResolutionId: 'r-y' },
-        { id: 'task-z', hint: 'ceviche', requestedQuantity: 1, status: 'queued', currentResolutionId: 'r-z' },
+        { id: 'task-y', hint: 'milanesa', requestedQuantity: 1, status: 'active', currentResolutionId: 'r-y', pendingNote: null },
+        { id: 'task-z', hint: 'ceviche', requestedQuantity: 1, status: 'queued', currentResolutionId: 'r-z', pendingNote: null },
       ],
     });
     conversationMetadata.value = { pendingOrderLines: pending };
@@ -547,8 +547,8 @@ describe('pendingOrderLines.service', () => {
   it('activateNextOrderLine activa la próxima queued solo si no hay ya una active', async () => {
     const noActive = basePending({
       lines: [
-        { id: 'l1', hint: 'lomo', requestedQuantity: null, status: 'done', currentResolutionId: 'pr1:biz-1:conv-1:res-1' },
-        { id: 'l2', hint: 'ceviche', requestedQuantity: null, status: 'queued', currentResolutionId: 'pr1:biz-1:conv-1:res-2' },
+        { id: 'l1', hint: 'lomo', requestedQuantity: null, status: 'done', currentResolutionId: 'pr1:biz-1:conv-1:res-1', pendingNote: null },
+        { id: 'l2', hint: 'ceviche', requestedQuantity: null, status: 'queued', currentResolutionId: 'pr1:biz-1:conv-1:res-2', pendingNote: null },
       ],
     });
     const next = await activateNextOrderLine('conv-1', { pendingOrderLines: noActive });
@@ -581,7 +581,7 @@ describe('pendingOrderLines.service', () => {
   it('cancelOrderLine no cae al hint ni al Task active si el ID explícito es stale', async () => {
     const pending = basePending({
       lines: [
-        { id: 'task-b', hint: 'ceviche', requestedQuantity: 1, status: 'active', currentResolutionId: 'r-b' },
+        { id: 'task-b', hint: 'ceviche', requestedQuantity: 1, status: 'active', currentResolutionId: 'r-b', pendingNote: null },
       ],
     });
     conversationMetadata.value = { pendingOrderLines: pending };
@@ -598,7 +598,7 @@ describe('pendingOrderLines.service', () => {
   it('cancelOrderLine con hint sin match no cancela el Task active', async () => {
     const pending = basePending({
       lines: [
-        { id: 'task-b', hint: 'ceviche', requestedQuantity: 1, status: 'active', currentResolutionId: 'r-b' },
+        { id: 'task-b', hint: 'ceviche', requestedQuantity: 1, status: 'active', currentResolutionId: 'r-b', pendingNote: null },
       ],
     });
     conversationMetadata.value = { pendingOrderLines: pending };
@@ -614,8 +614,8 @@ describe('pendingOrderLines.service', () => {
   it('cancelOrderLine con hint ambiguo no elige la primera coincidencia', async () => {
     const pending = basePending({
       lines: [
-        { id: 'task-a', hint: 'ceviche clásico', requestedQuantity: 1, status: 'active', currentResolutionId: 'r-a' },
-        { id: 'task-b', hint: 'ceviche mixto', requestedQuantity: 1, status: 'queued', currentResolutionId: 'r-b' },
+        { id: 'task-a', hint: 'ceviche clásico', requestedQuantity: 1, status: 'active', currentResolutionId: 'r-a', pendingNote: null },
+        { id: 'task-b', hint: 'ceviche mixto', requestedQuantity: 1, status: 'queued', currentResolutionId: 'r-b', pendingNote: null },
       ],
     });
     conversationMetadata.value = { pendingOrderLines: pending };
@@ -642,7 +642,7 @@ describe('pendingOrderLines.service', () => {
 
   it('buildOrderLinesContinueOrCancelHint es null sin líneas queued', () => {
     const allClosed = basePending({
-      lines: [{ id: 'l1', hint: 'lomo', requestedQuantity: null, status: 'active' }],
+      lines: [{ id: 'l1', hint: 'lomo', requestedQuantity: null, status: 'active', currentResolutionId: null, pendingNote: null }],
     });
     expect(buildOrderLinesContinueOrCancelHint(allClosed)).toBeNull();
   });
@@ -663,8 +663,8 @@ describe('pendingOrderLines.service', () => {
     const lines = buildPendingOrderLinesContextLines({
       pendingOrderLines: basePending({
         lines: [
-          { id: 'l1', hint: 'A', requestedQuantity: 1, status: 'done' },
-          { id: 'l2', hint: 'B', requestedQuantity: 2, status: 'queued' },
+          { id: 'l1', hint: 'A', requestedQuantity: 1, status: 'done', currentResolutionId: null, pendingNote: null },
+          { id: 'l2', hint: 'B', requestedQuantity: 2, status: 'queued', currentResolutionId: null, pendingNote: null },
         ],
       }),
     });
@@ -695,8 +695,8 @@ describe('pendingOrderLines.service', () => {
     });
     const readyPending = (over: Partial<PendingOrderLines['lines'][number]> = {}) => basePending({
       lines: [
-        { id: 'l1', hint: 'ceviche', requestedQuantity: 2, status: 'active', currentResolutionId: 'pr1:biz-1:conv-1:res-1', ...over },
-        { id: 'l2', hint: 'papas', requestedQuantity: null, status: 'queued', currentResolutionId: null },
+        { id: 'l1', hint: 'ceviche', requestedQuantity: 2, status: 'active', currentResolutionId: 'pr1:biz-1:conv-1:res-1', pendingNote: null, ...over },
+        { id: 'l2', hint: 'papas', requestedQuantity: null, status: 'queued', currentResolutionId: null, pendingNote: null },
       ],
     });
 
@@ -726,8 +726,8 @@ describe('pendingOrderLines.service', () => {
         {
           pendingOrderLines: basePending({
             lines: [
-              { id: 'l1', hint: 'ceviche', requestedQuantity: 2, status: 'active', currentResolutionId: 'pr1:biz-1:conv-1:res-1' },
-              { id: 'l2', hint: 'papas', requestedQuantity: null, status: 'queued', currentResolutionId: 'pr1:biz-1:conv-1:res-1' },
+              { id: 'l1', hint: 'ceviche', requestedQuantity: 2, status: 'active', currentResolutionId: 'pr1:biz-1:conv-1:res-1', pendingNote: null },
+              { id: 'l2', hint: 'papas', requestedQuantity: null, status: 'queued', currentResolutionId: 'pr1:biz-1:conv-1:res-1', pendingNote: null },
             ],
           }),
           productResolutions: [resolution()],
@@ -747,9 +747,9 @@ describe('pendingOrderLines.service', () => {
   describe('resolveOrderLineForProduct', () => {
     const pending = basePending({
       lines: [
-        { id: 'l1', hint: 'ceviche', requestedQuantity: 1, status: 'active' },
-        { id: 'l2', hint: 'papas a la huancaína', requestedQuantity: 2, status: 'queued' },
-        { id: 'l3', hint: 'una chicha morada', requestedQuantity: 1, status: 'queued' },
+        { id: 'l1', hint: 'ceviche', requestedQuantity: 1, status: 'active', currentResolutionId: null, pendingNote: null },
+        { id: 'l2', hint: 'papas a la huancaína', requestedQuantity: 2, status: 'queued', currentResolutionId: null, pendingNote: null },
+        { id: 'l3', hint: 'una chicha morada', requestedQuantity: 1, status: 'queued', currentResolutionId: null, pendingNote: null },
       ],
     });
 
@@ -774,14 +774,14 @@ describe('pendingOrderLines.service', () => {
 
     it('ignora líneas ya cerradas', () => {
       const closed = basePending({
-        lines: [{ id: 'l1', hint: 'ceviche', requestedQuantity: 1, status: 'done' }],
+        lines: [{ id: 'l1', hint: 'ceviche', requestedQuantity: 1, status: 'done', currentResolutionId: null, pendingNote: null }],
       });
       expect(resolveOrderLineForProduct(closed, 'Ceviche Clásico')).toBeNull();
     });
 
     it('no matchea por stopwords compartidas ("a la", "de")', () => {
       const soloStopwords = basePending({
-        lines: [{ id: 'l1', hint: 'papas a la huancaína', requestedQuantity: 2, status: 'active' }],
+        lines: [{ id: 'l1', hint: 'papas a la huancaína', requestedQuantity: 2, status: 'active', currentResolutionId: null, pendingNote: null }],
       });
       expect(resolveOrderLineForProduct(soloStopwords, 'Pollo a la brasa')).toBeNull();
     });

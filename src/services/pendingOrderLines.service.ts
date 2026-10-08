@@ -34,6 +34,8 @@ export type OrderLine = {
   requestedQuantity: number | null;
   status: OrderLineStatus;
   currentResolutionId: string | null;
+  /** Instrucción de producto dicha antes de que la línea cierre (ej. "poco picante"). */
+  pendingNote: string | null;
 };
 
 export type FulfillmentTask = OrderLine;
@@ -68,12 +70,15 @@ const parseLine = (raw: unknown): OrderLine | null => {
       : raw.currentResolutionId === null
         ? null
         : null;
+  const pendingNote =
+    typeof raw.pendingNote === 'string' ? raw.pendingNote.trim() || null : null;
   return {
     id: raw.id.trim(),
     hint: raw.hint.trim(),
     requestedQuantity,
     status,
     currentResolutionId,
+    pendingNote,
   };
 };
 
@@ -728,11 +733,19 @@ export const normalizeOrderLineInput = (line: {
  */
 export const setPendingOrderLines = async (params: {
   conversationId: string;
-  lines: Array<{ hint: string; requestedQuantity?: number | null }>;
+  lines: Array<{
+    hint: string;
+    requestedQuantity?: number | null;
+    pendingNote?: string | null;
+  }>;
   sourceMessage: string;
 }): Promise<PendingOrderLines> => {
   const cleaned = params.lines
-    .map(normalizeOrderLineInput)
+    .map((line) => ({
+      ...normalizeOrderLineInput(line),
+      pendingNote:
+        typeof line.pendingNote === 'string' ? line.pendingNote.trim() || null : null,
+    }))
     .filter((l) => l.hint.length > 0)
     .slice(0, ORDER_LINES_MAX);
 
@@ -742,6 +755,7 @@ export const setPendingOrderLines = async (params: {
     requestedQuantity: l.requestedQuantity,
     status: idx === 0 ? 'active' : 'queued',
     currentResolutionId: null,
+    pendingNote: l.pendingNote,
   }));
 
   const pending: PendingOrderLines = {
