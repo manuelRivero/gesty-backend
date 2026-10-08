@@ -2263,8 +2263,10 @@ export const runHybridReactAgent = async (
       // (no una inferencia del LLM): si queda cola, la respuesta la comunica acá y el
       // turno igual termina — avanzar la cola sigue siendo continue_order_line en otro turno.
       const followUpProse = signals.queueFollowUp && signals.queueFollowUp.remaining > 0
-        ? `Quedan ${signals.queueFollowUp.remaining} línea(s) de tu pedido por sumar. ` +
-          `¿Seguimos con *${signals.queueFollowUp.nextHint}*?`
+        ? signals.queueFollowUp.remaining === 1
+          ? `Queda 1 línea de tu pedido por sumar. ¿Seguimos con *${signals.queueFollowUp.nextHint}*?`
+          : `Quedan ${signals.queueFollowUp.remaining} línea(s) de tu pedido por sumar. ` +
+            `¿Seguimos con *${signals.queueFollowUp.nextHint}*?`
         : null;
       const cartMsg = await buildCartSummaryMessage({
         businessId,
@@ -2273,10 +2275,16 @@ export const runHybridReactAgent = async (
         customerId: customer.id,
         currencyCode: business.currency_code ?? null,
         businessStreetAddress: business.street_address ?? null,
-        llmProse: followUpProse,
+        llmProse: null,
       });
+      // El CTA de continuación va al final absoluto del mensaje (estado del carrito primero,
+      // propuesta de seguir después), no antepuesto via llmProse como el resto de la prosa.
+      // No muta cartMsg: buildCartSummaryMessage puede devolver una referencia reutilizada.
+      const cartMsgWithFollowUp = followUpProse
+        ? { ...cartMsg, body: { ...cartMsg.body, text: `${cartMsg.body.text}\n\n${followUpProse}` } }
+        : cartMsg;
       console.debug(JSON.stringify({ event: '[hybrid-agent] post_effect_cart_summary', turnId: ctx.turnId, conversationId }));
-      return { kind: 'response', handlerResult: markHybridResult({ content: cartMsg, isInteractive: true }) };
+      return { kind: 'response', handlerResult: markHybridResult({ content: cartMsgWithFollowUp, isInteractive: true }) };
     } catch (err) {
       console.error('[hybrid-agent] post-effect cart summary failed, falling through', err);
     }

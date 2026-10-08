@@ -461,19 +461,17 @@ describe('runHybridReactAgent', () => {
         messages: [addToolMessage({ nextHint: 'papas a la huancaína', remaining: 2 })],
       }) });
 
-      await runHybridReactAgent(makeCtx() as any);
+      const result = unwrap(await runHybridReactAgent(makeCtx() as any));
+      const visible = JSON.stringify(result?.content ?? '');
 
-      // La respuesta final (vía llmProse → prependLlmProse, ya existente) incorpora exactamente
-      // el nextHint/remaining que devolvió add_cart_item — dato determinístico, no inferencia.
-      expect(buildCartSummaryMessage).toHaveBeenCalledWith(
-        expect.objectContaining({ llmProse: expect.stringMatching(/papas a la huancaína/) })
-      );
-      const calls = vi.mocked(buildCartSummaryMessage).mock.calls;
-      const llmProse = calls[calls.length - 1]?.[0]?.llmProse ?? '';
-      expect(llmProse).toMatch(/2/);
+      // El CTA (dato determinístico del add_cart_item, no inferencia) llega al cuerpo del
+      // resumen; nunca por llmProse (eso lo antepondría, no lo pondría al final).
+      expect(buildCartSummaryMessage).toHaveBeenCalledWith(expect.objectContaining({ llmProse: null }));
+      expect(visible).toMatch(/papas a la huancaína/);
+      expect(visible).toMatch(/Quedan 2 línea\(s\)/);
       // Ninguna tool se ejecutó para la siguiente línea: el mock de invoke solo devolvió el
       // ToolMessage de add_cart_item, sin search_products/resolve_product/present_product_cta/continue_order_line.
-      expect(llmProse).not.toMatch(/search_products|resolve_product|present_product_cta|continue_order_line/);
+      expect(visible).not.toMatch(/search_products|resolve_product|present_product_cta|continue_order_line/);
     });
 
     it('TEST B — sin cola restante: comportamiento actual (llmProse: null), sin "¿algo más?" artificial', async () => {
@@ -484,6 +482,7 @@ describe('runHybridReactAgent', () => {
 
       expect(buildCartSummaryMessage).toHaveBeenCalledWith(expect.objectContaining({ llmProse: null }));
       expect(visible).not.toMatch(/algo más/i);
+      expect(visible).not.toMatch(/Quedan|Queda \d/);
     });
 
     it('no ofrece seguir si remaining llega en 0 (cola ya cerrada del todo)', async () => {
@@ -491,9 +490,73 @@ describe('runHybridReactAgent', () => {
         messages: [addToolMessage({ nextHint: 'papas a la huancaína', remaining: 0 })],
       }) });
 
-      await runHybridReactAgent(makeCtx() as any);
+      const result = unwrap(await runHybridReactAgent(makeCtx() as any));
+      const visible = JSON.stringify(result?.content ?? '');
 
       expect(buildCartSummaryMessage).toHaveBeenCalledWith(expect.objectContaining({ llmProse: null }));
+      expect(visible).not.toMatch(/Quedan|Queda \d/);
+    });
+
+    it('TEST 1 — el queueFollowUp queda DESPUÉS del resumen del carrito (orden, no solo presencia)', async () => {
+      mockAgent({ invoke: vi.fn().mockResolvedValue({
+        messages: [addToolMessage({ nextHint: 'papas a la huancaína', remaining: 2 })],
+      }) });
+
+      const result = unwrap(await runHybridReactAgent(makeCtx() as any)) as { content: { body: { text: string } } };
+      const bodyText = result.content.body.text;
+
+      const cartIndex = bodyText.indexOf('Platos principales');
+      const followUpIndex = bodyText.indexOf('Quedan 2 línea(s)');
+      expect(cartIndex).toBeGreaterThanOrEqual(0);
+      expect(followUpIndex).toBeGreaterThan(cartIndex);
+      // El CTA es literalmente el cierre del mensaje: no hay nada después.
+      expect(bodyText.endsWith('¿Seguimos con *papas a la huancaína*?')).toBe(true);
+    });
+
+    it('TEST 3 — sin queueFollowUp, el body del carrito queda exactamente igual que antes', async () => {
+      mockAgent({ invoke: vi.fn().mockResolvedValue({ messages: [addToolMessage(undefined)] }) });
+
+      const result = unwrap(await runHybridReactAgent(makeCtx() as any)) as { content: { body: { text: string } } };
+
+      expect(result.content.body.text).toBe('*Platos principales*\n1× Papas a la huancaína');
+    });
+
+    it('TEST 4 — singular: "Queda 1 línea" (sin "(s)", sin "Quedan"), al final del mensaje', async () => {
+      mockAgent({ invoke: vi.fn().mockResolvedValue({
+        messages: [addToolMessage({ nextHint: 'chicha morada', remaining: 1 })],
+      }) });
+
+      const result = unwrap(await runHybridReactAgent(makeCtx() as any)) as { content: { body: { text: string } } };
+      const bodyText = result.content.body.text;
+
+      expect(bodyText.endsWith('Queda 1 línea de tu pedido por sumar. ¿Seguimos con *chicha morada*?')).toBe(true);
+      expect(bodyText).not.toMatch(/Quedan|línea\(s\)/);
+    });
+
+    it('TEST 5 — plural: "Quedan 2 línea(s)", al final del mensaje', async () => {
+      mockAgent({ invoke: vi.fn().mockResolvedValue({
+        messages: [addToolMessage({ nextHint: 'papas a la huancaína', remaining: 2 })],
+      }) });
+
+      const result = unwrap(await runHybridReactAgent(makeCtx() as any)) as { content: { body: { text: string } } };
+      const bodyText = result.content.body.text;
+
+      expect(bodyText.endsWith('Quedan 2 línea(s) de tu pedido por sumar. ¿Seguimos con *papas a la huancaína*?')).toBe(true);
+    });
+
+    it('TEST 6 — construir el mensaje es pura composición de texto: no vuelve a invocar al agente', async () => {
+      // El reordenamiento es composición de respuesta después de que el grafo ya terminó
+      // (agent.stream/invoke no se vuelve a llamar). La garantía fuerte de que ningún tool
+      // corre automáticamente tras el fulfillment ya está en turnAwaitsUserInput.test.ts
+      // (TEST 5, sobre el grafo real) y no cambia con este ajuste puramente visual.
+      const invoke = vi.fn().mockResolvedValue({
+        messages: [addToolMessage({ nextHint: 'papas a la huancaína', remaining: 2 })],
+      });
+      mockAgent({ invoke });
+
+      await runHybridReactAgent(makeCtx() as any);
+
+      expect(invoke).toHaveBeenCalledTimes(1);
     });
   });
 
