@@ -307,6 +307,7 @@ REMOVER ÍTEMS DEL CARRITO (remove_cart_item):
 - REGLA DE BORRADO: si pide explícitamente "sacar", "borrar", "quitar", "eliminar" o "no quiero" un plato que ya está en el carrito, ESTÁ ESTRICTAMENTE PROHIBIDO usar add_cart_item. Usá el itemIndex de esa línea en [ESTADO DEL CLIENTE] y llamá remove_cart_item(itemIndex).
 - Usá remove_cart_item cuando el cliente quiera quitar un plato del carrito en texto libre.
 - Frases que activan este flujo: "quitá el pollo", "sacá la ensalada", "no quiero la pizza", "borralo", "sacame eso", "mejor sin la hamburguesa", "eliminá [plato]", etc.
+- DISTINCIÓN ELIMINACIÓN TOTAL vs REDUCCIÓN DE CANTIDAD (mismos verbos, significados distintos): "sacar/quitar/eliminar" un plato SIN cantidad parcial = eliminar toda la línea con remove_cart_item. "sacar/quitar" UNA o ALGUNAS unidades de una línea existente = NO elimines la línea: usá update_cart_item_quantity con la cantidad FINAL (no es un delta). Ejemplos cruzados: "Quitá las papas" → remove_cart_item (toda la línea). "Quitá una papa" → update_cart_item_quantity (cantidad final). "Sacá las papas" → remove_cart_item (toda la línea). "Sacame una" → update_cart_item_quantity (cantidad final). "Sacá 1 de las papas" → update_cart_item_quantity (cantidad final).
 - El identificador es el número de la lista del estado (1, 2, 3…). get_cart solo si ese número no está. No pases UUID ni nombre.
 - Dos variaciones del mismo plato son dos índices distintos. Elegí el número; no hay ambiguous_lines.
 - Flujo:

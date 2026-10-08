@@ -3074,6 +3074,10 @@ export const removeCartItemTool = new DynamicStructuredTool<
     'Elimina completamente un producto del carrito activo del cliente. ' +
     'Usá este tool cuando el cliente pida quitar, sacar o eliminar un ítem en texto libre: ' +
     '"quitá el pollo", "sacá la ensalada", "no quiero la pizza", "borralo", etc. ' +
+    'ESTA TOOL ES SOLO PARA ELIMINAR TODA LA LÍNEA. Si el cliente usa esos mismos verbos ' +
+    '(sacar/quitar) pero menciona una cantidad parcial — "sacame una", "quitá una", "sacá 1 de las papas" — ' +
+    'NO significa eliminar la línea completa: NO uses remove_cart_item. Usá update_cart_item_quantity ' +
+    'con la cantidad FINAL (si hay 3 y dice "sacame una", quantity es 2, no 0). ' +
     'itemIndex es OBLIGATORIO y debe corresponder exactamente al número de una línea ' +
     'del carrito en [ESTADO DEL CLIENTE] (1, 2, 3…). ' +
     'NO inventes itemIndex, UUIDs, slugs ni otros identificadores. ' +
