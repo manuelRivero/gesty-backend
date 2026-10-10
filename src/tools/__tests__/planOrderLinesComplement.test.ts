@@ -103,14 +103,54 @@ describe('plan_order_lines + ola de complemento', () => {
     }, CONFIG);
 
     const pending = setPendingOrderLines.mock.lastCall?.[0] as {
-      lines: Array<{ hint: string; requestedQuantity: number | null }>;
+      lines: Array<{ hint: string; requestedQuantity: number | null; pendingNote: string | null }>;
     };
     expect(pending.lines).toEqual([
-      { hint: 'papas', requestedQuantity: null },
-      { hint: 'ceviche', requestedQuantity: null },
+      { hint: 'papas', requestedQuantity: null, pendingNote: null },
+      { hint: 'ceviche', requestedQuantity: null, pendingNote: null },
     ]);
     for (const line of pending.lines) {
       expect(line.requestedQuantity).toBeNull();
     }
+  });
+
+  it('transfiere pendingNote por línea sin cruzarlas ("ceviche con poco picante y papas sin cebolla")', async () => {
+    await planOrderLinesTool.invoke(
+      {
+        lines: [
+          { hint: 'ceviche', pendingNote: 'poco picante' },
+          { hint: 'papas', pendingNote: 'sin cebolla' },
+        ],
+      },
+      CONFIG
+    );
+
+    const pending = setPendingOrderLines.mock.lastCall?.[0] as {
+      lines: Array<{ hint: string; requestedQuantity: number | null; pendingNote: string | null }>;
+    };
+    expect(pending.lines).toEqual([
+      { hint: 'ceviche', requestedQuantity: null, pendingNote: 'poco picante' },
+      { hint: 'papas', requestedQuantity: null, pendingNote: 'sin cebolla' },
+    ]);
+  });
+
+  it('una línea sin nota queda con pendingNote null (no inventa notas)', async () => {
+    await planOrderLinesTool.invoke(
+      {
+        lines: [
+          { hint: 'ceviche', pendingNote: 'poco picante' },
+          { hint: 'chicha morada' },
+        ],
+      },
+      CONFIG
+    );
+
+    const pending = setPendingOrderLines.mock.lastCall?.[0] as {
+      lines: Array<{ hint: string; requestedQuantity: number | null; pendingNote: string | null }>;
+    };
+    expect(pending.lines).toEqual([
+      { hint: 'ceviche', requestedQuantity: null, pendingNote: 'poco picante' },
+      { hint: 'chicha morada', requestedQuantity: null, pendingNote: null },
+    ]);
   });
 });

@@ -468,7 +468,7 @@ describe('runHybridReactAgent', () => {
       // resumen; nunca por llmProse (eso lo antepondría, no lo pondría al final).
       expect(buildCartSummaryMessage).toHaveBeenCalledWith(expect.objectContaining({ llmProse: null }));
       expect(visible).toMatch(/papas a la huancaína/);
-      expect(visible).toMatch(/Quedan 2 línea\(s\)/);
+      expect(visible).toMatch(/Quedan \*2 productos\*/);
       // Ninguna tool se ejecutó para la siguiente línea: el mock de invoke solo devolvió el
       // ToolMessage de add_cart_item, sin search_products/resolve_product/present_product_cta/continue_order_line.
       expect(visible).not.toMatch(/search_products|resolve_product|present_product_cta|continue_order_line/);
@@ -482,7 +482,7 @@ describe('runHybridReactAgent', () => {
 
       expect(buildCartSummaryMessage).toHaveBeenCalledWith(expect.objectContaining({ llmProse: null }));
       expect(visible).not.toMatch(/algo más/i);
-      expect(visible).not.toMatch(/Quedan|Queda \d/);
+      expect(visible).not.toMatch(/Quedan|Queda \d+ producto/);
     });
 
     it('no ofrece seguir si remaining llega en 0 (cola ya cerrada del todo)', async () => {
@@ -494,7 +494,7 @@ describe('runHybridReactAgent', () => {
       const visible = JSON.stringify(result?.content ?? '');
 
       expect(buildCartSummaryMessage).toHaveBeenCalledWith(expect.objectContaining({ llmProse: null }));
-      expect(visible).not.toMatch(/Quedan|Queda \d/);
+      expect(visible).not.toMatch(/Quedan|Queda \d+ producto/);
     });
 
     it('TEST 1 — el queueFollowUp queda DESPUÉS del resumen del carrito (orden, no solo presencia)', async () => {
@@ -506,11 +506,14 @@ describe('runHybridReactAgent', () => {
       const bodyText = result.content.body.text;
 
       const cartIndex = bodyText.indexOf('Platos principales');
-      const followUpIndex = bodyText.indexOf('Quedan 2 línea(s)');
+      const followUpIndex = bodyText.indexOf('Quedan *2 productos*');
       expect(cartIndex).toBeGreaterThanOrEqual(0);
       expect(followUpIndex).toBeGreaterThan(cartIndex);
       // El CTA es literalmente el cierre del mensaje: no hay nada después.
-      expect(bodyText.endsWith('¿Seguimos con *papas a la huancaína*?')).toBe(true);
+      expect(bodyText.endsWith(
+        '*Importante:* podrás agregar notas y ajustar cantidades cuando terminemos de incorporar todos los productos a tu pedido.'
+      )).toBe(true);
+      expect(bodyText).toContain('El siguiente es: *papas a la huancaína*.');
     });
 
     it('TEST 3 — sin queueFollowUp, el body del carrito queda exactamente igual que antes', async () => {
@@ -521,7 +524,7 @@ describe('runHybridReactAgent', () => {
       expect(result.content.body.text).toBe('*Platos principales*\n1× Papas a la huancaína');
     });
 
-    it('TEST 4 — singular: "Queda 1 línea" (sin "(s)", sin "Quedan"), al final del mensaje', async () => {
+    it('TEST 4 — singular: "Queda 1 producto por sumar..." (sin "Quedan"), con instrucciones de Sí/No', async () => {
       mockAgent({ invoke: vi.fn().mockResolvedValue({
         messages: [addToolMessage({ nextHint: 'chicha morada', remaining: 1 })],
       }) });
@@ -529,11 +532,16 @@ describe('runHybridReactAgent', () => {
       const result = unwrap(await runHybridReactAgent(makeCtx() as any)) as { content: { body: { text: string } } };
       const bodyText = result.content.body.text;
 
-      expect(bodyText.endsWith('Queda 1 línea de tu pedido por sumar. ¿Seguimos con *chicha morada*?')).toBe(true);
-      expect(bodyText).not.toMatch(/Quedan|línea\(s\)/);
+      expect(bodyText).toContain('Queda 1 producto por sumar a tu pedido: *chicha morada*.');
+      expect(bodyText).not.toMatch(/Quedan|línea/);
+      expect(bodyText).toMatch(/Escribe \*Sí\* para continuar con tu pedido\./);
+      expect(bodyText).toMatch(/Escribe \*No\* si quieres que te ayude con otra cosa y dejar el pedido como está\./);
+      expect(bodyText).toMatch(
+        /\*Importante:\* podrás agregar notas y ajustar cantidades cuando terminemos de incorporar todos los productos a tu pedido\./
+      );
     });
 
-    it('TEST 5 — plural: "Quedan 2 línea(s)", al final del mensaje', async () => {
+    it('TEST 5 — plural: "Quedan N productos...", nombra el siguiente, con instrucciones de Sí/No', async () => {
       mockAgent({ invoke: vi.fn().mockResolvedValue({
         messages: [addToolMessage({ nextHint: 'papas a la huancaína', remaining: 2 })],
       }) });
@@ -541,7 +549,13 @@ describe('runHybridReactAgent', () => {
       const result = unwrap(await runHybridReactAgent(makeCtx() as any)) as { content: { body: { text: string } } };
       const bodyText = result.content.body.text;
 
-      expect(bodyText.endsWith('Quedan 2 línea(s) de tu pedido por sumar. ¿Seguimos con *papas a la huancaína*?')).toBe(true);
+      expect(bodyText).toContain('Quedan *2 productos* por sumar a tu pedido.');
+      expect(bodyText).toContain('El siguiente es: *papas a la huancaína*.');
+      expect(bodyText).toMatch(/Escribe \*Sí\* para continuar con tu pedido\./);
+      expect(bodyText).toMatch(/Escribe \*No\* si quieres que te ayude con otra cosa y dejar el pedido como está\./);
+      expect(bodyText).toMatch(
+        /\*Importante:\* podrás agregar notas y ajustar cantidades cuando terminemos de incorporar todos los productos a tu pedido\./
+      );
     });
 
     it('TEST 6 — construir el mensaje es pura composición de texto: no vuelve a invocar al agente', async () => {

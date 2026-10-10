@@ -713,6 +713,12 @@ describe('pendingOrderLines.service', () => {
     expect(hint).toMatchObject({ nextHint: 'ceviche', remaining: 3 });
     expect(hint?.instruction).toMatch(/ceviche/);
     expect(hint?.instruction).toMatch(/NO arranques/);
+    // Vocabulario de UX acordado: "producto(s)", no "línea(s)"; y se informa que al
+    // terminar se podrá ajustar cantidades/notas (ver reactAgent.ts para el copy literal).
+    expect(hint?.instruction).toMatch(/producto\(s\)/);
+    expect(hint?.instruction).not.toMatch(/línea/);
+    expect(hint?.instruction).toMatch(/atender otra necesidad dejando el pedido actual como está/);
+    expect(hint?.instruction).toMatch(/agregar notas y ajustar cantidades/);
   });
 
   it('buildOrderLinesContinueOrCancelHint es null sin líneas queued', () => {

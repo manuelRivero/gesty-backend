@@ -975,10 +975,12 @@ export const buildOrderLinesContinueOrCancelHint = (
     nextHint: nextQueued.hint,
     remaining,
     instruction:
-      `Quedan ${remaining} línea(s) de la cola de pedido. En tu mensaje de cierre de este turno, ` +
-      `ofrecé seguir con *${nextQueued.hint}*${qtyLabel} o cancelar el resto — NO arranques ` +
-      `search_products/present_product_cta de esa línea en este mismo turno; esperá la respuesta. ` +
-      `PROHIBIDO present_complement_suggestions y preguntar "¿algo más?" mientras la cola siga abierta.`,
+      `Quedan ${remaining} producto(s) por sumar al pedido. En tu mensaje de cierre de este turno, ` +
+      `ofrecé seguir con *${nextQueued.hint}*${qtyLabel} o atender otra necesidad dejando el pedido ` +
+      `actual como está — NO arranques search_products/present_product_cta de ese producto en este ` +
+      `mismo turno; esperá la respuesta. PROHIBIDO present_complement_suggestions y preguntar ` +
+      `"¿algo más?" mientras queden productos pendientes. Podrá agregar notas y ajustar cantidades ` +
+      `cuando terminemos de incorporar todos los productos a su pedido.`,
   };
 };
 

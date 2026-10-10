@@ -663,6 +663,24 @@ const logToolCallTrace = (
   }));
 };
 
+// UX del cierre de MVP: mientras queden OrderLines pendientes, el flujo guía al
+// cliente a completarlas una por una; recién terminada la cola puede ajustar
+// cantidades o agregar notas (eso ya lo cubre el turno post-cola, no acá).
+// nextHint y remaining son los únicos datos que necesita este copy — ambos ya
+// vienen resueltos por queueFollowUp (ver buildOrderLinesContinueOrCancelHint).
+const buildQueueFollowUpMessage = (nextHint: string, remaining: number): string => {
+  const headline = remaining === 1
+    ? `Queda 1 producto por sumar a tu pedido: *${nextHint}*.`
+    : `Quedan *${remaining} productos* por sumar a tu pedido.\n\nEl siguiente es: *${nextHint}*.`;
+  return (
+    `${headline}\n\n` +
+    `¿Seguimos con este producto?\n\n` +
+    `Escribe *Sí* para continuar con tu pedido.\n\n` +
+    `Escribe *No* si quieres que te ayude con otra cosa y dejar el pedido como está.\n\n` +
+    `*Importante:* podrás agregar notas y ajustar cantidades cuando terminemos de incorporar todos los productos a tu pedido.`
+  );
+};
+
 const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
   const signals: HybridAgentSignals = {
     startCheckoutSession: false,
@@ -2263,10 +2281,7 @@ export const runHybridReactAgent = async (
       // (no una inferencia del LLM): si queda cola, la respuesta la comunica acá y el
       // turno igual termina — avanzar la cola sigue siendo continue_order_line en otro turno.
       const followUpProse = signals.queueFollowUp && signals.queueFollowUp.remaining > 0
-        ? signals.queueFollowUp.remaining === 1
-          ? `Queda 1 línea de tu pedido por sumar. ¿Seguimos con *${signals.queueFollowUp.nextHint}*?`
-          : `Quedan ${signals.queueFollowUp.remaining} línea(s) de tu pedido por sumar. ` +
-            `¿Seguimos con *${signals.queueFollowUp.nextHint}*?`
+        ? buildQueueFollowUpMessage(signals.queueFollowUp.nextHint, signals.queueFollowUp.remaining)
         : null;
       const cartMsg = await buildCartSummaryMessage({
         businessId,
