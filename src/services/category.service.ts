@@ -37,7 +37,7 @@ interface CategoryMessageResult {
 }
 
 interface ViewCategoriesResult {
-    message: WhatsAppListMessage | null;
+    message: WhatsAppListMessage | string | null;
     errorMessage?: string;
 }
 
@@ -369,29 +369,25 @@ export const buildViewCategoriesMessage = async (
       where: { business_id: business.id, is_active: true },
       orderBy: { name: 'asc' },
       skip: (page - 1) * MAX_ROWS,
-      take: MAX_ROWS + 1 // 10 + 1 para detectar si hay más
+      take: MAX_ROWS
     });
-  
+
     if (categories.length === 0) {
       const errorText = 'No hay categorías disponibles.';
       await createConversationMessage(conversation.id, 'ai', errorText, false);
       await updateConversationLastMessageAt(conversation.id);
       return { message: null, errorMessage: errorText };
     }
-  
-    const hasMore = categories.length > MAX_ROWS;
-  
-    // 👇 calcular slots especiales
-    const specialSlots =
-      (isFromMenuReturn ? 1 : 0) +
-      (hasMore ? 1 : 0);
-  
+
+    // Las categorías ya no se ofrecen como filas CATEGORY:<id>/CATEGORY_LIST_PAGE:
+    // se resuelven por texto libre (get_categories/present_category). El único
+    // row que puede sobrevivir es VIEW_MENU_RETURN (fuera del alcance de esta etapa).
+    const specialSlots = isFromMenuReturn ? 1 : 0;
     const maxCategorySlots = MAX_ROWS - specialSlots;
-  
     const displayCategories = categories.slice(0, maxCategorySlots);
-  
-    const rows = [];
-  
+
+    const rows: Array<{ id: string; title: string; description: string }> = [];
+
     if (isFromMenuReturn) {
       rows.push({
         id: 'VIEW_MENU_RETURN',
@@ -399,43 +395,36 @@ export const buildViewCategoriesMessage = async (
         description: 'Volver al inicio'
       });
     }
-  
-    rows.push(
-      ...displayCategories.map(cat => ({
-        id: `CATEGORY:${cat.id}`,
-        title: truncateTitle(cat.name),
-        description: 'Ver platillos'
-      }))
-    );
-  
-    if (hasMore) {
-      rows.push({
-        id: `CATEGORY_LIST_PAGE:${page + 1}`,
-        title: 'Más categorías →',
-        description: 'Siguiente página'
-      });
-    }
 
     const bodyPlain = buildViewCategoriesBodyText(
       displayCategories.map((cat) => cat.name)
     );
-  
+
+    if (rows.length === 0) {
+      // Sin fila clickeable que ofrecer (ej. click en un CATEGORY_LIST_PAGE
+      // antiguo): se mantiene el contenido conversacional como texto plano,
+      // nunca como un WhatsAppListMessage con 0 filas.
+      await createConversationMessage(conversation.id, 'ai', bodyPlain, false);
+      await updateConversationLastMessageAt(conversation.id);
+      return { message: bodyPlain };
+    }
+
     const listMessage: WhatsAppListMessage = {
       type: 'list',
       header: { type: 'text', text: '🤖\n\n*Este es nuestro menú* 🍲' },
       body: {
         text: bodyPlain,
       },
-      footer: { text: hasMore ? `Página ${page}` : 'Elegí o escribí' },
+      footer: { text: 'Elegí o escribí' },
       action: {
         button: 'Ver categorías',
         sections: [{ title: 'Categorías disponibles', rows }]
       }
     };
-  
+
     await createConversationMessage(conversation.id, 'ai', listMessage.body.text, false);
     await updateConversationLastMessageAt(conversation.id);
-  
+
     return { message: listMessage };
   };
 

@@ -654,9 +654,7 @@ export const buildAddItemMessage = async (
     includeEditAddressHint: includeAddress,
   });
 
-  const mainFollowUpList = buildAddItemShortcutsFollowUpList(followUpBody, {
-    includeEditAddressRow: includeAddress,
-  });
+  const mainFollowUpList = buildAddItemShortcutsFollowUpList(followUpBody);
   await patchConversationMetadata(conversation.id, {
     ...buildPendingTipablesPatch(CART_FOLLOWUP_MANAGEMENT_TIPABLES),
   });
@@ -1065,12 +1063,6 @@ export const handleShowCartForEditionFromWebhook = async (
           payload: 'VIEW_MENU',
           description: 'Explorar platos disponibles',
           sectionTitle: 'Opciones'
-        },
-        {
-          title: 'Hacer una consulta',
-          payload: 'ASK_QUESTION',
-          description: 'Resolver una duda',
-          sectionTitle: 'Opciones'
         }
       ],
       'Ver opciones',
@@ -1147,7 +1139,6 @@ export const buildCartSummaryMessage = async (params: {
       prependLlmProse(EMPTY_CART_BOT_MESSAGE, llmProse),
       [
         { title: 'Ver menú', payload: 'VIEW_MENU', description: 'Explorar platos disponibles', sectionTitle: 'Opciones' },
-        { title: 'Hacer una consulta', payload: 'ASK_QUESTION', description: 'Resolver una duda', sectionTitle: 'Opciones' },
       ],
       'Ver opciones',
       '',
@@ -1234,26 +1225,8 @@ export const buildCartSummaryMessage = async (params: {
     //   description: 'Cantidades, ítems y revisión',
     // },
     { id: 'CHECKOUT', title: 'Finalizar pedido', description: 'Ir al checkout' },
-    {
-      id: 'ITEM_NOTE',
-      title: 'Nota del pedido',
-      description: 'Instrucción especial de un plato',
-    },
     { id: 'CANCEL_ORDER', title: 'Cancelar pedido', description: 'Vaciar y empezar de nuevo' },
   ];
-  if (includeAddress) {
-    rows.push({
-      id: 'EDIT_ADDRESS',
-      title: 'Editar dirección',
-      description: 'Cambiar entrega',
-    });
-  }
-  rows.push(
-    { id: 'MENU_BY_TAG:STARTER:1', title: 'Ver entradas', description: 'Solo entradas' },
-    { id: 'MENU_BY_TAG:MAIN:1', title: 'Ver platos principales', description: 'Solo principales' },
-    { id: 'MENU_BY_TAG:DRINK:1', title: 'Ver bebidas', description: 'Solo bebidas' },
-    { id: 'MENU_BY_TAG:DESSERT:1', title: 'Ver postres', description: 'Solo postres' }
-  );
 
   return {
     type: 'list',

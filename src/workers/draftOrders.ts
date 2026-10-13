@@ -262,12 +262,6 @@ export const processDraftOrderTimeouts = async () => {
                     payload: 'ASK_QUESTION',
                     description: 'Resolver una duda',
                     sectionTitle: 'Opciones'
-                },
-                {
-                    title: 'Necesito ayuda',
-                    payload: 'SUPPORT',
-                    description: 'Contactar soporte',
-                    sectionTitle: 'Opciones'
                 }
             ],
             'Ver opciones',

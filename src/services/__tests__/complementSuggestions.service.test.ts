@@ -125,11 +125,13 @@ describe('canSurfaceComplementOpportunity', () => {
 });
 
 describe('buildAddItemShortcutsFollowUpList', () => {
-  it('incluye fila ITEM_NOTE junto a gestión', () => {
+  it('ya no emite filas ITEM_NOTE ni EDIT_ADDRESS (resueltas por texto libre vía update_item_note/save_delivery_address)', () => {
     const list = buildAddItemShortcutsFollowUpList('Escribí: …');
     const rows = list.action.sections.flatMap((s) => s.rows);
-    expect(rows.some((r) => r.id === 'ITEM_NOTE')).toBe(true);
-    expect(rows.find((r) => r.id === 'ITEM_NOTE')?.title).toBe('Nota del pedido');
+    expect(rows.some((r) => r.id === 'ITEM_NOTE')).toBe(false);
+    expect(rows.some((r) => r.id === 'EDIT_ADDRESS')).toBe(false);
+    expect(rows.some((r) => r.id === 'VIEW_MENU')).toBe(true);
+    expect(rows.some((r) => r.id === 'CHECKOUT')).toBe(true);
   });
 });
 
@@ -148,13 +150,16 @@ describe('buildComplementSuggestionsListMessage', () => {
 
     const rows = list.action.sections.flatMap((s) => s.rows);
     expect(rows.some((r) => r.id === 'ADD_ITEM:p1')).toBe(true);
-    expect(rows.some((r) => r.id === 'VIEW_CART')).toBe(true);
     expect(rows.some((r) => r.id === 'CHECKOUT')).toBe(true);
+    expect(rows.some((r) => r.id === 'VIEW_MENU')).toBe(true);
+    // VIEW_CART y ITEM_NOTE ya no se emiten como filas clickeables: se
+    // resuelven por texto libre (present_cart / update_item_note). El atajo
+    // tipable "Ver *pedido*" se conserva en el body (ver abajo).
     // VIEW_CART_FOR_EDITION oculto a propósito: POC del flujo conversacional
     // directo de eliminación/modificación de cantidades del carrito.
     // expect(rows.some((r) => r.id === 'VIEW_CART_FOR_EDITION')).toBe(true);
-    expect(rows.some((r) => r.id === 'ITEM_NOTE')).toBe(true);
-    expect(rows.some((r) => r.id === 'VIEW_MENU')).toBe(true);
+    expect(rows.some((r) => r.id === 'VIEW_CART')).toBe(false);
+    expect(rows.some((r) => r.id === 'ITEM_NOTE')).toBe(false);
     expect(list.body.text).toMatch(/postre/i);
     expect(list.body.text).toContain('• *Flan*');
     expect(list.body.text).toContain('• *Brownie*');
@@ -234,10 +239,12 @@ describe('buildItemNoteSuccessListMessage', () => {
     expect(list.body.text).toContain('• *Adobo arequipeno*');
     expect(list.footer.text).toBe('Elegí o escribí');
     expect(rows.some((r) => r.id === 'ADD_ITEM:adobo')).toBe(true);
-    expect(rows.some((r) => r.id === 'VIEW_CART')).toBe(true);
     expect(rows.some((r) => r.id === 'CHECKOUT')).toBe(true);
-    expect(rows.some((r) => r.id === 'ITEM_NOTE')).toBe(true);
     expect(rows.some((r) => r.id === 'VIEW_MENU')).toBe(true);
+    // VIEW_CART y ITEM_NOTE ya no son filas clickeables (se resuelven por
+    // texto libre); los atajos tipables de arriba se conservan en el body.
+    expect(rows.some((r) => r.id === 'VIEW_CART')).toBe(false);
+    expect(rows.some((r) => r.id === 'ITEM_NOTE')).toBe(false);
   });
 
   it('sin nota guardada dice que la sacó', () => {

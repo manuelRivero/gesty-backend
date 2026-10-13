@@ -17,12 +17,6 @@ import {
 
 const orderBrowseButtons = [
   {
-    title: 'Hacer un pedido',
-    payload: 'ORDER_FOOD',
-    description: 'Armar un pedido nuevo',
-    sectionTitle: 'Opciones',
-  },
-  {
     title: 'Ver menú',
     payload: 'VIEW_MENU',
     description: 'Explorar platos disponibles',
@@ -37,12 +31,6 @@ const alwaysButtons = [
     description: 'Ver los horarios de atención',
     sectionTitle: 'Opciones'
   },
-  {
-    title: 'Hacer una consulta',
-    payload: 'ASK_QUESTION',
-    description: 'Hacer una consulta',
-    sectionTitle: 'Opciones'
-  }
 ];
 
 /** Atajo tipable en negrita alineado al payload / título de la fila WA. */
@@ -89,53 +77,20 @@ export const buildSmallTalkButtons = async (ctx: EnrichedContext) => {
   });
   const businessId = ctx.business?.id ?? business?.id ?? null;
 
-  const [activeOrder, defaultAddress, capability] = await Promise.all([
-    prisma.draft_order.findFirst({
-      where: {
-        business_id: businessId,
-        customer_phone: ctx.customer?.phone_number,
-        status: 'active'
-      },
-      select: { id: true }
-    }),
-    prisma.customer_address.findFirst({
-      where: {
-        customer_id: ctx.customer?.id,
-        is_default: true
-      },
-      select: { id: true }
-    }),
-    businessId
-      ? evaluateBusinessCapabilityAccess(businessId)
-      : Promise.resolve(null)
-  ]);
+  const capability = businessId
+    ? await evaluateBusinessCapabilityAccess(businessId)
+    : null;
 
   const canOrder = capability?.canOrder === true;
   const buttons = [
     ...(canOrder ? orderBrowseButtons : []),
     ...alwaysButtons,
   ];
-  if (canOrder && activeOrder) {
-    buttons.unshift({
-      title: 'Ver pedido',
-      payload: 'VIEW_CART',
-      description: 'Revisar tu pedido actual',
-      sectionTitle: 'Opciones'
-    });
-  }
   if (isReservationAgentEnabled() && capability?.hasReservations) {
     buttons.push({
       title: 'Reservar mesa',
       payload: 'VIEW_RESERVATION',
       description: 'Reservar una mesa',
-      sectionTitle: 'Opciones'
-    });
-  }
-  if (canOrder && defaultAddress) {
-    buttons.push({
-      title: 'Editar dirección',
-      payload: 'EDIT_ADDRESS',
-      description: 'Actualizar dirección de entrega',
       sectionTitle: 'Opciones'
     });
   }

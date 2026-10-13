@@ -64,11 +64,6 @@ export async function clearComplementSuggestionSnapshot(
   await omitConversationMetadataKeys(conversationId, [COMPLEMENT_METADATA_KEY]);
 }
 
-export type AddItemFollowUpListOptions = {
-  /** Fila extra si el cliente ya tiene dirección por defecto. */
-  includeEditAddressRow?: boolean;
-};
-
 /**
  * Cuerpo de gestión de pedido (post-add y ver carrito): atajos tipables.
  * La lista WA se ofrece vía footer («Elegí o escribí»), no en el body.
@@ -99,8 +94,7 @@ export function buildAddItemShortcutsFollowUpBody(options?: {
  * Cabecera: 🤖 + *Gestión de pedido*; el cuerpo va aparte (solo texto descriptivo, sin repetir título).
  */
 export function buildAddItemShortcutsFollowUpList(
-  bodyPlain: string,
-  options?: AddItemFollowUpListOptions
+  bodyPlain: string
 ): WhatsAppListMessage {
   const rows: WhatsAppListMessage['action']['sections'][0]['rows'] = [
     {
@@ -120,43 +114,7 @@ export function buildAddItemShortcutsFollowUpList(
       title: 'Finalizar pedido',
       description: 'Ir al checkout',
     },
-    {
-      id: 'ITEM_NOTE',
-      title: 'Nota del pedido',
-      description: 'Instrucción especial de un plato',
-    },
   ];
-
-  if (options?.includeEditAddressRow) {
-    rows.push({
-      id: 'EDIT_ADDRESS',
-      title: 'Editar dirección',
-      description: 'Cambiar entrega',
-    });
-  }
-
-  rows.push(
-    {
-      id: 'MENU_BY_TAG:STARTER:1',
-      title: 'Ver entradas',
-      description: 'Solo entradas',
-    },
-    {
-      id: 'MENU_BY_TAG:MAIN:1',
-      title: 'Ver platos principales',
-      description: 'Solo principales',
-    },
-    {
-      id: 'MENU_BY_TAG:DRINK:1',
-      title: 'Ver bebidas',
-      description: 'Solo bebidas',
-    },
-    {
-      id: 'MENU_BY_TAG:DESSERT:1',
-      title: 'Ver postres',
-      description: 'Solo postres',
-    }
-  );
 
   return {
     type: 'list',
@@ -316,12 +274,6 @@ export function buildComplementSuggestionsListMessage(params: {
 
   if (includeManagementRows) {
     suggestionButtons.push(
-      {
-        title: 'Ver pedido',
-        payload: 'VIEW_CART',
-        description: 'Detalle y total del carrito',
-        sectionTitle: 'Pedido',
-      },
       // Oculto a propósito: POC del flujo conversacional directo de eliminación/
       // modificación de cantidades del carrito (ver DIRECT_MODIFY_OR_NOTE_HINT_LINE).
       // {
@@ -334,12 +286,6 @@ export function buildComplementSuggestionsListMessage(params: {
         title: 'Finalizar pedido',
         payload: 'CHECKOUT',
         description: 'Ir al checkout',
-        sectionTitle: 'Pedido',
-      },
-      {
-        title: 'Nota del pedido',
-        payload: 'ITEM_NOTE',
-        description: 'Instrucción especial de un plato',
         sectionTitle: 'Pedido',
       }
     );
