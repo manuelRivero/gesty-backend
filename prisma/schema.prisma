@@ -30,6 +30,8 @@ model business {
   longitude                 Float?
   billing_mode              String?                     @default("subscription")
   slug                      String?                     @unique
+  /// Rubro gastronómico para la vitrina global de Shopping (ver BUSINESS_CATEGORIES).
+  category                  String?
   features                  Json?                       @default("{}")
   street_address            String?
   address_notes             String?

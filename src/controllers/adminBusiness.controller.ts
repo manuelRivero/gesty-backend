@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { getBusinessConfig } from "../services/businessConfig.service";
+import { BUSINESS_CATEGORIES } from "../constants/businessCategory";
 
 const businessPatchSchema = z.object({
   name: z.string().min(1).optional(),
@@ -11,7 +12,8 @@ const businessPatchSchema = z.object({
   latitude: z.number().nullable().optional(),
   longitude: z.number().nullable().optional(),
   timezone: z.string().optional(),
-  slug: z.string().min(1).nullable().optional()
+  slug: z.string().min(1).nullable().optional(),
+  category: z.enum(BUSINESS_CATEGORIES).nullable().optional()
 });
 
 export async function getAdminBusiness(req: Request, res: Response) {
@@ -31,6 +33,7 @@ export async function getAdminBusiness(req: Request, res: Response) {
       longitude: true,
       timezone: true,
       slug: true,
+      category: true,
       currency_code: true,
       is_active: true
     }
@@ -80,6 +83,7 @@ export async function patchAdminBusiness(req: Request, res: Response) {
       longitude: true,
       timezone: true,
       slug: true,
+      category: true,
       currency_code: true,
       is_active: true
     }

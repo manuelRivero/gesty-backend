@@ -21,6 +21,7 @@ type PublicBusinessRow = {
   name: string;
   description: string | null;
   slug: string | null;
+  category: string | null;
   timezone: string;
   currency_code: string | null;
   whatsapp_phone_number: string | null;
@@ -45,6 +46,7 @@ export async function resolveActivePublicBusiness(
     name: true,
     description: true,
     slug: true,
+    category: true,
     timezone: true,
     currency_code: true,
     whatsapp_phone_number: true,
@@ -96,6 +98,7 @@ function mapBusinessProfile(
     /** Tagline = description hasta que exista campo propio. */
     tagline: row.description ?? null,
     slug: row.slug ?? null,
+    category: row.category ?? null,
     isActive: true as const,
     /** Logo de negocio aún no modelado en schema. */
     imageUrl: null as string | null,
@@ -159,6 +162,7 @@ export type PublicStorefrontSummary = {
   slug: string;
   description: string | null;
   tagline: string | null;
+  category: string | null;
   /** Logo de negocio aún no modelado en schema. */
   imageUrl: string | null;
   isOpen: boolean;
@@ -184,6 +188,7 @@ export async function listPublicStorefronts(): Promise<
       name: true,
       slug: true,
       description: true,
+      category: true,
       timezone: true
     },
     orderBy: { name: "asc" }
@@ -205,6 +210,7 @@ export async function listPublicStorefronts(): Promise<
           slug: row.slug,
           description: row.description ?? null,
           tagline: row.description ?? null,
+          category: row.category ?? null,
           imageUrl: null,
           isOpen: open.isOpen,
           nextOpenText: open.nextOpenText

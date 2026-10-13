@@ -92,6 +92,7 @@ function baseBusiness() {
     name: "Sabrosón",
     description: "Pizza y empanadas",
     slug: "sabroson",
+    category: "PIZZA",
     timezone: "America/Argentina/Buenos_Aires",
     currency_code: "ARS",
     whatsapp_phone_number: "549111",
@@ -174,6 +175,7 @@ describe("getPublicStorefrontProfile", () => {
       id: BUSINESS_ID,
       name: "Sabrosón",
       slug: "sabroson",
+      category: "PIZZA",
       isActive: true,
       imageUrl: null,
       currencyCode: "ARS",
@@ -196,6 +198,7 @@ describe("listPublicStorefronts", () => {
         name: "Sabrosón",
         slug: "sabroson",
         description: "Pizza y empanadas",
+        category: "PIZZA",
         timezone: "America/Argentina/Buenos_Aires"
       }
     ]);
@@ -219,6 +222,7 @@ describe("listPublicStorefronts", () => {
         slug: "sabroson",
         description: "Pizza y empanadas",
         tagline: "Pizza y empanadas",
+        category: "PIZZA",
         imageUrl: null,
         isOpen: true,
         nextOpenText: null
