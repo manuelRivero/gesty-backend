@@ -7,7 +7,11 @@ import { prisma } from '../lib/prisma';
 import { getHumanIntentState, type HumanIntentRecord } from '../services/humanIntentState.service';
 import { resolveProductForAdd } from '../services/productResolution.service';
 import type { ProductResolution } from '../services/productResolution.service';
-import { getPendingOrderLines, getTaskCanonicalResolution } from '../services/pendingOrderLines.service';
+import {
+  getFulfillmentReadyOrderLine,
+  getPendingOrderLines,
+  getTaskCanonicalResolution,
+} from '../services/pendingOrderLines.service';
 import { evaluateToolRequirement } from '../services/requirementEvaluator';
 import {
   partySizeRequiredPayload,
@@ -358,6 +362,31 @@ const taskRecoveryFor = async (
   if (task.currentResolutionId == null) return { kind: 'resolve' };
   const canonical = getTaskCanonicalResolution(task, metadata, { businessId, conversationId });
   return canonical ? { kind: 'canonical', args: canonical } : null;
+};
+
+/**
+ * `productId`/`resolutionId` canónicos de una Task lista para fulfillment
+ * (mismo criterio que `fulfillmentTransitionFor` en postEffectToolNode.ts),
+ * para que `add_cart_item` nunca dependa de que el modelo copie bien un
+ * identificador largo recién ofrecido por `set_order_line_quantity`.
+ * `quantity` no se toca acá: addCartItemTool ya descarta el valor del modelo
+ * y usa el persistido (single source of truth, no se duplica esa lógica).
+ * Sin Task lista (vencida, no ACTIVE, etc.) devuelve null — fail closed,
+ * el llamador no sustituye nada y el flujo de rechazo/reintento sigue igual.
+ */
+const canonicalAddCartItemArgs = async (
+  conversationId: string,
+  businessId: string,
+  orderLineId: string
+): Promise<{ productId: string; resolutionId: string } | null> => {
+  const metadata = (await prisma.conversation_state.findUnique({
+    where: { conversation_id: conversationId },
+    select: { metadata: true },
+  }))?.metadata;
+  const task = getPendingOrderLines(metadata)?.lines.find((line) => line.id === orderLineId);
+  if (!task || task.status !== 'active') return null;
+  const ready = getFulfillmentReadyOrderLine(task, metadata, { businessId, conversationId });
+  return ready ? { productId: ready.productId, resolutionId: ready.resolutionId } : null;
 };
 
 const nextRequiredToolFor = (
@@ -975,14 +1004,36 @@ export class HumanIntentToolNode extends PostEffectToolNode {
     }
 
     if (call.name === 'add_cart_item') {
+      // Si la Task ya está lista para fulfillment (cantidad persistida,
+      // resolución propia vigente), el runtime reemplaza productId/resolutionId
+      // por los canónicos ANTES de evaluar requisitos o ejecutar la tool — el
+      // modelo ya no tiene que copiar sin error un identificador largo recién
+      // ofrecido por set_order_line_quantity. Sin Task lista, no se toca nada
+      // (fail closed): el flujo de rechazo/reintento existente sigue igual.
+      let effectiveCall = call;
+      if (explicitOrderLineId) {
+        const canonical = await canonicalAddCartItemArgs(conversationId, businessId, explicitOrderLineId);
+        if (canonical) {
+          effectiveCall = {
+            ...call,
+            args: {
+              ...(call.args as Record<string, unknown>),
+              productId: canonical.productId,
+              resolutionId: canonical.resolutionId,
+              orderLineId: explicitOrderLineId,
+            },
+          };
+        }
+      }
+
       let addProductName: string | null = null;
       try {
-        const targets = await toolTargets(call.name, call.args, businessId);
+        const targets = await toolTargets(effectiveCall.name, effectiveCall.args, businessId);
         if (targets?.length) {
           addProductName = targets[0];
           const pendingMatch = pending.find((intent) => matchesIntent(intent, targets));
           if (pendingMatch && !matchesIntent(active, targets)) {
-            return internalToolError(call, HUMAN_INTENT_TOOL_DENIED, pendingMatch.id);
+            return internalToolError(effectiveCall, HUMAN_INTENT_TOOL_DENIED, pendingMatch.id);
           }
         }
       } catch {
@@ -993,8 +1044,8 @@ export class HumanIntentToolNode extends PostEffectToolNode {
         let requirementDecision;
         try {
           requirementDecision = await evaluateToolRequirement({
-            toolName: call.name,
-            callArgs: call.args as Record<string, unknown>,
+            toolName: effectiveCall.name,
+            callArgs: effectiveCall.args as Record<string, unknown>,
             businessId,
             conversationId,
             turnId: typeof turnId === 'string' ? turnId : undefined,
@@ -1003,12 +1054,12 @@ export class HumanIntentToolNode extends PostEffectToolNode {
             validatedProductResolution,
           });
         } catch {
-          return internalToolError(call, 'requirement_evaluation_failed');
+          return internalToolError(effectiveCall, 'requirement_evaluation_failed');
         }
 
         if (requirementDecision.type === 'DEFER') {
           if (requirementDecision.reason === 'party_size_required') {
-            const args = call.args as Record<string, unknown>;
+            const args = effectiveCall.args as Record<string, unknown>;
             const heldOrder = await rememberPartySizeBlockedFood(
               conversationId,
               {
@@ -1026,29 +1077,29 @@ export class HumanIntentToolNode extends PostEffectToolNode {
               missingRequirements: requirementDecision.missingRequirements,
             };
             return new ToolMessage({
-              name: call.name,
-              tool_call_id: call.id ?? '',
+              name: effectiveCall.name,
+              tool_call_id: effectiveCall.id ?? '',
               status: 'success',
               content: JSON.stringify(payload),
             });
           }
           return deferredRequirement(
-            call,
+            effectiveCall,
             requirementDecision.reason,
             requirementDecision.missingRequirements,
             requirementDecision.reason === 'order_line_quantity_required'
               ? `¿Cuántas unidades${addProductName ? ` de ${addProductName}` : ''} querés agregar?`
               : undefined,
             requirementDecision.reason in UNMET_CAPABILITY_BY_DEFER_REASON
-              ? await taskRecoveryFor(conversationId, businessId, call)
+              ? await taskRecoveryFor(conversationId, businessId, effectiveCall)
               : null
           );
         }
         if (requirementDecision.type === 'REJECT') {
-          return internalToolError(call, requirementDecision.reason);
+          return internalToolError(effectiveCall, requirementDecision.reason);
         }
       }
-      return super.runTool(call, tracedToolConfig);
+      return super.runTool(effectiveCall, tracedToolConfig);
     }
 
     if (pending.length === 0) return super.runTool(call, tracedToolConfig);

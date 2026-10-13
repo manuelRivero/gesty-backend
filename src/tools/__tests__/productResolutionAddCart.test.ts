@@ -53,6 +53,24 @@ vi.mock('../../lib/prisma', () => ({ prisma: database.prisma }));
 vi.mock('../../services/humanIntentReconciliation.service', () => ({
   reconcileHumanIntentAfterToolEffect: vi.fn().mockResolvedValue(null),
 }));
+vi.mock('../../services/humanIntentState.service', () => ({
+  getHumanIntentState: vi.fn().mockResolvedValue({
+    version: 1,
+    revision: 7,
+    nextSequence: 2,
+    processedMessageIds: ['wamid-turn'],
+    records: [{
+      id: 'intent-order',
+      sequence: 1,
+      goal: 'PEDIR',
+      request: { products: ['producto de prueba'] },
+      status: 'ACTIVE',
+      blockers: [],
+      createdAt: '2026-09-27T00:00:00.000Z',
+      updatedAt: '2026-09-27T00:00:00.000Z',
+    }],
+  }),
+}));
 vi.mock('../../services/menu.service', () => ({
   MenuService: { searchMenuItemsByKeyword: vi.fn() },
 }));
@@ -138,7 +156,7 @@ import {
 import { prisma } from '../../lib/prisma';
 import { AIMessage, ToolMessage } from '@langchain/core/messages';
 import { PostEffectToolNode } from '../../agents/postEffectToolNode';
-import { completesTask } from '../../agents/humanIntentToolNode';
+import { completesTask, HumanIntentToolNode } from '../../agents/humanIntentToolNode';
 import { getFulfillmentReadyOrderLine, getPendingOrderLines } from '../../services/pendingOrderLines.service';
 
 const BUSINESS_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -1572,5 +1590,148 @@ describe('search_products → ProductResolution → add_cart_item', () => {
         data: { notes: 'poca cebolla' },
       });
     });
+  });
+});
+
+describe('HumanIntentToolNode canonicaliza add_cart_item para Tasks listas (runtime, no el modelo)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    database.state.metadata = { peopleCount: 1, requestedPartySize: 1 };
+    vi.mocked(prisma.menu_item.findFirst).mockResolvedValue(PRODUCT as never);
+    vi.mocked(prisma.draft_order_item.aggregate).mockResolvedValue({
+      _sum: { total_price: new Prisma.Decimal(400) },
+    } as never);
+  });
+  const GATE_CONFIG = {
+    ...CONFIG,
+    configurable: { ...CONFIG.configurable, humanIntentGateRevision: 7 },
+  };
+  const lines = () =>
+    (database.state.metadata.pendingOrderLines as { lines: Array<Record<string, unknown>> }).lines;
+  const seedReadyTask = (resolutionId: string, orderLineId = 'task-a') => {
+    database.state.metadata.pendingOrderLines = {
+      lines: [{
+        id: orderLineId,
+        hint: 'producto de prueba',
+        requestedQuantity: 3,
+        status: 'active',
+        currentResolutionId: resolutionId,
+      }],
+      sourceMessage: 'producto de prueba',
+      createdAt: new Date().toISOString(),
+    };
+    database.state.metadata.productResolutions = [{
+      resolutionId,
+      productId: PRODUCT_ID,
+      businessId: BUSINESS_ID,
+      conversationId: CONVERSATION_ID,
+      source: 'search_products',
+      status: 'selected',
+      scope: 'conversation',
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    }];
+  };
+  const invokeAddCartItem = async (args: Record<string, unknown>) => {
+    const node = new HumanIntentToolNode([addCartItemTool]);
+    const result = await node.invoke(
+      { messages: [new AIMessage({ content: '', tool_calls: [{ id: 'call-add', name: 'add_cart_item', args, type: 'tool_call' }] })] },
+      GATE_CONFIG
+    );
+    return JSON.parse(String((result.messages[0] as ToolMessage).content)) as Record<string, unknown>;
+  };
+
+  it('reproduce el incidente: resolutionId truncado y productId equivocado del modelo no impiden el alta correcta', async () => {
+    const resolutionId = `pr1:${BUSINESS_ID}:${CONVERSATION_ID}:ea9a494a-3e8f-4bdb-903c-02aefa8bc2df`;
+    seedReadyTask(resolutionId);
+    const truncatedResolutionId = resolutionId.slice(0, resolutionId.lastIndexOf(':'));
+
+    const added = await invokeAddCartItem({
+      productId: OTHER_PRODUCT_ID, // el modelo "alucina" otro producto
+      resolutionId: truncatedResolutionId, // le falta el segmento final, igual que en el incidente real
+      orderLineId: 'task-a',
+      quantity: 2, // valor viejo del modelo, debe ser ignorado (ya cubierto antes de este fix)
+    });
+
+    expect(added).toMatchObject({ success: true, effect: { kind: 'cart_item_persisted', reference: PRODUCT_ID } });
+    expect(prisma.draft_order_item.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ product_id: PRODUCT_ID, quantity: 3 }) })
+    );
+    expect(database.state.metadata.productResolutions).toEqual([
+      expect.objectContaining({ resolutionId, status: 'consumed' }),
+    ]);
+  });
+
+  it('sin Task lista para fulfillment (resolución propia pero sin quantity persistida): no inventa nada, sigue el rechazo existente', async () => {
+    const resolutionId = `pr1:${BUSINESS_ID}:${CONVERSATION_ID}:ea9a494a-3e8f-4bdb-903c-02aefa8bc2df`;
+    database.state.metadata.pendingOrderLines = {
+      lines: [{
+        id: 'task-a',
+        hint: 'producto de prueba',
+        requestedQuantity: null,
+        status: 'active',
+        currentResolutionId: resolutionId,
+      }],
+      sourceMessage: 'producto de prueba',
+      createdAt: new Date().toISOString(),
+    };
+    database.state.metadata.productResolutions = [{
+      resolutionId,
+      productId: PRODUCT_ID,
+      businessId: BUSINESS_ID,
+      conversationId: CONVERSATION_ID,
+      source: 'search_products',
+      status: 'selected',
+      scope: 'conversation',
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    }];
+
+    const added = await invokeAddCartItem({
+      productId: PRODUCT_ID,
+      resolutionId,
+      orderLineId: 'task-a',
+      quantity: 1,
+    });
+
+    expect(added).toMatchObject({ success: false, error: 'order_line_quantity_required' });
+    expect(prisma.draft_order_item.create).not.toHaveBeenCalled();
+  });
+
+  it('dos Tasks listas: la sustitución nunca mezcla la resolución/producto de una línea con la otra', async () => {
+    const resolutionA = `pr1:${BUSINESS_ID}:${CONVERSATION_ID}:aaaa1111-1111-4111-8111-111111111111`;
+    const resolutionB = `pr1:${BUSINESS_ID}:${CONVERSATION_ID}:bbbb2222-2222-4222-8222-222222222222`;
+    database.state.metadata.pendingOrderLines = {
+      lines: [
+        { id: 'task-a', hint: 'producto de prueba', requestedQuantity: 1, status: 'active', currentResolutionId: resolutionA },
+        { id: 'task-b', hint: 'otro producto', requestedQuantity: 5, status: 'done', currentResolutionId: resolutionB },
+      ],
+      sourceMessage: 'dos líneas',
+      createdAt: new Date().toISOString(),
+    };
+    database.state.metadata.productResolutions = [
+      { resolutionId: resolutionA, productId: PRODUCT_ID, businessId: BUSINESS_ID, conversationId: CONVERSATION_ID, source: 'search_products', status: 'selected', scope: 'conversation', createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString() },
+      { resolutionId: resolutionB, productId: OTHER_PRODUCT_ID, businessId: BUSINESS_ID, conversationId: CONVERSATION_ID, source: 'search_products', status: 'consumed', scope: 'conversation', createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString() },
+    ];
+
+    const added = await invokeAddCartItem({
+      productId: PRODUCT_ID,
+      resolutionId: resolutionA.slice(0, resolutionA.lastIndexOf(':')), // truncado, igual que el incidente
+      orderLineId: 'task-a',
+      quantity: 1,
+    });
+
+    expect(added).toMatchObject({ success: true, effect: { kind: 'cart_item_persisted', reference: PRODUCT_ID } });
+    expect(prisma.draft_order_item.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ product_id: PRODUCT_ID, quantity: 1 }) })
+    );
+    // task-b (done, otra resolución ya consumida) no se toca.
+    expect(lines()[1]).toMatchObject({ id: 'task-b', status: 'done', currentResolutionId: resolutionB });
+    expect(database.state.metadata.productResolutions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ resolutionId: resolutionA, status: 'consumed' }),
+        expect.objectContaining({ resolutionId: resolutionB, status: 'consumed' }),
+      ])
+    );
   });
 });
