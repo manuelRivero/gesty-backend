@@ -9,6 +9,7 @@ import {
   getStorefrontMenuCategories,
   getStorefrontMenuItems,
   getStorefrontPaymentMethods,
+  listBusinessCategories,
   listStorefronts
 } from "../controllers/publicMenu.controller";
 import {
@@ -60,6 +61,9 @@ router.get("/push/vapid-public-key", getPublicVapidKey);
 
 // Vitrina global: locales publicados (storefront_enabled) y activos.
 router.get("/businesses", listStorefronts);
+
+// Catálogo fijo de rubros gastronómicos (dropdown "Mi negocio" + filtro home).
+router.get("/business-categories", listBusinessCategories);
 
 // Storefront por slug (UUID sigue resolviendo por compat).
 // Rutas más específicas primero.

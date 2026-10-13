@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { BUSINESS_CATEGORY_OPTIONS } from "../constants/businessCategory";
 import {
   getPublicMenuItemById,
   listFeaturedMenuItems
@@ -90,6 +91,19 @@ export async function getMenuItemById(req: Request, res: Response) {
 export async function listStorefronts(_req: Request, res: Response) {
   const businesses = await listPublicStorefronts();
   return res.json({ businesses });
+}
+
+/**
+ * Catálogo fijo de rubros gastronómicos (dropdown en "Mi negocio" +
+ * chips de filtro en el home de Shopping). Lista estática en código:
+ * cachear agresivamente es seguro.
+ */
+export async function listBusinessCategories(_req: Request, res: Response) {
+  res.setHeader(
+    "Cache-Control",
+    "public, max-age=3600, stale-while-revalidate=86400"
+  );
+  return res.json({ categories: BUSINESS_CATEGORY_OPTIONS });
 }
 
 export async function getBusinessInfo(req: Request, res: Response) {
