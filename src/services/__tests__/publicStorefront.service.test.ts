@@ -3,7 +3,7 @@ import { Prisma } from "@prisma/client";
 
 vi.mock("../../lib/prisma", () => ({
   prisma: {
-    business: { findFirst: vi.fn() },
+    business: { findFirst: vi.fn(), findMany: vi.fn() },
     business_hours: { findMany: vi.fn() },
     business_config: { findUnique: vi.fn() },
     payment_method_config: { findMany: vi.fn() },
@@ -55,6 +55,7 @@ import {
   getPublicStorefrontProfile,
   listPublicMenuCategories,
   listPublicMenuItems,
+  listPublicStorefronts,
   looksLikeUuid,
   resolveActivePublicBusiness
 } from "../publicStorefront.service";
@@ -62,6 +63,8 @@ import {
 const mockedBusinessFind = prisma.business.findFirst as unknown as ReturnType<
   typeof vi.fn
 >;
+const mockedBusinessFindMany = prisma.business
+  .findMany as unknown as ReturnType<typeof vi.fn>;
 const mockedHoursFind = prisma.business_hours.findMany as unknown as ReturnType<
   typeof vi.fn
 >;
@@ -178,6 +181,56 @@ describe("getPublicStorefrontProfile", () => {
       tagline: "Pizza y empanadas"
     });
     expect(profile?.businessHours).toHaveLength(1);
+  });
+});
+
+describe("listPublicStorefronts", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("solo incluye locales activos y con storefront_enabled", async () => {
+    mockedBusinessFindMany.mockResolvedValue([
+      {
+        id: BUSINESS_ID,
+        name: "Sabrosón",
+        slug: "sabroson",
+        description: "Pizza y empanadas",
+        timezone: "America/Argentina/Buenos_Aires"
+      }
+    ]);
+    mockedOpenInfo.mockResolvedValue({ isOpen: true, nextOpenText: null });
+
+    const businesses = await listPublicStorefronts();
+
+    expect(mockedBusinessFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          is_active: true,
+          slug: { not: null },
+          business_config: { is: { storefront_enabled: true } }
+        }
+      }),
+    );
+    expect(businesses).toEqual([
+      {
+        id: BUSINESS_ID,
+        name: "Sabrosón",
+        slug: "sabroson",
+        description: "Pizza y empanadas",
+        tagline: "Pizza y empanadas",
+        imageUrl: null,
+        isOpen: true,
+        nextOpenText: null
+      }
+    ]);
+  });
+
+  it("devuelve lista vacía cuando no hay locales publicados", async () => {
+    mockedBusinessFindMany.mockResolvedValue([]);
+    const businesses = await listPublicStorefronts();
+    expect(businesses).toEqual([]);
+    expect(mockedOpenInfo).not.toHaveBeenCalled();
   });
 });
 

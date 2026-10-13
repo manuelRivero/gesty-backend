@@ -11,7 +11,8 @@ import {
   getPublicStorefrontPaymentMethods,
   getPublicStorefrontProfile,
   listPublicMenuCategories,
-  listPublicMenuItems
+  listPublicMenuItems,
+  listPublicStorefronts
 } from "../services/publicStorefront.service";
 
 const LOCAL_UNAVAILABLE = "local no disponible";
@@ -83,6 +84,12 @@ export async function getMenuItemById(req: Request, res: Response) {
   }
 
   return res.json(item);
+}
+
+/** Vitrina global de Shopping: locales publicados y activos. */
+export async function listStorefronts(_req: Request, res: Response) {
+  const businesses = await listPublicStorefronts();
+  return res.json({ businesses });
 }
 
 export async function getBusinessInfo(req: Request, res: Response) {

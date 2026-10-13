@@ -8,7 +8,8 @@ import {
   getStorefrontMenu,
   getStorefrontMenuCategories,
   getStorefrontMenuItems,
-  getStorefrontPaymentMethods
+  getStorefrontPaymentMethods,
+  listStorefronts
 } from "../controllers/publicMenu.controller";
 import {
   createStorefrontOrder,
@@ -56,6 +57,9 @@ const pushSubscribeOrderRateLimit = createKeyedRateLimit({
 router.get("/billing/plans", getPublicBillingPlansHandler);
 
 router.get("/push/vapid-public-key", getPublicVapidKey);
+
+// Vitrina global: locales publicados (storefront_enabled) y activos.
+router.get("/businesses", listStorefronts);
 
 // Storefront por slug (UUID sigue resolviendo por compat).
 // Rutas más específicas primero.

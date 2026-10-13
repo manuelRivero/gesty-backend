@@ -153,6 +153,66 @@ export async function getPublicStorefrontProfile(slugOrId: string) {
   return mapBusinessProfile(row, open, hours);
 }
 
+export type PublicStorefrontSummary = {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  tagline: string | null;
+  /** Logo de negocio aún no modelado en schema. */
+  imageUrl: string | null;
+  isOpen: boolean;
+  nextOpenText: string | null;
+};
+
+/**
+ * Locales publicables en la vitrina global de Shopping.
+ * Mismo criterio de elegibilidad que `resolveActivePublicBusiness`
+ * (activo + `storefront_enabled`), sin exponer datos de locales no publicados.
+ */
+export async function listPublicStorefronts(): Promise<
+  PublicStorefrontSummary[]
+> {
+  const rows = await prisma.business.findMany({
+    where: {
+      is_active: true,
+      slug: { not: null },
+      business_config: { is: { storefront_enabled: true } }
+    },
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      description: true,
+      timezone: true
+    },
+    orderBy: { name: "asc" }
+  });
+
+  return Promise.all(
+    rows
+      .filter(
+        (row): row is typeof row & { slug: string } => row.slug !== null
+      )
+      .map(async (row) => {
+        const open = await getBusinessOpenInfo({
+          businessId: row.id,
+          timezone: row.timezone
+        });
+        return {
+          id: row.id,
+          name: row.name,
+          slug: row.slug,
+          description: row.description ?? null,
+          tagline: row.description ?? null,
+          imageUrl: null,
+          isOpen: open.isOpen,
+          nextOpenText: open.nextOpenText
+        };
+      })
+  );
+}
+
 export async function getPublicStorefrontHours(slugOrId: string) {
   const row = await resolveActivePublicBusiness(slugOrId);
   if (!row) return null;
