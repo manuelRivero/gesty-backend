@@ -1,4 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
+
+/**
+ * Los dos casos "vía LLM" (sin regex de cambio de tema) no pueden depender de
+ * una llamada real a OpenAI: en la suite unitaria no hay credenciales
+ * garantizadas y, aun con ellas, un timeout de red lo haría flaky. Se mockea
+ * `getIntentDetectorLlm` para devolver una clasificación determinística.
+ */
+const invokeMock = vi.fn();
+vi.mock('../../../config/llm', () => ({
+  getIntentDetectorLlm: () => ({
+    withStructuredOutput: () => ({ invoke: invokeMock }),
+  }),
+}));
+
 import {
   extractPendingTurnResponse,
   formatPendingExtractionBlock,
@@ -11,6 +25,10 @@ import {
 
 const paymentConfig = getCheckoutPendingActionConfig('payment_method')!;
 const fulfillmentConfig = getCheckoutPendingActionConfig('fulfillment_type')!;
+
+beforeEach(() => {
+  invokeMock.mockReset();
+});
 
 describe('extractPendingTurnResponse — deterministic', () => {
   it('efectivo → fulfilled + cash', async () => {
@@ -75,6 +93,13 @@ describe('extractPendingTurnResponse — deterministic', () => {
   });
 
   it('quiero ver el menú → delegate (vía LLM, no hay regex de cambio de tema)', async () => {
+    invokeMock.mockResolvedValueOnce({
+      status: 'delegate',
+      confidence: 0.9,
+      reason: 'cambio_de_tema',
+      value: null,
+      resolvedAction: null,
+    });
     const result = await extractPendingTurnResponse({
       userMessage: 'quiero ver el menú',
       pendingAction: paymentConfig.pendingAction,
@@ -85,6 +110,7 @@ describe('extractPendingTurnResponse — deterministic', () => {
     });
     expect(result.status).toBe('delegate');
     expect(result.source).toBe('llm');
+    expect(invokeMock).toHaveBeenCalledOnce();
   });
 
   it('mejor retiro por el local con pending payment_method → off_pending + TAKE_AWAY', async () => {
@@ -132,6 +158,13 @@ describe('extractPendingTurnResponse — fulfillment_type', () => {
   });
 
   it('quiero pagar → delegate', async () => {
+    invokeMock.mockResolvedValueOnce({
+      status: 'delegate',
+      confidence: 0.9,
+      reason: 'quiere_cerrar_pago',
+      value: null,
+      resolvedAction: null,
+    });
     const result = await extractPendingTurnResponse({
       userMessage: 'quiero pagar',
       pendingAction: fulfillmentConfig.pendingAction,
@@ -141,6 +174,7 @@ describe('extractPendingTurnResponse — fulfillment_type', () => {
       actionDescription: fulfillmentConfig.actionDescription,
     });
     expect(result.status).toBe('delegate');
+    expect(invokeMock).toHaveBeenCalledOnce();
   });
 
   it('efectivo con pending fulfillment_type → off_pending + cash', async () => {

@@ -19,6 +19,7 @@ import {
   buildTextPayload,
   countUserMessages,
   disconnectPrisma,
+  ensureE2eButtonProductResolution,
   findE2eAddableProduct,
   findE2eProductWithVariations,
   findE2eQuantityGateProduct,
@@ -99,6 +100,7 @@ describe.sequential.skipIf(!isE2eEnabled())('natural conversations (e2e fase 4)'
     conversationId = reset.conversationId;
 
     const product = await findE2eQuantityGateProduct(businessId);
+    await ensureE2eButtonProductResolution(businessId, product.id);
     const usersBefore = await countUserMessages(conversationId);
 
     await runGraphTurn(
@@ -454,6 +456,7 @@ describe.sequential.skipIf(!isE2eEnabled())('natural conversations (e2e fase 4)'
     conversationId = reset.conversationId;
 
     const product = await findE2eQuantityGateProduct(businessId);
+    await ensureE2eButtonProductResolution(businessId, product.id);
     await runGraphTurn(
       graph,
       buildInteractivePayload(`ADD_ITEM:${product.id}:1`)

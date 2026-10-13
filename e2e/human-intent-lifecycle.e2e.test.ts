@@ -848,13 +848,32 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
 
   // Mecanismo determinista verificado por separado (productResolutionAddCart.test.ts).
   // Este test mide adherencia real del LLM a pendingNote en plan_order_lines.
+  //
+  // El catálogo de prueba tiene 2 productos cuyo nombre matchea "ceviche"
+  // (ambigüedad real — ver e2e/README.md, NO se elimina para que el test
+  // pase). Por eso el guion responde explícitamente esa desambiguación
+  // ("Ceviche Clásico", el nombre que el bot pide) antes de la cantidad.
+  //
+  // "papas a la huancaína" también resultó ambiguo en corridas reales (5
+  // candidatos por búsqueda semántica, no por nombre exacto): tras "Seguí"
+  // el bot presenta una lista y "1" selecciona "Papa a la huancaina" (el
+  // candidato correcto, visto en corridas reales), seguido de su propia
+  // pregunta de cantidad. El guion incluye ambas respuestas para completar
+  // el flujo real de los dos productos, sin asumir que el catálogo entrega
+  // un único candidato para ninguno de los dos platos.
+  //
+  // Las aserciones de carrito NO asumen en qué turno fijo ocurre cada cosa
+  // (la desambiguación puede tomar un turno más o menos según el prompt):
+  // buscan el primer turno en el que cada línea queda resuelta/en el carrito.
   it('CASE 08 — Notas por línea en pedido multi-producto no se cruzan', async () => {
     const trace = await runCase('CASE 08 — pendingNote multi-línea', [
       'Quiero un ceviche con poca cebolla y unas papas a la huancaína no muy picantes',
       'Para 3',
+      'Ceviche Clásico',
       '2',
       'Seguí',
-      '1',
+      '1', // selecciona "Papa a la huancaina" de la lista de papas
+      '1', // cantidad de papas
     ], { requirePartySize: true, captureTurnLogs: true });
     const turnLogs = turnLogsByTrace.get(trace) ?? [];
     type Line = {
@@ -873,11 +892,28 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
         Array<{ resolutionId: string; productId: string }> | undefined) ?? [];
       return resolutions.find((entry) => entry.resolutionId === resolutionId)?.productId ?? null;
     };
+    // Primer turno (desde `fromTurn`) en el que la línea que matchea `hintNeedle`
+    // ya tiene un `currentResolutionId` — sin asumir un número de turno fijo,
+    // porque la desambiguación de catálogo puede consumir un turno extra.
+    const firstTurnResolved = (hintNeedle: string, fromTurn: number): number | null => {
+      for (let t = fromTurn; t <= trace.turns.length; t += 1) {
+        const line = linesAt(t).find((l) => normalize(l.hint).includes(hintNeedle));
+        if (line?.currentResolutionId) return t;
+      }
+      return null;
+    };
+    // Primer turno (desde `fromTurn`) en el que `productId` ya figura en el
+    // draft_order_item real (BD), no solo en el ledger de la cola.
+    const firstTurnInCart = (productId: string | null, fromTurn: number): number | null => {
+      if (!productId) return null;
+      for (let t = fromTurn; t <= turnLogs.length; t += 1) {
+        if ((turnLogs[t - 1]?.draftItems ?? []).some((item) => item.product_id === productId)) return t;
+      }
+      return null;
+    };
 
     const PLAN_TURN = 1;
-    const CEVICHE_QUANTITY_TURN = 3;
-    const CONTINUE_TURN = 4;
-    const PAPAS_QUANTITY_TURN = 5;
+    const PARTY_SIZE_TURN = 2;
 
     const plannedLines = linesAt(PLAN_TURN);
     const ceviche = plannedLines.find((line) => normalize(line.hint).includes('ceviche'));
@@ -892,29 +928,58 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
 
     // Tras guardar personas, la cola real conserva ambas notas intactas (sobrevive
     // la reconstrucción vía save_party_size → pendingPartySizeOrder.lines).
-    const linesAfterParty = linesAt(2);
+    const linesAfterParty = linesAt(PARTY_SIZE_TURN);
     const cevicheAfterParty = linesAfterParty.find((line) => line.id === ceviche?.id || normalize(line.hint).includes('ceviche'));
     const papasAfterParty = linesAfterParty.find((line) => line.id === papas?.id || normalize(line.hint).includes('papas'));
-    assertLifecycleInvariant(trace, 2, 'INV-NOTE-03', normalize(cevicheAfterParty?.pendingNote).includes('cebolla'), 'pendingNote de ceviche sobrevive save_party_size', compactValue(linesAfterParty));
-    assertLifecycleInvariant(trace, 2, 'INV-NOTE-03', normalize(papasAfterParty?.pendingNote).includes('picante'), 'pendingNote de papas sobrevive save_party_size', compactValue(linesAfterParty));
+    assertLifecycleInvariant(trace, PARTY_SIZE_TURN, 'INV-NOTE-03', normalize(cevicheAfterParty?.pendingNote).includes('cebolla'), 'pendingNote de ceviche sobrevive save_party_size', compactValue(linesAfterParty));
+    assertLifecycleInvariant(trace, PARTY_SIZE_TURN, 'INV-NOTE-03', normalize(papasAfterParty?.pendingNote).includes('picante'), 'pendingNote de papas sobrevive save_party_size', compactValue(linesAfterParty));
 
-    const cevicheProductId = productIdForResolution(2, cevicheAfterParty?.currentResolutionId ?? null);
-    const draftAfterCeviche = turnLogs[CEVICHE_QUANTITY_TURN - 1]?.draftItems ?? [];
+    // FLUJO B — la línea de ceviche se resuelve (desambiguación incluida) y
+    // llega al carrito real con su nota, sin asumir en qué turno exacto pasa.
+    const cevicheResolvedTurn = firstTurnResolved('ceviche', PARTY_SIZE_TURN);
+    const cevicheResolutionId = cevicheResolvedTurn
+      ? linesAt(cevicheResolvedTurn).find((l) => normalize(l.hint).includes('ceviche'))?.currentResolutionId ?? null
+      : null;
+    const cevicheProductId = productIdForResolution(cevicheResolvedTurn ?? PARTY_SIZE_TURN, cevicheResolutionId);
+    const cevicheCartTurn = firstTurnInCart(cevicheProductId, cevicheResolvedTurn ?? PARTY_SIZE_TURN);
+    const draftAfterCeviche = turnLogs[(cevicheCartTurn ?? trace.turns.length) - 1]?.draftItems ?? [];
     const cevicheItem = draftAfterCeviche.find((item) => item.product_id === cevicheProductId);
-    assertLifecycleInvariant(trace, CEVICHE_QUANTITY_TURN, 'INV-NOTE-04', Boolean(cevicheItem) && normalize(cevicheItem?.notes).includes('cebolla'), 'draft_order_item.notes del ceviche agregado contiene la nota correcta', compactValue(draftAfterCeviche));
-    assertLifecycleInvariant(trace, CEVICHE_QUANTITY_TURN, 'INV-NOTE-05', !normalize(cevicheItem?.notes).includes('picante'), 'la nota persistida del ceviche NO es la de las papas', compactValue(cevicheItem));
+    assertLifecycleInvariant(trace, cevicheCartTurn ?? trace.turns.length, 'INV-NOTE-04', Boolean(cevicheItem) && normalize(cevicheItem?.notes).includes('cebolla'), 'draft_order_item.notes del ceviche agregado contiene la nota correcta', compactValue(draftAfterCeviche));
+    assertLifecycleInvariant(trace, cevicheCartTurn ?? trace.turns.length, 'INV-NOTE-05', !normalize(cevicheItem?.notes).includes('picante'), 'la nota persistida del ceviche NO es la de las papas', compactValue(cevicheItem));
 
-    const linesAfterContinue = linesAt(CONTINUE_TURN);
-    const papasAfterContinue = linesAfterContinue.find((line) => line.id === papas?.id || normalize(line.hint).includes('papas'));
-    const papasProductId = productIdForResolution(CONTINUE_TURN, papasAfterContinue?.currentResolutionId ?? null);
+    // FLUJO C — con el ceviche cerrado, la cola avanza a papas; también se
+    // resuelve y llega al carrito con su propia nota, igualmente sin turno fijo.
+    const papasResolvedTurn = firstTurnResolved('papas', cevicheCartTurn ?? PARTY_SIZE_TURN);
+    const papasResolutionId = papasResolvedTurn
+      ? linesAt(papasResolvedTurn).find((l) => normalize(l.hint).includes('papas'))?.currentResolutionId ?? null
+      : null;
+    const papasProductId = productIdForResolution(papasResolvedTurn ?? (cevicheCartTurn ?? PARTY_SIZE_TURN), papasResolutionId);
+    const papasCartTurn = firstTurnInCart(papasProductId, papasResolvedTurn ?? (cevicheCartTurn ?? PARTY_SIZE_TURN));
 
-    const draftFinal = turnLogs[PAPAS_QUANTITY_TURN - 1]?.draftItems ?? [];
+    const draftFinal = turnLogs[(papasCartTurn ?? trace.turns.length) - 1]?.draftItems ?? turnLogs[turnLogs.length - 1]?.draftItems ?? [];
     const papasItem = draftFinal.find((item) => item.product_id === papasProductId);
     const cevicheItemFinal = draftFinal.find((item) => item.product_id === cevicheProductId);
-    assertLifecycleInvariant(trace, PAPAS_QUANTITY_TURN, 'INV-NOTE-06', draftFinal.length === 2, 'ambos productos terminan en el carrito', compactValue(draftFinal));
-    assertLifecycleInvariant(trace, PAPAS_QUANTITY_TURN, 'INV-NOTE-07', Boolean(papasItem) && normalize(papasItem?.notes).includes('picante'), 'draft_order_item.notes de papas contiene la nota correcta', compactValue(draftFinal));
-    assertLifecycleInvariant(trace, PAPAS_QUANTITY_TURN, 'INV-NOTE-08', !normalize(papasItem?.notes).includes('cebolla'), 'la nota persistida de papas NO es la del ceviche (sin contaminación)', compactValue(papasItem));
-    assertLifecycleInvariant(trace, PAPAS_QUANTITY_TURN, 'INV-NOTE-09', Boolean(cevicheItemFinal) && normalize(cevicheItemFinal?.notes).includes('cebolla') && !normalize(cevicheItemFinal?.notes).includes('picante'), 'la nota del ceviche sigue intacta al cerrar la segunda línea', compactValue(cevicheItemFinal));
+    const finalTurn = papasCartTurn ?? trace.turns.length;
+    assertLifecycleInvariant(trace, finalTurn, 'INV-NOTE-06', draftFinal.length === 2, 'ambos productos terminan en el carrito, sin líneas duplicadas', compactValue(draftFinal));
+    assertLifecycleInvariant(trace, finalTurn, 'INV-NOTE-07', Boolean(papasItem) && normalize(papasItem?.notes).includes('picante'), 'draft_order_item.notes de papas contiene la nota correcta', compactValue(draftFinal));
+    assertLifecycleInvariant(trace, finalTurn, 'INV-NOTE-08', !normalize(papasItem?.notes).includes('cebolla'), 'la nota persistida de papas NO es la del ceviche (sin contaminación)', compactValue(papasItem));
+    assertLifecycleInvariant(trace, finalTurn, 'INV-NOTE-09', Boolean(cevicheItemFinal) && normalize(cevicheItemFinal?.notes).includes('cebolla') && !normalize(cevicheItemFinal?.notes).includes('picante'), 'la nota del ceviche sigue intacta al cerrar la segunda línea', compactValue(cevicheItemFinal));
+
+    // La línea del ceviche sigue `done` y con su resolución original en el
+    // ledger final — no se reabrió ni se reconstruyó como línea `active`/
+    // `queued` sin resolución (lo que pasaba antes de los fixes de ciclo de
+    // vida de pendingOrderLines y de la guardia de cancelación).
+    const cevicheLineFinal = linesAt(finalTurn).find(
+      (l) => l.id === ceviche?.id || normalize(l.hint).includes('ceviche')
+    );
+    assertLifecycleInvariant(
+      trace,
+      finalTurn,
+      'INV-NOTE-10',
+      cevicheLineFinal?.status === 'done' && Boolean(cevicheLineFinal?.currentResolutionId),
+      'la línea del ceviche sigue done y resuelta en el ledger, no se reabrió ni reconstruyó',
+      compactValue(cevicheLineFinal)
+    );
 
     trace.status = 'PASS';
   }, 900_000);

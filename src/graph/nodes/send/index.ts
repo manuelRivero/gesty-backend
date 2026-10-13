@@ -175,10 +175,14 @@ export const sendResponseNode = async (
       followUps: humanizedResult.followUps?.length ?? 0,
       humanizeMessages: state.businessConfig?.humanize_messages === true,
     });
-    return { handlerResult: humanizedResult };
+  } else {
+    await sendResponse(ctx, humanizedResult);
   }
 
-  await sendResponse(ctx, humanizedResult);
+  // El bookkeeping de ProductResolution corre siempre (incluso en dry-run):
+  // un click de botón presentado en un turno anterior necesita encontrar su
+  // candidate acá para no ser rechazado como resolution_missing, sin importar
+  // si el envío real a WhatsApp se saltó.
   const conversationId = state.conversationId ?? state.conversation?.id;
   if (conversationId && businessId) {
     const presentedProductIds = collectProductPayloadIds(humanizedResult);

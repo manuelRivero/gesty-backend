@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { ToolPlanner, planToolCalls } from '../toolPlanner';
 import { ToolExecutor, executeToolPlan } from '../toolExecutor';
 import { DEFAULT_TOOL_CONTRACTS, ORDER_LINE_QUANTITY_PERSISTED } from '../toolContracts';
-import { evaluateToolRequirement } from '../../services/requirementEvaluator';
 
 const call = (name: string, args: Record<string, unknown>) => ({ name, args, id: `${name}-${Math.random()}` });
 
@@ -358,9 +357,4 @@ describe('ToolExecutor', () => {
     expect(results[0]).toMatchObject({ status: 'REJECTED', reason: 'human_intent_incompatible' });
     expect(runner).not.toHaveBeenCalled();
   });
-});
-
-it('keeps requirement evaluation as the final gate', async () => {
-  const evaluator = vi.spyOn({} as typeof evaluateToolRequirement, 'constructor');
-  expect(typeof evaluator).toBe('function');
 });

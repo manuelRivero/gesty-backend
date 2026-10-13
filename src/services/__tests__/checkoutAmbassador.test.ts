@@ -8,8 +8,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Prisma } from '@prisma/client';
 
-vi.mock('../../lib/prisma', () => ({
-  prisma: {
+vi.mock('../../lib/prisma', () => {
+  // `createOrderFromDraft` ahora abre su propia `$transaction` y opera sobre
+  // el `tx` que recibe. En el mock, el `tx` es el propio objeto `prismaMock`:
+  // así las aserciones existentes sobre `prisma.orders.create`, etc. siguen
+  // viendo las mismas llamadas.
+  const prismaMock: Record<string, unknown> = {
     draft_order: {
       findFirst: vi.fn(),
       updateMany: vi.fn(),
@@ -23,8 +27,11 @@ vi.mock('../../lib/prisma', () => ({
     orders: {
       create: vi.fn(),
     },
-  },
-}));
+    $executeRaw: vi.fn().mockResolvedValue(undefined),
+  };
+  prismaMock.$transaction = vi.fn((cb: (tx: unknown) => unknown) => cb(prismaMock));
+  return { prisma: prismaMock };
+});
 
 vi.mock('../../socket/adminSocket', () => ({
   emitAdminOrderCreated: vi.fn(),

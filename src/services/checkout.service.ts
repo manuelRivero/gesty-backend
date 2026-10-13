@@ -76,19 +76,65 @@ export interface CheckoutResult {
 }
 
 /**
+ * Clave del advisory lock que serializa la creación de órdenes de un mismo
+ * cliente. Dos confirmaciones (reintento, webhook duplicado, doble tap) que
+ * compitan por el mismo draft deben tomar el mismo lock para que una de ellas
+ * vea, bajo el lock, que el draft ya fue convertido por la otra.
+ */
+const orderCreateLockKey = (businessId: string, customerPhone: string): string =>
+  `order-create:${businessId}:${customerPhone}`;
+
+/**
+ * Toma el advisory lock transaccional (se libera solo al terminar `tx`) que
+ * protege la creación de la orden de este cliente. Debe llamarse como primera
+ * operación dentro de la transacción que va a releer el estado y escribir.
+ */
+export const acquireOrderCreateLock = (
+  tx: Prisma.TransactionClient,
+  businessId: string,
+  customerPhone: string
+): Promise<unknown> =>
+  tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${orderCreateLockKey(businessId, customerPhone)}))`;
+
+/**
  * Materializa un `draft_order` activo en una `orders` real.
  * Reutilizado tanto por el flujo efectivo (checkout inmediato) como por el webhook
  * de Mercado Pago (pago online confirmado).
+ *
+ * Si se pasa `tx`, se asume que el caller ya tomó `acquireOrderCreateLock` en
+ * esa misma transacción (p. ej. porque también necesita escribir un
+ * `payment_intent` de forma atómica con la orden). Si no se pasa, esta función
+ * abre su propia transacción y toma el lock ella misma.
  */
 export const createOrderFromDraft = async (
   business: BusinessType,
   conversation: ConversationType,
   customer: CustomerType,
-  params: CreateOrderFromDraftParams = {}
+  params: CreateOrderFromDraftParams = {},
+  tx?: Prisma.TransactionClient
+): Promise<{ orderId: string; total: number; pricing: PricingResult; qrDataUrl: string }> => {
+  if (!tx) {
+    return prisma.$transaction(async (innerTx) => {
+      await acquireOrderCreateLock(innerTx, business.id, customer.phone_number);
+      return createOrderFromDraftLocked(business, conversation, customer, params, innerTx);
+    });
+  }
+  return createOrderFromDraftLocked(business, conversation, customer, params, tx);
+};
+
+const createOrderFromDraftLocked = async (
+  business: BusinessType,
+  conversation: ConversationType,
+  customer: CustomerType,
+  params: CreateOrderFromDraftParams,
+  db: Prisma.TransactionClient
 ): Promise<{ orderId: string; total: number; pricing: PricingResult; qrDataUrl: string }> => {
   const { paymentStatus = OrderPaymentStatus.unpaid, paymentMethod } = params;
 
-  const draft = await prisma.draft_order.findFirst({
+  // Releído bajo el lock: si otra ejecución concurrente ya convirtió este
+  // draft (o nunca hubo uno), no hay nada para materializar — así se evita
+  // crear una segunda orden a partir del mismo carrito.
+  const draft = await db.draft_order.findFirst({
     where: {
       business_id: business.id,
       customer_phone: customer.phone_number,
@@ -104,7 +150,7 @@ export const createOrderFromDraft = async (
   let customerAddressId: string | undefined;
   let deliveryAddressSnapshot: object = {};
   if (draft.fulfillment_type === 'DELIVERY') {
-    const defaultAddress = await prisma.customer_address.findFirst({
+    const defaultAddress = await db.customer_address.findFirst({
       where: { customer_id: customer.id, is_default: true },
     });
     if (defaultAddress) {
@@ -170,7 +216,7 @@ export const createOrderFromDraft = async (
   // Referencia TEMPORAL de Embajador (D.S.): solo se adhiere al pedido si sigue
   // vigente (TTL). Se borra de metadata más abajo para que compras futuras del
   // mismo chat no comisionen automáticamente (ver ambassador/referralCode.ts).
-  const conversationStateRow = await prisma.conversation_state.findUnique({
+  const conversationStateRow = await db.conversation_state.findUnique({
     where: { conversation_id: conversation.id },
     select: { metadata: true },
   });
@@ -180,7 +226,7 @@ export const createOrderFromDraft = async (
       ? ambassadorRef.code
       : null;
 
-  const order = await prisma.orders.create({
+  const order = await db.orders.create({
     data: {
       business_id: business.id,
       customer_id: customer.id,
@@ -243,7 +289,7 @@ export const createOrderFromDraft = async (
     },
   });
 
-  await prisma.draft_order.updateMany({
+  await db.draft_order.updateMany({
     where: {
       business_id: business.id,
       customer_phone: customer.phone_number,

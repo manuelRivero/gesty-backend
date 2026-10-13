@@ -664,6 +664,36 @@ const extractListRowIds = (result: HandlerResult | null | undefined): string[] =
 };
 
 /**
+ * El botón ADD_ITEM simulado en un test no pasó por un turno previo de
+ * `sendResponseNode` que lo presente de verdad (eso es lo que, en
+ * producción, registra la ProductResolution candidate que `AddItemHandler`
+ * ahora exige antes de aceptar el click). Se registra acá para no fabricar
+ * un turno de más — llamar antes de cualquier payload `ADD_ITEM:<productId>`
+ * que no haya sido precedido por un turno que realmente muestre ese producto.
+ */
+export const ensureE2eButtonProductResolution = async (
+  businessId: string,
+  productId: string
+): Promise<void> => {
+  const { issueProductResolutions } = await import(
+    '../../src/services/productResolution.service'
+  );
+  const { findOrCreateCustomer } = await import('../../src/repositories/customer.repository');
+  const { createOrGetOpenConversation } = await import('../../src/repositories/conversation.repository');
+
+  const customer = await findOrCreateCustomer(businessId, E2E_CUSTOMER_PHONE);
+  const conversation = await createOrGetOpenConversation(businessId, customer.id);
+  await issueProductResolutions({
+    productIds: [productId],
+    businessId,
+    conversationId: conversation.id,
+    source: 'whatsapp_presentation',
+    status: 'candidate',
+    scope: 'conversation',
+  });
+};
+
+/**
  * Happy path botón: ADD_ITEM → (variación) → (cantidad) → ítem en carrito.
  * Asume `closed_order_confirmed_at` del reset si el local está cerrado.
  */
@@ -677,6 +707,9 @@ export const addItemViaButtonHappyPath = async (params: {
   const { parseAddItemButtonPayload } = await import(
     '../../src/controllers/webhook/utils'
   );
+
+  await ensureE2eButtonProductResolution(params.businessId, params.productId);
+
   const qty = params.quantity ?? 1;
   let payloadId = `ADD_ITEM:${params.productId}:${qty}`;
   let lastState = await runGraphTurn(params.graph, buildInteractivePayload(payloadId));

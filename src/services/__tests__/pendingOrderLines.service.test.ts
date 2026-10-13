@@ -16,6 +16,7 @@ import {
   ORDER_LINES_MAX,
   OrderLineCloseError,
   parsePendingOrderLines,
+  reconcileOrderLinesPlan,
   resolveMissedSearchOrderLine,
   resolveOrderLineForProduct,
   ingredientFilterCarvesDishHint,
@@ -54,6 +55,7 @@ const basePending = (over: Partial<PendingOrderLines> = {}): PendingOrderLines =
   ],
   sourceMessage: '3 lomos, 2 ceviches y una bebida',
   createdAt: new Date().toISOString(),
+  closedAt: null,
   ...over,
 });
 
@@ -404,6 +406,234 @@ describe('pendingOrderLines.service', () => {
     });
   });
 
+  describe('ensurePendingOrderLinesFromRequest — no resucita una cola ya procesada (CASE08)', () => {
+    const request = {
+      products: [
+        { name: 'ceviche', note: 'poca cebolla' },
+        { name: 'papas a la huancaína', note: 'no muy picantes' },
+      ],
+    };
+
+    it('ceviche done + papas queued: no vuelve a crear ni a tocar la línea de ceviche', async () => {
+      const existing = basePending({
+        lines: [
+          { id: 'l1', hint: 'ceviche', requestedQuantity: 2, status: 'done', currentResolutionId: 'pr1:biz-1:conv-1:res-1', pendingNote: 'poca cebolla' },
+          { id: 'l2', hint: 'papas a la huancaína', requestedQuantity: null, status: 'queued', currentResolutionId: null, pendingNote: 'no muy picantes' },
+        ],
+      });
+      const pending = await ensurePendingOrderLinesFromRequest({
+        conversationId: 'conv-1',
+        request,
+        sourceMessage: '1',
+        metadata: { pendingOrderLines: existing },
+      });
+      // Misma cola, sin líneas nuevas ni reescritura de la ya resuelta.
+      expect(pending).toEqual(existing);
+      expect(patchConversationMetadata).not.toHaveBeenCalled();
+    });
+
+    it('cola cerrada (ceviche done, papas cancelled) con intent PEDIR aún ACTIVE: no reconstruye ninguna de las dos líneas', async () => {
+      const closed = basePending({
+        closedAt: new Date().toISOString(),
+        lines: [
+          { id: 'l1', hint: 'ceviche', requestedQuantity: 2, status: 'done', currentResolutionId: 'pr1:biz-1:conv-1:res-1', pendingNote: 'poca cebolla' },
+          { id: 'l2', hint: 'papas a la huancaína', requestedQuantity: null, status: 'cancelled', currentResolutionId: null, pendingNote: 'no muy picantes' },
+        ],
+      });
+      const pending = await ensurePendingOrderLinesFromRequest({
+        conversationId: 'conv-1',
+        // Mismo `request` original del intent, sin cambios — exactamente el
+        // escenario de CASE08 (humanIntentState PEDIR nunca se marcó resuelto).
+        request,
+        sourceMessage: '1',
+        metadata: { pendingOrderLines: closed },
+      });
+      expect(pending).toEqual(closed);
+      expect(patchConversationMetadata).not.toHaveBeenCalled();
+    });
+
+    it('una solicitud nueva y legítima (producto no representado) abre una cola propia tras una cola cerrada', async () => {
+      const closed = basePending({
+        closedAt: new Date().toISOString(),
+        lines: [
+          { id: 'l1', hint: 'ceviche', requestedQuantity: 2, status: 'done', currentResolutionId: 'pr1:biz-1:conv-1:res-1', pendingNote: 'poca cebolla' },
+          { id: 'l2', hint: 'papas a la huancaína', requestedQuantity: null, status: 'cancelled', currentResolutionId: null, pendingNote: 'no muy picantes' },
+        ],
+      });
+      const pending = await ensurePendingOrderLinesFromRequest({
+        conversationId: 'conv-1',
+        request: { products: [{ name: 'tiradito' }] },
+        sourceMessage: 'Y también un tiradito',
+        metadata: { pendingOrderLines: closed },
+      });
+      expect(pending?.lines).toMatchObject([{ hint: 'tiradito', status: 'active' }]);
+      expect(pending?.closedAt).toBeNull();
+      expect(patchConversationMetadata).toHaveBeenCalledWith(
+        'conv-1',
+        expect.objectContaining({ pendingOrderLines: expect.objectContaining({ lines: expect.any(Array) }) })
+      );
+    });
+
+    it('una cola abierta que suma un producto nuevo del mismo intent no toca las líneas existentes', async () => {
+      const open = basePending({
+        lines: [
+          { id: 'l1', hint: 'ceviche', requestedQuantity: 2, status: 'done', currentResolutionId: 'pr1:biz-1:conv-1:res-1', pendingNote: 'poca cebolla' },
+          { id: 'l2', hint: 'papas a la huancaína', requestedQuantity: null, status: 'queued', currentResolutionId: null, pendingNote: 'no muy picantes' },
+        ],
+      });
+      conversationMetadata.value = { pendingOrderLines: open };
+      const pending = await ensurePendingOrderLinesFromRequest({
+        conversationId: 'conv-1',
+        request: { products: [{ name: 'ceviche' }, { name: 'papas a la huancaína' }, { name: 'gaseosa' }] },
+        sourceMessage: 'Y también una gaseosa',
+        metadata: { pendingOrderLines: open },
+      });
+      expect(pending?.lines).toMatchObject([
+        { id: 'l1', hint: 'ceviche', status: 'done' },
+        { id: 'l2', hint: 'papas a la huancaína', status: 'queued' },
+        { hint: 'gaseosa', status: 'queued' },
+      ]);
+    });
+
+    it('dos líneas legítimas con el mismo plato en la solicitud original no se fusionan ni se descartan (sin consultar el carrito)', async () => {
+      const pending = await ensurePendingOrderLinesFromRequest({
+        conversationId: 'conv-1',
+        request: {
+          products: [
+            { name: 'ceviche', note: 'poca cebolla' },
+            { name: 'ceviche', note: 'bien picante' },
+          ],
+        },
+        sourceMessage: 'Quiero dos ceviches: uno con poca cebolla y otro bien picante',
+        metadata: {},
+      });
+      // Primera materialización (sin cola previa): ambas líneas se crean tal
+      // cual vinieron, sin dedup — el dedup solo protege contra una cola YA
+      // persistida, nunca compara contra draft_order_item.
+      expect(pending?.lines).toMatchObject([
+        { hint: 'ceviche', pendingNote: 'poca cebolla' },
+        { hint: 'ceviche', pendingNote: 'bien picante' },
+      ]);
+    });
+  });
+
+  describe('reconcileOrderLinesPlan — plan_order_lines no destruye progreso confirmado (CASE08, variante plan_order_lines)', () => {
+    // Variante exacta observada: ceviche ya `done` con resolución persistida,
+    // papas todavía `queued`; el modelo responde "Seguí" re-enunciando TODO
+    // el pedido original vía plan_order_lines({ceviche, papas}) en vez de
+    // continue_order_line().
+    const cevicheDonePapasQueued = (): PendingOrderLines => basePending({
+      lines: [
+        { id: 'line-ceviche', hint: 'ceviche', requestedQuantity: 2, status: 'done', currentResolutionId: 'pr1:biz-1:conv-1:res-ceviche', pendingNote: 'poca cebolla' },
+        { id: 'line-papas', hint: 'papas a la huancaína', requestedQuantity: null, status: 'queued', currentResolutionId: null, pendingNote: 'no muy picantes' },
+      ],
+    });
+
+    it('con ceviche done + papas queued, una llamada válida (2 líneas) no reabre el ceviche: conserva id, status y resolución exactos', async () => {
+      const existing = cevicheDonePapasQueued();
+      const pending = await reconcileOrderLinesPlan({
+        conversationId: 'conv-1',
+        lines: [
+          { hint: 'ceviche', requestedQuantity: null, pendingNote: 'poca cebolla' },
+          { hint: 'papas a la huancaína', requestedQuantity: null, pendingNote: 'no muy picantes' },
+        ],
+        sourceMessage: 'Seguí',
+        metadata: { pendingOrderLines: existing },
+      });
+      // No-op total: ambos platos ya estaban representados, nada nuevo que agregar.
+      expect(pending).toEqual(existing);
+      expect(patchConversationMetadata).not.toHaveBeenCalled();
+      const ceviche = pending?.lines.find((l) => l.id === 'line-ceviche');
+      expect(ceviche).toMatchObject({
+        status: 'done',
+        currentResolutionId: 'pr1:biz-1:conv-1:res-ceviche',
+        requestedQuantity: 2,
+        pendingNote: 'poca cebolla',
+      });
+    });
+
+    it('papas sigue queued (no se salta ni se cancela) y puede continuar con continue_order_line()', async () => {
+      const existing = cevicheDonePapasQueued();
+      const pending = await reconcileOrderLinesPlan({
+        conversationId: 'conv-1',
+        lines: [
+          { hint: 'ceviche', requestedQuantity: null, pendingNote: 'poca cebolla' },
+          { hint: 'papas a la huancaína', requestedQuantity: null, pendingNote: 'no muy picantes' },
+        ],
+        sourceMessage: 'Seguí',
+        metadata: { pendingOrderLines: existing },
+      });
+      const papas = pending?.lines.find((l) => l.id === 'line-papas');
+      expect(papas).toMatchObject({ status: 'queued', currentResolutionId: null, pendingNote: 'no muy picantes' });
+
+      conversationMetadata.value = { pendingOrderLines: pending };
+      const activation = await activateNextOrderLine('conv-1', conversationMetadata.value);
+      expect(activation.outcome).toBe('activated');
+    });
+
+    it('una línea genuinamente nueva se agrega en cola sin tocar el ceviche done ni la papa queued', async () => {
+      const existing = cevicheDonePapasQueued();
+      const pending = await reconcileOrderLinesPlan({
+        conversationId: 'conv-1',
+        lines: [
+          { hint: 'ceviche', requestedQuantity: null, pendingNote: 'poca cebolla' },
+          { hint: 'papas a la huancaína', requestedQuantity: null, pendingNote: 'no muy picantes' },
+          { hint: 'chicha morada', requestedQuantity: null, pendingNote: null },
+        ],
+        sourceMessage: 'Seguí, y también una chicha morada',
+        metadata: { pendingOrderLines: existing },
+      });
+      expect(pending?.lines).toHaveLength(3);
+      expect(pending?.lines.find((l) => l.id === 'line-ceviche')).toMatchObject({ status: 'done', currentResolutionId: 'pr1:biz-1:conv-1:res-ceviche' });
+      expect(pending?.lines.find((l) => l.id === 'line-papas')).toMatchObject({ status: 'queued', currentResolutionId: null });
+      expect(pending?.lines.find((l) => l.hint === 'chicha morada')).toMatchObject({ status: 'queued', currentResolutionId: null });
+    });
+
+    it('una intención nueva y explícita (cola previa cerrada, platos enteramente distintos) sigue pudiendo planificar de cero', async () => {
+      const closed: PendingOrderLines = {
+        ...cevicheDonePapasQueued(),
+        lines: [
+          { id: 'line-ceviche', hint: 'ceviche', requestedQuantity: 2, status: 'done', currentResolutionId: 'pr1:biz-1:conv-1:res-ceviche', pendingNote: 'poca cebolla' },
+          { id: 'line-papas', hint: 'papas a la huancaína', requestedQuantity: null, status: 'cancelled', currentResolutionId: null, pendingNote: 'no muy picantes' },
+        ],
+        closedAt: new Date().toISOString(),
+      };
+      const pending = await reconcileOrderLinesPlan({
+        conversationId: 'conv-1',
+        lines: [
+          { hint: 'lomo saltado', requestedQuantity: 1, pendingNote: null },
+          { hint: 'chicha morada', requestedQuantity: 2, pendingNote: null },
+        ],
+        sourceMessage: 'Quiero un lomo saltado y dos chichas moradas',
+        metadata: { pendingOrderLines: closed },
+      });
+      expect(pending?.lines).toMatchObject([
+        { hint: 'lomo saltado', requestedQuantity: 1, status: 'active' },
+        { hint: 'chicha morada', requestedQuantity: 2, status: 'queued' },
+      ]);
+      expect(pending?.closedAt).toBeNull();
+    });
+
+    it('no altera cantidad, nota ni ningún otro efecto ya confirmado de la línea done', async () => {
+      const existing = cevicheDonePapasQueued();
+      const pending = await reconcileOrderLinesPlan({
+        conversationId: 'conv-1',
+        // Mismas líneas, pero con una nota/cantidad DISTINTA en el texto
+        // entrante para el ceviche — igual no debe pisar lo ya confirmado.
+        lines: [
+          { hint: 'ceviche', requestedQuantity: 5, pendingNote: 'bien picante' },
+          { hint: 'papas a la huancaína', requestedQuantity: null, pendingNote: 'no muy picantes' },
+        ],
+        sourceMessage: 'Seguí',
+        metadata: { pendingOrderLines: existing },
+      });
+      expect(pending?.lines.find((l) => l.id === 'line-ceviche')).toMatchObject({
+        requestedQuantity: 2,
+        pendingNote: 'poca cebolla',
+      });
+    });
+  });
+
   describe('normalizeOrderLineInput (cantidad dentro del hint)', () => {
     it('extrae el número que el modelo dejó en el hint', () => {
       expect(normalizeOrderLineInput({ hint: '2 papas a la huancaína' })).toEqual({
@@ -532,7 +762,7 @@ describe('pendingOrderLines.service', () => {
     expect(getActiveOrderLine(next)).toMatchObject({ id: 'l2', status: 'queued' });
   });
 
-  it('advanceAfterLineClose limpia la cola entera cuando no queda nada abierto', async () => {
+  it('advanceAfterLineClose cierra la cola (sin línea abierta) pero NO borra la clave — queda closedAt y las líneas en su estado final', async () => {
     const oneLine = basePending({
       lines: [{ id: 'l1', hint: 'lomo', requestedQuantity: null, status: 'active', currentResolutionId: 'pr1:biz-1:conv-1:res-1', pendingNote: null }],
     });
@@ -542,8 +772,15 @@ describe('pendingOrderLines.service', () => {
       lineId: 'l1',
       closeStatus: 'done',
     });
+    // De cara al caller, "nada para trabajar ahora" no cambia (sigue siendo null).
     expect(next).toBeNull();
-    expect(conversationMetadata.value.pendingOrderLines).toBeUndefined();
+    // Pero el estado persistido NO se borra: queda disponible para que
+    // ensurePendingOrderLinesFromRequest no confunda "cola cerrada" con
+    // "nunca hubo cola" (evita resucitar productos ya resueltos, CASE08).
+    const persisted = conversationMetadata.value.pendingOrderLines as PendingOrderLines;
+    expect(persisted).toBeDefined();
+    expect(persisted.lines.find((l) => l.id === 'l1')?.status).toBe('done');
+    expect(persisted.closedAt).toBeTypeOf('string');
   });
 
   it('rechaza un orderLineId stale sin cerrar el Task active', async () => {
@@ -651,6 +888,27 @@ describe('pendingOrderLines.service', () => {
     });
     expect(next?.lines.find((l) => l.id === 'l2')?.status).toBe('cancelled');
     expect(next?.lines.find((l) => l.id === 'l1')?.status).toBe('active');
+  });
+
+  it('cancelOrderLine de la última línea abierta (p. ej. recuperación tras un tool call rechazado por el esquema) no borra la clave — queda cerrada con historial', async () => {
+    const singleLine = basePending({
+      lines: [
+        { id: 'l1', hint: 'ceviche', requestedQuantity: 2, status: 'done', currentResolutionId: 'pr1:biz-1:conv-1:res-1', pendingNote: 'poca cebolla' },
+        { id: 'l2', hint: 'papas a la huancaína', requestedQuantity: null, status: 'queued', currentResolutionId: null, pendingNote: 'no muy picantes' },
+      ],
+    });
+    conversationMetadata.value = { pendingOrderLines: singleLine };
+    const next = await cancelOrderLine({
+      conversationId: 'conv-1',
+      metadata: { pendingOrderLines: singleLine },
+      hint: 'papas a la huancaína',
+    });
+    expect(next).toBeNull();
+    const persisted = conversationMetadata.value.pendingOrderLines as PendingOrderLines;
+    expect(persisted).toBeDefined();
+    expect(persisted.lines.find((l) => l.id === 'l1')?.status).toBe('done');
+    expect(persisted.lines.find((l) => l.id === 'l2')?.status).toBe('cancelled');
+    expect(persisted.closedAt).toBeTypeOf('string');
   });
 
   it('cancelOrderLine no cae al hint ni al Task active si el ID explícito es stale', async () => {
@@ -819,6 +1077,39 @@ describe('pendingOrderLines.service', () => {
       expect(text).toMatch(/search_products\(keyword="ceviche"\)/);
       expect(text).not.toContain('productId: prod-ceviche');
     });
+  });
+
+  it('buildPendingOrderLinesContextLines: con shortlist ya mostrado para la línea activa, instruye resolve_product en vez de volver a buscar', () => {
+    const text = buildPendingOrderLinesContextLines({
+      pendingOrderLines: basePending({
+        lines: [
+          { id: 'l1', hint: 'ceviche', requestedQuantity: 2, status: 'active', currentResolutionId: null, pendingNote: null },
+          { id: 'l2', hint: 'papas', requestedQuantity: null, status: 'queued', currentResolutionId: null, pendingNote: null },
+        ],
+      }),
+      pendingProductSelection: true,
+      candidateProductIds: ['prod-ceviche-1', 'prod-ceviche-2'],
+    }).join('\n');
+
+    expect(text).toContain('ya mostraste el shortlist');
+    expect(text).toContain('orderLineId: l1');
+    expect(text).toContain('resolve_product(productId, resolutionId, orderLineId="l1")');
+    expect(text).toContain('PROHIBIDO volver a llamar search_products');
+    expect(text).not.toMatch(/search_products\(keyword=/);
+  });
+
+  it('buildPendingOrderLinesContextLines: sin shortlist pendiente, mantiene la instrucción de búsqueda aunque falte la resolución', () => {
+    const text = buildPendingOrderLinesContextLines({
+      pendingOrderLines: basePending({
+        lines: [
+          { id: 'l1', hint: 'ceviche', requestedQuantity: 2, status: 'active', currentResolutionId: null, pendingNote: null },
+          { id: 'l2', hint: 'papas', requestedQuantity: null, status: 'queued', currentResolutionId: null, pendingNote: null },
+        ],
+      }),
+    }).join('\n');
+
+    expect(text).toMatch(/search_products\(keyword="ceviche"\)/);
+    expect(text).not.toContain('ya mostraste el shortlist');
   });
 
   it('buildPendingOrderLinesContextLines vacío sin cola', () => {

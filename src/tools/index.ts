@@ -100,6 +100,7 @@ import {
   clearPendingOrderLines,
   getActiveOrderLine,
   getCurrentProductResolutionForTask,
+  getLastToolOutcome,
   getNextOrderLineRequiringQuantity,
   getPendingOrderLines,
   getTaskCanonicalResolution,
@@ -108,10 +109,12 @@ import {
   ingredientFilterCarvesDishHint,
   buildOrderLineSearchInstruction,
   ORDER_LINES_MAX,
+  reconcileOrderLinesPlan,
   resolveMissedSearchOrderLine,
   resolveOrderLineForProduct,
   setPendingOrderLines,
   setOrderLineRequestedQuantity,
+  wouldCancelCloseOrderQueue,
   type OrderLine,
 } from '../services/pendingOrderLines.service';
 import {
@@ -4282,10 +4285,18 @@ export const planOrderLinesTool = new DynamicStructuredTool<
       turnStartedAt
     );
     if (partyGate) return partyGate;
-    const pending = await setPendingOrderLines({
+    // Reconciliación con la cola YA persistida (propietario único de esta
+    // regla, ver reconcileOrderLinesPlan): si el cliente re-enuncia platos
+    // que ya están `done`/`cancelled`/abiertos en la cola actual (típico de
+    // "Seguí" interpretado como replanificar en vez de continue_order_line()),
+    // esas líneas NO se tocan — se conserva su id, status, resolución,
+    // cantidad y nota exactos. Solo los platos genuinamente nuevos entran.
+    const state = await findOrCreateConversationState(conversationId);
+    const pending = await reconcileOrderLinesPlan({
       conversationId,
       lines: plannedLines,
       sourceMessage: plannedLines.map((l) => l.hint).join(', '),
+      metadata: state.metadata,
     });
     // La cola ya es la representación persistente de esa comida.
     await clearPendingPartySizeOrder(conversationId);
@@ -4296,19 +4307,33 @@ export const planOrderLinesTool = new DynamicStructuredTool<
       SHORTLIST_AWAITING_CHOICE_KEY,
     ]);
     await clearComplementSuggestionSnapshot(conversationId);
-    const active = getActiveOrderLine(pending);
+    // `getActiveOrderLine` cae a la primera `queued` cuando no hay ninguna
+    // `active` — correcto para UI/instrucciones de display, pero acá decide
+    // si el siguiente paso es "buscar y resolver directo" (solo válido para
+    // una línea REALMENTE active) o "activar primero". Usarla sin distinguir
+    // eso le dijo al modelo que llamara search_products/resolve_product sobre
+    // una línea todavía `queued` cuando esta llamada resultó un no-op de
+    // reconcileOrderLinesPlan (p. ej. "Seguí" re-enunciando ceviche+papas con
+    // el ceviche ya `done`): resolve_product la rechazaba con `task_not_active`
+    // y el pedido se trababa sin que nada se corrompiera (CASE08).
+    const realActive = pending?.lines.find((l: OrderLine) => l.status === 'active') ?? null;
+    const hasQueued = Boolean(pending?.lines.some((l: OrderLine) => l.status === 'queued'));
     return toJson({
       success: true,
       effect: { kind: 'order_plan_persisted' },
-      activeLine: active
-        ? { hint: active.hint, requestedQuantity: active.requestedQuantity }
+      activeLine: realActive
+        ? { hint: realActive.hint, requestedQuantity: realActive.requestedQuantity }
         : null,
-      queuedCount: pending.lines.filter((l) => l.status === 'queued').length,
-      instruction: active
-        ? `Trabajá ahora SOLO "${active.hint}"${
-            active.requestedQuantity ? ` (${active.requestedQuantity}×)` : ''
-          }. ${buildOrderLineSearchInstruction(active.hint)} No listes ni menciones las demás líneas todavía.`
-        : 'Sin línea activa (inesperado): revisá con get_cart.',
+      queuedCount: pending?.lines.filter((l: OrderLine) => l.status === 'queued').length ?? 0,
+      instruction: realActive
+        ? `Trabajá ahora SOLO "${realActive.hint}"${
+            realActive.requestedQuantity ? ` (${realActive.requestedQuantity}×)` : ''
+          }. ${buildOrderLineSearchInstruction(realActive.hint)} No listes ni menciones las demás líneas todavía.`
+        : hasQueued
+          ? 'No hay línea activa: esta cola ya existía (no se modificó nada nuevo). Si el cliente confirmó que ' +
+            'sigue, llamá continue_order_line() para activar la próxima línea en cola. PROHIBIDO search_products ' +
+            'o resolve_product de esa línea antes de activarla con continue_order_line().'
+          : 'Sin línea activa ni líneas en cola (inesperado): revisá con get_cart.',
     });
   },
 });
@@ -4389,11 +4414,37 @@ export const cancelOrderLineTool = new DynamicStructuredTool<
     _runManager,
     config?: RunnableConfig
   ) => {
-    const { conversationId } = getReactContext(config);
+    const { conversationId, turnId } = getReactContext(config);
     if (!conversationId) {
       return toJson({ success: false, error: 'no_conversation' });
     }
     const state = await findOrCreateConversationState(conversationId);
+
+    // Cancelar la última línea abierta cierra toda la cola — irreversible.
+    // Si el intento de tool inmediatamente anterior de ESTE turno falló a
+    // nivel de esquema (ej. plan_order_lines con 1 sola línea), este cancel
+    // es casi siempre una "recuperación" automática del modelo, no un pedido
+    // del cliente: no se autoriza. `continue_order_line()` sigue siendo el
+    // camino normal para avanzar; una cancelación real se puede repetir en
+    // un turno sin ese fallo inmediatamente antes.
+    const pendingBefore = getPendingOrderLines(state.metadata);
+    const lastOutcome = getLastToolOutcome(state.metadata);
+    if (
+      wouldCancelCloseOrderQueue(pendingBefore, { hint: hint ?? null }) &&
+      lastOutcome &&
+      lastOutcome.turnId === turnId &&
+      lastOutcome.success === false
+    ) {
+      return toJson({
+        success: false,
+        error: 'cancel_blocked_after_tool_error',
+        instruction:
+          'No se cancela la última línea pendiente: la tool anterior de este turno falló por esquema. ' +
+          'Si la cola tiene una sola línea y el cliente confirmó que sigue, usá continue_order_line(), ' +
+          'no plan_order_lines ni cancel_order_line.',
+      });
+    }
+
     const nextPending = await cancelOrderLine({
       conversationId,
       metadata: state.metadata,

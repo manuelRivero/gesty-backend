@@ -590,7 +590,16 @@ describe('search_products → ProductResolution → add_cart_item', () => {
         expect.objectContaining({ resolutionId: resolutionBId, status: 'consumed' }),
       ])
     );
-    expect(database.state.metadata.pendingOrderLines).toBeUndefined();
+    // La cola cerrada (ambas Tasks `done`) ya no se borra: queda persistida
+    // con `closedAt` para que ensurePendingOrderLinesFromRequest no la
+    // confunda con "nunca hubo cola" y resucite productos ya resueltos.
+    expect(database.state.metadata.pendingOrderLines).toMatchObject({
+      closedAt: expect.any(String),
+      lines: expect.arrayContaining([
+        expect.objectContaining({ id: 'task-a', status: 'done' }),
+        expect.objectContaining({ id: 'task-b', status: 'done' }),
+      ]),
+    });
     expect(prisma.draft_order_item.create).toHaveBeenCalledTimes(2);
   });
 

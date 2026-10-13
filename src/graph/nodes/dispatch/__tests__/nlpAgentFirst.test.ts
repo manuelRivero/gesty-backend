@@ -10,7 +10,7 @@ const lifecycleMock = vi.hoisted(() => ({
     revision: 0,
     nextSequence: 1,
     processedMessageIds: [] as string[],
-    records: [] as Array<Record<string, unknown>>,
+    records: [] as HumanIntentRecord[],
   },
   metadata: {} as Record<string, unknown>,
 }));
@@ -131,6 +131,7 @@ import {
   getHumanIntentState,
 } from '../../../../services/humanIntentState.service';
 import { runHumanIntentPreflight } from '../../../../services/humanIntentPreflight.service';
+import type { HumanIntentRecord } from '../../../../services/humanIntentState.service';
 import { prisma } from '../../../../lib/prisma';
 import { dispatchIntent, dispatchInteractive } from '../../../../controllers/webhook/dispachers';
 import { patchConversationMetadata } from '../../../../repositories';
@@ -211,7 +212,7 @@ describe('nlpSubgraphNode — agent-first', () => {
       decision: 'NEW_INTENT' as const,
       intents: [{ goal: 'PEDIR' as const, request: { products: ['ceviche'] } }],
     };
-    const active = {
+    const active: HumanIntentRecord = {
       id: 'intent-ceviche',
       sequence: 1,
       goal: 'PEDIR',
@@ -236,11 +237,11 @@ describe('nlpSubgraphNode — agent-first', () => {
 
     const update = await nlpSubgraphNode(nlpState('Quiero ceviche'));
 
-    expect(runHumanIntentPreflight.mock.invocationCallOrder[0]).toBeLessThan(
-      applyHumanIntentTurnDecision.mock.invocationCallOrder[0]
+    expect(vi.mocked(runHumanIntentPreflight).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(applyHumanIntentTurnDecision).mock.invocationCallOrder[0]
     );
-    expect(applyHumanIntentTurnDecision.mock.invocationCallOrder[0]).toBeLessThan(
-      runHybridReactAgent.mock.invocationCallOrder[0]
+    expect(vi.mocked(applyHumanIntentTurnDecision).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(runHybridReactAgent).mock.invocationCallOrder[0]
     );
     const hybridContext = vi.mocked(runHybridReactAgent).mock.calls[0][0];
     expect(hybridContext.conversationState.metadata.humanIntentState.records).toEqual([active]);
@@ -248,13 +249,15 @@ describe('nlpSubgraphNode — agent-first', () => {
   });
 
   it('pasa a ReAct solo el fulfillmentCandidate devuelto por preflight', async () => {
-    const activeIntent = {
+    const activeIntent: HumanIntentRecord = {
       id: 'intent-order',
       sequence: 1,
       goal: 'PEDIR',
       request: { products: ['ceviche'] },
       status: 'ACTIVE',
       blockers: [],
+      createdAt: '2026-09-28T00:00:00.000Z',
+      updatedAt: '2026-09-28T00:00:00.000Z',
     };
     lifecycleMock.state = {
       ...lifecycleMock.state,
@@ -282,13 +285,15 @@ describe('nlpSubgraphNode — agent-first', () => {
   });
 
   it('adjunta al fulfillment quantity el target calculado desde la OrderLine', async () => {
-    const activeIntent = {
+    const activeIntent: HumanIntentRecord = {
       id: 'intent-order',
       sequence: 1,
       goal: 'PEDIR',
       request: { products: ['ceviche', 'papas'] },
       status: 'ACTIVE',
       blockers: [],
+      createdAt: '2026-09-28T00:00:00.000Z',
+      updatedAt: '2026-09-28T00:00:00.000Z',
     };
     const resolutionId = 'pr1:biz-1:conv-1:papas';
     const metadata = {
@@ -359,7 +364,7 @@ describe('nlpSubgraphNode — agent-first', () => {
   });
 
   it('party-size Goal activo deja que ReAct resuelva una respuesta aunque preflight falle cerrado', async () => {
-    const activeOrder = {
+    const activeOrder: HumanIntentRecord = {
       id: 'intent-order',
       sequence: 1,
       goal: 'PEDIR',

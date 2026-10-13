@@ -1,4 +1,4 @@
-import { AIMessage, ToolMessage } from '@langchain/core/messages';
+import { AIMessage, type BaseMessage, ToolMessage } from '@langchain/core/messages';
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
@@ -139,7 +139,7 @@ const makeResolveProductTool = (effect: () => unknown, success = true) =>
     name: 'resolve_product',
     description: 'resolve product',
     schema: z.object({ productId: z.string().uuid(), resolutionId: z.string() }),
-    func: async (args) => {
+    func: async (args: { productId: string; resolutionId: string }) => {
       await effect();
       return JSON.stringify({
         success,
@@ -311,7 +311,7 @@ describe('HumanIntentToolNode', () => {
     expect(addEffect).toHaveBeenCalledOnce();
     expect(executionOrder).toEqual(['search_products', 'resolve_product', 'add_cart_item']);
     expect(result.messages).toHaveLength(3);
-    expect(result.messages.map((message) => (message as ToolMessage).tool_call_id)).toEqual([
+    expect(result.messages.map((message: BaseMessage) => (message as ToolMessage).tool_call_id)).toEqual([
       'search-1',
       'resolve-1',
       'add-1',
@@ -486,7 +486,7 @@ describe('HumanIntentToolNode', () => {
     );
 
     const blocked = result.messages.find(
-      (message) => ToolMessage.isInstance(message) && message.tool_call_id === 'add-2'
+      (message: BaseMessage) => ToolMessage.isInstance(message) && message.tool_call_id === 'add-2'
     ) as ToolMessage | undefined;
     expect(blocked).toBeDefined();
     expect(blocked?.tool_call_id).toBe('add-2');
@@ -527,7 +527,7 @@ describe('HumanIntentToolNode', () => {
     );
 
     const rejected = result.messages.find(
-      (message) => ToolMessage.isInstance(message) && message.tool_call_id === 'add-3'
+      (message: BaseMessage) => ToolMessage.isInstance(message) && message.tool_call_id === 'add-3'
     ) as ToolMessage | undefined;
     expect(rejected).toBeDefined();
     expect(rejected?.tool_call_id).toBe('add-3');

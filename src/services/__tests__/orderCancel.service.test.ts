@@ -74,12 +74,12 @@ describe('buildCancelOrderMessage', () => {
     vi.mocked(prisma.orders.findFirst).mockResolvedValue(null as never);
     vi.mocked(prisma.draft_order.findFirst).mockResolvedValue({ id: 'draft-1' } as never);
     const txUpdate = vi.fn();
-    vi.mocked(prisma.$transaction).mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
+    vi.mocked(prisma.$transaction).mockImplementation((async (fn: (tx: unknown) => Promise<unknown>) =>
       fn({
         draft_order_item: { deleteMany: vi.fn() },
         draft_order: { update: txUpdate },
       })
-    );
+    ) as never);
 
     const result = await buildCancelOrderMessage(CONVERSATION, 'biz-1', '+54911');
 

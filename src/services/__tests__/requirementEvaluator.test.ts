@@ -33,11 +33,12 @@ vi.mock('../partySizeGoal.service', () => ({
 }));
 
 import { evaluateToolRequirement } from '../requirementEvaluator';
+import type { HumanIntentRecord } from '../humanIntentState.service';
 
 const PRODUCT_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const ORDER_LINE_ID = 'line-ceviche';
 const RESOLUTION_ID = 'pr1:biz-1:conv-1:resolution-1';
-const PEDIR = {
+const PEDIR: HumanIntentRecord = {
   id: 'intent-order',
   sequence: 1,
   goal: 'PEDIR',

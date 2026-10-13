@@ -8,7 +8,11 @@ import { getRequestedPartySize, normalizeMetadata } from '../services/productQue
 import { hasActivePedirHumanIntent } from '../services/partySizeGoal.service';
 import { getGoalFulfillmentContractsForTool } from '../domain/intent/family';
 import { reconcileHumanIntentAfterToolEffect } from '../services/humanIntentReconciliation.service';
-import { getFulfillmentReadyOrderLine, getPendingOrderLines } from '../services/pendingOrderLines.service';
+import {
+  getFulfillmentReadyOrderLine,
+  getPendingOrderLines,
+  recordLastToolOutcome,
+} from '../services/pendingOrderLines.service';
 import { CART_ITEM_PERSISTED, DEFAULT_TOOL_CONTRACTS } from './toolContracts';
 
 /** Tool que el contrato declara como productora del fulfillment (CART_ITEM_PERSISTED). */
@@ -46,7 +50,6 @@ const fulfillmentTransitionFor = (
 export class PostEffectToolNode extends ToolNode {
   protected override async runTool(call: ToolCall, config: RunnableConfig) {
     const result = await super.runTool(call, config);
-    if (!(result instanceof ToolMessage) || result.status !== 'success') return result;
 
     const configurable = config.configurable as
       | {
@@ -59,6 +62,23 @@ export class PostEffectToolNode extends ToolNode {
     const conversationId = configurable?.conversationId;
     const businessId = configurable?.businessId;
     const customerPhone = configurable?.customerPhone;
+    const turnId = configurable?.turnId;
+
+    // Única señal, garantizada por el sistema (no por el modelo), de si el
+    // intento de tool inmediatamente anterior de este turno falló a nivel
+    // LangChain/ToolNode (p. ej. un esquema rechazado) — `cancel_order_line`
+    // la usa para no cancelar la última línea abierta como "recuperación".
+    // Se registra para TODO call, éxito o no, antes de cualquier early return.
+    if (typeof conversationId === 'string' && typeof turnId === 'string') {
+      await recordLastToolOutcome(conversationId, {
+        turnId,
+        toolName: call.name,
+        success: result instanceof ToolMessage && result.status === 'success',
+      }).catch((err) => console.error('[human-intent] recordLastToolOutcome failed:', err));
+    }
+
+    if (!(result instanceof ToolMessage) || result.status !== 'success') return result;
+
     if (
       typeof conversationId !== 'string' ||
       typeof businessId !== 'string' ||

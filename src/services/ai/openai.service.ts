@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import type { business as Business } from '@prisma/client';
 import type { OpenAI as OpenAITypes } from 'openai';
 import { prisma } from '../../lib/prisma';
+import { env } from '../../config/env';
 import { evaluateBusinessBillingAccess } from '../billing/evaluateBusinessBillingAccess.service';
 import { getEffectiveAiTokenLimit } from './aiLimits';
 import { incrementUsage } from './aiUsage.service';
@@ -13,9 +14,16 @@ import { resolvePersonalityPromptText } from '../botPersonality.service';
 import { getBusinessConfig } from '../businessConfig.service';
 import { buildProductAwareUserPrompt } from '../../prompts/productAware';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
+// Lazy: instanciar en el primer uso (no al importar el módulo) evita que el
+// orden de imports de otro módulo (p. ej. un test que importa esto antes de
+// que `config/env.ts` corra `loadEnv()`) rompa la construcción del cliente.
+let cachedOpenai: OpenAI | null = null;
+const getOpenaiClient = (): OpenAI => {
+  if (!cachedOpenai) {
+    cachedOpenai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
+  }
+  return cachedOpenai;
+};
 
 const zeroUsage = () => ({
   promptTokens: 0,
@@ -70,7 +78,7 @@ export const generateAIResponse = async (
   }
 
   try {
-    const response = await openai.chat.completions.create({
+    const response = await getOpenaiClient().chat.completions.create({
       model: 'gpt-4o-mini',
       messages
     });
@@ -132,7 +140,7 @@ export const generateProductAwareResponse = async (params: {
     : undefined;
   const systemPrompt = buildProductAwareSystemPrompt(personalityPrompt);
 
-  const response = await openai.chat.completions.create({
+  const response = await getOpenaiClient().chat.completions.create({
     model: 'gpt-4o-mini',
     temperature: 0.2,
     messages: [
@@ -159,7 +167,7 @@ export const generateProductAwareResponse = async (params: {
 export const extractOrderData = async (
   message: string
 ): Promise<{ quantity: number | null; confidence: number }> => {
-  const response = await openai.chat.completions.create({
+  const response = await getOpenaiClient().chat.completions.create({
     model: 'gpt-4o-mini',
     temperature: 0,
     response_format: { type: 'json_object' },
@@ -233,7 +241,7 @@ Output: {"quantity":null,"confidence":0.2}`
 export const generateOrderExtraction = async (params: {
   userMessage: string;
 }): Promise<{ quantity: number }> => {
-  const response = await openai.chat.completions.create({
+  const response = await getOpenaiClient().chat.completions.create({
     model: 'gpt-4o',
     temperature: 0,
     response_format: { type: 'json_object' },
@@ -271,7 +279,7 @@ export const generateOrderActionAnalysis = async (params: {
   userMessage: string;
   currentProductName: string | null;
 }): Promise<{ action: 'add' | 'add_same' | 'add_other' | 'remove' | 'unclear' }> => {
-  const response = await openai.chat.completions.create({
+  const response = await getOpenaiClient().chat.completions.create({
     model: 'gpt-4o',
     temperature: 0,
     response_format: { type: 'json_object' },
@@ -345,7 +353,7 @@ export const generateOrderResolution = async ({
   }[];
   needs_clarification: boolean;
 }> => {
-  const response = await openai.chat.completions.create({
+  const response = await getOpenaiClient().chat.completions.create({
     model: 'gpt-4o',
     temperature: 0,
     response_format: { type: 'json_object' },
@@ -416,7 +424,7 @@ Descripción: ${p.description ?? ''}
 Ingredientes: ${p.ingredients ?? ''}
 `).join('\n');
 
-  const response = await openai.chat.completions.create({
+  const response = await getOpenaiClient().chat.completions.create({
     model: 'gpt-4o-mini',
     temperature: 0,
     response_format: { type: "json_object" },
@@ -451,7 +459,7 @@ export const getProductEmbedding = async (
   keyword: string
 ): Promise<number[]> => {
   // 1️⃣ Generar embedding del query
-  const embeddingResponse = await openai.embeddings.create({
+  const embeddingResponse = await getOpenaiClient().embeddings.create({
     model: "text-embedding-3-small",
     input: keyword
   });

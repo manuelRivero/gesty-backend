@@ -4,7 +4,7 @@ import { prisma } from '../../lib/prisma';
 import { env } from '../../config/env';
 import { getActiveProvider } from './paymentProvider.repository';
 import { createMpPreference } from './mercadoPago.service';
-import { createOrderFromDraft } from '../checkout.service';
+import { acquireOrderCreateLock, createOrderFromDraft } from '../checkout.service';
 import { emitAdminOrderPaymentStatusChanged } from '../../socket/adminSocket';
 import { sendTextMessageNoCtx, sendImageMessageNoCtx } from './messageHelpers';
 import { formatBotUserMessage } from '../productQuery/utils';
@@ -504,8 +504,19 @@ export const handleApprovedPayment = async (
   });
   if (!conversation) return;
 
-  // Transacción: crea orden + actualiza intent
-  const { orderId, total, qrDataUrl } = await prisma.$transaction(async () => {
+  // Transacción real: el lock + la relectura del intent + la creación de la
+  // orden + la actualización del intent corren todas sobre el mismo `tx`, así
+  // que o se persiste todo o no se persiste nada. El lock también serializa
+  // esta ejecución contra cualquier otra (webhook duplicado/concurrente, o un
+  // checkout en efectivo/transferencia disparado para el mismo cliente).
+  const result = await prisma.$transaction(async (tx) => {
+    await acquireOrderCreateLock(tx, business.id, customer.phone_number);
+
+    // Releído bajo el lock: si otra ejecución (reintento o webhook duplicado)
+    // ya aprobó este mismo intent, no hay nada más que hacer.
+    const freshIntent = await tx.payment_intent.findUnique({ where: { id: intent.id } });
+    if (!freshIntent || freshIntent.status === 'approved') return null;
+
     const { orderId, total, qrDataUrl } = await createOrderFromDraft(
       business,
       conversation,
@@ -517,10 +528,11 @@ export const handleApprovedPayment = async (
         // ya pagó ese monto y acá no hay turno donde re-confirmar. Re-evaluar
         // podría crear una orden por un total distinto del cobrado.
         promotionEvaluation: parsePromotionSnapshot(intent.promotion_snapshot),
-      }
+      },
+      tx
     );
 
-    await prisma.payment_intent.update({
+    await tx.payment_intent.update({
       where: { id: intent.id },
       data: {
         status: 'approved',
@@ -533,6 +545,11 @@ export const handleApprovedPayment = async (
 
     return { orderId, total, qrDataUrl };
   });
+
+  // Idempotente: otra ejecución ya procesó esta aprobación (webhook
+  // duplicado/concurrente) — no hay nada nuevo para notificar.
+  if (!result) return;
+  const { orderId, total, qrDataUrl } = result;
 
   // Fire-and-forget: nunca debe bloquear ni romper la confirmación de pago online.
   void notifyAmbassadorSaleIfNeeded(orderId).catch((err) => {

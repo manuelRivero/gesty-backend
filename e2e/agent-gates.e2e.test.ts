@@ -22,6 +22,7 @@ import {
   buildInteractivePayload,
   buildTextPayload,
   disconnectPrisma,
+  ensureE2eButtonProductResolution,
   findE2eAddableProduct,
   findE2eProductWithVariations,
   findE2eQuantityGateProduct,
@@ -110,6 +111,7 @@ describe.sequential.skipIf(!isE2eEnabled())('agent gates (e2e fase 2)', () => {
       // Caso A — confirma
       let reset = await resetE2eCustomer({ confirmClosedOrder: false });
       conversationId = reset.conversationId;
+      await ensureE2eButtonProductResolution(businessId, product.id);
 
       const addTurn = await runGraphTurn(
         graph,
@@ -136,6 +138,7 @@ describe.sequential.skipIf(!isE2eEnabled())('agent gates (e2e fase 2)', () => {
       // Caso B — rechaza
       reset = await resetE2eCustomer({ confirmClosedOrder: false });
       conversationId = reset.conversationId;
+      await ensureE2eButtonProductResolution(businessId, product.id);
       const beforeOrderId =
         (await findLatestOrderForE2eCustomer(businessId))?.id ?? null;
 
@@ -166,6 +169,7 @@ describe.sequential.skipIf(!isE2eEnabled())('agent gates (e2e fase 2)', () => {
     conversationId = reset.conversationId;
 
     const product = await findE2eQuantityGateProduct(businessId);
+    await ensureE2eButtonProductResolution(businessId, product.id);
     const addTurn = await runGraphTurn(
       graph,
       buildInteractivePayload(`ADD_ITEM:${product.id}:1`)

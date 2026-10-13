@@ -5,11 +5,25 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('../../../lib/prisma', () => ({
-  prisma: {
-    conversation_state: { findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
-  },
-}));
+vi.mock('../../../lib/prisma', () => {
+  const conversation_state = {
+    findFirst: vi.fn(),
+    findUnique: vi.fn(),
+    update: vi.fn(),
+  };
+  return {
+    prisma: {
+      conversation_state,
+      $queryRaw: vi.fn(),
+      // `patchConversationMetadata` corre dentro de una transacción (lock +
+      // read + update); el mock de test corre el callback con el mismo
+      // cliente, sin BEGIN/COMMIT real.
+      $transaction: vi.fn((callback: (tx: unknown) => unknown) =>
+        callback({ conversation_state, $queryRaw: vi.fn() })
+      ),
+    },
+  };
+});
 
 import { prisma } from '../../../lib/prisma';
 import { patchReservationDraft, readReservationDraft } from '../draft.repository';
@@ -39,6 +53,9 @@ describe('patchReservationDraft', () => {
       where: { conversation_id: 'conv-1' },
       data: {
         metadata: {
+          // `patchConversationMetadata` normaliza `productResolutions` en
+          // cada write (ver `preserveConsumedProductResolutions`).
+          productResolutions: [],
           reservation_draft: { partySize: 4, slotId: 'slot-1', date: '20/08/2026' },
         },
       },

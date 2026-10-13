@@ -39,7 +39,7 @@ describe('botPersonality', () => {
 
   it('humanize pide solo el cuerpo reescrito y preservar estructura', () => {
     const humanize = buildHumanizeSystemPrompt();
-    expect(humanize).toMatch(/SOLO cambiar el tono/i);
+    expect(humanize).toMatch(/ÚNICAMENTE el cuerpo reescrito/i);
     expect(humanize).toMatch(/Estructura sagrada/i);
     expect(humanize).toMatch(/viñetas/i);
     expect(humanize).toMatch(/negrita/i);

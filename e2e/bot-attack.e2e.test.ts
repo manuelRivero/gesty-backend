@@ -26,6 +26,7 @@ import {
   buildTextPayload,
   cancelRecentE2eReservations,
   disconnectPrisma,
+  ensureE2eButtonProductResolution,
   ensureE2eReservationPrerequisites,
   extractHandlerText,
   findE2eAddableProduct,
@@ -429,6 +430,7 @@ describe.sequential.skipIf(!isE2eEnabled())(
         return;
       }
 
+      await ensureE2eButtonProductResolution(businessId, product.id);
       const open = await runGraphTurn(
         graph,
         buildInteractivePayload(`ADD_ITEM:${product.id}:1`)

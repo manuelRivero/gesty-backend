@@ -197,7 +197,9 @@ describe('efectos de I/O', () => {
       facts: { hasDraft: true, reservationAgentActive: false },
       ledger: EMPTY_LEDGER,
       conversationId: 'conv-1',
-      draft: { date: '11/07/2026' },
+      // Orden RES-05: personas → fecha → horario. Con partySize ya resuelto,
+      // lo que falta es el horario (slot).
+      draft: { partySize: 4, date: '11/07/2026' },
       hasEnvironments: false,
     });
     expect(lines).toHaveLength(1);

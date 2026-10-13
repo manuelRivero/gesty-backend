@@ -44,6 +44,15 @@ export type PendingOrderLines = {
   lines: OrderLine[];
   sourceMessage: string;
   createdAt: string;
+  /**
+   * Cuándo dejó de haber una línea `active`/`queued` (todas `done`/`cancelled`).
+   * Antes, al vaciarse, se borraba la clave `pendingOrderLines` entera — eso
+   * hacía indistinguible "nunca hubo cola" de "esta cola ya se procesó", y
+   * permitía que `ensurePendingOrderLinesFromRequest` resucitara productos ya
+   * resueltos desde el `humanIntentState` original (ver CASE08). Una cola
+   * cerrada se conserva (no se borra) para que esa función pueda reconocerla.
+   */
+  closedAt?: string | null;
 };
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
@@ -92,7 +101,8 @@ export const parsePendingOrderLines = (raw: unknown): PendingOrderLines | null =
     typeof raw.createdAt === 'string' && raw.createdAt
       ? raw.createdAt
       : new Date().toISOString();
-  return { lines, sourceMessage, createdAt };
+  const closedAt = typeof raw.closedAt === 'string' && raw.closedAt ? raw.closedAt : null;
+  return { lines, sourceMessage, createdAt, closedAt };
 };
 
 export const getPendingOrderLines = (metadata: unknown): PendingOrderLines | null => {
@@ -762,6 +772,7 @@ export const setPendingOrderLines = async (params: {
     lines,
     sourceMessage: params.sourceMessage.slice(0, 500),
     createdAt: new Date().toISOString(),
+    closedAt: null,
   };
 
   await patchConversationMetadata(params.conversationId, {
@@ -770,18 +781,14 @@ export const setPendingOrderLines = async (params: {
   return pending;
 };
 
-/** Materializes requested PEDIR products as lines only when no plan exists yet. */
-export const ensurePendingOrderLinesFromRequest = async (params: {
-  conversationId: string;
-  request: Record<string, unknown>;
-  sourceMessage: string;
-  metadata: unknown;
-}): Promise<PendingOrderLines | null> => {
-  const existing = getPendingOrderLines(params.metadata);
-  if (existing) return existing;
-  const products = Array.isArray(params.request.products)
-    ? params.request.products.flatMap((product) => {
-        if (typeof product === 'string' && product.trim()) return [{ hint: product.trim() }];
+const parseRequestProducts = (
+  request: Record<string, unknown>
+): Array<{ hint: string; requestedQuantity: number | null; pendingNote: string | null }> =>
+  Array.isArray(request.products)
+    ? request.products.flatMap((product) => {
+        if (typeof product === 'string' && product.trim()) {
+          return [{ hint: product.trim(), requestedQuantity: null, pendingNote: null }];
+        }
         if (isRecord(product)) {
           const hint = [product.hint, product.name, product.product]
             .find((value): value is string => typeof value === 'string' && value.trim().length > 0);
@@ -798,16 +805,212 @@ export const ensurePendingOrderLinesFromRequest = async (params: {
         return [];
       })
     : [];
-  if (products.length === 0) return null;
-  return setPendingOrderLines({
+
+/** Mismo plato ya representado en la cola (cualquier estado): comparación por tokens de plato, no de texto literal. */
+const hintAlreadyInLines = (hint: string, lines: OrderLine[]): boolean => {
+  const tokens = dishTokens(hint);
+  if (tokens.size === 0) return false;
+  return lines.some((line) => {
+    const lineTokens = dishTokens(line.hint);
+    return lineTokens.size === tokens.size && [...tokens].every((t) => lineTokens.has(t));
+  });
+};
+
+type OrderLinePlanInput = { hint: string; requestedQuantity: number | null; pendingNote: string | null };
+
+/**
+ * Único punto que decide qué hacer con una planificación entrante (desde
+ * `plan_order_lines` o desde la materialización automática del `PEDIR`
+ * activo) frente a lo que YA está persistido en la cola — es el propietario
+ * real del ciclo de vida: ni `plan_order_lines`, ni la materialización
+ * automática, mutan `pendingOrderLines` sin pasar por acá.
+ *
+ * Reconciliación (reutiliza únicamente señales que el dominio ya tiene — sin
+ * heurísticas de texto ni contra `draft_order_item`):
+ * - Sin cola existente: alta nueva de todas las líneas entrantes.
+ * - Plato entrante YA representado en la cola (por tokens de plato, en
+ *   CUALQUIER estado — `done`, `cancelled`, `active`, `queued`): se excluye
+ *   de la planificación. Su línea existente no se toca — conserva id, status,
+ *   `currentResolutionId`, cantidad y nota exactamente como estaban. Esto es
+ *   lo que evita que `plan_order_lines({ceviche, papas})` reabra un ceviche
+ *   ya `done` cuando el modelo responde "Seguí" re-enunciando todo el pedido
+ *   en vez de usar `continue_order_line()` (ver CASE08).
+ * - Si tras excluir lo ya representado no queda ningún plato nuevo: no-op,
+ *   se devuelve la cola existente sin escribir metadata.
+ * - Si queda algún plato nuevo Y la cola existente sigue abierta (hay una
+ *   línea `active`/`queued`): los nuevos se agregan en cola al final, sin
+ *   tocar el orden ni el estado de ninguna línea existente.
+ * - Si queda algún plato nuevo y la cola existente está cerrada (`closedAt`,
+ *   sin líneas abiertas): se abre una cola nueva con SOLO los platos nuevos.
+ *
+ * AMBIGÜEDAD DOCUMENTADA (no resuelta, por diseño — ver restricciones de la
+ * tarea): el dominio actual no tiene una identidad de "pedido"/intent que
+ * llegue hasta este nivel (ni `plan_order_lines` ni la materialización
+ * automática reciben un intentId), así que no hay forma segura de distinguir
+ * "el cliente quiere agregar más a ESTE pedido" de "el cliente empieza un
+ * pedido nuevo que por coincidencia repite un plato ya cerrado". Con una cola
+ * cerrada y una planificación mixta (algún plato repetido + alguno nuevo), se
+ * optó por el lado conservador: los repetidos NO se resucitan (se excluyen
+ * igual que con una cola abierta) y solo los genuinamente nuevos abren cola.
+ * Si en el futuro se necesita permitir repetir un plato ya cerrado a
+ * propósito, hace falta una señal explícita (p. ej. un intentId distinto)
+ * que hoy no existe — no se debe intentar inferir por texto.
+ */
+export const reconcileOrderLinesPlan = async (params: {
+  conversationId: string;
+  lines: OrderLinePlanInput[];
+  sourceMessage: string;
+  metadata: unknown;
+}): Promise<PendingOrderLines | null> => {
+  const existing = getPendingOrderLines(params.metadata);
+  if (params.lines.length === 0) return existing;
+
+  if (!existing) {
+    return setPendingOrderLines({
+      conversationId: params.conversationId,
+      lines: params.lines,
+      sourceMessage: params.sourceMessage,
+    });
+  }
+
+  const newLines = params.lines.filter((p) => !hintAlreadyInLines(p.hint, existing.lines));
+  if (newLines.length === 0) return existing;
+
+  if (existing.closedAt) {
+    // Cola cerrada: sus líneas ya corrieron (resueltas o abandonadas). Los
+    // platos nuevos abren una cola propia; no se cargan los cerrados.
+    return setPendingOrderLines({
+      conversationId: params.conversationId,
+      lines: newLines,
+      sourceMessage: params.sourceMessage,
+    });
+  }
+
+  // Cola todavía abierta: los platos nuevos se agregan en cola, sin tocar el
+  // orden ni el estado de las líneas existentes (activa, en cola, cerradas).
+  return appendOrderLines({
+    conversationId: params.conversationId,
+    newLines,
+  });
+};
+
+/**
+ * Materializes requested PEDIR products as lines — pero solo los que esta
+ * cola todavía no representa (delega la reconciliación a
+ * `reconcileOrderLinesPlan`, el propietario único de esa regla).
+ *
+ * Antes, "no existe `pendingOrderLines`" se usaba como única señal de "nunca
+ * se procesó este pedido". Con `advanceAfterLineClose` conservando la cola
+ * cerrada (`closedAt`), una cola ya resuelta/abandonada deja de ser invisible:
+ * esto permite excluir cualquier plato que YA esté representado en ella, en
+ * vez de reconstruir ciegamente todo `request.products` cada vez que el
+ * `humanIntentState` PEDIR sigue ACTIVE (ver CASE08).
+ */
+export const ensurePendingOrderLinesFromRequest = async (params: {
+  conversationId: string;
+  request: Record<string, unknown>;
+  sourceMessage: string;
+  metadata: unknown;
+}): Promise<PendingOrderLines | null> => {
+  const products = parseRequestProducts(params.request);
+  if (products.length === 0) return getPendingOrderLines(params.metadata);
+  return reconcileOrderLinesPlan({
     conversationId: params.conversationId,
     lines: products,
     sourceMessage: params.sourceMessage,
+    metadata: params.metadata,
   });
+};
+
+/** Agrega líneas nuevas al final de una cola abierta, sin alterar las existentes. */
+const appendOrderLines = async (params: {
+  conversationId: string;
+  newLines: Array<{ hint: string; requestedQuantity: number | null; pendingNote: string | null }>;
+}): Promise<PendingOrderLines | null> => {
+  const result = await mutateConversationMetadata<PendingOrderLines | null>(
+    params.conversationId,
+    (metadata) => {
+      const pending = getPendingOrderLines(metadata);
+      if (!pending) return { metadata: null, result: null };
+      const appended: OrderLine[] = params.newLines.map((l) => ({
+        id: randomUUID().slice(0, 8),
+        hint: l.hint,
+        requestedQuantity: l.requestedQuantity,
+        status: 'queued',
+        currentResolutionId: null,
+        pendingNote: l.pendingNote,
+      }));
+      const next: PendingOrderLines = { ...pending, lines: [...pending.lines, ...appended] };
+      return { metadata: { ...metadata, pendingOrderLines: next }, result: next };
+    }
+  );
+  return result;
 };
 
 export const clearPendingOrderLines = async (conversationId: string): Promise<void> => {
   await omitConversationMetadataKeys(conversationId, [PENDING_ORDER_LINES_KEY]);
+};
+
+const LAST_TOOL_OUTCOME_KEY = 'lastToolOutcome' as const;
+
+export type LastToolOutcome = { turnId: string; toolName: string; success: boolean; at: string };
+
+/**
+ * Resultado (a nivel LangChain/ToolNode, no el JSON de negocio) del último
+ * intento de tool de este turno — lo escribe `PostEffectToolNode.runTool`
+ * para TODO call, incluso uno rechazado por el esquema (`result.status !==
+ * 'success'`, antes de llegar al `func` de la tool).
+ *
+ * Única señal garantizada por el sistema (no autoreportada por el modelo) de
+ * "el intento inmediatamente anterior en este turno falló" — la usa
+ * `cancel_order_line` para no cancelar la última línea abierta como
+ * mecanismo de recuperación tras un esquema rechazado (ver CASE08).
+ */
+export const recordLastToolOutcome = async (
+  conversationId: string,
+  outcome: { turnId: string; toolName: string; success: boolean }
+): Promise<void> => {
+  await patchConversationMetadata(conversationId, {
+    [LAST_TOOL_OUTCOME_KEY]: { ...outcome, at: new Date().toISOString() },
+  });
+};
+
+export const getLastToolOutcome = (metadata: unknown): LastToolOutcome | null => {
+  const meta = normalizeMetadata(metadata) as Record<string, unknown>;
+  const raw = meta[LAST_TOOL_OUTCOME_KEY];
+  if (!isRecord(raw)) return null;
+  if (
+    typeof raw.turnId !== 'string' ||
+    typeof raw.toolName !== 'string' ||
+    typeof raw.success !== 'boolean'
+  ) return null;
+  return {
+    turnId: raw.turnId,
+    toolName: raw.toolName,
+    success: raw.success,
+    at: typeof raw.at === 'string' ? raw.at : '',
+  };
+};
+
+/**
+ * Cancelar la línea que resulta ser la ÚNICA abierta cierra toda la cola
+ * (D1/D6): es la acción irreversible que CASE08 mostró disparada como
+ * "recuperación" tras un `plan_order_lines` rechazado por esquema, nunca
+ * pedida por el cliente. `lineId`/`hint` replican la resolución de target
+ * que ya hace `cancelOrderLine`, para decidir ANTES de mutar nada.
+ */
+export const wouldCancelCloseOrderQueue = (
+  pending: PendingOrderLines | null,
+  params: { lineId?: string | null; hint?: string | null }
+): boolean => {
+  if (!pending) return false;
+  const open = pending.lines.filter((l) => l.status === 'active' || l.status === 'queued');
+  if (open.length !== 1) return false;
+  const [onlyOpen] = open;
+  if (params.lineId != null) return onlyOpen.id === params.lineId;
+  const hint = params.hint?.trim();
+  if (!hint) return true; // sin hint: cancelOrderLine cae a la línea activa — es esta.
+  return onlyOpen.hint.toLowerCase().includes(hint.toLowerCase());
 };
 
 /**
@@ -871,9 +1074,16 @@ export const advanceAfterLineClose = async (params: {
     };
     const stillOpen = next.lines.some((line) => line.status === 'queued' || line.status === 'active');
     if (!stillOpen) {
-      const nextMetadata = { ...metadata };
-      delete nextMetadata[PENDING_ORDER_LINES_KEY];
-      return { metadata: nextMetadata, result: { ok: true, pending: null } };
+      // No se borra la clave: una cola cerrada (todas `done`/`cancelled`) queda
+      // persistida con `closedAt` para que `ensurePendingOrderLinesFromRequest`
+      // no la confunda con "nunca hubo cola" y resucite productos ya resueltos
+      // o abandonados (ver CASE08). `pending: null` de cara al caller no cambia:
+      // no hay línea activa, sigue siendo "nada para trabajar ahora".
+      const closed: PendingOrderLines = { ...next, closedAt: new Date().toISOString() };
+      return {
+        metadata: { ...metadata, [PENDING_ORDER_LINES_KEY]: closed },
+        result: { ok: true, pending: null },
+      };
     }
     return {
       metadata: { ...metadata, pendingOrderLines: next },
@@ -1107,6 +1317,30 @@ export const buildPendingOrderLinesContextLines = (
         `(NO preguntes "¿algo más?" genérico, nombrá el hint siguiente). ` +
         `"seguí"/"dale con..." → continuá con esa línea; "cancelá el resto"/"nada más" → clear_pending_order_lines(). ` +
         `PROHIBIDO ofrecer complementos (present_complement_suggestions) o abrir COMPLETAR_PEDIDO mientras esta cola siga abierta.`,
+    ];
+  }
+
+  // Ya se mostró un shortlist para la línea activa (search_products devolvió
+  // ≥2 candidatos con nombre ambiguo) y está esperando la elección del
+  // cliente. Sin este corte, la instrucción genérica de abajo
+  // (buildOrderLineSearchInstruction) le pide al modelo volver a buscar el
+  // mismo hint en cada turno — nunca llega a resolve_product y el shortlist
+  // se repite indefinidamente (evidencia: CASE08, e2e/human-intent-lifecycle).
+  const meta = normalizeMetadata(metadata) as ConversationMetadata;
+  const shortlistAwaitingUserChoice =
+    Boolean(active) &&
+    !active!.currentResolutionId &&
+    meta.pendingProductSelection === true &&
+    Array.isArray(meta.candidateProductIds) &&
+    meta.candidateProductIds.length >= 2;
+  if (shortlistAwaitingUserChoice) {
+    return [
+      `- Cola de pedido: ya mostraste el shortlist para la línea activa *${active!.hint}* ` +
+        `[orderLineId: ${active!.id}] (ver "Candidatos" abajo). PROHIBIDO volver a llamar search_products ` +
+        `de ese plato en este turno. Cuando la respuesta del cliente identifique uno de esos candidatos ` +
+        `(nombre u ordinal), llamá resolve_product(productId, resolutionId, orderLineId="${active!.id}") con ` +
+        `el productId y resolutionId exactos de ese candidato, y después add_cart_item con esos mismos ids.` +
+        (queuedLabels.length > 0 ? ` Después faltan: ${queuedLabels.join(', ')}.` : ''),
     ];
   }
 
