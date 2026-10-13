@@ -86,7 +86,21 @@ const mockedOffered = listOfferedPaymentMethods as unknown as ReturnType<
 
 const BUSINESS_ID = "11111111-1111-4111-8111-111111111111";
 
-function baseBusiness() {
+/** Suscripción activa con plan `shopping_enabled=true` — entitlement por defecto en los fixtures. */
+function entitledSubscription(overrides: Record<string, unknown> = {}) {
+  return {
+    status: "active",
+    is_trial: false,
+    trial_end: null,
+    cancel_at_period_end: false,
+    current_period_end: new Date("2099-01-01"),
+    plan_id: "plan-basic",
+    plan: { ai_enabled: true, shopping_enabled: true },
+    ...overrides
+  };
+}
+
+function baseBusiness(subscriptionOverride: Record<string, unknown> | null = {}) {
   return {
     id: BUSINESS_ID,
     name: "Sabrosón",
@@ -99,7 +113,11 @@ function baseBusiness() {
     street_address: "Calle 1",
     address_notes: null,
     latitude: -34.6,
-    longitude: -58.4
+    longitude: -58.4,
+    subscription:
+      subscriptionOverride === null
+        ? null
+        : entitledSubscription(subscriptionOverride)
   };
 }
 
@@ -148,6 +166,51 @@ describe("resolveActivePublicBusiness", () => {
     mockedBusinessFind.mockResolvedValue(null);
     expect(await resolveActivePublicBusiness("ghost")).toBeNull();
   });
+
+  it("devuelve null (mismo 404) cuando el negocio no tiene suscripción (sin entitlement de Shopping)", async () => {
+    mockedBusinessFind.mockResolvedValue(baseBusiness(null));
+    expect(await resolveActivePublicBusiness("sabroson")).toBeNull();
+  });
+
+  it("devuelve null cuando el plan no tiene shopping_enabled", async () => {
+    mockedBusinessFind.mockResolvedValue(
+      baseBusiness({ plan: { ai_enabled: true, shopping_enabled: false } })
+    );
+    expect(await resolveActivePublicBusiness("sabroson")).toBeNull();
+  });
+
+  it("devuelve null cuando la suscripción está vencida/inactiva", async () => {
+    mockedBusinessFind.mockResolvedValue(baseBusiness({ status: "past_due" }));
+    expect(await resolveActivePublicBusiness("sabroson")).toBeNull();
+  });
+
+  it("permite Shopping Only (shopping_enabled=true, ai_enabled=false)", async () => {
+    mockedBusinessFind.mockResolvedValue(
+      baseBusiness({ plan: { ai_enabled: false, shopping_enabled: true } })
+    );
+    const row = await resolveActivePublicBusiness("sabroson");
+    expect(row?.slug).toBe("sabroson");
+  });
+
+  it("permite un trial vigente sin plan_id", async () => {
+    mockedBusinessFind.mockResolvedValue(
+      baseBusiness({
+        is_trial: true,
+        status: "trialing",
+        plan_id: null,
+        plan: null,
+        trial_end: new Date(Date.now() + 86_400_000)
+      })
+    );
+    const row = await resolveActivePublicBusiness("sabroson");
+    expect(row?.slug).toBe("sabroson");
+  });
+
+  it("nunca expone el campo `subscription` en la fila pública devuelta", async () => {
+    mockedBusinessFind.mockResolvedValue(baseBusiness());
+    const row = await resolveActivePublicBusiness("sabroson");
+    expect(row).not.toHaveProperty("subscription");
+  });
 });
 
 describe("getPublicStorefrontProfile", () => {
@@ -191,17 +254,21 @@ describe("listPublicStorefronts", () => {
     vi.clearAllMocks();
   });
 
+  function storefrontRow(subscriptionOverride: Record<string, unknown> | null = {}) {
+    return {
+      id: BUSINESS_ID,
+      name: "Sabrosón",
+      slug: "sabroson",
+      description: "Pizza y empanadas",
+      category: "PIZZA",
+      timezone: "America/Argentina/Buenos_Aires",
+      subscription:
+        subscriptionOverride === null ? null : entitledSubscription(subscriptionOverride)
+    };
+  }
+
   it("solo incluye locales activos y con storefront_enabled", async () => {
-    mockedBusinessFindMany.mockResolvedValue([
-      {
-        id: BUSINESS_ID,
-        name: "Sabrosón",
-        slug: "sabroson",
-        description: "Pizza y empanadas",
-        category: "PIZZA",
-        timezone: "America/Argentina/Buenos_Aires"
-      }
-    ]);
+    mockedBusinessFindMany.mockResolvedValue([storefrontRow()]);
     mockedOpenInfo.mockResolvedValue({ isOpen: true, nextOpenText: null });
 
     const businesses = await listPublicStorefronts();
@@ -228,6 +295,18 @@ describe("listPublicStorefronts", () => {
         nextOpenText: null
       }
     ]);
+  });
+
+  it("excluye locales sin entitlement de Shopping (sin suscripción o plan sin shopping_enabled)", async () => {
+    mockedBusinessFindMany.mockResolvedValue([
+      storefrontRow(null),
+      storefrontRow({ plan: { ai_enabled: true, shopping_enabled: false } }),
+    ]);
+    mockedOpenInfo.mockResolvedValue({ isOpen: true, nextOpenText: null });
+
+    const businesses = await listPublicStorefronts();
+    expect(businesses).toEqual([]);
+    expect(mockedOpenInfo).not.toHaveBeenCalled();
   });
 
   it("devuelve lista vacía cuando no hay locales publicados", async () => {

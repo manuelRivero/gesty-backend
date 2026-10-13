@@ -21,6 +21,7 @@ import OpenAI from 'openai';
 import { z } from 'zod';
 import type { business as Business } from '@prisma/client';
 import { evaluateBusinessBillingAccess } from '../billing/evaluateBusinessBillingAccess.service';
+import { resolveBusinessCapabilities } from '../billing/businessCapabilities.service';
 import { getEffectiveAiTokenLimit } from './aiLimits';
 import { incrementUsage } from './aiUsage.service';
 
@@ -75,6 +76,10 @@ function buildDataUrl(imageBuffer: Buffer, mimeType: string): string {
 /**
  * Gate de uso de IA del negocio (D7): mismo criterio que `generateAIResponse`
  * (openai.service.ts) — negocio bloqueado o sin cuota no dispara el llamado.
+ * También resuelve la capacidad comercial de IA (PLAN-ACCION-SHOPPING-ONLY.md):
+ * defensa en profundidad, aunque este flujo ya es inalcanzable para un
+ * negocio Shopping Only porque está corriente abajo de `aiCapabilityGateNode`
+ * en el grafo principal.
  */
 async function canUseVisionForBusiness(business: Business): Promise<boolean> {
   if (business.ai_blocked) return false;
@@ -85,7 +90,8 @@ async function canUseVisionForBusiness(business: Business): Promise<boolean> {
   const effectiveLimit = getEffectiveAiTokenLimit(trialAccess.business);
   if (trialAccess.business.ai_monthly_tokens_used >= effectiveLimit) return false;
 
-  return true;
+  const capabilities = await resolveBusinessCapabilities(business.id);
+  return capabilities.ai.allowed;
 }
 
 export const extractPaymentProofWithVision = async (params: {

@@ -14,6 +14,7 @@
 
 import OpenAI from 'openai';
 import { prisma } from '../../lib/prisma';
+import { resolveBusinessCapabilities } from '../billing/businessCapabilities.service';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -105,6 +106,10 @@ function parseDraft(raw: string): MenuItemAiMetadataDraft {
  * y retorna el borrador estructurado. **No persiste nada.**
  *
  * @throws 'MENU_ITEM_NOT_FOUND' si el id no corresponde a ningún producto.
+ * @throws 'AI_CAPABILITY_DENIED' si el negocio no tiene IA habilitada
+ *   comercialmente (plan Shopping Only — PLAN-ACCION-SHOPPING-ONLY.md). El
+ *   enriquecimiento es una operación exclusivamente de IA: no hay versión
+ *   determinista equivalente, así que se rechaza en vez de degradar.
  * @throws 'ENRICHMENT_INVALID_JSON' si el LLM no devuelve JSON parseable.
  */
 export async function generateMenuItemEnrichment(
@@ -132,6 +137,11 @@ export async function generateMenuItemEnrichment(
 
   if (!item) {
     throw new Error('MENU_ITEM_NOT_FOUND');
+  }
+
+  const capabilities = await resolveBusinessCapabilities(item.business_id);
+  if (!capabilities.ai.allowed) {
+    throw new Error('AI_CAPABILITY_DENIED');
   }
 
   const activePrice = item.menu_item_price[0];

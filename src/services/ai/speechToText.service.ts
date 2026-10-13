@@ -15,6 +15,7 @@
 
 import type { business as Business } from '@prisma/client';
 import { evaluateBusinessBillingAccess } from '../billing/evaluateBusinessBillingAccess.service';
+import { resolveBusinessCapabilities } from '../billing/businessCapabilities.service';
 import { getEffectiveAiTokenLimit } from './aiLimits';
 import { incrementUsage } from './aiUsage.service';
 import {
@@ -35,7 +36,11 @@ export type SpeechToTextOutcome =
 /**
  * Gate de uso de IA del negocio (D6): mismo criterio que
  * `extractPaymentProofWithVision` — negocio bloqueado o sin cuota no dispara
- * el llamado a OpenAI.
+ * el llamado a OpenAI. Corre ANTES de `aiCapabilityGateNode` en el grafo
+ * (STT de audio del dueño normaliza a texto antes del gate de suscripción),
+ * así que además resuelve explícitamente la capacidad comercial de IA
+ * (PLAN-ACCION-SHOPPING-ONLY.md): un negocio Shopping Only con suscripción
+ * activa no debe transcribir audio aunque la suscripción esté vigente.
  */
 async function canUseSttForBusiness(business: Business): Promise<boolean> {
   if (business.ai_blocked) return false;
@@ -46,7 +51,8 @@ async function canUseSttForBusiness(business: Business): Promise<boolean> {
   const effectiveLimit = getEffectiveAiTokenLimit(trialAccess.business);
   if (trialAccess.business.ai_monthly_tokens_used >= effectiveLimit) return false;
 
-  return true;
+  const capabilities = await resolveBusinessCapabilities(business.id);
+  return capabilities.ai.allowed;
 }
 
 export const transcribeOwnerAudio = async (params: {

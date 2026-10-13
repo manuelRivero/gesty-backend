@@ -105,6 +105,15 @@ export async function getSuperAdminBusinessBilling(
   res.json(detail);
 }
 
+/**
+ * `ai_plan` y `ai_monthly_token_limit` son display/cupo, no entitlement:
+ * desde PLAN-ACCION-SHOPPING-ONLY.md, la autorización de IA la resuelve
+ * `resolveBusinessCapabilities` a partir de `subscription.plan.ai_enabled`,
+ * no de estos campos. `ai_blocked=true` sigue siendo una restricción
+ * ADICIONAL válida (puede denegar IA por encima del plan), pero
+ * `ai_blocked=false` nunca concede IA si el plan no la habilita — superadmin
+ * no puede otorgar por esta vía una capacidad que el plan no otorga.
+ */
 const patchBodySchema = z
   .object({
     ai_plan: z.string().min(1).optional(),

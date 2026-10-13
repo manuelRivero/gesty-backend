@@ -7,7 +7,8 @@
  * extract → resolveBusiness → businessConfig → resolveCustomer →
  * businessOpenInfo (→ closedBusiness → send) → normalizeOwnerAudio (→ end si
  * wamid duplicado) → persistUserMessage →
- * subscriptionAccessGate (→ send) → capabilityAccessGate (→ send) →
+ * subscriptionAccessGate (→ send) → aiCapabilityGate (→ send) →
+ * capabilityAccessGate (→ send) →
  * messageTypeGuard (→ send) →
  * escalationGate (→ send) →
  * ambassadorReferral →
@@ -19,6 +20,14 @@
  * dueño autorizado y el mensaje es audio, descarga + transcribe y muta
  * `webhookContext.message` a texto antes de persistir — el resto del grafo
  * no distingue audio de texto del dueño. No-op para cualquier otro caso.
+ * Corre ANTES de `aiCapabilityGate`: la STT propia (`speechToText.service.ts`)
+ * aplica su propia verificación de capacidad de IA para no dejar un bypass
+ * ahí (PLAN-ACCION-SHOPPING-ONLY.md).
+ *
+ * `aiCapabilityGate` (PLAN-ACCION-SHOPPING-ONLY.md): corta el turno con un
+ * aviso fijo, sin LLM, si el negocio no tiene IA habilitada comercialmente
+ * (plan Shopping Only). Ningún nodo de detección/agente/ReAct es alcanzable
+ * detrás de este gate. No exime a `isOwnerAssistant`.
  *
  * `messageTypeGuard` filtra mensajes no procesables (imágenes, audio, video,
  * contactos, documentos, ubicación fuera de un flujo de captura de dirección,
@@ -44,6 +53,7 @@ import {
 import {
   closedBusinessNode,
   subscriptionAccessGateNode,
+  aiCapabilityGateNode,
   capabilityAccessGateNode,
   reservationWizardNode,
 } from './nodes/gates';
@@ -79,6 +89,7 @@ import {
   routeAfterReservation,
   routeAfterSend,
   routeAfterSubscriptionGate,
+  routeAfterAiCapabilityGate,
 } from './routers';
 
 const builder = new StateGraph(AgentStateAnnotation)
@@ -91,6 +102,7 @@ const builder = new StateGraph(AgentStateAnnotation)
   .addNode(NODE.OWNER_AUDIO, normalizeOwnerAudioNode)
   .addNode(NODE.PERSIST_USER, persistUserMessageNode)
   .addNode(NODE.SUBSCRIPTION_GATE, subscriptionAccessGateNode)
+  .addNode(NODE.AI_CAPABILITY_GATE, aiCapabilityGateNode)
   .addNode(NODE.CAPABILITY_GATE, capabilityAccessGateNode)
   .addNode(NODE.MESSAGE_TYPE_GUARD, messageTypeGuardNode)
   .addNode(NODE.ESCALATION_GATE, escalationGateNode)
@@ -148,6 +160,12 @@ builder.addConditionalEdges(NODE.PERSIST_USER, routeAfterPersistUser, {
 });
 
 builder.addConditionalEdges(NODE.SUBSCRIPTION_GATE, routeAfterSubscriptionGate, {
+  [NODE.SEND]: NODE.SEND,
+  [NODE.AI_CAPABILITY_GATE]: NODE.AI_CAPABILITY_GATE,
+  [END]: END,
+});
+
+builder.addConditionalEdges(NODE.AI_CAPABILITY_GATE, routeAfterAiCapabilityGate, {
   [NODE.SEND]: NODE.SEND,
   [NODE.CAPABILITY_GATE]: NODE.CAPABILITY_GATE,
   [END]: END,

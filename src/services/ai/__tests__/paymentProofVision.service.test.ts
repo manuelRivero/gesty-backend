@@ -17,15 +17,21 @@ vi.mock('../../billing/evaluateBusinessBillingAccess.service', () => ({
   evaluateBusinessBillingAccess: vi.fn(),
 }));
 
+vi.mock('../../billing/businessCapabilities.service', () => ({
+  resolveBusinessCapabilities: vi.fn(),
+}));
+
 vi.mock('../aiUsage.service', () => ({
   incrementUsage: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { evaluateBusinessBillingAccess } from '../../billing/evaluateBusinessBillingAccess.service';
+import { resolveBusinessCapabilities } from '../../billing/businessCapabilities.service';
 import { incrementUsage } from '../aiUsage.service';
 import { extractPaymentProofWithVision } from '../paymentProofVision.service';
 
 const mockedEvaluateSubscription = evaluateBusinessBillingAccess as unknown as ReturnType<typeof vi.fn>;
+const mockedResolveCapabilities = resolveBusinessCapabilities as unknown as ReturnType<typeof vi.fn>;
 const mockedIncrementUsage = incrementUsage as unknown as ReturnType<typeof vi.fn>;
 
 function buildBusiness(overrides: Partial<Record<string, unknown>> = {}): any {
@@ -65,6 +71,26 @@ describe('paymentProofVision.service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedEvaluateSubscription.mockResolvedValue({ ok: true, business: buildBusiness() });
+    mockedResolveCapabilities.mockResolvedValue({
+      ai: { allowed: true, reason: 'ok' },
+      shopping: { allowed: true, reason: 'ok' },
+    });
+  });
+
+  it('no llama a OpenAI si el negocio es Shopping Only (plan sin ai_enabled), aunque la suscripción esté activa', async () => {
+    mockedResolveCapabilities.mockResolvedValueOnce({
+      ai: { allowed: false, reason: 'plan_ai_disabled' },
+      shopping: { allowed: true, reason: 'ok' },
+    });
+
+    const result = await extractPaymentProofWithVision({
+      business: buildBusiness(),
+      imageBuffer: Buffer.from('fake-image'),
+      mimeType: 'image/png',
+    });
+
+    expect(result).toBeNull();
+    expect(mockedCreate).not.toHaveBeenCalled();
   });
 
   it('parsea una respuesta válida y contabiliza el uso', async () => {

@@ -6,6 +6,9 @@
  *   el aviso de cierre (`processInboundWhileBusinessClosed`).
  * - `subscriptionAccessGateNode`: evalúa la suscripción/trial; bloquea con
  *   mensaje si no aplica.
+ * - `aiCapabilityGateNode`: evalúa el entitlement comercial de IA
+ *   (PLAN-ACCION-SHOPPING-ONLY.md); corta con un aviso fijo, sin LLM, si el
+ *   negocio no tiene IA habilitada (plan Shopping Only).
  * - `reservationWizardNode`: `processReservationWizardIfActive`.
  *
  * El onboarding no tiene nodo acá: lo maneja `onboardingAgentNode` en todo
@@ -24,6 +27,7 @@ import {
   updateConversationLastMessageAt,
 } from '../../../repositories';
 import { evaluateBusinessBillingAccess } from '../../../services/billing/evaluateBusinessBillingAccess.service';
+import { resolveBusinessCapabilities } from '../../../services/billing/businessCapabilities.service';
 import { evaluateBusinessCapabilityAccess } from '../../../services/evaluateBusinessCapabilityAccess.service';
 import {
   formatClosedBusinessCustomerNotice,
@@ -32,9 +36,11 @@ import { handleReservationIntent } from '../../../services/reservations';
 import { reservationStepQuestion } from '../../../services/reservations/reservation.service';
 import { classifyReservationTurn } from '../../../services/reservations/turnClassifier.service';
 import { normalizeToHandlerResult } from '../../../controllers/webhook/utils';
-import { normalizeMetadata } from '../../../services/productQuery/utils';
+import { normalizeMetadata, formatBotUserMessage } from '../../../services/productQuery/utils';
 import { patchConversationMetadata } from '../../../repositories/conversationState.repository';
 import { formatInboundMessageForLog } from '../../../controllers/webhook/utils/messageLog';
+import { env } from '../../../config/env';
+import type { business } from '@prisma/client';
 import type { EnrichedContext } from '../../../controllers/webhook/types';
 import type { AgentState, AgentStateUpdate } from '../../state';
 import type { ReservationState } from '../../../services/reservations/types';
@@ -111,6 +117,66 @@ export const subscriptionAccessGateNode = async (
       isInteractive: false,
     },
     earlyExit: 'subscription_blocked',
+  };
+};
+
+/**
+ * Enlace a la tienda web del negocio para el aviso de Shopping Only, solo si
+ * se puede construir de forma confiable (slug + origen público configurados).
+ * Si no, se omite el enlace — no se inventa una URL relativa sin contexto.
+ */
+function shoppingLinkFor(business: business): string | null {
+  const slug = business.slug?.trim();
+  const origin = env.STOREFRONT_PUBLIC_ORIGIN?.replace(/\/$/, '');
+  if (!slug || !origin) return null;
+  return `${origin}/shopping/${slug}`;
+}
+
+/**
+ * Aviso fijo, sin LLM, para negocios sin IA habilitada comercialmente
+ * (Shopping Only). No afirma que el negocio cerró o dejó de vender — solo
+ * que la atención automatizada por este canal no está incluida en su plan.
+ */
+function buildAiCapabilityBlockedMessage(business: business): string {
+  const link = shoppingLinkFor(business);
+  const body = link
+    ? `Este negocio no tiene activada la atención automática por WhatsApp.\n\nPodés ver el menú y hacer tu pedido directamente en nuestra tienda: ${link}`
+    : 'Este negocio no tiene activada la atención automática por WhatsApp.';
+  return formatBotUserMessage('Atención por WhatsApp no disponible', '🛍️', body);
+}
+
+/**
+ * Gate de capacidad de IA (PLAN-ACCION-SHOPPING-ONLY.md). Corre después del
+ * gate de suscripción/trial y antes de `buildDetectionContext`: ningún nodo
+ * que invoque un modelo (detección, agentes ReAct, STT, visión,
+ * humanización, sentimiento) es alcanzable si este gate corta el turno.
+ *
+ * Resuelve la capacidad desde la fuente de verdad comercial
+ * (`resolveBusinessCapabilities`) — nunca reutiliza `ai_plan`, `ai_blocked`
+ * ni `bot_enabled` como si fueran el entitlement. `isOwnerAssistant` NO está
+ * exento: el dueño no puede saltarse una IA comercialmente desautorizada.
+ *
+ * El aviso resultante SÍ se persiste (trazabilidad de conversación) vía
+ * `persistAIMessageNode`, pero marca `aiCapabilityBlocked` para que ese nodo
+ * no dispare `analyzeConversationSentiment` sobre un mensaje estático.
+ */
+export const aiCapabilityGateNode = async (
+  state: AgentState
+): Promise<AgentStateUpdate> => {
+  const business = state.business!;
+  const capabilities = await resolveBusinessCapabilities(business.id);
+  if (capabilities.ai.allowed) {
+    return {};
+  }
+
+  return {
+    handlerResult: {
+      content: buildAiCapabilityBlockedMessage(business),
+      isInteractive: false,
+      skipBodyHumanization: true,
+    },
+    aiCapabilityBlocked: true,
+    earlyExit: 'ai_capability_blocked',
   };
 };
 

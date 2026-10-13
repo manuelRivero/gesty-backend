@@ -7,6 +7,13 @@ import {
   type StripeSubscriptionLike,
 } from "./mapStripeSubscription";
 
+/**
+ * Sincroniza campos de DISPLAY en `business` (`ai_plan`, `ai_monthly_token_limit`).
+ * `ai_plan` es cosmético desde que existen `plan.ai_enabled`/`plan.shopping_enabled`:
+ * ninguna autorización lo lee (ver `businessCapabilities.service.ts`). No
+ * tocar `ai_blocked` acá no sería seguro tampoco — por eso sigue limpiándolo
+ * en cada sync exitoso, como hacía antes de este cambio.
+ */
 export async function syncBusinessAiFromPlan(
   businessId: string,
   opts: { planId?: string | null; planCode?: string | null }
@@ -27,7 +34,9 @@ export async function syncBusinessAiFromPlan(
       ? "enterprise"
       : plan.code === "pro"
         ? "pro"
-        : "basic";
+        : plan.code === "shopping_only"
+          ? "shopping_only"
+          : "basic";
 
   await prisma.business.update({
     where: { id: businessId },
@@ -121,6 +130,18 @@ export async function upsertSubscriptionFromStripe(
 
   if (planId) {
     await syncBusinessAiFromPlan(businessId, { planId });
+  } else if (priceId) {
+    // Precio de Stripe sin plan mapeado: no se infieren capacidades de otro
+    // plan como fallback (D5/E6 de la auditoría). `subscription.plan_id`
+    // queda `null` y `resolveBusinessCapabilities` deniega ambas capacidades
+    // hasta que se mapee el precio en `plan.stripe_price_id`.
+    console.warn(
+      JSON.stringify({
+        event: "[billing:stripe] price_unmapped_to_plan",
+        businessId,
+        stripePriceId: priceId,
+      })
+    );
   }
 }
 

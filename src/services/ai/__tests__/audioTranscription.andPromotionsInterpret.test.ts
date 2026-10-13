@@ -28,6 +28,10 @@ vi.mock('../../billing/evaluateBusinessBillingAccess.service', () => ({
   evaluateBusinessBillingAccess: vi.fn(),
 }));
 
+vi.mock('../../billing/businessCapabilities.service', () => ({
+  resolveBusinessCapabilities: vi.fn(),
+}));
+
 vi.mock('../aiUsage.service', () => ({
   incrementUsage: vi.fn().mockResolvedValue(undefined),
 }));
@@ -38,6 +42,7 @@ vi.mock('../../promotions/promotionInterpreter.service', () => ({
 
 import { prisma } from '../../../lib/prisma';
 import { evaluateBusinessBillingAccess } from '../../billing/evaluateBusinessBillingAccess.service';
+import { resolveBusinessCapabilities } from '../../billing/businessCapabilities.service';
 import { interpretPromotionText } from '../../promotions/promotionInterpreter.service';
 import { transcribeAudio } from '../audioTranscription.service';
 import { detectAudioMimeFromBuffer } from '../../../middleware/audioUpload.middleware';
@@ -45,6 +50,7 @@ import { interpretPromotionHandler } from '../../../controllers/adminPromotions.
 
 const mockedFindUnique = prisma.business.findUnique as unknown as ReturnType<typeof vi.fn>;
 const mockedEvaluate = evaluateBusinessBillingAccess as unknown as ReturnType<typeof vi.fn>;
+const mockedResolveCapabilities = resolveBusinessCapabilities as unknown as ReturnType<typeof vi.fn>;
 const mockedInterpret = interpretPromotionText as unknown as ReturnType<typeof vi.fn>;
 
 function buildBusiness(overrides: Record<string, unknown> = {}) {
@@ -120,6 +126,10 @@ describe('interpretPromotionHandler (audio)', () => {
     vi.clearAllMocks();
     mockedFindUnique.mockResolvedValue(buildBusiness());
     mockedEvaluate.mockResolvedValue({ ok: true, business: buildBusiness() });
+    mockedResolveCapabilities.mockResolvedValue({
+      ai: { allowed: true, reason: 'ok' },
+      shopping: { allowed: true, reason: 'ok' },
+    });
     mockedTranscriptionsCreate.mockResolvedValue({
       text: 'Los martes, de 18 a 20, si alguien compra dos hamburguesas le regalamos papas.',
       usage: { total_tokens: 25 },
@@ -231,6 +241,29 @@ describe('interpretPromotionHandler (audio)', () => {
     expect(body.input.type).toBe('text');
     expect(body.transcription).toBeNull();
     expect(body.interpretation.status).toBe('needs_clarification');
+    expect(mockedTranscriptionsCreate).not.toHaveBeenCalled();
+  });
+
+  it('rechaza interpretar (402) cuando el negocio es Shopping Only, aunque la suscripción/cuota estén OK (PLAN-ACCION-SHOPPING-ONLY.md)', async () => {
+    mockedResolveCapabilities.mockResolvedValueOnce({
+      ai: { allowed: false, reason: 'plan_ai_disabled' },
+      shopping: { allowed: true, reason: 'ok' },
+    });
+
+    const req = {
+      user: { businessId: 'biz-1', userId: 'u1', role: 'OWNER' },
+      headers: { 'content-type': 'application/json' },
+      body: {
+        type: 'text',
+        text: 'Los martes, de 18 a 20, si alguien compra dos hamburguesas le regalamos papas.',
+      },
+    } as unknown as Request;
+
+    const res = mockRes();
+    await interpretPromotionHandler(req, res);
+
+    expect(res.statusCode).toBe(402);
+    expect(mockedInterpret).not.toHaveBeenCalled();
     expect(mockedTranscriptionsCreate).not.toHaveBeenCalled();
   });
 });

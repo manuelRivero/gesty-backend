@@ -14,6 +14,7 @@
 
 import { prisma } from '../../lib/prisma';
 import { getProductEmbedding } from './openai.service';
+import { resolveBusinessCapabilities } from '../billing/businessCapabilities.service';
 
 type AiMetadataForEmbedding = {
   display_name: string | null;
@@ -114,9 +115,31 @@ export async function buildMenuItemEmbeddingText(
  * caller realmente quiera saber si falló. Desde el flujo admin preferimos
  * `scheduleMenuItemEmbeddingRefresh` para no bloquear el response.
  */
+/**
+ * Único punto de llamada a `getProductEmbedding` (OpenAI) de todo el flujo
+ * admin de productos (create/update item, cambio de precio, guardado de
+ * metadata AI — ver `menuItemPrice.helper.ts` y `adminMenuItemAiMetadata.service.ts`).
+ * Centralizar el gate acá, en vez de en cada caller, evita que un nuevo
+ * disparador de embedding olvide el chequeo (PLAN-ACCION-SHOPPING-ONLY.md):
+ * un negocio sin IA habilitada comercialmente no genera embeddings nuevos.
+ * No borra el embedding existente — simplemente no lo regenera.
+ */
 export async function refreshMenuItemEmbedding(
   menuItemId: string
 ): Promise<{ updated: boolean; reason?: string }> {
+  const item = await prisma.menu_item.findUnique({
+    where: { id: menuItemId },
+    select: { business_id: true },
+  });
+  if (!item) {
+    return { updated: false, reason: 'item_not_found' };
+  }
+
+  const capabilities = await resolveBusinessCapabilities(item.business_id);
+  if (!capabilities.ai.allowed) {
+    return { updated: false, reason: 'ai_capability_denied' };
+  }
+
   const text = await buildMenuItemEmbeddingText(menuItemId);
   if (text == null) {
     return { updated: false, reason: 'item_not_found' };

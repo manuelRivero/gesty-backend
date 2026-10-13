@@ -42,3 +42,10 @@ export function isInactiveSubscriptionStatus(status: string): boolean {
     status.trim().toLowerCase()
   );
 }
+
+/** Complemento de `isInactiveSubscriptionStatus` — usado por `businessCapabilities.service.ts`. */
+export function isActiveSubscriptionStatus(status: string): boolean {
+  return (ACTIVE_SUBSCRIPTION_STATUSES as readonly string[]).includes(
+    status.trim().toLowerCase()
+  );
+}

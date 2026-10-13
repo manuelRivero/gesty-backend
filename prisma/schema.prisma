@@ -771,6 +771,12 @@ model plan {
   stripe_price_id   String?        @unique
   description       String?
   features          Json?          @default("{}")
+  /// Entitlement comercial: habilita la ejecución de IA conversacional (agente, detección, STT, visión, etc.).
+  /// Default true para no alterar planes existentes. Fuente de verdad de autorización de IA — NO usar `code` ni `business.ai_plan`.
+  ai_enabled        Boolean        @default(true)
+  /// Entitlement comercial: habilita el acceso público a Shopping (vitrina + pedidos web) del negocio.
+  /// Default true para no alterar planes existentes. Fuente de verdad de autorización de Shopping — NO usar `business_config.storefront_enabled` (ese sigue siendo un control operativo, no comercial).
+  shopping_enabled  Boolean        @default(true)
   subscription      subscription[]
 }
 

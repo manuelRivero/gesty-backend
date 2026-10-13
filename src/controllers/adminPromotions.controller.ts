@@ -28,6 +28,7 @@ import {
 import { getEffectiveAiTokenLimit } from '../services/ai/aiLimits';
 import { incrementUsage } from '../services/ai/aiUsage.service';
 import { evaluateBusinessBillingAccess } from '../services/billing/evaluateBusinessBillingAccess.service';
+import { resolveBusinessCapabilities } from '../services/billing/businessCapabilities.service';
 import { interpretPromotionText } from '../services/promotions/promotionInterpreter.service';
 import { resolveProductEntities } from '../services/promotions/resolveProductEntities';
 import { buildEntityCards } from '../services/promotions/buildPromotionDisplay';
@@ -106,13 +107,20 @@ async function loadBusiness(businessId: string): Promise<Business | null> {
   return prisma.business.findUnique({ where: { id: businessId } });
 }
 
+/**
+ * Billing + cuota (comportamiento existente) y, además, capacidad comercial
+ * de IA (PLAN-ACCION-SHOPPING-ONLY.md): un negocio con plan sin
+ * `ai_enabled` no puede interpretar promociones con IA aunque su
+ * suscripción esté vigente.
+ */
 async function canUseAiForBusiness(business: Business): Promise<boolean> {
   if (business.ai_blocked) return false;
   const trialAccess = await evaluateBusinessBillingAccess(business);
   if (!trialAccess.ok) return false;
   const effectiveLimit = getEffectiveAiTokenLimit(trialAccess.business);
   if (trialAccess.business.ai_monthly_tokens_used >= effectiveLimit) return false;
-  return true;
+  const capabilities = await resolveBusinessCapabilities(business.id);
+  return capabilities.ai.allowed;
 }
 
 function isMultipart(req: Request): boolean {

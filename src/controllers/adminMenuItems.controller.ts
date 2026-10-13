@@ -300,6 +300,11 @@ export async function generateMenuItemEnrichmentHandler(req: Request, res: Respo
     if ((error as Error).message === "MENU_ITEM_NOT_FOUND") {
       return res.status(404).json({ error: "Menu item no encontrado" });
     }
+    if ((error as Error).message === "AI_CAPABILITY_DENIED") {
+      return res.status(403).json({
+        error: "Este negocio no tiene IA habilitada en su plan actual. El enriquecimiento automático no está disponible."
+      });
+    }
     if ((error as Error).message === "ENRICHMENT_INVALID_JSON") {
       return res.status(502).json({ error: "El modelo no devolvió una respuesta válida. Intentá nuevamente." });
     }

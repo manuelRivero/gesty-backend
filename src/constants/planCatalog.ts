@@ -15,12 +15,16 @@ export function tokenLimitFromConversations(conversations: number): number {
   return conversations * TOKENS_PER_CONVERSATION;
 }
 
-export type PaidPlanCode = "basic" | "pro" | "business";
+export type PaidPlanCode = "basic" | "pro" | "business" | "shopping_only";
 
 export type PlanCatalogEntry = {
   code: PaidPlanCode;
   name: string;
-  monthly_price_usd: string;
+  /**
+   * `null` = precio comercial todavía no configurado (plan no vendible).
+   * No inventar un valor: lo fija un operador antes de publicar el plan.
+   */
+  monthly_price_usd: string | null;
   conversations_per_month: number;
   token_limit: number;
   description: string;
@@ -29,6 +33,14 @@ export type PlanCatalogEntry = {
     conversations_label: string;
     highlights: string[];
   };
+  /**
+   * Entitlements comerciales del plan. `plan.code` NUNCA es el mecanismo de
+   * autorización — ver `src/services/billing/businessCapabilities.service.ts`.
+   * Default implícito `true` para los planes históricos (basic/pro/business):
+   * declarados explícitos acá para que quede a la vista qué habilita cada uno.
+   */
+  ai_enabled: boolean;
+  shopping_enabled: boolean;
 };
 
 export const PAID_PLAN_CATALOG: PlanCatalogEntry[] = [
@@ -49,6 +61,8 @@ export const PAID_PLAN_CATALOG: PlanCatalogEntry[] = [
         "Soporte de onboarding incluido",
       ],
     },
+    ai_enabled: true,
+    shopping_enabled: true,
   },
   {
     code: "pro",
@@ -67,6 +81,8 @@ export const PAID_PLAN_CATALOG: PlanCatalogEntry[] = [
         "Automatización estable para alta demanda",
       ],
     },
+    ai_enabled: true,
+    shopping_enabled: true,
   },
   {
     code: "business",
@@ -85,6 +101,32 @@ export const PAID_PLAN_CATALOG: PlanCatalogEntry[] = [
         "Implementación guiada por el equipo",
       ],
     },
+    ai_enabled: true,
+    shopping_enabled: true,
+  },
+  {
+    code: "shopping_only",
+    name: "Shopping Only",
+    // Precio comercial pendiente de definir — no se inventa un valor acá.
+    // Un operador debe completarlo y luego correr
+    // `npm run billing:sync-stripe-plans` para crear el Price en Stripe
+    // antes de marcar el plan como `is_active` / vendible (ver seed-plans.ts
+    // y prisma/sql/add_plan_capabilities.sql).
+    monthly_price_usd: null,
+    conversations_per_month: 0,
+    token_limit: 0,
+    description:
+      "Tienda web (Shopping) propia sin asistente de IA por WhatsApp.",
+    features: {
+      conversations_per_month: 0,
+      conversations_label: "Sin IA conversacional",
+      highlights: [
+        "Tienda web (vitrina + pedidos) incluida",
+        "Sin agente de WhatsApp automatizado",
+      ],
+    },
+    ai_enabled: false,
+    shopping_enabled: true,
   },
 ];
 

@@ -8,6 +8,40 @@ import { prisma } from "../lib/prisma";
 import { getBusinessOpenInfo } from "./businessHours.service";
 import { buildGoogleMapsUrl } from "../utils/googleMapsUrl";
 import { listOfferedPaymentMethods } from "./paymentMethods.service";
+import {
+  decideShoppingCapability,
+  type SubscriptionForCapabilities
+} from "./billing/businessCapabilities.service";
+
+/** Select Prisma reusable: la suscripción+plan necesarios para decidir `shopping`, sin exponerlos en la respuesta pública. */
+const subscriptionCapabilitySelect = {
+  subscription: {
+    select: {
+      status: true,
+      is_trial: true,
+      trial_end: true,
+      cancel_at_period_end: true,
+      current_period_end: true,
+      plan_id: true,
+      plan: { select: { ai_enabled: true, shopping_enabled: true } }
+    }
+  }
+} as const;
+
+type RowWithSubscription = {
+  subscription: SubscriptionForCapabilities | null;
+};
+
+/**
+ * Barrera comercial de Shopping (PLAN-ACCION-SHOPPING-ONLY.md). Un negocio
+ * sin `subscription.plan.shopping_enabled=true` (o trial vigente) no puede
+ * resolverse públicamente, aunque `is_active`/`storefront_enabled` sean
+ * verdaderos. Entitlement comercial, independiente de esos controles
+ * operativos.
+ */
+function hasShoppingCapability(row: RowWithSubscription): boolean {
+  return decideShoppingCapability(row.subscription).allowed;
+}
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -33,7 +67,11 @@ type PublicBusinessRow = {
 
 /**
  * Resuelve un local activo por slug (preferido) o UUID (compat).
- * Inactivo / inexistente / storefront_enabled=false → null (404 "local no disponible").
+ * Inactivo / inexistente / storefront_enabled=false / sin entitlement de
+ * Shopping (suscripción vencida, plan sin `shopping_enabled`, sin
+ * suscripción) → null (404 "local no disponible"). Mismo contrato de
+ * respuesta para ambos casos: no se distingue "no existe" de "sin acceso
+ * comercial" para no filtrar información de billing en una ruta pública.
  */
 export async function resolveActivePublicBusiness(
   slugOrId: string
@@ -53,24 +91,29 @@ export async function resolveActivePublicBusiness(
     street_address: true,
     address_notes: true,
     latitude: true,
-    longitude: true
+    longitude: true,
+    ...subscriptionCapabilitySelect
   } as const;
 
   const storefrontOn = {
     business_config: { is: { storefront_enabled: true } }
   };
 
-  if (looksLikeUuid(key)) {
-    return prisma.business.findFirst({
-      where: { id: key, is_active: true, ...storefrontOn },
-      select
-    });
-  }
+  const row = looksLikeUuid(key)
+    ? await prisma.business.findFirst({
+        where: { id: key, is_active: true, ...storefrontOn },
+        select
+      })
+    : await prisma.business.findFirst({
+        where: { slug: key, is_active: true, ...storefrontOn },
+        select
+      });
 
-  return prisma.business.findFirst({
-    where: { slug: key, is_active: true, ...storefrontOn },
-    select
-  });
+  if (!row) return null;
+  if (!hasShoppingCapability(row)) return null;
+
+  const { subscription: _subscription, ...publicRow } = row;
+  return publicRow;
 }
 
 function mapBusinessProfile(
@@ -172,7 +215,9 @@ export type PublicStorefrontSummary = {
 /**
  * Locales publicables en la vitrina global de Shopping.
  * Mismo criterio de elegibilidad que `resolveActivePublicBusiness`
- * (activo + `storefront_enabled`), sin exponer datos de locales no publicados.
+ * (activo + `storefront_enabled` + entitlement `shopping_enabled` vigente),
+ * sin exponer datos de locales no publicados ni de locales sin acceso
+ * comercial a Shopping.
  */
 export async function listPublicStorefronts(): Promise<
   PublicStorefrontSummary[]
@@ -189,7 +234,8 @@ export async function listPublicStorefronts(): Promise<
       slug: true,
       description: true,
       category: true,
-      timezone: true
+      timezone: true,
+      ...subscriptionCapabilitySelect
     },
     orderBy: { name: "asc" }
   });
@@ -199,6 +245,7 @@ export async function listPublicStorefronts(): Promise<
       .filter(
         (row): row is typeof row & { slug: string } => row.slug !== null
       )
+      .filter(hasShoppingCapability)
       .map(async (row) => {
         const open = await getBusinessOpenInfo({
           businessId: row.id,

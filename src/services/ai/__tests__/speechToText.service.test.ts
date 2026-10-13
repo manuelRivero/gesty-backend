@@ -20,15 +20,21 @@ vi.mock('../../billing/evaluateBusinessBillingAccess.service', () => ({
   evaluateBusinessBillingAccess: vi.fn(),
 }));
 
+vi.mock('../../billing/businessCapabilities.service', () => ({
+  resolveBusinessCapabilities: vi.fn(),
+}));
+
 vi.mock('../aiUsage.service', () => ({
   incrementUsage: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { evaluateBusinessBillingAccess } from '../../billing/evaluateBusinessBillingAccess.service';
+import { resolveBusinessCapabilities } from '../../billing/businessCapabilities.service';
 import { incrementUsage } from '../aiUsage.service';
 import { transcribeOwnerAudio } from '../speechToText.service';
 
 const mockedEvaluateSubscription = evaluateBusinessBillingAccess as unknown as ReturnType<typeof vi.fn>;
+const mockedResolveCapabilities = resolveBusinessCapabilities as unknown as ReturnType<typeof vi.fn>;
 const mockedIncrementUsage = incrementUsage as unknown as ReturnType<typeof vi.fn>;
 
 function buildBusiness(overrides: Partial<Record<string, unknown>> = {}): any {
@@ -47,6 +53,10 @@ describe('speechToText.service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedEvaluateSubscription.mockResolvedValue({ ok: true, business: buildBusiness() });
+    mockedResolveCapabilities.mockResolvedValue({
+      ai: { allowed: true, reason: 'ok' },
+      shopping: { allowed: true, reason: 'ok' },
+    });
   });
 
   it('transcribe y contabiliza el uso en éxito', async () => {
@@ -117,6 +127,22 @@ describe('speechToText.service', () => {
     mockedEvaluateSubscription.mockResolvedValueOnce({
       ok: true,
       business: buildBusiness({ ai_monthly_token_limit: 1000, ai_monthly_tokens_used: 1000 }),
+    });
+
+    const result = await transcribeOwnerAudio({
+      business: buildBusiness(),
+      audioBuffer: Buffer.from('fake-audio'),
+      mimeType: 'audio/ogg',
+    });
+
+    expect(result).toEqual({ ok: false, reason: 'no_quota' });
+    expect(mockedTranscriptionsCreate).not.toHaveBeenCalled();
+  });
+
+  it('devuelve reason "no_quota" y no llama a OpenAI si el negocio es Shopping Only (plan sin ai_enabled), aunque la suscripción esté activa', async () => {
+    mockedResolveCapabilities.mockResolvedValueOnce({
+      ai: { allowed: false, reason: 'plan_ai_disabled' },
+      shopping: { allowed: true, reason: 'ok' },
     });
 
     const result = await transcribeOwnerAudio({

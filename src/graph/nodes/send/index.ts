@@ -262,9 +262,13 @@ export const persistAIMessageNode = async (
   // Análisis de sentimiento en background: no bloquea el flujo principal.
   // Emite evento Socket.IO si el sentiment nuevo es negativo (alerta)
   // o si el anterior era negativo y ahora ya no lo es (resolución de alerta).
+  // Se omite si el turno fue cortado por `aiCapabilityGateNode`
+  // (PLAN-ACCION-SHOPPING-ONLY.md): el mensaje enviado es un aviso fijo, no
+  // una respuesta generada, y el negocio no tiene IA habilitada — no
+  // corresponde invocar un LLM sobre él aunque sí se persiste para auditoría.
   const conversation = state.conversation;
   const businessId = state.business?.id;
-  if (conversation && businessId) {
+  if (!state.aiCapabilityBlocked && conversation && businessId) {
     const previousSentiment = conversation.ai_sentiment as import('../../../types/conversationSentiment').ConversationSentiment | null;
     void analyzeConversationSentiment(conversationId, conversation.started_at)
       .then(async (result) => {

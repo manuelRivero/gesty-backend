@@ -19,6 +19,7 @@ export const NODE = {
   OWNER_AUDIO: 'normalizeOwnerAudio',
   PERSIST_USER: 'persistUserMessage',
   SUBSCRIPTION_GATE: 'subscriptionAccessGate',
+  AI_CAPABILITY_GATE: 'aiCapabilityGate',
   CAPABILITY_GATE: 'capabilityAccessGate',
   MESSAGE_TYPE_GUARD: 'messageTypeGuard',
   ESCALATION_GATE: 'escalationGate',
@@ -94,6 +95,19 @@ export const routeAfterSubscriptionGate = (
   state: AgentState
 ): NodeName | typeof END => {
   if (state.earlyExit === 'subscription_blocked') return NODE.SEND;
+  if (state.earlyExit) return END;
+  return NODE.AI_CAPABILITY_GATE;
+};
+
+/**
+ * Tras `aiCapabilityGate` (PLAN-ACCION-SHOPPING-ONLY.md). Sin IA habilitada
+ * comercialmente → directo a `SEND` con el aviso fijo; nunca llega a
+ * `buildDetectionContext` ni a ningún nodo que invoque un modelo.
+ */
+export const routeAfterAiCapabilityGate = (
+  state: AgentState
+): NodeName | typeof END => {
+  if (state.earlyExit === 'ai_capability_blocked') return NODE.SEND;
   if (state.earlyExit) return END;
   return NODE.CAPABILITY_GATE;
 };

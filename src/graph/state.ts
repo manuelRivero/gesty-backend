@@ -39,6 +39,7 @@ export type EarlyExitReason =
   | 'business_closed'
   | 'persist_failed'
   | 'subscription_blocked'
+  | 'ai_capability_blocked'
   | 'capabilities_blocked'
   | 'unsupported_message_type'
   | 'bot_disabled_or_human_handled'
@@ -269,6 +270,19 @@ export const AgentStateAnnotation = Annotation.Root({
   ownerAudioBlockedMessage: Annotation<string | null>({
     reducer: (_prev, next) => next,
     default: () => null,
+  }),
+
+  /**
+   * `true` cuando `aiCapabilityGateNode` cortó el turno porque el negocio no
+   * tiene IA habilitada comercialmente (plan Shopping Only, ver
+   * PLAN-ACCION-SHOPPING-ONLY.md). El mensaje fijo resultante SÍ se persiste
+   * (auditoría de conversación), pero `persistAIMessageNode` no debe disparar
+   * `analyzeConversationSentiment` sobre él — es un aviso estático, no una
+   * respuesta generada. Independiente de `skipAIPersistence`.
+   */
+  aiCapabilityBlocked: Annotation<boolean>({
+    reducer: (_prev, next) => next,
+    default: () => false,
   }),
 });
 
