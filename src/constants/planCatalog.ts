@@ -106,13 +106,16 @@ export const PAID_PLAN_CATALOG: PlanCatalogEntry[] = [
   },
   {
     code: "shopping_only",
+    // `sync-stripe-plans.ts` antepone "Gesty " al crear el Product en Stripe
+    // (mismo patrón que Basic/Pro/Business) → nombre comercial final en
+    // Stripe: "Gesty Shopping Only". No duplicar el prefijo acá.
     name: "Shopping Only",
-    // Precio comercial pendiente de definir — no se inventa un valor acá.
-    // Un operador debe completarlo y luego correr
-    // `npm run billing:sync-stripe-plans` para crear el Price en Stripe
-    // antes de marcar el plan como `is_active` / vendible (ver seed-plans.ts
-    // y prisma/sql/add_plan_capabilities.sql).
-    monthly_price_usd: null,
+    // USD 15.00/mes confirmado para Test Mode. Antes de sincronizar con
+    // Stripe, correr `npm run seed:billing-plans` y luego
+    // `npm run billing:sync-stripe-plans -- --plan shopping_only` (ver
+    // PLAN-ACCION-SHOPPING-ONLY.md). No usar `--force`: tocaría también
+    // Basic/Pro/Business.
+    monthly_price_usd: "15.00",
     conversations_per_month: 0,
     token_limit: 0,
     description:
