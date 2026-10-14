@@ -61,6 +61,7 @@ model business {
   conversation_note         conversation_note[]
   canned_reply              canned_reply[]
   storefront_order_push_subscription storefront_order_push_subscription[]
+  checkout_attempt          checkout_attempt[]
 }
 
 model business_user {
@@ -801,6 +802,36 @@ model subscription {
 
   @@index([business_id], map: "idx_subscription_business_id")
   @@index([stripe_customer_id], map: "idx_subscription_customer_id")
+}
+
+/// Reserva de intento de Checkout para evitar más de una Checkout Session /
+/// suscripción nueva en curso por negocio (protección contra duplicados en
+/// `stripeCheckout.service.ts`). No es fuente de verdad de acceso/permisos
+/// — eso sigue siendo exclusivamente `subscription` vía
+/// `stripeSubscriptionSync.service.ts`. Estados: `pending` (reservado,
+/// resultado de Stripe desconocido) → `created` (session id confirmado) →
+/// `completed` | `expired` (evidencia de Stripe) | `failed` (rechazo
+/// determinístico) | `unresolved` (sin evidencia tras la ventana segura de
+/// idempotencia; requiere reconciliación manual, ver
+/// `docs/arquitectura/` — no se libera por tiempo).
+model checkout_attempt {
+  id                         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id                String    @db.Uuid
+  plan_code                  String
+  status                     String    @default("pending")
+  stripe_checkout_session_id String?   @unique
+  stripe_customer_id         String?
+  session_url                String?
+  session_expires_at         DateTime? @db.Timestamptz(6)
+  created_at                 DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at                 DateTime  @default(now()) @db.Timestamptz(6)
+  business                   business  @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_checkout_attempt_business")
+
+  @@index([business_id], map: "idx_checkout_attempt_business_id")
+  @@index([status, created_at], map: "idx_checkout_attempt_status_created_at")
+  /// Como máximo un intento vigente (pending/created/unresolved) por negocio.
+  /// Mismo patrón que `conversation.customer_id` (índice único parcial).
+  @@unique([business_id], map: "unique_business_pending_checkout_attempt", where: raw("(status = ANY (ARRAY['pending'::text,'created'::text,'unresolved'::text]))"))
 }
 
 model stripe_webhook_event {
