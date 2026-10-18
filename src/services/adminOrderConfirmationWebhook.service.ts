@@ -27,6 +27,7 @@ import {
 } from '../repositories/conversationState.repository';
 import { createConversationMessage } from '../repositories/conversationMessage.repository';
 import { createOrderFromDraft, PromotionChangedError } from './checkout.service';
+import { setConversationHumanHandled } from './conversationHumanHandled.service';
 import { formatBotUserMessage } from './productQuery/utils';
 import { WhatsAppSenderService } from './whatsappSender.service';
 import { isPaymentMethodId } from '../domain/payment/paymentMethods';
@@ -146,6 +147,16 @@ export async function handleAdminOrderConfirmationWebhook(
         `Número: #${result.orderId}\nTotal: $${result.total.toFixed(2)}\n\n¡Gracias por tu compra!`
       )
     );
+    // La gestión puntual del admin terminó: vuelve el bot solo (mismo
+    // mecanismo que el timeout) en vez de dejar al cliente "hablándole a
+    // nadie" en modo humano. Si cancela en vez de confirmar, se queda en modo
+    // humano porque seguramente el admin todavía tiene algo que resolver.
+    await setConversationHumanHandled({
+      conversationId: conversation.id,
+      businessId: business.id,
+      humanHandled: false,
+      reason: 'order_confirmed',
+    });
   } catch (error) {
     await omitConversationMetadataKeys(conversation.id, ['pendingAction', 'pendingAdminCheckout']);
     if (error instanceof PromotionChangedError) {

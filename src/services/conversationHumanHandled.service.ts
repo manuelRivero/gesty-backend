@@ -42,11 +42,20 @@ export async function setConversationHumanHandled(params: {
   conversationId: string;
   businessId: string;
   humanHandled: boolean;
-  /** Emite `whatsapp.bot_auto_reactivated` (worker timeout). */
-  reason?: "manual" | "auto_timeout";
+  /**
+   * Emite `whatsapp.bot_auto_reactivated` (el panel vuelve el switch a "Bot
+   * activo" solo y manda el mensaje de reenganche al cliente) para cualquier
+   * reactivación que no sea un toggle manual del admin — worker de timeout
+   * (`auto_timeout`) o, tras confirmar un pedido admin-initiated
+   * (`order_confirmed`, ver `adminOrderConfirmationWebhook.service.ts`): una
+   * vez que el cliente confirmó, la gestión puntual del admin terminó y no
+   * tiene sentido dejarlo "hablando con nadie" en modo humano.
+   */
+  reason?: "manual" | "auto_timeout" | "order_confirmed";
 }): Promise<void> {
   const { conversationId, businessId, humanHandled, reason = "manual" } =
     params;
+  const isAutomaticReactivation = reason === "auto_timeout" || reason === "order_confirmed";
 
   await findOrCreateConversationState(conversationId);
   await updateConversationState(conversationId, {
@@ -62,7 +71,7 @@ export async function setConversationHumanHandled(params: {
 
     if (before?.assigned_business_user_id) {
       await clearConversationAssignee({ businessId, conversationId });
-    } else if (reason === "auto_timeout") {
+    } else if (isAutomaticReactivation) {
       // Igual emitir assignment null por si el panel tenía stale state
       emitAdminWhatsappAssignmentUpdated(businessId, {
         conversationId,
@@ -71,7 +80,7 @@ export async function setConversationHumanHandled(params: {
       });
     }
 
-    if (reason === "auto_timeout") {
+    if (isAutomaticReactivation) {
       emitAdminWhatsappBotAutoReactivated(businessId, { conversationId });
     }
   }
