@@ -108,6 +108,10 @@ import {
   getAdminBusiness,
   patchAdminBusiness
 } from "../controllers/adminBusiness.controller";
+import {
+  deleteBusinessImageHandler,
+  uploadBusinessImageHandler
+} from "../controllers/adminBusinessImage.controller";
 import { getAdminAiQuota } from "../controllers/adminAiQuota.controller";
 import {
   getAdminBillingPlans,
@@ -214,6 +218,17 @@ router.get("/analytics/client-ranking", getClientRankingHandler);
 router.get("/analytics/top-dishes", getTopDishesHandler);
 router.get("/business", requireRoles("OWNER", "ADMIN"), getAdminBusiness);
 router.patch("/business", requireRoles("OWNER", "ADMIN"), patchAdminBusiness);
+router.post(
+  "/business/image",
+  requireRoles("OWNER", "ADMIN"),
+  menuItemImageUploadMiddleware,
+  uploadBusinessImageHandler
+);
+router.delete(
+  "/business/image",
+  requireRoles("OWNER", "ADMIN"),
+  deleteBusinessImageHandler
+);
 router.get("/ai-quota", requireRoles("OWNER", "ADMIN"), getAdminAiQuota);
 router.get(
   "/billing/plans",

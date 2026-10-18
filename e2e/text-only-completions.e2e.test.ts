@@ -41,7 +41,10 @@ import { getPendingAddQuantity } from '../src/services/pendingAddQuantity.servic
 import { getPendingVariation } from '../src/services/pendingVariation.service';
 import { getLastOffer } from '../src/services/lastOffer.service';
 import { formatDMY, nextDateForWeekday } from '../src/services/reservations/clock';
-import { nextReservationStep } from '../src/services/reservations/nextReservationStep';
+import {
+  nextReservationStep,
+  type ReservationStep,
+} from '../src/services/reservations/nextReservationStep';
 
 const TZ = 'America/Argentina/Buenos_Aires';
 
@@ -58,6 +61,46 @@ const previewText = (text: string, max = 300): string => {
   const oneLine = text.replace(/\s+/g, ' ').trim();
   return oneLine.length <= max ? oneLine : `${oneLine.slice(0, max)}…`;
 };
+
+// ── E2-B: evidencia textual mínima por paso de reserva ──────────────────────
+//
+// `nextReservationStep` dice qué dato falta en el borrador persistido, pero
+// no dice qué le mostró el bot al cliente. Usarlo solo no basta para decidir
+// la respuesta del usuario simulado: hay que comprobar que el texto visible
+// realmente pidió ese dato (si no, el test respondería "a ciegas" y podría
+// dar un falso verde si el bot preguntó otra cosa, por ambigüedad o error).
+//
+// Los patrones cubren las frases/etiquetas que el sistema efectivamente usa
+// para cada paso: `PARTY_SIZE_QUESTION`, `SELECT_ENVIRONMENT_QUESTION` y
+// `CONFIRM_RESERVATION_QUESTION` (`src/agents/reservationAgent.ts`), más los
+// `sectionTitle` "Horarios disponibles"/"Ambientes" que arma el nodo
+// (`src/graph/nodes/reservation/index.ts`) al mostrar listas. LIMITACIÓN
+// CONOCIDA: el paso `date` no tiene una frase canónica en el sistema (el
+// LLM la redacta libremente, sin instrucción de wording fijo) — el patrón
+// de `date` es, por lo tanto, más laxo y más propenso a falsos negativos o
+// positivos que los otros cuatro.
+type ReservationQuestionStep = Exclude<ReservationStep, 'done'>;
+
+const normalizeForStepMatch = (text: string): string =>
+  text
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const RESERVATION_STEP_EVIDENCE: Record<ReservationQuestionStep, RegExp> = {
+  party_size: /cuant[oa]s?\s+personas|para\s+cuant[oa]s/,
+  date: /que\s+(fecha|dia)|cuando\s+(quer|ser|te)|fecha\s+de\s+la\s+reserva/,
+  slot: /horario|franja|a\s+que\s+hora/,
+  environment: /ambiente/,
+  confirm: /confirm/,
+};
+
+const findReservationStepEvidence = (
+  step: ReservationQuestionStep,
+  visibleText: string
+): boolean => RESERVATION_STEP_EVIDENCE[step].test(normalizeForStepMatch(visibleText));
 
 describe.sequential.skipIf(!isE2eEnabled())('text-only completions (e2e etapa E2)', () => {
   let graph: MainGraph;
@@ -280,7 +323,30 @@ describe.sequential.skipIf(!isE2eEnabled())('text-only completions (e2e etapa E2
         { hasEnvironments }
       );
 
-      let reply: string | null;
+      if (nextStep === 'done') {
+        blockedReason = 'nextReservationStep devolvió "done" antes de confirmar la reserva en BD';
+        break;
+      }
+
+      // `nextStep` es lo que el borrador persistido todavía necesita — no lo
+      // que el cliente vio. Antes de responder, exigimos evidencia textual
+      // de que el bot efectivamente pidió ESE dato en su último mensaje
+      // visible; si no, no respondemos a ciegas por el estado interno.
+      const visibleText = extractHandlerText(state.handlerResult);
+      if (!visibleText) {
+        blockedReason = `paso esperado "${nextStep}" pero no se pudo extraer texto visible del asistente`;
+        break;
+      }
+      if (!findReservationStepEvidence(nextStep, visibleText)) {
+        blockedReason =
+          `paso esperado "${nextStep}" pero el mensaje visible del asistente no muestra evidencia ` +
+          `textual de ese paso (no lo preguntó, o la redacción no es reconocida); texto: ${previewText(
+            visibleText
+          )}`;
+        break;
+      }
+
+      let reply: string;
       switch (nextStep) {
         case 'party_size':
           reply = 'Somos 2 personas';
@@ -297,13 +363,6 @@ describe.sequential.skipIf(!isE2eEnabled())('text-only completions (e2e etapa E2
         case 'confirm':
           reply = 'Sí, confirmo la reserva';
           break;
-        default:
-          reply = null;
-      }
-
-      if (!reply) {
-        blockedReason = `nextReservationStep devolvió "${nextStep}" sin respuesta natural mapeada`;
-        break;
       }
 
       state = await send(reply);

@@ -16,6 +16,23 @@ const businessPatchSchema = z.object({
   category: z.enum(BUSINESS_CATEGORIES).nullable().optional()
 });
 
+/** Select compartido con adminBusinessImage.controller.ts tras subir/borrar la imagen. */
+export const ADMIN_BUSINESS_SELECT = {
+  id: true,
+  name: true,
+  description: true,
+  street_address: true,
+  address_notes: true,
+  latitude: true,
+  longitude: true,
+  timezone: true,
+  slug: true,
+  category: true,
+  currency_code: true,
+  is_active: true,
+  image_url: true
+} as const;
+
 export async function getAdminBusiness(req: Request, res: Response) {
   const businessId = req.user?.businessId;
   if (!businessId) {
@@ -23,20 +40,7 @@ export async function getAdminBusiness(req: Request, res: Response) {
   }
   const business = await prisma.business.findUnique({
     where: { id: businessId },
-    select: {
-      id: true,
-      name: true,
-      description: true,
-      street_address: true,
-      address_notes: true,
-      latitude: true,
-      longitude: true,
-      timezone: true,
-      slug: true,
-      category: true,
-      currency_code: true,
-      is_active: true
-    }
+    select: ADMIN_BUSINESS_SELECT
   });
   if (!business) {
     return res.status(404).json({ error: "Business no encontrado" });
@@ -73,20 +77,7 @@ export async function patchAdminBusiness(req: Request, res: Response) {
   const updated = await prisma.business.update({
     where: { id: businessId },
     data,
-    select: {
-      id: true,
-      name: true,
-      description: true,
-      street_address: true,
-      address_notes: true,
-      latitude: true,
-      longitude: true,
-      timezone: true,
-      slug: true,
-      category: true,
-      currency_code: true,
-      is_active: true
-    }
+    select: ADMIN_BUSINESS_SELECT
   });
 
   return res.json(updated);

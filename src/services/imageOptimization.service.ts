@@ -135,3 +135,7 @@ export async function optimizeImageToWebp(buffer: Buffer): Promise<OptimizedImag
 export function buildDishImageKey(businessId: string, extension = "webp"): string {
   return `restaurants/${businessId}/dishes/${randomUUID()}.${extension}`;
 }
+
+export function buildBusinessImageKey(businessId: string, extension = "webp"): string {
+  return `restaurants/${businessId}/profile/${randomUUID()}.${extension}`;
+}

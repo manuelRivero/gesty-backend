@@ -35,6 +35,8 @@ model business {
   features                  Json?                       @default("{}")
   street_address            String?
   address_notes             String?
+  image_url                 String?
+  image_key                 String?
   currency                  currency?                   @relation(fields: [currency_code], references: [code], onDelete: NoAction, onUpdate: NoAction)
   business_config           business_config?
   business_coverage_zone    business_coverage_zone[]
