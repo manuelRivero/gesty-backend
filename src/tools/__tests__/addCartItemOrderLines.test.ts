@@ -339,4 +339,22 @@ describe('add_cart_item — cola de pedido y cantidad por línea', () => {
       expect.objectContaining({ lineId: 'line-chicha', closeStatus: 'done' })
     );
   });
+
+  // Fase 2 (continuidad de pedidos compuestos): la ÚNICA indisponibilidad
+  // confirmada es esta — un productId YA IDENTIFICADO que el catálogo marca
+  // `is_available: false` (o inexistente). A diferencia de search_products
+  // con count 0 (ningún producto identificado, solo un keyword sin matches),
+  // acá sí hay evidencia fiable contra un id puntual, por eso el error es
+  // definitivo y no toca ninguna OrderLine.
+  it('producto identificado pero no disponible: indisponibilidad confirmada, sin tocar la cola', async () => {
+    vi.mocked(prisma.menu_item.findFirst).mockResolvedValue(null as never);
+
+    const result = JSON.parse(
+      (await callTool({ productId: PRODUCT_ID })) as string
+    );
+
+    expect(result).toEqual({ success: false, error: 'product_not_found_or_unavailable' });
+    expect(advanceAfterLineClose).not.toHaveBeenCalled();
+    expect(prisma.draft_order_item.create).not.toHaveBeenCalled();
+  });
 });

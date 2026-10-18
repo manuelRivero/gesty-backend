@@ -253,7 +253,11 @@ describe('botPersonality', () => {
   it('hybrid cola: plato → search_products(hint); sección → categoría, no recortar containsIngredient', () => {
     const hybrid = buildHybridAgentSystemPrompt();
     expect(hybrid).toMatch(/search_products\(keyword=<hint exacto>/i);
-    expect(hybrid).toMatch(/lineClosed/);
+    // count 0 ya no cancela la línea sola: la cola sigue abierta y la
+    // cancelación explícita queda a pedido del cliente (Fase 2 del fix de
+    // continuidad de pedidos compuestos).
+    expect(hybrid).toMatch(/SIGUE ABIERTA \(no se cancela sola\)/);
+    expect(hybrid).toMatch(/nunca la canceles por tu cuenta/i);
     expect(hybrid).toMatch(/una sola vez/i);
     expect(hybrid).toMatch(/containsIngredient.*papas a la huancaína/i);
     expect(hybrid).toMatch(/algo de beber/i);

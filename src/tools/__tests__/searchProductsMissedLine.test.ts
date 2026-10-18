@@ -1,6 +1,10 @@
 /**
- * search_products count 0 cierra la línea de cola que el keyword cubre.
- * Un "no lo tenemos" deja de reinyectar ese plato en el turno siguiente.
+ * search_products count 0 NO cancela la línea de cola que el keyword cubre
+ * (Fase 2 — continuidad de pedidos compuestos): cero resultados para un
+ * término puntual no demuestra que el plato no exista. La línea sigue
+ * abierta; `missedOrderLine` solo identifica cuál era, para que la
+ * instrucción al modelo la nombre bien y ofrezca reformular / seguir con el
+ * resto / cancelar explícitamente si el cliente lo pide.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -100,7 +104,7 @@ describe('search_products count 0 y cola de pedido', () => {
     omitConversationMetadataKeys.mockResolvedValue(undefined);
   });
 
-  it('cancela la línea cuyo hint cubre el keyword y deja el resto en cola', async () => {
+  it('NO cancela la línea cuyo hint cubre el keyword: la deja abierta y señala missedOrderLine', async () => {
     findOrCreateConversationState.mockResolvedValue({
       metadata: queue([
         { id: 'l1', hint: 'lomo', requestedQuantity: 1, status: 'active' },
@@ -111,24 +115,18 @@ describe('search_products count 0 y cola de pedido', () => {
     const result = JSON.parse((await callSearch('lomo')) as string);
 
     expect(result.count).toBe(0);
-    expect(result.lineClosed).toEqual({ hint: 'lomo' });
-    expect(result.queueFollowUp.nextHint).toBe('ceviche');
+    expect(result.missedOrderLine).toEqual({ hint: 'lomo' });
+    expect(result.lineClosed).toBeUndefined();
+    expect(result.queueFollowUp).toBeUndefined();
     expect(result.instruction).toMatch(/una sola vez/i);
-    expect(result.instruction).toMatch(/lineClosed/);
-    expect(patchConversationMetadata).toHaveBeenCalledWith(
-      'conv-1',
-      expect.objectContaining({
-        pendingOrderLines: expect.objectContaining({
-          lines: expect.arrayContaining([
-            expect.objectContaining({ id: 'l1', status: 'cancelled' }),
-            expect.objectContaining({ id: 'l2', status: 'queued' }),
-          ]),
-        }),
-      })
-    );
+    expect(result.instruction).toMatch(/sigue abierta, no se canceló/i);
+    expect(result.instruction).toMatch(/PROHIBIDO decir "no lo tenemos"/);
+    // Cero resultados no escribe nada en pendingOrderLines: la línea hermana
+    // ("ceviche", queued) tampoco se toca.
+    expect(patchConversationMetadata).not.toHaveBeenCalled();
   });
 
-  it('no cancela otra línea ni un recorte del hint', async () => {
+  it('no identifica otra línea ni un recorte del hint', async () => {
     findOrCreateConversationState.mockResolvedValue({
       metadata: queue([
         {
@@ -141,11 +139,11 @@ describe('search_products count 0 y cola de pedido', () => {
     });
 
     const other = JSON.parse((await callSearch('lomo')) as string);
-    expect(other.lineClosed).toBeUndefined();
+    expect(other.missedOrderLine).toBeUndefined();
     expect(patchConversationMetadata).not.toHaveBeenCalled();
 
     const carved = JSON.parse((await callSearch('papa')) as string);
-    expect(carved.lineClosed).toBeUndefined();
+    expect(carved.missedOrderLine).toBeUndefined();
     expect(patchConversationMetadata).not.toHaveBeenCalled();
   });
 
@@ -157,12 +155,12 @@ describe('search_products count 0 y cola de pedido', () => {
     const result = JSON.parse((await callSearch('lomo')) as string);
 
     expect(result.count).toBe(0);
-    expect(result.lineClosed).toBeUndefined();
-    expect(result.instruction).toMatch(/no lo tenemos/i);
+    expect(result.missedOrderLine).toBeUndefined();
+    expect(result.instruction).toMatch(/no confirma que no lo tengamos/i);
     expect(patchConversationMetadata).not.toHaveBeenCalled();
   });
 
-  it('turno de reserva no cancela líneas de pedido', async () => {
+  it('turno de reserva no identifica líneas de pedido', async () => {
     findOrCreateConversationState.mockResolvedValue({
       metadata: {
         reservation_agent_active: true,
@@ -172,8 +170,65 @@ describe('search_products count 0 y cola de pedido', () => {
 
     const result = JSON.parse((await callSearch('lomo')) as string);
 
-    expect(result.lineClosed).toBeUndefined();
+    expect(result.missedOrderLine).toBeUndefined();
     expect(result.instruction).toMatch(/Turno de reserva/);
+    expect(patchConversationMetadata).not.toHaveBeenCalled();
+  });
+
+  it('reformulación exitosa: una segunda búsqueda con otro término resuelve la misma línea', async () => {
+    findOrCreateConversationState.mockResolvedValue({
+      metadata: queue([
+        { id: 'l1', hint: 'cevichito', requestedQuantity: null, status: 'active' },
+      ]),
+    });
+
+    const miss = JSON.parse((await callSearch('cevichito')) as string);
+    expect(miss.count).toBe(0);
+    expect(miss.missedOrderLine).toEqual({ hint: 'cevichito' });
+    expect(patchConversationMetadata).not.toHaveBeenCalled();
+
+    // El cliente aclara "ceviche clásico" — la línea sigue intacta (nunca se
+    // tocó), así que una búsqueda reformulada que SÍ matchea resuelve normal.
+    searchMenuItemsByKeyword.mockResolvedValue([
+      { id: 'cev-1', name: 'Ceviche Clásico', serves_people: 2 },
+    ]);
+    const resolved = JSON.parse((await callSearch('ceviche clasico')) as string);
+
+    expect(resolved.count).toBe(1);
+    expect(resolved.instruction).toBeUndefined();
+    expect(resolved.items).toHaveLength(1);
+  });
+
+  it('sin coincidencias persistentes: la segunda búsqueda sin match sigue ofreciendo la misma salida, sin declarar inexistencia', async () => {
+    findOrCreateConversationState.mockResolvedValue({
+      metadata: queue([
+        { id: 'l1', hint: 'cevichito', requestedQuantity: null, status: 'active' },
+      ]),
+    });
+
+    const first = JSON.parse((await callSearch('cevichito')) as string);
+    const second = JSON.parse((await callSearch('cevichito tipo tiradito')) as string);
+
+    for (const result of [first, second]) {
+      expect(result.missedOrderLine).toEqual({ hint: 'cevichito' });
+      expect(result.instruction).toMatch(/confirme el nombre exacto|digas de qué se trata/i);
+      expect(result.instruction).toMatch(/PROHIBIDO decir "no lo tenemos"/);
+    }
+    // Ningún intento, por repetido que sea, escribió metadata ni canceló nada:
+    // la "salida explícita" es conversacional (reformular / seguir con el
+    // resto / cancel_order_line a pedido), no un contador de intentos nuevo.
+    expect(patchConversationMetadata).not.toHaveBeenCalled();
+  });
+
+  it('error técnico: la búsqueda que falla no se interpreta como indisponibilidad ni toca la cola', async () => {
+    findOrCreateConversationState.mockResolvedValue({
+      metadata: queue([
+        { id: 'l1', hint: 'cevichito', requestedQuantity: null, status: 'active' },
+      ]),
+    });
+    searchMenuItemsByKeyword.mockRejectedValue(new Error('embedding service unavailable'));
+
+    await expect(callSearch('cevichito')).rejects.toThrow('embedding service unavailable');
     expect(patchConversationMetadata).not.toHaveBeenCalled();
   });
 });

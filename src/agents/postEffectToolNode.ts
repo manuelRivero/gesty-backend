@@ -7,7 +7,10 @@ import { deriveOrderQuantityGoalCandidate, deriveOrderQuantityGoalTarget } from 
 import { getRequestedPartySize, normalizeMetadata } from '../services/productQuery/utils';
 import { hasActivePedirHumanIntent } from '../services/partySizeGoal.service';
 import { getGoalFulfillmentContractsForTool } from '../domain/intent/family';
-import { reconcileHumanIntentAfterToolEffect } from '../services/humanIntentReconciliation.service';
+import {
+  closeAbandonedPedirIntent,
+  reconcileHumanIntentAfterToolEffect,
+} from '../services/humanIntentReconciliation.service';
 import {
   getFulfillmentReadyOrderLine,
   getPendingOrderLines,
@@ -114,7 +117,7 @@ export class PostEffectToolNode extends ToolNode {
         }));
       }
 
-      await reconcileHumanIntentAfterToolEffect({
+      const resolved = await reconcileHumanIntentAfterToolEffect({
         conversationId,
         businessId,
         customerPhone,
@@ -125,6 +128,12 @@ export class PostEffectToolNode extends ToolNode {
           success: true,
         },
       });
+      // cancel_order_line's effect never carries a cart `reference` (it cancels,
+      // it doesn't add), so it can never satisfy the success path above. Check
+      // separately whether that cancellation just emptied the whole order.
+      if (!resolved && kind === 'order_plan_line_cancelled') {
+        await closeAbandonedPedirIntent({ conversationId, businessId, customerPhone });
+      }
       if (kind === 'party_size_persisted' || kind === 'order_line_quantity_persisted') {
         const fresh = await prismaConversationMetadata(conversationId);
         const metadata = normalizeMetadata(fresh);

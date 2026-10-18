@@ -282,28 +282,36 @@ const readOrderingTurnScope = async (
   };
 };
 
-/** Búsqueda semántica sin ningún hit bajo el umbral de distancia. */
+/**
+ * Búsqueda semántica sin ningún hit bajo el umbral de distancia para ESTE
+ * término. Cero resultados no demuestra que el plato no exista ni que esté
+ * agotado — solo que el embedding de este keyword no matcheó nada bajo el
+ * umbral: puede ser otra forma de nombrarlo, un typo, o una categoría que no
+ * corresponde buscar por nombre. La indisponibilidad confirmada requiere un
+ * producto YA IDENTIFICADO (ver add_cart_item: chequeo real de
+ * `is_available` contra ese productId puntual) — un keyword sin matches
+ * nunca identifica nada, así que esta rama no puede afirmarla.
+ */
 const SEARCH_NOT_FOUND_INSTRUCTION =
-  'Ningún plato de la carta está cerca de esta búsqueda (count 0). ' +
-  'Decile al cliente que no lo tenemos, una sola vez en este mensaje. ' +
-  'En turnos siguientes no vuelvas a nombrar ese plato salvo que el cliente lo pida de nuevo. ' +
-  'PROHIBIDO present_product_cta, PROHIBIDO ofrecer otros platos como si fueran ese pedido, ' +
-  'y PROHIBIDO decir que hay opciones de la palabra que buscó.';
+  'Ningún plato de la carta matcheó este término exacto (count 0). Esto NO confirma que no lo ' +
+  'tengamos: puede ser otra forma de nombrarlo o un typo. PROHIBIDO decir "no lo tenemos", "está ' +
+  'agotado" o "no disponible" — decile que no encontraste nada con ESE término y pedile que te ' +
+  'confirme el nombre o te diga de qué se trata, una sola vez en este mensaje. ' +
+  'PROHIBIDO present_product_cta, PROHIBIDO ofrecer otros platos como si fueran ese pedido.';
 
-const searchMissInstruction = (closed: {
-  hint: string;
-  queueFollowUp: { instruction: string } | null;
-}): string => {
-  const once =
-    `La línea "${closed.hint}" ya se canceló (lineClosed). ` +
-    `Decilo en ESTE mensaje, una sola vez. ` +
-    `En turnos siguientes no vuelvas a nombrar "${closed.hint}" salvo que el cliente lo pida de nuevo. ` +
-    'PROHIBIDO cancel_order_line de esa línea y PROHIBIDO volver a buscarla.';
-  if (closed.queueFollowUp) {
-    return `${SEARCH_NOT_FOUND_INSTRUCTION} ${once} ${closed.queueFollowUp.instruction}`;
-  }
-  return `${SEARCH_NOT_FOUND_INSTRUCTION} ${once} No quedan otras líneas de la cola.`;
-};
+/**
+ * La línea de la cola que esta búsqueda sin resultados intentaba resolver
+ * SIGUE ABIERTA (no se cancela automáticamente por un solo miss de keyword —
+ * ver resolveMissedSearchOrderLine, que solo identifica cuál es, nunca la
+ * cierra). La única cancelación válida es la que el cliente pide
+ * explícitamente, vía cancel_order_line.
+ */
+const searchMissInstruction = (missed: { hint: string }): string =>
+  `${SEARCH_NOT_FOUND_INSTRUCTION} La línea "${missed.hint}" sigue abierta, no se canceló. ` +
+  'En tu mensaje de este turno ofrecele explícitamente: que te confirme el nombre exacto o te diga ' +
+  `de qué otra forma pedirlo, o que sigamos con el resto del pedido dejando "${missed.hint}" para ` +
+  'después. Si el cliente te dice que ya no lo quiere, recién ahí llamá cancel_order_line — ' +
+  'PROHIBIDO cancelarla vos mismo sin que el cliente lo pida.';
 
 /** Shortlist en turno de pedido: agregar si el plato está claro; listar solo si es ambiguo. */
 const SHORTLIST_CHOICE_INSTRUCTION =
@@ -477,41 +485,25 @@ export const searchProductsTool = new DynamicStructuredTool<
         keyword
       );
     }
+    // Cero resultados no cierra la línea: solo identifica cuál de la cola
+    // esta búsqueda intentaba resolver, para que la instrucción la nombre
+    // correctamente. Cancelar sigue siendo una acción explícita del cliente
+    // (cancel_order_line) — ver SEARCH_NOT_FOUND_INSTRUCTION/searchMissInstruction.
     const missedLine =
       !reservationTurn && shortlisted.length === 0
         ? resolveMissedSearchOrderLine(getPendingOrderLines(metadata), keyword)
         : null;
-    let lineClosed: { hint: string; queueFollowUp: { instruction: string } | null } | null =
-      null;
-    if (missedLine && conversationId) {
-      const nextPending = await cancelOrderLine({
-        conversationId,
-        metadata,
-        lineId: missedLine.id,
-      });
-      lineClosed = {
-        hint: missedLine.hint,
-        queueFollowUp: nextPending ? buildOrderLinesContinueOrCancelHint(nextPending) : null,
-      };
-    }
     return toJson({
       count: shortlisted.length,
       totalMatches: items.length,
       hasMore: items.length > shortlisted.length,
-      ...(lineClosed
-        ? {
-            lineClosed: { hint: lineClosed.hint },
-            ...(lineClosed.queueFollowUp
-              ? { queueFollowUp: lineClosed.queueFollowUp }
-              : { queueEmpty: true }),
-          }
-        : {}),
+      ...(missedLine ? { missedOrderLine: { hint: missedLine.hint } } : {}),
       ...(reservationTurn
         ? { instruction: RESERVATION_MENU_DATA_INSTRUCTION }
         : shortlisted.length === 0
           ? {
-              instruction: lineClosed
-                ? searchMissInstruction(lineClosed)
+              instruction: missedLine
+                ? searchMissInstruction(missedLine)
                 : SEARCH_NOT_FOUND_INSTRUCTION,
             }
           : nameAmbiguous
