@@ -161,6 +161,14 @@ import {
   postBusinessUser,
   removeBusinessUser
 } from "../controllers/adminBusinessUsers.controller";
+import {
+  deleteAdminDraftOrderItemHandler,
+  getAdminDraftOrderHandler,
+  patchAdminDraftOrderFulfillmentHandler,
+  patchAdminDraftOrderItemHandler,
+  postAdminDraftOrderRequestConfirmationHandler,
+  postAdminDraftOrderItemHandler
+} from "../controllers/adminDraftOrder.controller";
 
 const router = Router();
 
@@ -329,6 +337,36 @@ router.post(
   "/whatsapp/conversations/:conversationId/viewing",
   requireRoles("OWNER", "ADMIN"),
   postWhatsappConversationViewing
+);
+router.get(
+  "/whatsapp/conversations/:conversationId/draft-order",
+  requireRoles("OWNER", "ADMIN"),
+  getAdminDraftOrderHandler
+);
+router.post(
+  "/whatsapp/conversations/:conversationId/draft-order/items",
+  requireRoles("OWNER", "ADMIN"),
+  postAdminDraftOrderItemHandler
+);
+router.patch(
+  "/whatsapp/conversations/:conversationId/draft-order/items/:itemId",
+  requireRoles("OWNER", "ADMIN"),
+  patchAdminDraftOrderItemHandler
+);
+router.delete(
+  "/whatsapp/conversations/:conversationId/draft-order/items/:itemId",
+  requireRoles("OWNER", "ADMIN"),
+  deleteAdminDraftOrderItemHandler
+);
+router.patch(
+  "/whatsapp/conversations/:conversationId/draft-order/fulfillment",
+  requireRoles("OWNER", "ADMIN"),
+  patchAdminDraftOrderFulfillmentHandler
+);
+router.post(
+  "/whatsapp/conversations/:conversationId/draft-order/request-confirmation",
+  requireRoles("OWNER", "ADMIN"),
+  postAdminDraftOrderRequestConfirmationHandler
 );
 router.get(
   "/whatsapp/canned-replies",

@@ -34,6 +34,7 @@ import {
   paymentReturnSuccessHandler,
 } from './controllers/payments/paymentReturn.controller';
 import { billingStripeWebhookHandler } from './controllers/billingStripeWebhook.controller';
+import { handleAdminOrderConfirmationWebhook } from './services/adminOrderConfirmationWebhook.service';
 
 if (env.ENABLE_DRAFT_ORDER_WORKER) {
   const DRAFT_ORDER_TICK_MS = 60_000;
@@ -159,8 +160,14 @@ app.post(
 
     const payload = req.body;
     setImmediate(() => {
-      mainGraph
-        .invoke({ webhookPayload: payload })
+      // Admin-initiated order confirmation (ver adminOrderConfirmationWebhook.service.ts):
+      // se resuelve ANTES del grafo porque, en modo humano, el grafo corta el
+      // turno sin leer el payload (`bot_disabled_or_human_handled`).
+      handleAdminOrderConfirmationWebhook(payload)
+        .then((handled) => {
+          if (handled) return;
+          return mainGraph.invoke({ webhookPayload: payload });
+        })
         .catch((err) => {
           console.error('[graph] invoke error', err);
         });

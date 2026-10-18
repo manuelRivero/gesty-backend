@@ -39,8 +39,37 @@ export const buildOrderConfirmationMessage = async (params: {
   currencyCode: string | null;
   /** Texto de una respuesta lateral a anteponer (retomar tras interrupción, H-03). */
   leadingText?: string;
+  /**
+   * Línea de dirección de entrega a mostrar en el resumen (admin-initiated
+   * checkout, D-ADMIN-1): el checkout propio del bot no la incluye porque el
+   * cliente ya la vio al confirmarla; acá el admin arma el pedido por el
+   * cliente, así que conviene que la vea antes de tocar "Confirmar".
+   */
+  addressLine?: string | null;
+  /**
+   * IDs de los botones de confirmar/cancelar. Default = los del checkout del
+   * bot (`CONFIRM_ORDER`/`EDIT_PAYMENT_METHOD`). El checkout admin-initiated
+   * (D-ADMIN-1) pasa IDs propios (`ADMIN_CONFIRM_ORDER`/`ADMIN_CANCEL_ORDER`)
+   * porque un tap de `CONFIRM_ORDER` entraría al nodo de checkout del bot, que
+   * espera `checkout_active` en la metadata — inexistente en ese flujo.
+   */
+  buttonIds?: {
+    confirm: string;
+    confirmTitle?: string;
+    cancel: string;
+    cancelTitle?: string;
+  };
 }): Promise<WhatsAppInteractiveMessage | null> => {
-  const { businessId, customerId, customerPhone, paymentMethod, currencyCode, leadingText } = params;
+  const {
+    businessId,
+    customerId,
+    customerPhone,
+    paymentMethod,
+    currencyCode,
+    leadingText,
+    addressLine,
+    buttonIds,
+  } = params;
 
   const draft = await prisma.draft_order.findFirst({
     where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
@@ -101,6 +130,9 @@ export const buildOrderConfirmationMessage = async (params: {
       .join(' + ');
     lines.push(`${label || 'Promoción'}: −$${pricing.promotionDiscount.toFixed(2)}`);
   }
+  if (addressLine) {
+    lines.push(`Dirección: ${addressLine}`);
+  }
   if (pricing.deliveryFee > 0) {
     lines.push(`Envío: $${pricing.deliveryFee.toFixed(2)}`);
   } else if (promotions.freeShipping) {
@@ -137,8 +169,20 @@ export const buildOrderConfirmationMessage = async (params: {
       footer: { text: 'Revisá el total antes de confirmar' },
       action: {
         buttons: [
-          { type: 'reply', reply: { id: 'CONFIRM_ORDER', title: '✅ Confirmar pedido' } },
-          { type: 'reply', reply: { id: 'EDIT_PAYMENT_METHOD', title: '❌ Cancelar' } },
+          {
+            type: 'reply',
+            reply: {
+              id: buttonIds?.confirm ?? 'CONFIRM_ORDER',
+              title: buttonIds?.confirmTitle ?? '✅ Confirmar pedido',
+            },
+          },
+          {
+            type: 'reply',
+            reply: {
+              id: buttonIds?.cancel ?? 'EDIT_PAYMENT_METHOD',
+              title: buttonIds?.cancelTitle ?? '❌ Cancelar',
+            },
+          },
         ],
       },
     },
