@@ -63,6 +63,7 @@ type PublicBusinessRow = {
   address_notes: string | null;
   latitude: number | null;
   longitude: number | null;
+  image_url: string | null;
 };
 
 /**
@@ -92,6 +93,7 @@ export async function resolveActivePublicBusiness(
     address_notes: true,
     latitude: true,
     longitude: true,
+    image_url: true,
     ...subscriptionCapabilitySelect
   } as const;
 
@@ -143,8 +145,7 @@ function mapBusinessProfile(
     slug: row.slug ?? null,
     category: row.category ?? null,
     isActive: true as const,
-    /** Logo de negocio aún no modelado en schema. */
-    imageUrl: null as string | null,
+    imageUrl: row.image_url ?? null,
     timezone: row.timezone,
     currencyCode: row.currency_code ?? null,
     whatsappPhoneNumber: row.whatsapp_phone_number ?? null,
@@ -206,7 +207,6 @@ export type PublicStorefrontSummary = {
   description: string | null;
   tagline: string | null;
   category: string | null;
-  /** Logo de negocio aún no modelado en schema. */
   imageUrl: string | null;
   isOpen: boolean;
   nextOpenText: string | null;
@@ -235,6 +235,7 @@ export async function listPublicStorefronts(): Promise<
       description: true,
       category: true,
       timezone: true,
+      image_url: true,
       ...subscriptionCapabilitySelect
     },
     orderBy: { name: "asc" }
@@ -258,7 +259,7 @@ export async function listPublicStorefronts(): Promise<
           description: row.description ?? null,
           tagline: row.description ?? null,
           category: row.category ?? null,
-          imageUrl: null,
+          imageUrl: row.image_url ?? null,
           isOpen: open.isOpen,
           nextOpenText: open.nextOpenText
         };
