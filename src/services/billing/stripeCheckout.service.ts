@@ -2,7 +2,6 @@ import type { checkout_attempt, subscription } from "@prisma/client";
 import Stripe from "stripe";
 import { prisma } from "../../lib/prisma";
 import { env } from "../../config/env";
-import { isActiveSubscriptionStatus } from "../../constants/billing";
 import { findActivePlanByCode } from "./planCatalog.service";
 import { getStripe, isStripeConfigured } from "./stripe.client";
 import { getOrCreateStripeCustomerId } from "./stripeCustomer.service";
@@ -12,6 +11,12 @@ import {
   upsertSubscriptionFromStripe,
 } from "./stripeSubscriptionSync.service";
 import type { StripeSubscriptionLike } from "./mapStripeSubscription";
+import { classifySubscriptionLifecycle } from "./subscriptionLifecycle.service";
+import {
+  SUBSCRIPTION_LIFECYCLE_NAMESPACE,
+  withBillingLock,
+} from "./billingLock";
+import { reconcileLiveSubscription } from "./subscriptionReconcile.service";
 
 function adminBaseUrl(): string {
   const origin = (env.CORS_ORIGIN ?? "http://localhost:3000")
@@ -46,15 +51,6 @@ function runExclusivePerBusiness<T>(
   return result;
 }
 
-/** Estados de Stripe que representan una suscripción con pago pendiente de
- * regularizar (no cancelada definitivamente, potencialmente recuperable por
- * Stripe o por el cliente desde el Portal). */
-const RECOVERABLE_SUBSCRIPTION_STATUSES = new Set([
-  "past_due",
-  "unpaid",
-  "incomplete",
-]);
-
 type CheckoutGuardResult =
   | { blocked: false }
   | { blocked: true; reason: "active" | "cancel_pending" | "recoverable" };
@@ -65,26 +61,23 @@ type CheckoutGuardResult =
  * `business.ai_plan` ni en el código del plan: solo en el estado persistido
  * de `subscription` (espejo de Stripe vía webhooks).
  *
- * Sin cambios respecto a la versión anterior — esta función ya fue
- * auditada y tiene cobertura de tests propia.
+ * Reimplementada sobre `classifySubscriptionLifecycle` (compartida con el
+ * contrato de `GET /admin/billing/subscription` y con los guards de
+ * cancelación/reactivación/cambio de plan) en vez de reimplementar la
+ * clasificación — mismo comportamiento observable (bloquea exactamente los
+ * mismos casos, mismo HTTP 409), con una diferencia menor y deliberada: una
+ * suscripción `active` con cancelación programada vigente ahora devuelve
+ * el mensaje de "cancel_pending" en vez de "active" (antes, el chequeo de
+ * `isActiveSubscriptionStatus` cortaba primero y nunca llegaba a evaluar
+ * `cancel_at_period_end`) — el texto es más preciso, el bloqueo (409) es
+ * idéntico. Cobertura de tests existente no depende del mensaje para ese
+ * caso puntual, así que no hay regresión.
  */
 function evaluateCheckoutGuard(sub: subscription | null): CheckoutGuardResult {
-  if (!sub || !sub.stripe_subscription_id) {
-    return { blocked: false };
-  }
-
-  if (isActiveSubscriptionStatus(sub.status)) {
-    return { blocked: true, reason: "active" };
-  }
-
-  if (sub.cancel_at_period_end && new Date() <= sub.current_period_end) {
-    return { blocked: true, reason: "cancel_pending" };
-  }
-
-  if (RECOVERABLE_SUBSCRIPTION_STATUSES.has(sub.status.trim().toLowerCase())) {
-    return { blocked: true, reason: "recoverable" };
-  }
-
+  const state = classifySubscriptionLifecycle(sub);
+  if (state === "active") return { blocked: true, reason: "active" };
+  if (state === "active_canceling") return { blocked: true, reason: "cancel_pending" };
+  if (state === "past_due") return { blocked: true, reason: "recoverable" };
   return { blocked: false };
 }
 
@@ -609,6 +602,228 @@ export async function createBillingPortalSession(input: {
   return { url: session.url };
 }
 
+/**
+ * Tras un error transitorio (red/5xx/rate limit/idempotencia) en una
+ * mutación de Stripe sobre una suscripción existente, NO asumimos que no
+ * se aplicó: releemos el estado real desde Stripe (lectura, siempre
+ * segura) y lo sincronizamos con el mecanismo existente antes de decidir
+ * qué responder. Si ni la reconciliación funciona, el resultado queda
+ * genuinamente indeterminado — se informa así, nunca como éxito.
+ */
+async function reconcileAfterTransientMutationError(
+  stripe: Stripe,
+  businessId: string,
+  stripeSubscriptionId: string
+): Promise<subscription | null> {
+  try {
+    const remote = await stripe.subscriptions.retrieve(stripeSubscriptionId);
+    await upsertSubscriptionFromStripe(
+      remote as unknown as StripeSubscriptionLike,
+      businessId
+    );
+    return prisma.subscription.findUnique({ where: { business_id: businessId } });
+  } catch {
+    return null;
+  }
+}
+
+function isTransientOrConflictStripeError(err: unknown): boolean {
+  return (
+    err instanceof Stripe.errors.StripeConnectionError ||
+    err instanceof Stripe.errors.StripeAPIError ||
+    err instanceof Stripe.errors.StripeRateLimitError ||
+    err instanceof Stripe.errors.StripeIdempotencyError
+  );
+}
+
+function indeterminateResultError() {
+  return Object.assign(
+    new Error(
+      "No se pudo confirmar si la operación se aplicó en Stripe. Verificá el estado de tu suscripción en unos segundos antes de reintentar."
+    ),
+    { status: 503 }
+  );
+}
+
+/**
+ * Política de la sección 7 (Fase 2): si la suscripción remota tiene un
+ * Subscription Schedule asociado (típicamente un downgrade programado por
+ * `scheduleDowngrade`), cancelar o reactivar desde acá queda ambiguo —
+ * ¿qué pasa con la fase futura ya programada? En vez de decidir eso de
+ * forma implícita (liberar/truncar/reemplazar el schedule sin que el
+ * usuario lo haya pedido), se rechaza con 409 y se pide resolver primero
+ * el cambio de plan programado. Esta tarea NO agrega la operación para
+ * cancelar ese cambio programado — solo el guard que impide pisarlo.
+ *
+ * Se comprueba sobre `remote.schedule` (el estado de Stripe recién
+ * reconciliado por `reconcileLiveSubscription`), nunca sobre una copia
+ * local — la fila `subscription` no guarda el id del schedule.
+ */
+function scheduleConflictError() {
+  return Object.assign(
+    new Error(
+      "Esta suscripción tiene un cambio de plan programado. Resolvé ese cambio antes de cancelar o reactivar."
+    ),
+    { status: 409 }
+  );
+}
+
+/**
+ * Cancelación owner-facing: programa la cancelación al final del período
+ * vigente. Reutiliza `cancelSubscriptionAtPeriodEnd` (ya usado por
+ * super-admin) para la llamada a Stripe, pero valida autorización/estado
+ * de forma propia — nunca pasa por el controller de super-admin.
+ *
+ * Todo el cuerpo corre bajo `withBillingLock` (mismo namespace que
+ * `reactivateSubscription`, `changeSubscriptionPlan` y el handler de
+ * webhooks de `customer.subscription.*`): el lock se sostiene durante la
+ * relectura+reconciliación contra Stripe, la validación del estado, la
+ * mutación remota y la persistencia local — nunca solo durante la lectura
+ * inicial.
+ */
+export async function cancelOwnerSubscription(businessId: string): Promise<{
+  subscription: subscription;
+}> {
+  const stripe = getStripe();
+  if (!stripe) {
+    throw Object.assign(new Error("Stripe no configurado"), { status: 503 });
+  }
+
+  return withBillingLock(SUBSCRIPTION_LIFECYCLE_NAMESPACE, businessId, async () => {
+    const { local: sub, remote } = await reconcileLiveSubscription(stripe, businessId);
+    const state = classifySubscriptionLifecycle(sub);
+
+    if (state === "active_canceling") {
+      // Repetición segura: ya está programada, no hace falta volver a tocar
+      // Stripe. Devolvemos el estado actual (ya reconciliado) como éxito
+      // idempotente.
+      return { subscription: sub as subscription };
+    }
+    if (state !== "active") {
+      throw Object.assign(
+        new Error(
+          "Esta suscripción no está en un estado que permita programar una cancelación."
+        ),
+        { status: 409 }
+      );
+    }
+    if (remote?.schedule) {
+      throw scheduleConflictError();
+    }
+
+    const stripeSubscriptionId = (sub as subscription).stripe_subscription_id as string;
+
+    try {
+      const updated = await stripe.subscriptions.update(
+        stripeSubscriptionId,
+        { cancel_at_period_end: true },
+        { idempotencyKey: `cancel:${stripeSubscriptionId}:${(sub as subscription).updated_at?.getTime() ?? 0}` }
+      );
+      await upsertSubscriptionFromStripe(
+        updated as unknown as StripeSubscriptionLike,
+        businessId
+      );
+    } catch (err) {
+      if (isTransientOrConflictStripeError(err)) {
+        const reconciled = await reconcileAfterTransientMutationError(
+          stripe,
+          businessId,
+          stripeSubscriptionId
+        );
+        if (reconciled && classifySubscriptionLifecycle(reconciled) === "active_canceling") {
+          return { subscription: reconciled };
+        }
+        throw indeterminateResultError();
+      }
+      throw Object.assign(
+        new Error(err instanceof Error ? err.message : "Error cancelando en Stripe"),
+        { status: 502 }
+      );
+    }
+
+    const finalSub = await prisma.subscription.findUnique({ where: { business_id: businessId } });
+    if (!finalSub) {
+      throw indeterminateResultError();
+    }
+    return { subscription: finalSub };
+  });
+}
+
+/**
+ * Reactivación owner-facing: deshace una cancelación programada mientras
+ * la suscripción sigue vigente. Rechaza si no hay nada que reactivar
+ * (idempotente si ya está `active` sin cancelación) o si la suscripción
+ * ya terminó efectivamente (ahí corresponde un checkout nuevo, nunca se
+ * crea una suscripción como alternativa acá). Mismo lock y mismo criterio
+ * de conflicto con schedules que `cancelOwnerSubscription` — ver el
+ * comentario de esa función.
+ */
+export async function reactivateSubscription(businessId: string): Promise<{
+  subscription: subscription;
+}> {
+  const stripe = getStripe();
+  if (!stripe) {
+    throw Object.assign(new Error("Stripe no configurado"), { status: 503 });
+  }
+
+  return withBillingLock(SUBSCRIPTION_LIFECYCLE_NAMESPACE, businessId, async () => {
+    const { local: sub, remote } = await reconcileLiveSubscription(stripe, businessId);
+    const state = classifySubscriptionLifecycle(sub);
+
+    if (state === "active") {
+      // Idempotente: ya no hay cancelación pendiente, nada que hacer.
+      return { subscription: sub as subscription };
+    }
+    if (state !== "active_canceling") {
+      throw Object.assign(
+        new Error(
+          "Esta suscripción no tiene una cancelación programada vigente para revertir."
+        ),
+        { status: 409 }
+      );
+    }
+    if (remote?.schedule) {
+      throw scheduleConflictError();
+    }
+
+    const stripeSubscriptionId = (sub as subscription).stripe_subscription_id as string;
+
+    try {
+      const updated = await stripe.subscriptions.update(
+        stripeSubscriptionId,
+        { cancel_at_period_end: false },
+        { idempotencyKey: `reactivate:${stripeSubscriptionId}:${(sub as subscription).updated_at?.getTime() ?? 0}` }
+      );
+      await upsertSubscriptionFromStripe(
+        updated as unknown as StripeSubscriptionLike,
+        businessId
+      );
+    } catch (err) {
+      if (isTransientOrConflictStripeError(err)) {
+        const reconciled = await reconcileAfterTransientMutationError(
+          stripe,
+          businessId,
+          stripeSubscriptionId
+        );
+        if (reconciled && classifySubscriptionLifecycle(reconciled) === "active") {
+          return { subscription: reconciled };
+        }
+        throw indeterminateResultError();
+      }
+      throw Object.assign(
+        new Error(err instanceof Error ? err.message : "Error reactivando en Stripe"),
+        { status: 502 }
+      );
+    }
+
+    const finalSub = await prisma.subscription.findUnique({ where: { business_id: businessId } });
+    if (!finalSub) {
+      throw indeterminateResultError();
+    }
+    return { subscription: finalSub };
+  });
+}
+
 export async function cancelSubscriptionAtPeriodEnd(
   businessId: string
 ): Promise<void> {
@@ -790,6 +1005,64 @@ async function reconcileExpiredCheckoutSession(
   });
 }
 
+/**
+ * Sincroniza una suscripción a partir de una señal de webhook, bajo el
+ * MISMO lock que usan las mutaciones owner-facing (`cancelOwnerSubscription`,
+ * `reactivateSubscription`, `changeSubscriptionPlan`). Esto es lo que evita
+ * que un webhook atrasado pise una mutación más reciente (o viceversa):
+ * ambos caminos se serializan por negocio.
+ *
+ * El webhook es solo una SEÑAL de que algo cambió — nunca se usa
+ * `event.data.object` como snapshot autoritativo. Siempre se vuelve a
+ * pedir el estado remoto actual con `stripe.subscriptions.retrieve(subId)`
+ * (ya dentro del lock) y se sincroniza con `upsertSubscriptionFromStripe`,
+ * así que un evento viejo que llega después de uno nuevo termina
+ * reconciliando el mismo estado actual, no el que traía su propio payload.
+ *
+ * Si el retrieve indica que la suscripción ya no existe en Stripe
+ * (`resource_missing`), se trata igual que `customer.subscription.deleted`:
+ * se marca cancelada localmente por id, sin necesitar el objeto remoto
+ * (operación de identidad, segura incluso sin datos frescos). Cualquier
+ * otro fallo (red, 5xx, rate limit) se propaga sin marcar nada — el
+ * webhook debe reintentarse (Stripe reintenta automáticamente ante una
+ * respuesta no-2xx del endpoint).
+ */
+async function syncSubscriptionFromWebhookSignal(
+  stripe: Stripe,
+  subId: string,
+  fallbackBusinessId: string | null
+): Promise<void> {
+  const businessId =
+    fallbackBusinessId ??
+    (await resolveBusinessIdFromStripeSub({ id: subId } as StripeSubscriptionLike));
+  if (!businessId) {
+    console.warn(
+      JSON.stringify({ event: "[billing:stripe] webhook_business_id_unresolved", subId })
+    );
+    return;
+  }
+
+  await withBillingLock(SUBSCRIPTION_LIFECYCLE_NAMESPACE, businessId, async () => {
+    let remote: Stripe.Subscription;
+    try {
+      remote = await stripe.subscriptions.retrieve(subId);
+    } catch (err) {
+      if (
+        err instanceof Stripe.errors.StripeInvalidRequestError &&
+        err.code === "resource_missing"
+      ) {
+        await markSubscriptionDeletedFromStripe(subId);
+        return;
+      }
+      throw err;
+    }
+    await upsertSubscriptionFromStripe(
+      remote as unknown as StripeSubscriptionLike,
+      businessId
+    );
+  });
+}
+
 export async function processStripeWebhookEvent(
   event: Stripe.Event
 ): Promise<void> {
@@ -809,22 +1082,21 @@ export async function processStripeWebhookEvent(
       break;
     }
     case "customer.subscription.created":
-    case "customer.subscription.updated": {
-      const stripeSub = event.data.object as unknown as StripeSubscriptionLike;
-      const businessId = await resolveBusinessIdFromStripeSub(stripeSub);
-      if (businessId) {
-        await upsertSubscriptionFromStripe(stripeSub, businessId);
-      } else {
-        console.warn(
-          `[billing:stripe] webhook ${event.type} sin business_id resoluble`,
-          stripeSub.id
-        );
-      }
-      break;
-    }
+    case "customer.subscription.updated":
     case "customer.subscription.deleted": {
-      const stripeSub = event.data.object as Stripe.Subscription;
-      await markSubscriptionDeletedFromStripe(stripeSub.id);
+      // El payload del evento solo se usa para IDENTIDAD (id de la
+      // suscripción, business_id en metadata si está) — nunca para los
+      // campos que pueden haber cambiado (status, cancel_at_period_end,
+      // período). Esos se vuelven a pedir frescos dentro del lock, ver
+      // `syncSubscriptionFromWebhookSignal`.
+      const stripeSub = event.data.object as unknown as StripeSubscriptionLike;
+      const stripe = getStripe();
+      if (!stripe) {
+        console.warn("[billing:stripe] webhook de suscripción sin Stripe configurado");
+        break;
+      }
+      const fallbackBusinessId = await resolveBusinessIdFromStripeSub(stripeSub);
+      await syncSubscriptionFromWebhookSignal(stripe, stripeSub.id, fallbackBusinessId);
       break;
     }
     case "invoice.payment_failed": {
@@ -835,16 +1107,7 @@ export async function processStripeWebhookEvent(
       if (subId) {
         const stripe = getStripe();
         if (stripe) {
-          const remote = await stripe.subscriptions.retrieve(subId);
-          const businessId = await resolveBusinessIdFromStripeSub(
-            remote as unknown as StripeSubscriptionLike
-          );
-          if (businessId) {
-            await upsertSubscriptionFromStripe(
-              remote as unknown as StripeSubscriptionLike,
-              businessId
-            );
-          }
+          await syncSubscriptionFromWebhookSignal(stripe, subId, null);
         }
       }
       break;

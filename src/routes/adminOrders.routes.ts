@@ -114,6 +114,9 @@ import {
   getAdminBillingSubscriptionHandler,
   postAdminBillingCheckout,
   postAdminBillingPortal,
+  postAdminBillingSubscriptionCancel,
+  postAdminBillingSubscriptionChangePlan,
+  postAdminBillingSubscriptionReactivate,
 } from "../controllers/adminBilling.controller";
 import {
   getPaymentProviderById,
@@ -231,6 +234,21 @@ router.post(
   "/billing/portal",
   requireRoles("OWNER", "ADMIN"),
   postAdminBillingPortal
+);
+router.post(
+  "/billing/subscription/cancel",
+  requireRoles("OWNER", "ADMIN"),
+  postAdminBillingSubscriptionCancel
+);
+router.post(
+  "/billing/subscription/reactivate",
+  requireRoles("OWNER", "ADMIN"),
+  postAdminBillingSubscriptionReactivate
+);
+router.post(
+  "/billing/subscription/change-plan",
+  requireRoles("OWNER", "ADMIN"),
+  postAdminBillingSubscriptionChangePlan
 );
 router.get("/config", requireRoles("OWNER", "ADMIN"), getAdminBusinessConfig);
 router.get(

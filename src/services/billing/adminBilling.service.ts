@@ -4,11 +4,17 @@ import { evaluateSubscriptionRowAccess } from "./evaluateBusinessBillingAccess.s
 import { buildQuotaSlice } from "../subscription/businessAiQuota.service";
 import type {
   AdminBillingSubscriptionResponse,
+  BillingActionsDto,
+  BillingLifecycleState,
   BillingSubscriptionSnapshotDto,
 } from "../../types/billing.dto";
 import type { business } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { resetIfNeeded } from "../ai/aiUsage.service";
+import {
+  classifySubscriptionLifecycle,
+  deriveBillingActions,
+} from "./subscriptionLifecycle.service";
 
 export function toSubscriptionSnapshot(
   business: business,
@@ -65,6 +71,9 @@ export async function getAdminBillingSubscription(
 
   // Portal solo con suscripción Stripe real. En trial (o sin sub de pago)
   // siempre Checkout para poder convertir a pago antes de que venza.
+  // `cta` se mantiene por compatibilidad mientras gesty-admin migra a
+  // `billing_state`/`actions` — misma condición que siempre tuvo, sin
+  // cambios de comportamiento.
   const cta: AdminBillingSubscriptionResponse["cta"] =
     access.access_ok &&
     Boolean(sub?.stripe_customer_id) &&
@@ -72,11 +81,41 @@ export async function getAdminBillingSubscription(
       ? "portal"
       : "checkout";
 
+  const billingState = classifySubscriptionLifecycle(sub);
+
   return {
     requires_subscription: true,
     access_ok: access.access_ok,
     cta,
+    billing_state: billingState,
+    actions: deriveBillingActions(billingState),
     subscription: sub ? toSubscriptionSnapshot(refreshed, sub) : null,
     quota: buildQuotaSlice(refreshed),
+  };
+}
+
+/**
+ * Respuesta compartida por los endpoints de mutación (cancelar/reactivar/
+ * cambiar de plan): estado + acciones + snapshot de la suscripción ya
+ * actualizada. Reutiliza `toSubscriptionSnapshot`/`classifySubscriptionLifecycle`
+ * en vez de reconstruir el DTO en cada controller.
+ */
+export async function buildSubscriptionActionResult(
+  businessId: string,
+  sub: subscription
+): Promise<{
+  billing_state: BillingLifecycleState;
+  actions: BillingActionsDto;
+  subscription: BillingSubscriptionSnapshotDto;
+}> {
+  const business = await prisma.business.findUnique({ where: { id: businessId } });
+  if (!business) {
+    throw Object.assign(new Error("Negocio no encontrado"), { status: 404 });
+  }
+  const billingState = classifySubscriptionLifecycle(sub);
+  return {
+    billing_state: billingState,
+    actions: deriveBillingActions(billingState),
+    subscription: toSubscriptionSnapshot(business, sub),
   };
 }

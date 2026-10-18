@@ -138,6 +138,13 @@ vi.mock('../stripeCustomer.service', () => ({
   getOrCreateStripeCustomerId: vi.fn(),
 }));
 
+vi.mock('../billingLock', () => ({
+  SUBSCRIPTION_LIFECYCLE_NAMESPACE: 'test-namespace',
+  withBillingLock: vi.fn(async (_namespace: string, _key: string, fn: () => Promise<unknown>) =>
+    fn()
+  ),
+}));
+
 // `stripeCheckout.service.ts` también importa esto a nivel de módulo
 // (usado por `processStripeWebhookEvent`, fuera de alcance de este archivo).
 vi.mock('../stripeSubscriptionSync.service', () => ({
@@ -151,6 +158,7 @@ import { findActivePlanByCode } from '../planCatalog.service';
 import { getStripe, isStripeConfigured } from '../stripe.client';
 import { getOrCreateStripeCustomerId } from '../stripeCustomer.service';
 import {
+  markSubscriptionDeletedFromStripe,
   resolveBusinessIdFromStripeSub,
   upsertSubscriptionFromStripe,
 } from '../stripeSubscriptionSync.service';
@@ -174,6 +182,7 @@ const mockedResolveBusinessId = resolveBusinessIdFromStripeSub as unknown as Ret
   typeof vi.fn
 >;
 const mockedUpsertSub = upsertSubscriptionFromStripe as unknown as ReturnType<typeof vi.fn>;
+const mockedMarkDeleted = markSubscriptionDeletedFromStripe as unknown as ReturnType<typeof vi.fn>;
 const mockedSubscriptionFindUnique = prisma.subscription.findUnique as unknown as ReturnType<
   typeof vi.fn
 >;
@@ -867,19 +876,33 @@ describe('processStripeWebhookEvent — idempotencia', () => {
     } as unknown as Parameters<typeof processStripeWebhookEvent>[0];
   }
 
+  let stripe: ReturnType<typeof fakeStripeClient>;
+
   beforeEach(() => {
     vi.clearAllMocks();
     resetAttempts();
+    stripe = fakeStripeClient();
+    // El handler de `customer.subscription.*` ahora SIEMPRE vuelve a pedir
+    // el estado remoto (`stripe.subscriptions.retrieve`) en vez de confiar
+    // en `event.data.object` — ver `syncSubscriptionFromWebhookSignal`.
+    stripe.subscriptions.retrieve.mockResolvedValue({
+      id: 'sub_stripe_1',
+      customer: 'cus_1',
+      status: 'active',
+      cancel_at_period_end: false,
+    });
+    mockedGetStripe.mockReturnValue(stripe);
     mockedResolveBusinessId.mockResolvedValue(BUSINESS_ID);
     mockedUpsertSub.mockResolvedValue(undefined);
     mockedWebhookEventCreate.mockResolvedValue({});
   });
 
-  it('procesa un evento nuevo: persiste el efecto y marca el evento como procesado', async () => {
+  it('procesa un evento nuevo: vuelve a pedir el estado remoto (no confía en el payload del evento), persiste el efecto y marca el evento como procesado', async () => {
     mockedWebhookEventFindUnique.mockResolvedValueOnce(null);
 
     await processStripeWebhookEvent(subscriptionUpdatedEvent('evt_1'));
 
+    expect(stripe.subscriptions.retrieve).toHaveBeenCalledWith('sub_stripe_1');
     expect(mockedUpsertSub).toHaveBeenCalledTimes(1);
     expect(mockedWebhookEventCreate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -894,6 +917,7 @@ describe('processStripeWebhookEvent — idempotencia', () => {
     await processStripeWebhookEvent(subscriptionUpdatedEvent('evt_1'));
 
     expect(mockedResolveBusinessId).not.toHaveBeenCalled();
+    expect(stripe.subscriptions.retrieve).not.toHaveBeenCalled();
     expect(mockedUpsertSub).not.toHaveBeenCalled();
     expect(mockedWebhookEventCreate).not.toHaveBeenCalled();
   });
@@ -910,5 +934,53 @@ describe('processStripeWebhookEvent — idempotencia', () => {
 
     expect(mockedUpsertSub).toHaveBeenCalledTimes(1);
     expect(mockedWebhookEventCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('webhook atrasado: aunque el payload del evento traiga datos viejos, lo que se persiste es el `retrieve` fresco, no `event.data.object`', async () => {
+    mockedWebhookEventFindUnique.mockResolvedValueOnce(null);
+    // El payload del evento dice "sin cancelación programada"...
+    const staleEvent = subscriptionUpdatedEvent('evt_stale');
+    // ...pero el estado remoto ACTUAL (lo que de verdad se persiste) ya
+    // tiene la cancelación programada — simula una mutación más reciente
+    // que superó a este evento atrasado.
+    stripe.subscriptions.retrieve.mockResolvedValueOnce({
+      id: 'sub_stripe_1',
+      customer: 'cus_1',
+      status: 'active',
+      cancel_at_period_end: true,
+    });
+
+    await processStripeWebhookEvent(staleEvent);
+
+    expect(mockedUpsertSub).toHaveBeenCalledWith(
+      expect.objectContaining({ cancel_at_period_end: true }),
+      BUSINESS_ID
+    );
+  });
+
+  it('si el retrieve indica que la suscripción ya no existe (resource_missing): la marca cancelada por id, sin necesitar el objeto remoto', async () => {
+    mockedWebhookEventFindUnique.mockResolvedValueOnce(null);
+    const notFound = new Stripe.errors.StripeInvalidRequestError({
+      message: 'No such subscription',
+      code: 'resource_missing',
+    } as any);
+    stripe.subscriptions.retrieve.mockRejectedValueOnce(notFound);
+
+    await processStripeWebhookEvent(subscriptionUpdatedEvent('evt_gone'));
+
+    expect(mockedMarkDeleted).toHaveBeenCalledWith('sub_stripe_1');
+    expect(mockedUpsertSub).not.toHaveBeenCalled();
+    expect(mockedWebhookEventCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('si el retrieve falla por un error transitorio (no resource_missing): no marca el evento como procesado — debe poder reintentarse', async () => {
+    mockedWebhookEventFindUnique.mockResolvedValueOnce(null);
+    stripe.subscriptions.retrieve.mockRejectedValueOnce(
+      new Stripe.errors.StripeConnectionError({ message: 'timeout' } as any)
+    );
+
+    await expect(processStripeWebhookEvent(subscriptionUpdatedEvent('evt_down'))).rejects.toThrow();
+
+    expect(mockedWebhookEventCreate).not.toHaveBeenCalled();
   });
 });

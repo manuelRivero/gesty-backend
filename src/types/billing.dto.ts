@@ -34,12 +34,58 @@ export type BillingQuotaDto = {
   reset_at: string;
 };
 
+export type BillingLifecycleState =
+  | "none"
+  | "active"
+  | "active_canceling"
+  | "past_due"
+  | "expired"
+  | "unknown";
+
+export type BillingActionsDto = {
+  can_checkout: boolean;
+  /** @deprecated usar `can_upgrade`/`can_downgrade`. */
+  can_change_plan: boolean;
+  can_cancel: boolean;
+  can_reactivate: boolean;
+  can_open_portal: boolean;
+  can_upgrade: boolean;
+  can_downgrade: boolean;
+};
+
 export type AdminBillingSubscriptionResponse = {
   requires_subscription: true;
   access_ok: boolean;
+  /** @deprecated usar `billing_state` + `actions`. Se mantiene por compatibilidad mientras gesty-admin migra. */
   cta: "checkout" | "portal" | "none";
+  billing_state: BillingLifecycleState;
+  actions: BillingActionsDto;
   subscription: BillingSubscriptionSnapshotDto | null;
   quota: BillingQuotaDto;
+};
+
+export type AdminBillingCancelResponse = {
+  billing_state: BillingLifecycleState;
+  actions: BillingActionsDto;
+  subscription: BillingSubscriptionSnapshotDto;
+};
+
+export type AdminBillingReactivateResponse = AdminBillingCancelResponse;
+
+export type AdminBillingChangePlanResponse = {
+  billing_state: BillingLifecycleState;
+  actions: BillingActionsDto;
+  subscription: BillingSubscriptionSnapshotDto;
+  /**
+   * `immediate_paid`: upgrade aplicado y la prorrata quedó confirmada como
+   * pagada (evidencia de la factura, no solo el status de la suscripción).
+   * `immediate_payment_pending`: el plan ya cambió, pero el pago de la
+   * prorrata no se pudo confirmar como pagado (pendiente, falló, o no hay
+   * evidencia suficiente) — nunca se devuelve `immediate_paid` sin esa
+   * evidencia. `scheduled`: downgrade programado para el fin del período
+   * vigente, el plan actual no cambió todavía.
+   */
+  billing: "immediate_paid" | "immediate_payment_pending" | "scheduled";
 };
 
 export type AdminBillingPlansResponse = {
