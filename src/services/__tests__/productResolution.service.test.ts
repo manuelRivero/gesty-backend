@@ -31,7 +31,9 @@ vi.mock('../../lib/prisma', () => ({ prisma: fakeDb.prisma }));
 
 import {
   consumeProductResolution,
+  expireOpenProductResolutions,
   extendProductResolutionForPending,
+  getProductResolutions,
   issueProductResolutions,
   selectProductResolution,
   selectProductResolutionFromButton,
@@ -218,5 +220,64 @@ describe('ProductResolution', () => {
         pendingResolutionId: resolution.resolutionId,
       })
     ).resolves.toMatchObject({ ok: true, resolution: { status: 'consumed' } });
+  });
+});
+
+describe('expireOpenProductResolutions', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fakeDb.state.metadata = {};
+    fakeDb.tx.menu_item.findMany.mockImplementation(async ({ where }) =>
+      where.id.in.map((id) => ({ id }))
+    );
+  });
+
+  it('expira (no borra) una resolución resolved/selected/candidate, pero no toca las consumed', async () => {
+    const live = await issue({ status: 'resolved' });
+    const consumed = (await consume({ resolutionId: live.resolutionId })) as {
+      ok: true;
+      resolution: typeof live;
+    };
+    expect(consumed.ok).toBe(true);
+    const other = await issue({ productIds: [OTHER_PRODUCT_ID], status: 'candidate' });
+
+    await expireOpenProductResolutions(CONVERSATION_ID);
+
+    const all = await getProductResolutions(CONVERSATION_ID);
+    const consumedAfter = all.find((r) => r.resolutionId === consumed.resolution.resolutionId);
+    const candidateAfter = all.find((r) => r.resolutionId === other.resolutionId);
+    // La consumed no se toca: sigue con su propio expiresAt (o el que tenía).
+    expect(consumedAfter?.status).toBe('consumed');
+    expect(consumedAfter?.expiresAt).toBe(consumed.resolution.expiresAt);
+    // La no-consumed queda expirada (en el pasado), nunca borrada del array.
+    expect(candidateAfter?.status).toBe('candidate');
+    expect(candidateAfter?.expiresAt).not.toBeNull();
+    expect(Date.parse(candidateAfter!.expiresAt as string)).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('una resolución ya expirada, tras agregar al carrito el producto, deja de autorizar un nuevo add', async () => {
+    const resolution = await issue({ status: 'resolved' });
+    await expireOpenProductResolutions(CONVERSATION_ID);
+
+    await expect(consume({ resolutionId: resolution.resolutionId })).resolves.toMatchObject({
+      ok: false,
+      reason: 'resolution_expired',
+    });
+  });
+
+  it('idempotente: sin resoluciones en la conversación, no lanza y no escribe nada', async () => {
+    await expect(expireOpenProductResolutions(CONVERSATION_ID)).resolves.toBeUndefined();
+    expect(fakeDb.tx.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('idempotente: llamarla dos veces seguidas no cambia el resultado de la segunda vez', async () => {
+    await issue({ status: 'candidate' });
+    await expireOpenProductResolutions(CONVERSATION_ID);
+    const afterFirst = await getProductResolutions(CONVERSATION_ID);
+
+    await expireOpenProductResolutions(CONVERSATION_ID);
+    const afterSecond = await getProductResolutions(CONVERSATION_ID);
+
+    expect(afterSecond).toEqual(afterFirst);
   });
 });

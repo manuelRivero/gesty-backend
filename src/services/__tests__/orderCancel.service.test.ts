@@ -42,6 +42,14 @@ vi.mock('../orderSessionReset.service', () => ({
   clearOrderSessionAfterCancel: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock('../humanIntentReconciliation.service', () => ({
+  closeOrderDomainHumanIntents: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('../productResolution.service', () => ({
+  expireOpenProductResolutions: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock('../storefrontOrderPush.service', () => ({
   scheduleStorefrontOrderPush: vi.fn(),
 }));
@@ -57,6 +65,8 @@ import { emitAdminOrderStatusChanged } from '../../socket/adminSocket';
 import {
   clearOrderSessionAfterCancel,
 } from '../orderSessionReset.service';
+import { closeOrderDomainHumanIntents } from '../humanIntentReconciliation.service';
+import { expireOpenProductResolutions } from '../productResolution.service';
 import {
   patchConversationMetadata,
   omitConversationMetadataKeys,
@@ -86,6 +96,12 @@ describe('buildCancelOrderMessage', () => {
     expect(typeof result).toBe('string');
     expect(result as string).toMatch(/carrito|cancelado/i);
     expect(clearOrderSessionAfterCancel).toHaveBeenCalledWith('conv-1');
+    expect(closeOrderDomainHumanIntents).toHaveBeenCalledWith({
+      conversationId: 'conv-1',
+      reason: 'cancelled',
+      reference: 'draft-1',
+    });
+    expect(expireOpenProductResolutions).toHaveBeenCalledWith('conv-1');
     expect(emitAdminOrderStatusChanged).not.toHaveBeenCalled();
     expect(prisma.orders.update).not.toHaveBeenCalled();
     expect(txUpdate).toHaveBeenCalledWith({
@@ -126,6 +142,12 @@ describe('buildCancelOrderMessage', () => {
       })
     );
     expect(clearOrderSessionAfterCancel).toHaveBeenCalledWith('conv-1');
+    expect(closeOrderDomainHumanIntents).toHaveBeenCalledWith({
+      conversationId: 'conv-1',
+      reason: 'cancelled',
+      reference: ORDER_ID,
+    });
+    expect(expireOpenProductResolutions).toHaveBeenCalledWith('conv-1');
   });
 
   it('ambos sin target → desambigua con botones y no muta', async () => {
@@ -166,6 +188,10 @@ describe('buildCancelOrderMessage', () => {
     );
     expect(prisma.orders.update).not.toHaveBeenCalled();
     expect(emitAdminOrderStatusChanged).not.toHaveBeenCalled();
+    // Todavía no se canceló nada (se está preguntando qué cancelar): ningún
+    // HumanIntent de dominio pedido debe tocarse en esta rama.
+    expect(closeOrderDomainHumanIntents).not.toHaveBeenCalled();
+    expect(expireOpenProductResolutions).not.toHaveBeenCalled();
   });
 
   it('ambos con target order → cancela orden + admin; no wipe (draft vivo)', async () => {
@@ -186,6 +212,10 @@ describe('buildCancelOrderMessage', () => {
       'conv-1',
       expect.arrayContaining(['pending_cancel_disambiguation'])
     );
+    // El PEDIR que sigue armando el draft vivo NO debe tocarse: cancelar
+    // solo la orden ya confirmada no es cancelar el pedido en curso.
+    expect(closeOrderDomainHumanIntents).not.toHaveBeenCalled();
+    expect(expireOpenProductResolutions).not.toHaveBeenCalled();
   });
 
   it('ambos con target draft → solo cancela draft', async () => {
@@ -201,6 +231,11 @@ describe('buildCancelOrderMessage', () => {
     });
 
     expect(clearOrderSessionAfterCancel).toHaveBeenCalled();
+    expect(closeOrderDomainHumanIntents).toHaveBeenCalledWith({
+      conversationId: 'conv-1',
+      reason: 'cancelled',
+      reference: 'draft-1',
+    });
     expect(prisma.orders.update).not.toHaveBeenCalled();
     expect(emitAdminOrderStatusChanged).not.toHaveBeenCalled();
   });
@@ -212,5 +247,74 @@ describe('buildCancelOrderMessage', () => {
     const result = await buildCancelOrderMessage(CONVERSATION, 'biz-1', '+54911');
     expect(result as string).toMatch(/Nada para cancelar/i);
     expect(clearOrderSessionAfterCancel).toHaveBeenCalledWith('conv-1');
+    // Sin draft/orden que cancelar, igual puede haber quedado un PEDIR
+    // obsoleto de una sesión anterior (el bug que originó esta auditoría):
+    // se cierra igual, sin reference porque no hay draft/orden concreto.
+    expect(closeOrderDomainHumanIntents).toHaveBeenCalledWith({
+      conversationId: 'conv-1',
+      reason: 'cancelled',
+      reference: undefined,
+    });
+    expect(expireOpenProductResolutions).toHaveBeenCalledWith('conv-1');
+  });
+
+  it('idempotencia: cancelar dos veces seguidas (sin nada vivo la segunda) no falla ni duplica side-effects raros', async () => {
+    vi.mocked(prisma.orders.findFirst).mockResolvedValue(null as never);
+    vi.mocked(prisma.draft_order.findFirst).mockResolvedValue({ id: 'draft-1' } as never);
+    vi.mocked(prisma.$transaction).mockImplementation((async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({
+        draft_order_item: { deleteMany: vi.fn() },
+        draft_order: { update: vi.fn() },
+      })
+    ) as never);
+
+    await buildCancelOrderMessage(CONVERSATION, 'biz-1', '+54911');
+    expect(closeOrderDomainHumanIntents).toHaveBeenCalledTimes(1);
+
+    // Segunda cancelación sobre la misma conversación: ya no hay draft vivo
+    // (se canceló arriba), así que cae en la rama "nada para cancelar" —
+    // igual debe poder ejecutarse sin lanzar.
+    vi.mocked(prisma.draft_order.findFirst).mockResolvedValue(null as never);
+    await expect(buildCancelOrderMessage(CONVERSATION, 'biz-1', '+54911')).resolves.toBeTruthy();
+    expect(closeOrderDomainHumanIntents).toHaveBeenCalledTimes(2);
+  });
+
+  it('[Fix 1] un fallo al cerrar humanIntentState no bloquea la confirmación de cancelación al cliente', async () => {
+    vi.mocked(prisma.orders.findFirst).mockResolvedValue(null as never);
+    vi.mocked(prisma.draft_order.findFirst).mockResolvedValue({ id: 'draft-1' } as never);
+    vi.mocked(prisma.$transaction).mockImplementation((async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({
+        draft_order_item: { deleteMany: vi.fn() },
+        draft_order: { update: vi.fn() },
+      })
+    ) as never);
+    vi.mocked(closeOrderDomainHumanIntents).mockRejectedValueOnce(
+      new Error('boom: humanIntentState lock timeout')
+    );
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    // El draft YA está cancelado en DB (arriba) para cuando esto corre: la
+    // respuesta de negocio al cliente no puede depender de que este
+    // side-effect haya salido bien.
+    const result = await buildCancelOrderMessage(CONVERSATION, 'biz-1', '+54911');
+
+    expect(result as string).toMatch(/cancelado/i);
+    expect(expireOpenProductResolutions).not.toHaveBeenCalled(); // no sigue tras el fallo, pero tampoco lanza
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('reconcileOrderDomainHumanIntentsAfterCancel'),
+      expect.objectContaining({ conversationId: 'conv-1' }),
+      expect.any(Error)
+    );
+    consoleErrorSpy.mockRestore();
+  });
+
+  it('[Fix 1] un error real de persistencia de la cancelación (no de reconciliación) SÍ se propaga, no se oculta', async () => {
+    vi.mocked(prisma.orders.findFirst).mockResolvedValue(null as never);
+    vi.mocked(prisma.draft_order.findFirst).mockResolvedValue({ id: 'draft-1' } as never);
+    vi.mocked(prisma.$transaction).mockRejectedValueOnce(new Error('DB caída'));
+
+    await expect(buildCancelOrderMessage(CONVERSATION, 'biz-1', '+54911')).rejects.toThrow('DB caída');
+    // Nunca se llegó a la reconciliación: la cancelación real falló primero.
+    expect(closeOrderDomainHumanIntents).not.toHaveBeenCalled();
   });
 });

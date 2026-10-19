@@ -1,9 +1,12 @@
-import type { HumanIntentEffect, HumanIntentRecord } from './humanIntentState.service';
+import type { HumanGoal, HumanIntentEffect, HumanIntentRecord } from './humanIntentState.service';
 import {
   HumanIntentStateError,
   cancelHumanIntent,
   getActiveHumanIntent,
+  getHumanIntentState,
+  notActiveMessage,
   reconcileActiveHumanIntent,
+  resolveHumanIntentById,
 } from './humanIntentState.service';
 import { getPendingOrderLines } from './pendingOrderLines.service';
 import { prisma } from '../lib/prisma';
@@ -167,4 +170,129 @@ export const closeAbandonedPedirIntent = async (params: {
     }
     throw error;
   }
+};
+
+/**
+ * Goals cuyo `request` (p. ej. `request.products` de PEDIR) puede re-derivar
+ * líneas de pedido o volver a condicionar un turno posterior sobre un pedido
+ * que ya terminó (cancelado o completado). Deliberadamente NO incluye
+ * `SEGUIR_PEDIDO` (consultar el estado de una orden YA creada: ese objetivo
+ * sigue vivo después de que la orden se cancela o se completa — es lo que
+ * permite seguir consultando su estado), ni `EXPLORAR`/`RESERVAR`/
+ * `CONSULTAR_NEGOCIO`/`SOPORTE_HUMANO` (otros dominios, ajenos al cierre de
+ * este pedido).
+ */
+const ORDER_DOMAIN_GOALS: readonly HumanGoal[] = [
+  'PEDIR',
+  'GESTIONAR_PEDIDO',
+  'COMPLETAR_COMPRA',
+  'CANCELAR_COMPRA',
+];
+
+export type OrderDomainCloseReason = 'cancelled' | 'completed';
+
+/** Goal cuyo intent, si está ACTIVE en este cierre, se resuelve como logrado (RESOLVED) en vez de abandonado (CANCELLED). */
+const resolvingGoalByReason: Record<OrderDomainCloseReason, HumanGoal> = {
+  cancelled: 'CANCELAR_COMPRA',
+  completed: 'COMPLETAR_COMPRA',
+};
+
+const effectKindByReason: Record<OrderDomainCloseReason, string> = {
+  cancelled: 'order_cancelled',
+  completed: 'order_completed',
+};
+
+/**
+ * Cierra, de forma idempotente, todo HumanIntentRecord ACTIVE/PENDING de
+ * dominio pedido (ver `ORDER_DOMAIN_GOALS`) tras cancelar o completar un
+ * pedido real — para que ninguno sobreviva a disparar una reconstrucción de
+ * líneas (`ensurePendingOrderLinesFromRequest`) ni a un `RESUME_PENDING` sobre
+ * datos obsoletos en un turno posterior.
+ *
+ * El goal que corresponde al motivo del cierre (`CANCELAR_COMPRA` al cancelar,
+ * `COMPLETAR_COMPRA` al completar) se resuelve como logrado
+ * (`resolveActiveHumanIntent`, solo cuando es el ACTIVE actual — ese intent sí
+ * cumplió su objetivo). El resto de los goals de dominio pedido que sigan
+ * abiertos se cancela (`cancelHumanIntent`, abandonados: el pedido al que
+ * apuntaban ya no existe en esa forma).
+ *
+ * Idempotente: una segunda llamada no encuentra ningún record abierto de
+ * dominio pedido y retorna sin mutar nada. Tolera la misma carrera que
+ * `closeAbandonedPedirIntent` (dos llamadas concurrentes leyendo el mismo
+ * ACTIVE antes de que cualquiera escriba): la perdedora se serializa detrás
+ * del lock de `cancelHumanIntent`/`resolveHumanIntentById`, relee el estado
+ * ya terminal (o ya no-ACTIVE) y se trata como "perdió la carrera, releer y
+ * seguir", no como falla.
+ *
+ * Importante (fix TOCTOU): la decisión de qué record cerrar se toma sobre
+ * una lectura (`getHumanIntentState`) tomada FUERA de cualquier lock — entre
+ * esa lectura y la escritura, otro turno concurrente podría haber cambiado
+ * cuál intent está ACTIVE. Por eso la resolución usa `resolveHumanIntentById`
+ * (valida identidad del `intentId` Y que siga ACTIVE, de forma atómica,
+ * dentro del mismo lock de la escritura) en vez de `resolveActiveHumanIntent`
+ * (que resolvería "el que esté ACTIVE ahora", sin confirmar que sea el mismo
+ * record que esta función decidió cerrar — ver humanIntentState.service.ts).
+ * Si la carrera ya movió el estado, `resolveHumanIntentById` lanza
+ * `notActiveMessage`, esta función lo trata como "perdió la carrera" y relee
+ * en la siguiente iteración — nunca resuelve un record distinto del que
+ * observó.
+ *
+ * No toca `pendingOrderLines` ni `productResolutions` — eso lo hace el
+ * caller (ya cubierto por `ORDER_SESSION_OMIT_KEYS` al cancelar, o
+ * explícitamente al completar el checkout).
+ */
+export const closeOrderDomainHumanIntents = async (params: {
+  conversationId: string;
+  reason: OrderDomainCloseReason;
+  /** Id del draft/orden, solo para el `outcome.reference` de auditoría. */
+  reference?: string;
+}): Promise<void> => {
+  const resolvingGoal = resolvingGoalByReason[params.reason];
+  const effect: HumanIntentEffect = {
+    kind: effectKindByReason[params.reason],
+    ...(params.reference ? { reference: params.reference } : {}),
+    occurredAt: new Date().toISOString(),
+    success: true,
+  };
+
+  // Acotado: cada iteración cierra como máximo un record; cerrar el ACTIVE
+  // puede promover un PENDING de dominio pedido a ACTIVE (promoteOldestPending
+  // dentro de cancelHumanIntent), así que se relee tras cada cierre. También
+  // es el límite ante la carrera: cada vuelta perdida por `notActiveMessage`/
+  // `alreadyTerminalMessage` consume una iteración. Si se agota, el estado
+  // puede haber quedado parcialmente cerrado — por eso SÍ lanza (ver abajo):
+  // el caller debe tratarlo igual que cualquier otro fallo de reconciliación
+  // (Fix 1), no asumir silenciosamente que terminó.
+  for (let iterations = 0; iterations < 20; iterations += 1) {
+    const state = await getHumanIntentState(params.conversationId);
+    const target = state.records.find(
+      (record) =>
+        (record.status === 'ACTIVE' || record.status === 'PENDING') &&
+        (ORDER_DOMAIN_GOALS as readonly string[]).includes(record.goal)
+    );
+    if (!target) return;
+
+    try {
+      if (target.status === 'ACTIVE' && target.goal === resolvingGoal) {
+        await resolveHumanIntentById(params.conversationId, target.id, effect);
+      } else {
+        await cancelHumanIntent(params.conversationId, target.id);
+      }
+    } catch (error) {
+      if (
+        error instanceof HumanIntentStateError &&
+        (error.message === alreadyTerminalMessage(target.id) ||
+          error.message === notActiveMessage(target.id))
+      ) {
+        continue; // perdió la carrera: el estado ya avanzó, releer y seguir.
+      }
+      throw error;
+    }
+  }
+
+  throw new Error(
+    `closeOrderDomainHumanIntents: no se pudo vaciar los records de dominio pedido tras 20 iteraciones ` +
+      `(conversationId=${params.conversationId}, reason=${params.reason}) — posible contienda sostenida ` +
+      `o estado residual real; no asumir que quedó cerrado.`
+  );
 };

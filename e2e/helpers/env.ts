@@ -13,9 +13,19 @@ import { loadEnv } from '../../src/config/loadEnv';
  */
 loadEnv();
 
+/**
+ * `resetE2eCustomer` borra mensajes/drafts y reutiliza siempre la misma
+ * conversación (ver graphHarness.ts) — correrlo con NODE_ENV=production
+ * (que haría `loadEnv()` cargar `.env.production`, la base real) sería
+ * destructivo contra un cliente real. Bloqueo duro, no solo un chequeo
+ * informativo: con NODE_ENV=production el E2E nunca se habilita.
+ */
+const isProductionEnv = (): boolean => process.env.NODE_ENV === 'production';
+
 /** Variables mínimas para correr e2e contra BD + LLM reales. Requiere opt-in `E2E_RUN=1`. */
 export const isE2eEnabled = (): boolean =>
   (process.env.E2E_RUN === 'true' || process.env.E2E_RUN === '1') &&
+  !isProductionEnv() &&
   Boolean(process.env.PHONE_NUMBER_ID?.trim()) &&
   Boolean(process.env.OPENAI_API_KEY?.trim()) &&
   Boolean(process.env.DATABASE_URL?.trim());
@@ -36,6 +46,9 @@ export const applyE2eEnv = (overrides?: Record<string, string>): void => {
 export const e2eSkipReason = (): string | null => {
   if (process.env.E2E_RUN !== 'true' && process.env.E2E_RUN !== '1') {
     return 'E2E_RUN=1 no configurado (opt-in explícito)';
+  }
+  if (isProductionEnv()) {
+    return 'NODE_ENV=production: el E2E no corre contra la base de producción, aunque E2E_RUN=1';
   }
   if (!process.env.DATABASE_URL?.trim()) return 'DATABASE_URL no configurado';
   if (!process.env.PHONE_NUMBER_ID?.trim()) return 'PHONE_NUMBER_ID no configurado';

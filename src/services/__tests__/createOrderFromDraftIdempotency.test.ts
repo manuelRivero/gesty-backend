@@ -26,11 +26,13 @@ vi.mock('../../lib/prisma', () => {
     },
     conversation_state: {
       findUnique: vi.fn(),
+      upsert: vi.fn().mockResolvedValue({}),
     },
     orders: {
       create: vi.fn(),
     },
     $executeRaw: vi.fn().mockResolvedValue(undefined),
+    $queryRaw: vi.fn().mockResolvedValue([]),
   };
   prismaMock.$transaction = vi.fn((cb: (tx: unknown) => unknown) => cb(prismaMock));
   return { prisma: prismaMock };
@@ -54,12 +56,26 @@ vi.mock('../../repositories/conversationState.repository', () => ({
   omitConversationMetadataKeys: vi.fn(),
 }));
 
+const { closeOrderDomainHumanIntentsMock } = vi.hoisted(() => ({
+  closeOrderDomainHumanIntentsMock: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('../humanIntentReconciliation.service', () => ({
+  closeOrderDomainHumanIntents: closeOrderDomainHumanIntentsMock,
+}));
+
+// `omitConversationMetadataKeys` también se importa desde el barrel
+// `../repositories` (así lo hace `pendingOrderLines.service.ts`, usado por
+// `reconcileOrderDomainStateAfterCheckout`) — no es el mismo mock que el de
+// `conversationState.repository` arriba, hay que declararlo acá también.
 vi.mock('../../repositories', () => ({
   closeConversation: vi.fn(),
   createOrGetOpenConversation: vi.fn(),
   findBusinessByPhoneNumberId: vi.fn(),
   findOrCreateConversationState: vi.fn(),
   findOrCreateCustomer: vi.fn(),
+  omitConversationMetadataKeys: vi.fn(),
+  patchConversationMetadata: vi.fn(),
+  mutateConversationMetadata: vi.fn(),
 }));
 
 vi.mock('../promotions/resolveCartPromotions', () => ({
@@ -82,7 +98,12 @@ vi.mock('../paymentAdjustment.service', () => ({
 }));
 
 import { prisma } from '../../lib/prisma';
+import { omitConversationMetadataKeys } from '../../repositories';
 import { createOrderFromDraft } from '../checkout.service';
+
+const mockedOmitConversationMetadataKeys = omitConversationMetadataKeys as unknown as ReturnType<
+  typeof vi.fn
+>;
 
 const mockedDraftFindFirst = prisma.draft_order.findFirst as unknown as ReturnType<typeof vi.fn>;
 const mockedDraftUpdateMany = prisma.draft_order.updateMany as unknown as ReturnType<typeof vi.fn>;
@@ -140,7 +161,10 @@ describe('createOrderFromDraft — lock e idempotencia', () => {
 
     await createOrderFromDraft(BUSINESS, CONVERSATION, CUSTOMER);
 
-    expect(mockedTransaction).toHaveBeenCalledTimes(1);
+    // 1 transacción para crear la orden + 1 propia de
+    // `expireOpenProductResolutions` (dentro de `reconcileOrderDomainStateAfterCheckout`,
+    // que corre después de que la primera ya commiteó).
+    expect(mockedTransaction).toHaveBeenCalledTimes(2);
     expect(mockedExecuteRaw).toHaveBeenCalledTimes(1);
     const lockCallOrder = mockedExecuteRaw.mock.invocationCallOrder[0];
     const findFirstCallOrder = mockedDraftFindFirst.mock.invocationCallOrder[0];
@@ -198,9 +222,59 @@ describe('createOrderFromDraft — lock e idempotencia', () => {
     await createOrderFromDraft(BUSINESS, CONVERSATION, CUSTOMER, {}, externalTx);
 
     // No debe abrir su propia transacción: el caller (handleApprovedPayment)
-    // ya está dentro de una.
+    // ya está dentro de una. Con un `tx` externo todavía sin commitear,
+    // cerrar el estado conversacional acá (`reconcileOrderDomainStateAfterCheckout`)
+    // sería inseguro (ver comentario en checkout.service.ts) — es
+    // responsabilidad del caller llamarlo una vez que SU transacción
+    // resuelva. Si hubiera corrido, `expireOpenProductResolutions` habría
+    // abierto su propia `prisma.$transaction` (el mismo mock) — por eso
+    // "no se llamó nunca" alcanza para probar las dos cosas a la vez.
     expect(mockedTransaction).not.toHaveBeenCalled();
     expect(mockedOrdersCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('con transacción propia (sin `tx` externo), cierra el estado conversacional de armado tras commitear', async () => {
+    mockedDraftFindFirst.mockResolvedValue(freshDraft());
+
+    await createOrderFromDraft(BUSINESS, CONVERSATION, CUSTOMER);
+
+    // `expireOpenProductResolutions` corrió en una segunda transacción,
+    // después de que la de creación de la orden ya resolvió.
+    expect(mockedTransaction).toHaveBeenCalledTimes(2);
+    // `clearPendingOrderLines` (dentro de `reconcileOrderDomainStateAfterCheckout`)
+    // corrió sobre la conversación correcta.
+    expect(mockedOmitConversationMetadataKeys).toHaveBeenCalledWith('conv-1', ['pendingOrderLines']);
+  });
+
+  it('[Fix 1] un fallo al cerrar humanIntentState tras el checkout NO convierte el resultado en error: la orden ya creada se devuelve igual', async () => {
+    mockedDraftFindFirst.mockResolvedValue(freshDraft());
+    closeOrderDomainHumanIntentsMock.mockRejectedValueOnce(new Error('boom: humanIntentState lock timeout'));
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await createOrderFromDraft(BUSINESS, CONVERSATION, CUSTOMER);
+
+    // La orden se creó y se devuelve normalmente — el fallo de reconciliación
+    // (un side-effect posterior al commit) nunca debió convertirse en un
+    // error genérico para el caller de negocio.
+    expect(result.orderId).toBe('order-1');
+    expect(mockedOrdersCreate).toHaveBeenCalledTimes(1);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('reconcileOrderDomainStateAfterCheckout'),
+      expect.objectContaining({ conversationId: 'conv-1', orderId: 'order-1' }),
+      expect.any(Error)
+    );
+    consoleErrorSpy.mockRestore();
+  });
+
+  it('[Fix 1] un error real de creación de la orden (no de reconciliación) SÍ se propaga', async () => {
+    mockedDraftFindFirst.mockResolvedValue(freshDraft());
+    mockedOrdersCreate.mockRejectedValueOnce(new Error('constraint violation'));
+
+    await expect(createOrderFromDraft(BUSINESS, CONVERSATION, CUSTOMER)).rejects.toThrow(
+      'constraint violation'
+    );
+    // Nunca se llegó a reconciliar: la creación de la orden falló primero.
+    expect(closeOrderDomainHumanIntentsMock).not.toHaveBeenCalled();
   });
 
   it('integridad: cantidades, notas y variación de cada línea llegan intactas a `order_item`, y total/payment_method a la orden', async () => {

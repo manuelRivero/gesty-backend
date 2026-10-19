@@ -19,6 +19,7 @@ import {
   disconnectPrisma,
   hasHandlerResponse,
   loadMainGraph,
+  purgeTestCustomerHistory,
   resetE2eCustomer,
   runGraphTurn,
   type MainGraph,
@@ -51,6 +52,15 @@ describe.sequential.skipIf(!isE2eEnabled())('agent history (e2e)', () => {
     graph = await loadMainGraph();
     const reset = await resetE2eCustomer();
     conversationId = reset.conversationId;
+    // `resetE2eCustomer` ya no purga el historial por defecto (ver
+    // `resetTestCustomerOperationalState`/`purgeTestCustomerHistory` en
+    // graphHarness.ts). Este archivo SÍ depende de arrancar sin mensajes
+    // previos: las aserciones de abajo buscan texto literal ("ceviche",
+    // "tiradito") dentro de la ventana de `buildAgentHistoryMessages`
+    // (últimos ~12 mensajes) y, a diferencia del resto de `e2e/`, no alcanza
+    // con que el estado OPERATIVO esté limpio — el propio contenido del
+    // historial es lo que se está probando.
+    await purgeTestCustomerHistory(conversationId);
   }, 60_000);
 
   afterAll(async () => {
@@ -60,6 +70,10 @@ describe.sequential.skipIf(!isE2eEnabled())('agent history (e2e)', () => {
   it('reconstruye el turno previo del cliente y excluye el turno actual', async () => {
     const reset = await resetE2eCustomer();
     conversationId = reset.conversationId;
+    // Repetible: cada corrida de este test necesita arrancar con cero
+    // mensajes, sin importar cuántas veces se haya corrido este archivo
+    // antes contra la misma conversación compartida.
+    await purgeTestCustomerHistory(conversationId);
 
     // Nota: bajo e2e (`DRY_RUN_WHATSAPP_SEND=true`) `persistAIMessageNode` se
     // salta, así que la respuesta del bot NO queda en BD; el historial sólo

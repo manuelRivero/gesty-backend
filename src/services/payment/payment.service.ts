@@ -4,7 +4,11 @@ import { prisma } from '../../lib/prisma';
 import { env } from '../../config/env';
 import { getActiveProvider } from './paymentProvider.repository';
 import { createMpPreference } from './mercadoPago.service';
-import { acquireOrderCreateLock, createOrderFromDraft } from '../checkout.service';
+import {
+  acquireOrderCreateLock,
+  createOrderFromDraft,
+  reconcileOrderDomainStateAfterCheckout,
+} from '../checkout.service';
 import { emitAdminOrderPaymentStatusChanged } from '../../socket/adminSocket';
 import { sendTextMessageNoCtx, sendImageMessageNoCtx } from './messageHelpers';
 import { formatBotUserMessage } from '../productQuery/utils';
@@ -550,6 +554,26 @@ export const handleApprovedPayment = async (
   // duplicado/concurrente) — no hay nada nuevo para notificar.
   if (!result) return;
   const { orderId, total, qrDataUrl } = result;
+
+  // La transacción que creó la orden ya committeó (es el `result` de arriba):
+  // recién acá es seguro cerrar el estado conversacional de armado (mismo
+  // motivo que en el `!tx` de `createOrderFromDraft` — ver su comentario).
+  // `reconcileOrderDomainStateAfterCheckout` ya nunca propaga por sí misma
+  // (atrapa internamente en checkout.service.ts) — este try/catch es
+  // defensa en profundidad para este call site puntual, el de mayor
+  // consecuencia (pago ya aprobado, dinero real cobrado): si algún día esa
+  // garantía interna se rompe, la notificación de "pago recibido" + QR de
+  // abajo NUNCA debe quedar sin enviarse por esto.
+  try {
+    await reconcileOrderDomainStateAfterCheckout(conversation.id, orderId);
+  } catch (error) {
+    console.error(
+      '[handleApprovedPayment] fallo al cerrar estado operativo tras aprobar el pago (la orden y el ' +
+        'pago ya quedaron persistidos; la notificación al cliente sigue su curso igual)',
+      { conversationId: conversation.id, orderId, stage: 'payment_approved' },
+      error
+    );
+  }
 
   // Fire-and-forget: nunca debe bloquear ni romper la confirmación de pago online.
   void notifyAmbassadorSaleIfNeeded(orderId).catch((err) => {

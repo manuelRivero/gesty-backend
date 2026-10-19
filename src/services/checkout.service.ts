@@ -41,6 +41,9 @@ import {
   resolveCartPromotions,
 } from './promotions/resolveCartPromotions';
 import type { PromotionEvaluation } from './promotions/promotionEvaluation.types';
+import { closeOrderDomainHumanIntents } from './humanIntentReconciliation.service';
+import { clearPendingOrderLines } from './pendingOrderLines.service';
+import { expireOpenProductResolutions } from './productResolution.service';
 
 export interface CreateOrderFromDraftParams {
   paymentStatus?: OrderPaymentStatus;
@@ -97,6 +100,51 @@ export const acquireOrderCreateLock = (
   tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${orderCreateLockKey(businessId, customerPhone)}))`;
 
 /**
+ * Cierra el estado conversacional de *armado* de un pedido que ya se
+ * confirmó — nunca el pedido de negocio en sí (eso ya quedó persistido en
+ * `orders` antes de llamar esto). Se ejecuta solo DESPUÉS de que la creación
+ * de la orden quedó committeada (ver los dos call sites: dentro del `!tx` de
+ * `createOrderFromDraft`, y en `payment.service.ts` tras resolver su propia
+ * transacción externa) — si corriera dentro de una transacción todavía
+ * abierta que después hace rollback, dejaría un HumanIntent resuelto como
+ * "completado" para un pedido que nunca llegó a existir.
+ *
+ * Mismo motivo que la cancelación (ver `order.service.ts`): ningún
+ * HumanIntentRecord/`pendingOrderLines`/`ProductResolution` de dominio
+ * pedido debe sobrevivir para seguir ofreciendo agregar al draft que ya se
+ * convirtió en orden. Idempotente en los tres (ver cada función).
+ *
+ * NUNCA propaga: para cuando esto corre, la orden (y, en el camino de pago
+ * online, el `payment_intent` aprobado) ya están committeados — ambos
+ * callers todavía tienen que notificar al cliente (confirmación, QR, "pago
+ * recibido") después de llamar esto, y esa notificación no puede depender de
+ * que la limpieza de estado conversacional haya salido bien. Si falla, el
+ * pedido/pago siguen siendo válidos; solo queda sin cerrar `humanIntentState`/
+ * `pendingOrderLines`/`productResolutions` de esa sesión de armado — logueado
+ * para diagnóstico. No existe hoy un mecanismo que reintente esto
+ * automáticamente (ver informe del fix); es un gap pendiente, no resuelto por
+ * este catch.
+ */
+export const reconcileOrderDomainStateAfterCheckout = async (
+  conversationId: string,
+  orderId: string
+): Promise<void> => {
+  try {
+    await closeOrderDomainHumanIntents({ conversationId, reason: 'completed', reference: orderId });
+    await clearPendingOrderLines(conversationId);
+    await expireOpenProductResolutions(conversationId);
+  } catch (error) {
+    console.error(
+      '[reconcileOrderDomainStateAfterCheckout] fallo al cerrar estado operativo tras completar el ' +
+        'checkout (la orden ya quedó persistida; esto solo afecta la limpieza de humanIntentState/' +
+        'pendingOrderLines/productResolutions — sin reintento automático hoy)',
+      { conversationId, orderId, stage: 'checkout_completed' },
+      error
+    );
+  }
+};
+
+/**
  * Materializa un `draft_order` activo en una `orders` real.
  * Reutilizado tanto por el flujo efectivo (checkout inmediato) como por el webhook
  * de Mercado Pago (pago online confirmado).
@@ -114,11 +162,20 @@ export const createOrderFromDraft = async (
   tx?: Prisma.TransactionClient
 ): Promise<{ orderId: string; total: number; pricing: PricingResult; qrDataUrl: string }> => {
   if (!tx) {
-    return prisma.$transaction(async (innerTx) => {
+    const result = await prisma.$transaction(async (innerTx) => {
       await acquireOrderCreateLock(innerTx, business.id, customer.phone_number);
       return createOrderFromDraftLocked(business, conversation, customer, params, innerTx);
     });
+    // La transacción ya committeó: recién acá es seguro cerrar el estado
+    // conversacional de armado (ver `reconcileOrderDomainStateAfterCheckout`).
+    await reconcileOrderDomainStateAfterCheckout(conversation.id, result.orderId);
+    return result;
   }
+  // Se pasó un `tx` externo todavía abierto (camino de pago online): el
+  // caller es responsable de llamar `reconcileOrderDomainStateAfterCheckout`
+  // una vez que SU transacción resuelva (ver `payment.service.ts`) — hacerlo
+  // acá, antes de ese commit, dejaría el HumanIntent resuelto como
+  // "completado" aunque el pedido termine no persistiéndose por un rollback.
   return createOrderFromDraftLocked(business, conversation, customer, params, tx);
 };
 

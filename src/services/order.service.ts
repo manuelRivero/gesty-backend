@@ -26,6 +26,46 @@ import { clearOrderSessionAfterCancel } from './orderSessionReset.service';
 import { DRAFT_CHECKOUT_COLLECTED_FACTS_RESET } from './checkout/draftCheckoutFacts';
 import { shortOrderRef } from './orderStatusNotification.service';
 import { buildPendingTipablesPatch } from './pendingTipables.service';
+import { closeOrderDomainHumanIntents } from './humanIntentReconciliation.service';
+import { expireOpenProductResolutions } from './productResolution.service';
+
+/**
+ * Tras un cancel real (o un wipe preventivo sin nada vivo que cancelar):
+ * cierra cualquier HumanIntent de dominio pedido que haya quedado
+ * ACTIVE/PENDING y expira las ProductResolution no consumidas, para que
+ * ninguna sobreviva a reconstruir líneas o autorizar un add en un turno
+ * posterior (ver auditoría "ciclo de vida y contaminación de estado
+ * operativo conversacional"). `clearOrderSessionAfterCancel` ya omite
+ * `pendingOrderLines` vía `ORDER_SESSION_OMIT_KEYS` — no se duplica acá.
+ *
+ * La cancelación del draft/orden (DB) y `clearOrderSessionAfterCancel` ya
+ * corrieron y ya respondieron por la operación de negocio — esto es un
+ * side-effect de limpieza posterior, no parte de esa confirmación. Por eso
+ * nunca propaga: un fallo acá (p. ej. una carrera agotando el loop interno,
+ * o la BD momentáneamente no disponible) no debe impedir que el caller
+ * (`buildCancelOrderMessage`) le confirme la cancelación al cliente — el
+ * pedido/draft YA está cancelado en DB sea como sea. No hay hoy ningún
+ * mecanismo que reintente esto automáticamente si falla: queda logueado para
+ * diagnóstico, pero la recuperación automática es un gap pendiente, no algo
+ * que este catch resuelva (ver informe de este fix).
+ */
+async function reconcileOrderDomainHumanIntentsAfterCancel(
+  conversationId: string,
+  reference?: string
+): Promise<void> {
+  try {
+    await closeOrderDomainHumanIntents({ conversationId, reason: 'cancelled', reference });
+    await expireOpenProductResolutions(conversationId);
+  } catch (error) {
+    console.error(
+      '[reconcileOrderDomainHumanIntentsAfterCancel] fallo al cerrar estado operativo tras cancelar ' +
+        '(el draft/orden ya quedó cancelado en DB; esto solo afecta la limpieza de humanIntentState/' +
+        'productResolutions — sin reintento automático hoy)',
+      { conversationId, reference, stage: 'cancel' },
+      error
+    );
+  }
+}
 
 export const handleOrderSearchPageFromWebhook = async (
   payload: WhatsAppWebhookPayload,
@@ -238,6 +278,7 @@ export const buildCancelOrderMessage = async (
     // puede arrastrar mode PRODUCT_FOCUS, shortlist, party size, cola de líneas
     // o Ledger de un pedido anterior. Wipe igual (no hay carrito que proteger).
     await clearOrderSessionAfterCancel(conversation.id);
+    await reconcileOrderDomainHumanIntentsAfterCancel(conversation.id);
     const errorText = formatBotUserMessage(
       'Nada para cancelar',
       'ℹ️',
@@ -306,6 +347,10 @@ export const buildCancelOrderMessage = async (
   const draftStillActive = Boolean(draftOrder && !cancelDraft);
   if (!draftStillActive && (cancelDraft || cancelOrder)) {
     await clearOrderSessionAfterCancel(conversation.id);
+    await reconcileOrderDomainHumanIntentsAfterCancel(
+      conversation.id,
+      draftOrder?.id ?? pendingOrder?.id
+    );
   } else {
     await omitConversationMetadataKeys(conversation.id, ['pending_cancel_disambiguation']);
   }

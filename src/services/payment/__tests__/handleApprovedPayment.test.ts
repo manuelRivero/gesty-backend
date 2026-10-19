@@ -30,6 +30,7 @@ vi.mock('../../../lib/prisma', () => {
 vi.mock('../../checkout.service', () => ({
   createOrderFromDraft: vi.fn(),
   acquireOrderCreateLock: vi.fn().mockResolvedValue(undefined),
+  reconcileOrderDomainStateAfterCheckout: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../../../socket/adminSocket', () => ({
@@ -50,7 +51,11 @@ vi.mock('../messageHelpers', () => ({
 }));
 
 import { prisma } from '../../../lib/prisma';
-import { acquireOrderCreateLock, createOrderFromDraft } from '../../checkout.service';
+import {
+  acquireOrderCreateLock,
+  createOrderFromDraft,
+  reconcileOrderDomainStateAfterCheckout,
+} from '../../checkout.service';
 import { sendTextMessageNoCtx } from '../messageHelpers';
 import { handleApprovedPayment } from '../payment.service';
 
@@ -61,6 +66,7 @@ const mockedConversationFindFirst = prisma.conversation.findFirst as unknown as 
 const mockedTransaction = prisma.$transaction as unknown as ReturnType<typeof vi.fn>;
 const mockedAcquireLock = acquireOrderCreateLock as unknown as ReturnType<typeof vi.fn>;
 const mockedCreateOrderFromDraft = createOrderFromDraft as unknown as ReturnType<typeof vi.fn>;
+const mockedReconcile = reconcileOrderDomainStateAfterCheckout as unknown as ReturnType<typeof vi.fn>;
 const mockedSendText = sendTextMessageNoCtx as unknown as ReturnType<typeof vi.fn>;
 
 const BUSINESS = { id: 'biz-1', whatsapp_phone_id: 'phone-1', currency_code: 'ARS' };
@@ -110,6 +116,34 @@ describe('handleApprovedPayment — atomicidad e idempotencia', () => {
       })
     );
     expect(mockedSendText).toHaveBeenCalled();
+    // Cierra el estado conversacional de armado (humanIntentState/
+    // pendingOrderLines/productResolutions) recién después de que la
+    // transacción que creó la orden ya resolvió — nunca antes.
+    expect(mockedReconcile).toHaveBeenCalledWith('conv-1', 'order-1');
+  });
+
+  it('[Fix 1] un fallo al reconciliar el estado conversacional no impide notificar el pago aprobado ni enviar el QR', async () => {
+    mockedFindUniqueIntent
+      .mockResolvedValueOnce(INTENT_PENDING)
+      .mockResolvedValueOnce({ ...INTENT_PENDING });
+    mockedReconcile.mockRejectedValueOnce(new Error('boom: humanIntentState lock timeout'));
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await handleApprovedPayment('intent-1', 'mp-payment-1', {} as never);
+
+    // El pago y la orden ya están aprobados/creados (mockedUpdateIntent arriba
+    // en el mismo `tx`) — la notificación al cliente no puede depender de que
+    // la reconciliación haya salido bien.
+    expect(mockedUpdateIntent).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'approved' }) })
+    );
+    expect(mockedSendText).toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('handleApprovedPayment'),
+      expect.objectContaining({ conversationId: 'conv-1', orderId: 'order-1' }),
+      expect.any(Error)
+    );
+    consoleErrorSpy.mockRestore();
   });
 
   it('webhook repetido: si bajo el lock el intent ya está aprobado, no crea otra orden ni reenvía notificaciones', async () => {
@@ -122,6 +156,9 @@ describe('handleApprovedPayment — atomicidad e idempotencia', () => {
     expect(mockedCreateOrderFromDraft).not.toHaveBeenCalled();
     expect(mockedUpdateIntent).not.toHaveBeenCalled();
     expect(mockedSendText).not.toHaveBeenCalled();
+    // Idempotente: una ejecución que perdió la carrera no tiene nada propio
+    // que cerrar (la que ganó ya lo hizo).
+    expect(mockedReconcile).not.toHaveBeenCalled();
   });
 
   it('corta temprano (antes del lock) si la lectura inicial ya muestra el intent aprobado', async () => {

@@ -4,7 +4,7 @@ import type {
   HandlerResult,
   WhatsAppWebhookPayload,
 } from '../../src/controllers/webhook/types';
-import { E2E_CUSTOMER_PHONE, E2E_PHONE_NUMBER_ID } from './env';
+import { E2E_CUSTOMER_PHONE, E2E_PHONE_NUMBER_ID, isE2eEnabled } from './env';
 
 let msgCounter = 0;
 
@@ -201,44 +201,203 @@ export type ResetE2eCustomerOptions = {
   confirmClosedOrder?: boolean;
 };
 
-export const resetE2eCustomer = async (
-  options?: ResetE2eCustomerOptions
-): Promise<{ businessId: string; conversationId: string }> => {
-  const confirmClosedOrder = options?.confirmClosedOrder !== false;
-  const { prisma } = await import('../../src/lib/prisma');
+/** Diagnóstico de lo que había en el cliente de test ANTES de resetear — ver `resetTestCustomerOperationalState`. */
+export type TestCustomerManifest = {
+  businessId: string;
+  customerId: string;
+  customerPhone: string;
+  conversationId: string;
+  messageCount: number;
+  activeDrafts: Array<{ id: string; itemCount: number }>;
+  /** Nunca se tocan por el reset — solo se reportan. */
+  confirmedOrders: Array<{ id: string; status: string }>;
+  openHumanIntents: Array<{ id: string; goal: string; status: string }>;
+  pendingOrderLinesCount: number;
+  openProductResolutions: number;
+};
+
+/**
+ * Claves de metadata que `resetTestCustomerOperationalState` omite siempre.
+ * A diferencia de `closeOrderDomainHumanIntents` (producción, acotado al
+ * dominio pedido para preservar reserva/onboarding en curso), un reset de
+ * TEST quiere partir de cero en TODOS los dominios — por eso incluye
+ * `humanIntentState` entero y las claves de reserva/onboarding, que en
+ * producción se preservan a propósito.
+ */
+const E2E_OMIT_KEYS = [
+  'peopleCountResume',
+  'lastCtaPayload',
+  'lastCtaShownAt',
+  'lastCtaProductId',
+  'lastOffer',
+  'pendingProductSelection',
+  'candidateProductIds',
+  'reservation_agent_active',
+  'reservation_draft',
+  'onboarding_step',
+  'onboarding_started_at',
+  'temp_address',
+  'awaiting_address',
+  'pending_closed_add_item',
+  'pending_switch_to_reservation',
+  'pending_cancel_disambiguation',
+  'pendingQuestion',
+  'pendingComplementSelection',
+  'pendingOrderSelection',
+  'pendingOrderMessage',
+  'pendingOrderCandidateIds',
+  'pendingPartySizeOrder',
+  'pendingTipables',
+  'pendingOrderLines',
+  'pendingAction',
+  'pendingItemId',
+  'pendingItemName',
+  'pendingActionAt',
+  'pendingProductQueryQuantity',
+  'pending_address_action',
+  'pending_address_text',
+  'pending_address_lat',
+  'pending_address_lng',
+  'pending_address_zone_id',
+  'pendingVariation',
+  'pendingAddQuantity',
+  'pendingItemNote',
+  // Esta cola no se auto-cierra sola: sin esto, un HumanIntentRecord PEDIR
+  // (con su `request.products`, blockers y revision) de una corrida E2E
+  // anterior — o de una conversación real sobre el mismo teléfono de prueba
+  // compartido — sigue ACTIVE/PENDING y se materializa de nuevo vía
+  // `ensurePendingOrderLinesFromRequest` en el primer turno del caso
+  // siguiente, con datos que no vienen de ese turno (ver auditoría
+  // "contaminación de historial y estado conversacional").
+  'humanIntentState',
+] as const;
+
+/**
+ * Resuelve negocio/cliente/conversación del cliente E2E — mismo camino que
+ * usa el webhook real (ver auditoría Fase 5): no hay un negocio/cliente de
+ * test aislados a nivel de datos, por eso el guard de `isE2eEnabled()` en
+ * `resetTestCustomerOperationalState` no es opcional.
+ */
+const resolveE2eTarget = async () => {
   const { findBusinessByPhoneNumberId } = await import('../../src/repositories/business.repository');
-  const { patchConversationMetadata, omitConversationMetadataKeys } = await import(
-    '../../src/repositories/conversationState.repository'
-  );
   const { updateCustomerName } = await import('../../src/repositories');
   const { findOrCreateCustomer } = await import('../../src/repositories/customer.repository');
   const { createOrGetOpenConversation } = await import('../../src/repositories/conversation.repository');
-  const { findOrCreateConversationState, updateConversationState } = await import(
-    '../../src/repositories/conversationState.repository'
-  );
-  const { clearCheckoutSession } = await import('../../src/graph/nodes/checkout/index');
 
   const business = await findBusinessByPhoneNumberId(E2E_PHONE_NUMBER_ID);
   if (!business) {
     throw new Error(`Negocio no encontrado para phone_number_id=${E2E_PHONE_NUMBER_ID}`);
   }
-
-  await pinE2eBusinessConfig(business.id);
-
   const customer = await findOrCreateCustomer(business.id, E2E_CUSTOMER_PHONE);
   await updateCustomerName(customer.id, 'E2E Test');
-
   const conversation = await createOrGetOpenConversation(business.id, customer.id);
-  const conversationId = conversation.id;
+  return { business, customer, conversationId: conversation.id };
+};
 
+const buildTestCustomerManifest = async (params: {
+  businessId: string;
+  customerId: string;
+  customerPhone: string;
+  conversationId: string;
+}): Promise<TestCustomerManifest> => {
+  const { prisma } = await import('../../src/lib/prisma');
+  const { getHumanIntentState } = await import('../../src/services/humanIntentState.service');
+  const { getPendingOrderLines } = await import('../../src/services/pendingOrderLines.service');
+  const { getProductResolutions } = await import('../../src/services/productResolution.service');
+
+  const [drafts, orders, conversationState, messageCount, humanIntentState, resolutions] =
+    await Promise.all([
+      prisma.draft_order.findMany({
+        where: { business_id: params.businessId, customer_phone: params.customerPhone, status: 'active' },
+        include: { draft_order_item: { select: { id: true } } },
+      }),
+      prisma.orders.findMany({
+        where: { conversation_id: params.conversationId },
+        select: { id: true, status: true },
+      }),
+      prisma.conversation_state.findUnique({
+        where: { conversation_id: params.conversationId },
+        select: { metadata: true },
+      }),
+      prisma.conversation_message.count({ where: { conversation_id: params.conversationId } }),
+      getHumanIntentState(params.conversationId),
+      getProductResolutions(params.conversationId),
+    ]);
+
+  return {
+    businessId: params.businessId,
+    customerId: params.customerId,
+    customerPhone: params.customerPhone,
+    conversationId: params.conversationId,
+    messageCount,
+    activeDrafts: drafts.map((d) => ({ id: d.id, itemCount: d.draft_order_item.length })),
+    confirmedOrders: orders.map((o) => ({ id: o.id, status: o.status })),
+    openHumanIntents: humanIntentState.records
+      .filter((r) => r.status === 'ACTIVE' || r.status === 'PENDING')
+      .map((r) => ({ id: r.id, goal: r.goal, status: r.status })),
+    pendingOrderLinesCount: getPendingOrderLines(conversationState?.metadata)?.lines.length ?? 0,
+    openProductResolutions: resolutions.filter((r) => r.status !== 'consumed').length,
+  };
+};
+
+/**
+ * Prepara el cliente de test para un escenario nuevo: estado operativo
+ * coherente y verificado, SIN tocar historial de mensajes ni pedidos ya
+ * confirmados (ver `purgeTestCustomerHistory` para lo primero; los pedidos
+ * confirmados nunca se tocan desde acá — solo se reportan en el manifiesto).
+ *
+ * Guard explícito: antes de este cambio, `resetE2eCustomer` no verificaba
+ * `isE2eEnabled()` por sí mismo — dependía de que el test que lo llama use
+ * `describe.skipIf(!isE2eEnabled())`. Cualquier código que lo invocara
+ * directamente (un script, un test que olvide ese skip) corría destructivo
+ * sin ninguna protección. Acá se firma la protección en la función misma.
+ */
+export const resetTestCustomerOperationalState = async (
+  options?: ResetE2eCustomerOptions
+): Promise<{ businessId: string; conversationId: string; manifest: TestCustomerManifest }> => {
+  if (!isE2eEnabled()) {
+    throw new Error(
+      'resetTestCustomerOperationalState: E2E no habilitado (isE2eEnabled()===false) — ' +
+        'requiere E2E_RUN=1, NODE_ENV!=production y DATABASE_URL/PHONE_NUMBER_ID/OPENAI_API_KEY configurados. ' +
+        'Bloqueado antes de modificar nada.'
+    );
+  }
+
+  const confirmClosedOrder = options?.confirmClosedOrder !== false;
+  const { prisma } = await import('../../src/lib/prisma');
+  const { patchConversationMetadata, omitConversationMetadataKeys, updateConversationState } =
+    await import('../../src/repositories/conversationState.repository');
+  const { findOrCreateConversationState } = await import(
+    '../../src/repositories/conversationState.repository'
+  );
+  const { clearCheckoutSession } = await import('../../src/graph/nodes/checkout/index');
+  const { expireOpenProductResolutions } = await import('../../src/services/productResolution.service');
+  const { getHumanIntentState } = await import('../../src/services/humanIntentState.service');
+  const { getPendingOrderLines } = await import('../../src/services/pendingOrderLines.service');
+  const { getProductResolutions } = await import('../../src/services/productResolution.service');
+
+  const { business, customer, conversationId } = await resolveE2eTarget();
+
+  // Identidad esperada, no solo "algún negocio/cliente que haya resuelto el
+  // import": una discrepancia acá (p. ej. alguien cambiando `WHATSAPP_TEST_TO`
+  // a mitad de una corrida) debe fallar ANTES de tocar nada.
+  if (customer.phone_number !== E2E_CUSTOMER_PHONE) {
+    throw new Error(
+      `resetTestCustomerOperationalState: el cliente resuelto (${customer.phone_number}) no coincide ` +
+        `con E2E_CUSTOMER_PHONE (${E2E_CUSTOMER_PHONE}) — abortado antes de modificar nada.`
+    );
+  }
+
+  const manifest = await buildTestCustomerManifest({
+    businessId: business.id,
+    customerId: customer.id,
+    customerPhone: customer.phone_number,
+    conversationId,
+  });
+
+  await pinE2eBusinessConfig(business.id);
   await clearCheckoutSession(conversationId);
   await findOrCreateConversationState(conversationId);
-
-  // Aísla el historial: runs previos (u otros entornos) dejan filas 'ai'/'user'
-  // en la misma conversación abierta y rompen aserciones de agent-history.
-  await prisma.conversation_message.deleteMany({
-    where: { conversation_id: conversationId },
-  });
 
   // Happy path: si el local está cerrado pero opera (`orders_when_closed`),
   // el gate de ADD_ITEM pide confirmación. Sembramos el flag como si el cliente
@@ -254,78 +413,132 @@ export const resetE2eCustomer = async (
       ? { closed_order_confirmed_at: new Date().toISOString() }
       : {}),
   });
-  const omitKeys = [
-    'peopleCountResume',
-    'lastCtaPayload',
-    'lastCtaShownAt',
-    'lastCtaProductId',
-    'lastOffer',
-    'pendingProductSelection',
-    'candidateProductIds',
-    'reservation_agent_active',
-    'reservation_draft',
-    'onboarding_step',
-    'onboarding_started_at',
-    'temp_address',
-    'awaiting_address',
-    'pending_closed_add_item',
-    'pending_switch_to_reservation',
-    'pending_cancel_disambiguation',
-    'pendingQuestion',
-    'pendingComplementSelection',
-    'pendingOrderSelection',
-    'pendingOrderMessage',
-    'pendingOrderCandidateIds',
-    'pendingPartySizeOrder',
-    'pendingTipables',
-    'pendingOrderLines',
-    'pendingAction',
-    'pendingItemId',
-    'pendingItemName',
-    'pendingActionAt',
-    'pendingProductQueryQuantity',
-    'pending_address_action',
-    'pending_address_text',
-    'pending_address_lat',
-    'pending_address_lng',
-    'pending_address_zone_id',
-    'pendingVariation',
-    'pendingAddQuantity',
-    'pendingItemNote',
+  await omitConversationMetadataKeys(conversationId, [
+    ...E2E_OMIT_KEYS,
     ...(confirmClosedOrder ? [] : (['closed_order_confirmed_at'] as const)),
-  ];
-  await omitConversationMetadataKeys(conversationId, [...omitKeys]);
+  ]);
+
+  // Resoluciones de producto no consumidas: se expiran (no se borran, mismo
+  // contrato que usa producción al cerrar un pedido — ver
+  // `expireOpenProductResolutions`) para que ninguna siga autorizando un
+  // `add_cart_item` de una corrida anterior.
+  await expireOpenProductResolutions(conversationId);
 
   await updateConversationState(conversationId, {
     mode: 'GLOBAL',
     current_intent: null,
   } as Parameters<typeof updateConversationState>[1]);
 
-  const drafts = await prisma.draft_order.findMany({
-    where: {
-      business_id: business.id,
-      customer_phone: E2E_CUSTOMER_PHONE,
-      status: 'active',
-    },
-    select: { id: true },
-  });
-  if (drafts.length > 0) {
-    const draftIds = drafts.map((draft) => draft.id);
-    await prisma.draft_order_item.deleteMany({
-      where: { draft_order_id: { in: draftIds } },
-    });
+  // Drafts activos: se vacían y marcan `abandoned` (comportamiento ya
+  // existente, verificado contra el contrato real de cancelación en
+  // `order.service.ts` — ver auditoría Fase 6.3 punto 3). Los pedidos ya
+  // CONFIRMADOS (`orders`) nunca se tocan desde acá, ni su estado ni sus
+  // filas — solo se reportan en el manifiesto (ver arriba).
+  if (manifest.activeDrafts.length > 0) {
+    const draftIds = manifest.activeDrafts.map((d) => d.id);
+    await prisma.draft_order_item.deleteMany({ where: { draft_order_id: { in: draftIds } } });
     await prisma.draft_order.updateMany({
       where: { id: { in: draftIds } },
-      data: {
-        status: 'abandoned',
-        fulfillment_type: null,
-        payment_method: null,
-        total_amount: 0,
-      },
+      data: { status: 'abandoned', fulfillment_type: null, payment_method: null, total_amount: 0 },
     });
   }
 
-  return { businessId: business.id, conversationId };
+  // Verificación posterior: el escenario siguiente solo puede arrancar si
+  // esto no lanza. Identifica el estado residual exacto en el mensaje, en
+  // vez de dejar que el test siguiente falle por una causa que no se ve.
+  const residual: string[] = [];
+
+  const stillActiveDraft = await prisma.draft_order.findFirst({
+    where: { business_id: business.id, customer_phone: customer.phone_number, status: 'active' },
+    select: { id: true },
+  });
+  if (stillActiveDraft) residual.push(`draft_order ${stillActiveDraft.id} sigue 'active'`);
+
+  const stateAfter = await getHumanIntentState(conversationId);
+  const openIntents = stateAfter.records.filter((r) => r.status === 'ACTIVE' || r.status === 'PENDING');
+  if (openIntents.length > 0) {
+    residual.push(
+      `humanIntentState con ${openIntents.length} record(s) abiertos: ` +
+        openIntents.map((r) => `${r.goal}(${r.status})`).join(', ')
+    );
+  }
+
+  const freshState = await prisma.conversation_state.findUnique({
+    where: { conversation_id: conversationId },
+    select: { metadata: true },
+  });
+  const freshMetadata = freshState?.metadata;
+  const stillPendingLines = getPendingOrderLines(freshMetadata);
+  if (stillPendingLines) residual.push('pendingOrderLines sigue presente');
+
+  const resolutionsAfter = await getProductResolutions(conversationId);
+  const stillAuthorizing = resolutionsAfter.filter(
+    (r) => r.status !== 'consumed' && (!r.expiresAt || Date.parse(r.expiresAt) > Date.now())
+  );
+  if (stillAuthorizing.length > 0) {
+    residual.push(`${stillAuthorizing.length} ProductResolution siguen vigentes (no expiradas, no consumidas)`);
+  }
+
+  const messageCountAfter = await prisma.conversation_message.count({
+    where: { conversation_id: conversationId },
+  });
+  if (messageCountAfter !== manifest.messageCount) {
+    residual.push(
+      `el historial cambió de tamaño (${manifest.messageCount} → ${messageCountAfter}) — ` +
+        'resetTestCustomerOperationalState nunca debe tocar conversation_message'
+    );
+  }
+
+  const ordersAfter = await prisma.orders.findMany({
+    where: { conversation_id: conversationId },
+    select: { id: true, status: true },
+  });
+  if (ordersAfter.length !== manifest.confirmedOrders.length) {
+    residual.push('la cantidad de pedidos confirmados cambió — nunca deben tocarse desde este reset');
+  }
+
+  if (residual.length > 0) {
+    throw new Error(
+      `resetTestCustomerOperationalState: estado residual tras el reset, no se habilita el escenario:\n` +
+        residual.map((line) => `  - ${line}`).join('\n')
+    );
+  }
+
+  return { businessId: business.id, conversationId, manifest };
+};
+
+/**
+ * Borra TODO el historial de mensajes de la conversación de test — operación
+ * separada y explícita (nunca implícita en `resetTestCustomerOperationalState`/
+ * `resetE2eCustomer`). Mientras el cliente/número de test se comparta con
+ * pruebas manuales (no hay números separados — ver auditoría Fase 6), llamar
+ * esto en medio de una sesión manual sobre el mismo número destruye esa
+ * sesión igual que una corrida E2E: es destrucción real, no un mock.
+ */
+export const purgeTestCustomerHistory = async (conversationId: string): Promise<void> => {
+  if (!isE2eEnabled()) {
+    throw new Error(
+      'purgeTestCustomerHistory: E2E no habilitado (isE2eEnabled()===false) — abortado antes de borrar nada.'
+    );
+  }
+  const { prisma } = await import('../../src/lib/prisma');
+  await prisma.conversation_message.deleteMany({ where: { conversation_id: conversationId } });
+};
+
+/**
+ * Alias histórico de `resetTestCustomerOperationalState`, con el mismo
+ * nombre y forma de retorno `{businessId, conversationId}` que usan los
+ * ~15 archivos de `e2e/*.e2e.test.ts` existentes. A partir de este cambio
+ * YA NO purga `conversation_message` por defecto (ver
+ * `purgeTestCustomerHistory` para eso explícitamente) — ver el informe de la
+ * auditoría para el detalle de qué pruebas podrían depender de empezar con
+ * el historial vacío y no fueron verificadas corriendo el E2E real.
+ */
+export const resetE2eCustomer = async (
+  options?: ResetE2eCustomerOptions
+): Promise<{ businessId: string; conversationId: string }> => {
+  const { businessId, conversationId } = await resetTestCustomerOperationalState(options);
+  return { businessId, conversationId };
 };
 
 export type E2eMenuProduct = {

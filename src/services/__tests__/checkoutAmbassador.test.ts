@@ -23,11 +23,13 @@ vi.mock('../../lib/prisma', () => {
     },
     conversation_state: {
       findUnique: vi.fn(),
+      upsert: vi.fn().mockResolvedValue({}),
     },
     orders: {
       create: vi.fn(),
     },
     $executeRaw: vi.fn().mockResolvedValue(undefined),
+    $queryRaw: vi.fn().mockResolvedValue([]),
   };
   prismaMock.$transaction = vi.fn((cb: (tx: unknown) => unknown) => cb(prismaMock));
   return { prisma: prismaMock };
@@ -51,12 +53,19 @@ vi.mock('../../repositories/conversationState.repository', () => ({
   omitConversationMetadataKeys: vi.fn(),
 }));
 
+// `omitConversationMetadataKeys` también se importa desde el barrel
+// `../repositories` (`pendingOrderLines.service.ts`, usado por
+// `reconcileOrderDomainStateAfterCheckout`) — mock separado del de
+// `conversationState.repository` arriba.
 vi.mock('../../repositories', () => ({
   closeConversation: vi.fn(),
   createOrGetOpenConversation: vi.fn(),
   findBusinessByPhoneNumberId: vi.fn(),
   findOrCreateConversationState: vi.fn(),
   findOrCreateCustomer: vi.fn(),
+  omitConversationMetadataKeys: vi.fn(),
+  patchConversationMetadata: vi.fn(),
+  mutateConversationMetadata: vi.fn(),
 }));
 
 import { prisma } from '../../lib/prisma';

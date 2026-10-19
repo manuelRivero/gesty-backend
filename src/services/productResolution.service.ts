@@ -352,6 +352,43 @@ export const extendProductResolutionForPending = async (params: {
   });
 };
 
+/**
+ * Expira (no borra) toda `ProductResolution` no `consumed` de la conversación.
+ * Se usa al cerrar un pedido (cancelado o completado): cualquier resolución
+ * que no llegó a `consumed` representa un producto que se mostró/seleccionó
+ * para ESE pedido pero nunca se agregó al carrito — como el dominio actual
+ * solo sostiene un draft activo por conversación a la vez (D1 de
+ * `pendingOrderLines`), todas las no-`consumed` vivas en este momento
+ * pertenecen al pedido que se está cerrando, nunca a uno distinto.
+ *
+ * No usa un estado nuevo: pone `expiresAt` en el pasado, el mismo campo que
+ * `validateResolution` ya chequea en cada lectura (`resolution_expired`).
+ * Las `consumed` no se tocan (ya son terminales y sirven de auditoría).
+ * Idempotente: una resolución ya expirada vuelve a quedar con `expiresAt` en
+ * el pasado (no-op observable).
+ */
+export const expireOpenProductResolutions = async (
+  conversationId: string
+): Promise<void> => {
+  await prisma.$transaction(async (tx) => {
+    const metadata = await lockConversationState(tx, conversationId);
+    const resolutions = parseResolutions(metadata);
+    if (resolutions.length === 0) return;
+    const expiredAt = new Date().toISOString();
+    let changed = false;
+    const next = resolutions.map((resolution) => {
+      if (resolution.status === 'consumed') return resolution;
+      if (resolution.expiresAt && Date.parse(resolution.expiresAt) <= Date.now()) {
+        return resolution;
+      }
+      changed = true;
+      return { ...resolution, expiresAt: expiredAt };
+    });
+    if (!changed) return;
+    await writeResolutionLedger(tx, conversationId, next);
+  });
+};
+
 export const getProductResolutions = async (
   conversationId: string
 ): Promise<ProductResolution[]> => {

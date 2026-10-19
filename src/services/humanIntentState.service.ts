@@ -671,6 +671,57 @@ export const resolveActiveHumanIntent = (
     return resolved;
   });
 
+/**
+ * Exact message thrown when `resolveHumanIntentById` finds its target no
+ * longer ACTIVE — matched verbatim by callers that need to tell "lost a race,
+ * something else already changed which intent is ACTIVE" apart from a
+ * genuinely different `HumanIntentStateError` (unknown id, malformed state).
+ */
+export const notActiveMessage = (intentId: string): string =>
+  `Human intent ${intentId} is no longer ACTIVE`;
+
+/**
+ * Same outcome as `resolveActiveHumanIntent`, but atomic against the exact
+ * intent the caller observed: validates `intentId` identity AND that it is
+ * still ACTIVE inside the SAME locked read-modify-write as the write itself
+ * (`mutateState` re-reads fresh state under the advisory lock before this
+ * check runs), not against a stale snapshot taken before the lock.
+ *
+ * Exists because `resolveActiveHumanIntent` resolves "whichever intent is
+ * ACTIVE right now" with no way to confirm it is still the one the caller
+ * decided to resolve — a caller that reads the state, decides based on that
+ * read, and only then calls `resolveActiveHumanIntent` has a TOCTOU window:
+ * if a concurrent turn changes which intent is ACTIVE in between, it would
+ * resolve the WRONG intent. `resolveActiveHumanIntent` itself is untouched
+ * (no other caller in this codebase needs this stronger guarantee, and its
+ * contract — "resolve the current ACTIVE, whatever it is" — is legitimate
+ * for a caller that doesn't need to know which record that is).
+ */
+export const resolveHumanIntentById = (
+  conversationId: string,
+  intentId: string,
+  effect: HumanIntentEffect
+): Promise<HumanIntentRecord> =>
+  mutateState(conversationId, (state) => {
+    if (effect.success !== true || !effect.kind.trim() || !Number.isFinite(Date.parse(effect.occurredAt))) {
+      throw new HumanIntentStateError('Resolution requires a validated successful effect');
+    }
+    const index = indexById(state, intentId);
+    if (state.records[index].status !== 'ACTIVE') {
+      throw new HumanIntentStateError(notActiveMessage(intentId));
+    }
+    const resolved: HumanIntentRecord = {
+      ...state.records[index],
+      status: 'RESOLVED',
+      blockers: [],
+      outcome: { ...effect },
+      updatedAt: new Date().toISOString(),
+    };
+    state.records[index] = resolved;
+    promoteOldestPending(state, resolved.updatedAt);
+    return resolved;
+  });
+
 /** Resolves ACTIVE only when a post-effect derivation confirms its request is complete. */
 export const reconcileActiveHumanIntent = (
   conversationId: string,
