@@ -50,16 +50,39 @@ const pendingResolutionId = (metadata: unknown, productId: string): string | und
   return undefined;
 };
 
+/**
+ * Tools que, al margen de su nombre, comprometen al cliente con un producto
+ * como si fuera a comprarlo (agregarlo al carrito o mostrar un CTA de compra
+ * sobre él). Ambas expresan la MISMA acción protegida — "comprometer un
+ * producto a una compra requiere goal PEDIR" — por eso comparten un único
+ * punto de autorización en vez de duplicar la regla en cada tool.
+ */
+const COMMIT_TO_CART_TOOLS = new Set(['add_cart_item', 'present_product_cta']);
+
 export const evaluateToolRequirement = async (
   params: RequirementEvaluationParams
 ): Promise<RequirementDecision> => {
-  if (params.toolName !== 'add_cart_item') return { type: 'ALLOW' };
+  if (!COMMIT_TO_CART_TOOLS.has(params.toolName)) return { type: 'ALLOW' };
 
   const activeIntent =
     params.state?.records.find((record) => record.status === 'ACTIVE') ??
     params.humanIntent ??
     null;
   if (!activeIntent) return { type: 'ALLOW' };
+
+  if (params.toolName === 'present_product_cta') {
+    // Resolver una referencia (SELECT_FROM_LIST) o explorar el menú
+    // (VIEW_MENU/VIEW_FEATURED) no compromete nada: solo ADD_ITEM lo hace.
+    if (params.callArgs.primaryKind !== 'ADD_ITEM') return { type: 'ALLOW' };
+    if (activeIntent.goal !== 'PEDIR') {
+      return {
+        type: 'REJECT',
+        reason: 'human_intent_incompatible',
+        missingRequirements: ['HUMAN_INTENT_PEDIR'],
+      };
+    }
+    return { type: 'ALLOW' };
+  }
 
   if (activeIntent.goal !== 'PEDIR') {
     return {

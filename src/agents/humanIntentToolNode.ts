@@ -187,15 +187,37 @@ export const HUMAN_INTENT_TOOL_DENIED = 'human_intent_pending_tool_denied';
 export const HUMAN_INTENT_STATE_STALE = 'human_intent_state_stale';
 export const HUMAN_INTENT_STATE_UNAVAILABLE = 'human_intent_state_unavailable';
 
+/**
+ * `human_intent_incompatible` no es un conflicto con otra intención PENDING
+ * (eso es HUMAN_INTENT_TOOL_DENIED, ver abajo): es que la intención ACTIVE no
+ * autoriza comprometer un producto a una compra. La recuperación no es
+ * "esperá a ACTIVE" (ACTIVE ya es lo que se está atendiendo) sino "no hay
+ * ninguna otra tool equivalente para lograr lo mismo — respondé con lo que ya
+ * sabés del producto". Sin esta instrucción explícita, el modelo reintenta la
+ * misma acción prohibida vía present_product_cta(ADD_ITEM) (que antes no
+ * tenía este guard) u otra tool de compra.
+ */
+const HUMAN_INTENT_INCOMPATIBLE_INSTRUCTION =
+  'Esta operación compromete el producto a una compra, pero la intención activa no es PEDIR. ' +
+  'No reintentes agregarlo ni mostrar un CTA de compra sobre él por ninguna otra tool en este turno ' +
+  '(ni add_cart_item ni present_product_cta con primaryKind ADD_ITEM). Si ya tenés los datos del ' +
+  'producto (de search_products, find_products_by_filter o get_products_details_by_ids en este turno), ' +
+  'respondé la consulta activa con esos datos. Si te faltan, llamá get_products_details_by_ids con el ' +
+  'productId, sin agregarlo al carrito.';
+
 const internalToolError = (call: ToolCall, code: string, intentId?: string): ToolMessage =>
   new ToolMessage({
     name: call.name,
     tool_call_id: call.id ?? '',
     status: 'error',
     content: JSON.stringify({
+      success: false,
       error: code,
       ...(intentId ? { pendingIntentId: intentId } : {}),
-      instruction: 'No ejecutes esta intención pendiente en este turno. Continuá exclusivamente con ACTIVE.',
+      instruction:
+        code === 'human_intent_incompatible'
+          ? HUMAN_INTENT_INCOMPATIBLE_INSTRUCTION
+          : 'No ejecutes esta intención pendiente en este turno. Continuá exclusivamente con ACTIVE.',
     }),
   });
 
@@ -1001,6 +1023,30 @@ export class HumanIntentToolNode extends PostEffectToolNode {
     const pending = state.records.filter((intent) => intent.status === 'PENDING');
     if (!active) {
       return super.runTool(call, tracedToolConfig);
+    }
+
+    if (call.name === 'present_product_cta' && !skipRequirementEvaluation) {
+      // Mismo guard de compromiso-de-compra que add_cart_item (ver
+      // COMMIT_TO_CART_TOOLS en requirementEvaluator): un CTA con
+      // primaryKind ADD_ITEM compromete el producto igual que add_cart_item,
+      // así que no puede quedar como vía libre cuando ACTIVE no es PEDIR.
+      let ctaRequirementDecision;
+      try {
+        ctaRequirementDecision = await evaluateToolRequirement({
+          toolName: call.name,
+          callArgs: call.args as Record<string, unknown>,
+          businessId,
+          conversationId,
+          turnId: typeof turnId === 'string' ? turnId : undefined,
+          humanIntent: active,
+          state,
+        });
+      } catch {
+        return internalToolError(call, 'requirement_evaluation_failed');
+      }
+      if (ctaRequirementDecision.type === 'REJECT') {
+        return internalToolError(call, ctaRequirementDecision.reason);
+      }
     }
 
     if (call.name === 'add_cart_item') {

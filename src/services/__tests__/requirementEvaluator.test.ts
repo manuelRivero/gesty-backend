@@ -109,6 +109,39 @@ describe('evaluateToolRequirement', () => {
     expect(resolveProductForAddMock).not.toHaveBeenCalled();
   });
 
+  it('devuelve REJECT para present_product_cta(ADD_ITEM) incompatible con HumanIntent', async () => {
+    await expect(
+      evaluateToolRequirement(params({
+        toolName: 'present_product_cta',
+        callArgs: { primaryKind: 'ADD_ITEM', productId: PRODUCT_ID },
+        humanIntent: { ...PEDIR, goal: 'CONSULTAR_NEGOCIO' },
+      }))
+    ).resolves.toMatchObject({
+      type: 'REJECT',
+      reason: 'human_intent_incompatible',
+    });
+    expect(resolveProductForAddMock).not.toHaveBeenCalled();
+  });
+
+  it('permite present_product_cta(ADD_ITEM) cuando la intención activa es PEDIR', async () => {
+    await expect(
+      evaluateToolRequirement(params({
+        toolName: 'present_product_cta',
+        callArgs: { primaryKind: 'ADD_ITEM', productId: PRODUCT_ID },
+      }))
+    ).resolves.toEqual({ type: 'ALLOW' });
+  });
+
+  it('permite present_product_cta(SELECT_FROM_LIST) aunque la intención activa no sea PEDIR: resolver la referencia no compromete una compra', async () => {
+    await expect(
+      evaluateToolRequirement(params({
+        toolName: 'present_product_cta',
+        callArgs: { primaryKind: 'SELECT_FROM_LIST', productIds: [PRODUCT_ID] },
+        humanIntent: { ...PEDIR, goal: 'CONSULTAR_NEGOCIO' },
+      }))
+    ).resolves.toEqual({ type: 'ALLOW' });
+  });
+
   it('difiere add después de validar la resolución si la OrderLine sigue UNKNOWN', async () => {
     const metadata = {
       peopleCount: 4,

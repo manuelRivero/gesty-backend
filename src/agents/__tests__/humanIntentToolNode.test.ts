@@ -538,6 +538,67 @@ describe('HumanIntentToolNode', () => {
     });
   });
 
+  it('rechaza present_product_cta(ADD_ITEM) cuando la intención activa no es PEDIR, sin reintento silencioso', async () => {
+    getStateMock.mockResolvedValue(state([
+      { ...ACTIVE, goal: 'CONSULTAR_NEGOCIO', request: { category: 'ceviche' } },
+    ]));
+    const ctaEffect = vi.fn();
+    const presentProductCtaTool = new DynamicStructuredTool({
+      name: 'present_product_cta',
+      description: 'test cta',
+      schema: z.object({ primaryKind: z.string(), productId: z.string().uuid().optional() }),
+      func: async (args) => {
+        ctaEffect();
+        return JSON.stringify({ signal: 'present_product_cta', primaryKind: args.primaryKind });
+      },
+    });
+    const node = new HumanIntentToolNode([presentProductCtaTool]);
+
+    const result = await node.invoke(
+      {
+        messages: [toolCall('present_product_cta', { primaryKind: 'ADD_ITEM', productId: PRODUCT_ID })],
+      },
+      config()
+    );
+
+    expect(ctaEffect).not.toHaveBeenCalled();
+    const toolMessage = result.messages.find(ToolMessage.isInstance) as ToolMessage;
+    const payload = JSON.parse(String(toolMessage.content));
+    expect(payload).toMatchObject({ success: false, error: 'human_intent_incompatible' });
+    expect(String(payload.instruction)).toContain('No reintentes');
+  });
+
+  it('permite present_product_cta(SELECT_FROM_LIST) aunque la intención activa no sea PEDIR: desambiguar no compromete una compra', async () => {
+    getStateMock.mockResolvedValue(state([
+      { ...ACTIVE, goal: 'CONSULTAR_NEGOCIO', request: { category: 'ceviche' } },
+    ]));
+    const ctaEffect = vi.fn();
+    const presentProductCtaTool = new DynamicStructuredTool({
+      name: 'present_product_cta',
+      description: 'test cta',
+      schema: z.object({ primaryKind: z.string(), productIds: z.array(z.string().uuid()).optional() }),
+      func: async (args) => {
+        ctaEffect();
+        return JSON.stringify({ signal: 'present_product_cta', primaryKind: args.primaryKind });
+      },
+    });
+    const node = new HumanIntentToolNode([presentProductCtaTool]);
+
+    const result = await node.invoke(
+      {
+        messages: [toolCall('present_product_cta', {
+          primaryKind: 'SELECT_FROM_LIST',
+          productIds: [PRODUCT_ID, OTHER_PRODUCT_ID],
+        })],
+      },
+      config()
+    );
+
+    expect(ctaEffect).toHaveBeenCalledTimes(1);
+    const toolMessage = result.messages.find(ToolMessage.isInstance) as ToolMessage;
+    expect(JSON.parse(String(toolMessage.content))).toMatchObject({ primaryKind: 'SELECT_FROM_LIST' });
+  });
+
   it('permite el ADD sin party size cuando la ProductResolution es válida (ya no es requisito)', async () => {
     conversationStateFindUniqueMock.mockResolvedValue({ metadata: {} });
     const effect = vi.fn();
