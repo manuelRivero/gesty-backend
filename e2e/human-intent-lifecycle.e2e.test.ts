@@ -983,4 +983,185 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
 
     trace.status = 'PASS';
   }, 900_000);
+
+  // Caso dirigido — auditoría "pérdida de aclaraciones y continuidad de
+  // líneas de pedido" (fix: buildOrderLineSearchInstruction ya no fija el
+  // keyword al hint guardado; prioriza la aclaración del turno actual).
+  //
+  // "cevichito" no matchea nada en el catálogo de prueba (sin hit bajo el
+  // umbral de distancia): dispara el camino de miss de search_products
+  // (missedOrderLine, Fase 2 de esta misma serie de fixes). La aclaración
+  // "Ceviche" del cliente debe usarse como keyword en el turno siguiente —
+  // NO debe repetirse "cevichito" — y debe resolver la MISMA OrderLine
+  // (mismo id), sin duplicarla ni perder "papas a la huancaína" de la cola.
+  it('REGRESSION — reformular un plato sin match ("cevichito" → "Ceviche") resuelve la misma línea y conserva la hermana', async () => {
+    const trace = await runCase('REGRESSION — reformulación de búsqueda sin match', [
+      'Quiero un cevichito con poca cebolla y unas papas a la huancaína no muy picantes',
+      'Para 3',
+      'Ceviche',
+      'Ceviche Clásico',
+      '2',
+      'Seguí',
+      '1', // selecciona "Papa a la huancaina" de la lista de papas
+      '1', // cantidad de papas
+    ], { requirePartySize: true, captureTurnLogs: true });
+
+    const turnLogs = turnLogsByTrace.get(trace) ?? [];
+    type Line = {
+      id: string;
+      hint: string;
+      requestedQuantity: number | null;
+      status: string;
+      currentResolutionId: string | null;
+      pendingNote: string | null;
+    };
+    const linesAt = (turn: number): Line[] =>
+      ((trace.turns[turn - 1]?.conversationMetadataAfter?.pendingOrderLines as { lines?: Line[] } | undefined)
+        ?.lines) ?? [];
+    const productIdForResolution = (turn: number, resolutionId: string | null): string | null => {
+      if (!resolutionId) return null;
+      const resolutions = (trace.turns[turn - 1]?.conversationMetadataAfter?.productResolutions as
+        Array<{ resolutionId: string; productId: string }> | undefined) ?? [];
+      return resolutions.find((entry) => entry.resolutionId === resolutionId)?.productId ?? null;
+    };
+    const firstTurnResolved = (hintNeedle: string, fromTurn: number): number | null => {
+      for (let t = fromTurn; t <= trace.turns.length; t += 1) {
+        const line = linesAt(t).find((l) => normalize(l.hint).includes(hintNeedle));
+        if (line?.currentResolutionId) return t;
+      }
+      return null;
+    };
+    const firstTurnInCart = (productId: string | null, fromTurn: number): number | null => {
+      if (!productId) return null;
+      for (let t = fromTurn; t <= turnLogs.length; t += 1) {
+        if ((turnLogs[t - 1]?.draftItems ?? []).some((item) => item.product_id === productId)) return t;
+      }
+      return null;
+    };
+    // Keywords reales que el modelo pasó a search_products en un turno dado —
+    // del evento [REACT N] (tool_calls[].args), no de [TRACE-ORDERLINE]
+    // (ese stage no expone `keyword`, solo orderLineId/productId/resolutionId/
+    // quantity — ver HumanIntentToolNode.before_runTool).
+    const searchProductsKeywordsUsed = (turn: number): string[] =>
+      (turnLogs[turn - 1]?.events ?? [])
+        .filter((event) => typeof event.event === 'string' && event.event.startsWith('[REACT '))
+        .flatMap((event) => (Array.isArray(event.tool_calls) ? event.tool_calls : []) as Array<{
+          name?: string;
+          args?: { keyword?: string };
+        }>)
+        .filter((call) => call.name === 'search_products')
+        .map((call) => call.args?.keyword ?? '')
+        .filter(Boolean);
+
+    const PLAN_TURN = 1;
+    const PARTY_SIZE_TURN = 2;
+    const CLARIFY_TURN = 3;
+
+    const plannedLines = linesAt(PLAN_TURN);
+    const ceviche = plannedLines.find((line) => normalize(line.hint).includes('cevich'));
+    const papas = plannedLines.find((line) => normalize(line.hint).includes('papas'));
+    assertLifecycleInvariant(trace, PLAN_TURN, 'INV-CLARIFY-00', Boolean(ceviche) && Boolean(papas), 'ambas líneas planificadas (ceviche y papas)', compactValue(plannedLines));
+    assertLifecycleInvariant(trace, PLAN_TURN, 'INV-CLARIFY-00b', normalize(ceviche?.pendingNote).includes('cebolla'), 'pendingNote de la línea cevichito menciona cebolla', compactValue(ceviche));
+
+    // El miss real: el turno de personas (que dispara el search retenido) o el
+    // turno siguiente deben devolver count 0 para "cevichito", sin cancelar
+    // la línea (sigue 'active'/'queued', nunca 'cancelled').
+    const stillOpenAfterMiss = linesAt(CLARIFY_TURN - 1).find((l) => l.id === ceviche?.id);
+    assertLifecycleInvariant(
+      trace,
+      CLARIFY_TURN - 1,
+      'INV-CLARIFY-01',
+      stillOpenAfterMiss?.status === 'active' || stillOpenAfterMiss?.status === 'queued',
+      'la línea de cevichito sigue abierta tras el miss de búsqueda (no se cancela sola)',
+      compactValue(stillOpenAfterMiss)
+    );
+
+    // EL FIX: en el turno de la aclaración ("Ceviche"), ningún search_products
+    // repite el keyword obsoleto "cevichito" — usa la palabra nueva del cliente.
+    const keywordsInClarifyTurn = searchProductsKeywordsUsed(CLARIFY_TURN);
+    assertLifecycleInvariant(
+      trace,
+      CLARIFY_TURN,
+      'INV-CLARIFY-02',
+      keywordsInClarifyTurn.length > 0,
+      'el turno de la aclaración ejecuta al menos un search_products',
+      compactValue(keywordsInClarifyTurn)
+    );
+    assertLifecycleInvariant(
+      trace,
+      CLARIFY_TURN,
+      'INV-CLARIFY-03',
+      keywordsInClarifyTurn.every((kw) => !normalize(kw).includes('cevichito')),
+      'ningún search_products de este turno repite el keyword obsoleto "cevichito"',
+      compactValue(keywordsInClarifyTurn)
+    );
+
+    // La línea que termina resuelta/cerrada para el ceviche es la MISMA que
+    // se planificó en el turno 1 — nunca una línea nueva/duplicada.
+    const cevicheResolvedTurn = firstTurnResolved('cevich', CLARIFY_TURN);
+    const cevicheAtResolution = cevicheResolvedTurn ? linesAt(cevicheResolvedTurn).find((l) => l.id === ceviche?.id) : null;
+    assertLifecycleInvariant(
+      trace,
+      cevicheResolvedTurn ?? trace.turns.length,
+      'INV-CLARIFY-04',
+      Boolean(cevicheResolvedTurn) && Boolean(cevicheAtResolution?.currentResolutionId),
+      'la línea original de cevichito (mismo id) es la que termina con ProductResolution, no una duplicada',
+      compactValue({ originalId: ceviche?.id, resolvedLineFound: Boolean(cevicheAtResolution) })
+    );
+    const cevicheResolutionId = cevicheAtResolution?.currentResolutionId ?? null;
+    const cevicheProductId = productIdForResolution(cevicheResolvedTurn ?? CLARIFY_TURN, cevicheResolutionId);
+    const cevicheCartTurn = firstTurnInCart(cevicheProductId, cevicheResolvedTurn ?? CLARIFY_TURN);
+    const draftAfterCeviche = turnLogs[(cevicheCartTurn ?? trace.turns.length) - 1]?.draftItems ?? [];
+    const cevicheItem = draftAfterCeviche.find((item) => item.product_id === cevicheProductId);
+    assertLifecycleInvariant(
+      trace,
+      cevicheCartTurn ?? trace.turns.length,
+      'INV-CLARIFY-05',
+      Boolean(cevicheItem) && normalize(cevicheItem?.notes).includes('cebolla'),
+      'draft_order_item del ceviche conserva "poca cebolla" pese a la reformulación del nombre',
+      compactValue(cevicheItem)
+    );
+
+    // Papas a la huancaína: no se tocó mientras ceviche se resolvía, y sigue
+    // disponible para retomarse (mismo id, sin duplicarse) tras "Seguí".
+    for (let t = PARTY_SIZE_TURN; t <= (cevicheCartTurn ?? CLARIFY_TURN); t += 1) {
+      const papasNow = linesAt(t).find((l) => l.id === papas?.id);
+      if (!papasNow) continue;
+      assertLifecycleInvariant(
+        trace,
+        t,
+        'INV-CLARIFY-06',
+        papasNow.status === 'queued' && papasNow.currentResolutionId == null,
+        `T${t}: papas sigue QUEUED y sin ProductResolution mientras se resuelve ceviche`,
+        compactValue(papasNow)
+      );
+    }
+
+    const papasResolvedTurn = firstTurnResolved('papas', cevicheCartTurn ?? CLARIFY_TURN);
+    const papasAtResolution = papasResolvedTurn ? linesAt(papasResolvedTurn).find((l) => l.id === papas?.id) : null;
+    assertLifecycleInvariant(
+      trace,
+      papasResolvedTurn ?? trace.turns.length,
+      'INV-CLARIFY-07',
+      Boolean(papasResolvedTurn) && Boolean(papasAtResolution?.currentResolutionId),
+      'la línea original de papas (mismo id) se retoma y resuelve tras "Seguí", sin duplicarse',
+      compactValue({ originalId: papas?.id, resolvedLineFound: Boolean(papasAtResolution) })
+    );
+    const papasResolutionId = papasAtResolution?.currentResolutionId ?? null;
+    const papasProductId = productIdForResolution(papasResolvedTurn ?? CLARIFY_TURN, papasResolutionId);
+    const papasCartTurn = firstTurnInCart(papasProductId, papasResolvedTurn ?? CLARIFY_TURN);
+
+    const finalTurn = papasCartTurn ?? trace.turns.length;
+    const draftFinal = turnLogs[finalTurn - 1]?.draftItems ?? [];
+    assertLifecycleInvariant(
+      trace,
+      finalTurn,
+      'INV-CLARIFY-08',
+      draftFinal.length === 2,
+      'el carrito final tiene exactamente 2 ítems (ceviche + papas), sin líneas duplicadas por la reformulación',
+      compactValue(draftFinal)
+    );
+
+    trace.status = 'PASS';
+  }, 900_000);
 });

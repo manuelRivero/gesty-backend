@@ -1239,7 +1239,7 @@ export const findProductsByFilterTool = new DynamicStructuredTool<
         return toJson({
           error: 'use_search_products',
           keyword: active.hint,
-          instruction: buildOrderLineSearchInstruction(active.hint),
+          instruction: buildOrderLineSearchInstruction(active.hint, active.pendingNote),
         });
       }
     }
@@ -4320,7 +4320,7 @@ export const planOrderLinesTool = new DynamicStructuredTool<
       instruction: realActive
         ? `Trabajá ahora SOLO "${realActive.hint}"${
             realActive.requestedQuantity ? ` (${realActive.requestedQuantity}×)` : ''
-          }. ${buildOrderLineSearchInstruction(realActive.hint)} No listes ni menciones las demás líneas todavía.`
+          }. ${buildOrderLineSearchInstruction(realActive.hint, realActive.pendingNote)} No listes ni menciones las demás líneas todavía.`
         : hasQueued
           ? 'No hay línea activa: esta cola ya existía (no se modificó nada nuevo). Si el cliente confirmó que ' +
             'sigue, llamá continue_order_line() para activar la próxima línea en cola. PROHIBIDO search_products ' +
@@ -4376,7 +4376,7 @@ export const continueOrderLineTool = new DynamicStructuredTool<
       success: true,
       effect: { kind: 'order_plan_advanced' },
       activeLine: { hint: active.hint, requestedQuantity: active.requestedQuantity },
-      instruction: buildOrderLineSearchInstruction(active.hint),
+      instruction: buildOrderLineSearchInstruction(active.hint, active.pendingNote),
     });
   },
 });

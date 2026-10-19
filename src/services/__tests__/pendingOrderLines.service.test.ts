@@ -729,12 +729,29 @@ describe('pendingOrderLines.service', () => {
       expect(resolveMissedSearchOrderLine(pending, 'lomo')?.id).toBe('a');
     });
 
-    it('buildOrderLineSearchInstruction nombra vectorial para plato y categoría para sección', () => {
+    it('buildOrderLineSearchInstruction nombra vectorial para plato y categoría para sección (fallback sin aclaración)', () => {
       const text = buildOrderLineSearchInstruction('papas a la huancaína');
       expect(text).toContain('search_products(keyword="papas a la huancaína")');
       expect(text).toMatch(/containsIngredient/);
       expect(text).toMatch(/algo de beber/);
       expect(text).toMatch(/present_category/);
+    });
+
+    it('buildOrderLineSearchInstruction prioriza la aclaración del turno sobre el hint guardado', () => {
+      const text = buildOrderLineSearchInstruction('cevichito');
+      expect(text).toMatch(/La línea activa de la cola es "cevichito"/);
+      expect(text).toMatch(/usá esa palabra nueva como keyword de search_products — NO "cevichito"/);
+      expect(text).toMatch(/sigue siendo la\s+misma línea \(mismo orderLineId\), nunca un plato nuevo ni una línea nueva/);
+      // El fallback (sin aclaración) sigue intacto, como contrato previo.
+      expect(text).toContain('search_products(keyword="cevichito")');
+    });
+
+    it('buildOrderLineSearchInstruction conserva el pendingNote aunque el plato se reformule', () => {
+      const withNote = buildOrderLineSearchInstruction('cevichito', 'poca cebolla');
+      expect(withNote).toMatch(/La instrucción ya dicha para este plato \("poca cebolla"\) sigue valiendo/);
+
+      const withoutNote = buildOrderLineSearchInstruction('cevichito', null);
+      expect(withoutNote).not.toMatch(/poca cebolla/);
     });
   });
 
@@ -996,6 +1013,23 @@ describe('pendingOrderLines.service', () => {
     expect(text).toMatch(/search_products\(keyword=/);
     expect(text).toMatch(/algo de beber/);
     expect(text).toMatch(/PROHIBIDO ofrecer complementos/);
+  });
+
+  it('buildPendingOrderLinesContextLines prioriza la aclaración del turno y conserva pendingNote (auditoría de continuidad)', () => {
+    const lines = buildPendingOrderLinesContextLines({
+      pendingOrderLines: basePending({
+        lines: [
+          { id: 'l1', hint: 'cevichito', requestedQuantity: null, status: 'active', currentResolutionId: null, pendingNote: 'poca cebolla' },
+          { id: 'l2', hint: 'papas a la huancaína', requestedQuantity: null, status: 'queued', currentResolutionId: null, pendingNote: null },
+        ],
+      }),
+    });
+    const text = lines.join('\n');
+    expect(text).toMatch(/La línea activa de la cola es "cevichito"/);
+    expect(text).toMatch(/usá esa palabra nueva como keyword de search_products — NO "cevichito"/);
+    expect(text).toMatch(/La instrucción ya dicha para este plato \("poca cebolla"\) sigue valiendo/);
+    // El fallback (sin aclaración) sigue siendo el contrato previo, intacto.
+    expect(text).toContain('search_products(keyword="cevichito")');
   });
 
   it('después de cerrar A, B queda pendiente y el contexto indica continue_order_line', () => {

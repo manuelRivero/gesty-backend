@@ -582,15 +582,40 @@ export const ingredientFilterCarvesDishHint = (
   return hintTokens.size > ingredientTokens.size;
 };
 
-/** Cómo resolver la línea activa: plato → vectorial; sección → categoría. */
-export const buildOrderLineSearchInstruction = (hint: string): string =>
-  `Trabajá ahora "${hint}" según el tipo de hint: ` +
-  `si nombra un plato (ej. "papas a la huancaína", "ceviche"), llamá search_products(keyword="${hint}") ` +
-  `con el hint ENTERO — PROHIBIDO find_products_by_filter(containsIngredient) recortando el hint ` +
-  `(ej. "papa" a partir de "papas a la huancaína": eso suma otro plato). ` +
-  `Si el hint es sección o rol ("algo de beber", "una bebida", "postre", "entrada"), ` +
-  `NO uses search_products de esa frase: get_categories + present_category, ` +
-  `o find_products_by_filter(categoryTag=DRINK/DESSERT/STARTER/...).`;
+/**
+ * Cómo resolver la línea activa: plato → vectorial; sección → categoría.
+ *
+ * `hint` es el texto con el que se creó la línea — referencia de CUÁL línea
+ * es (orderLineId), no el argumento obligatorio de `search_products`. Si el
+ * mensaje de ESTE turno aclara/corrige el nombre (típicamente porque una
+ * búsqueda anterior con `hint` no encontró nada — ver `missedOrderLine` en
+ * `search_products`), esa aclaración es la que hay que buscar: sigue siendo
+ * la MISMA línea, no un plato nuevo. Sin eso, el contexto reinyectaba
+ * `search_products(keyword="${hint}")` turno tras turno aunque el cliente ya
+ * hubiera dicho otra cosa, pisando su aclaración (evidencia: auditoría
+ * "pérdida de aclaraciones y continuidad de líneas de pedido").
+ */
+export const buildOrderLineSearchInstruction = (
+  hint: string,
+  pendingNote?: string | null
+): string => {
+  const noteClause = pendingNote
+    ? ` La instrucción ya dicha para este plato ("${pendingNote}") sigue valiendo — no se pierde por ` +
+      'aclarar o corregir el nombre.'
+    : '';
+  return (
+    `La línea activa de la cola es "${hint}". Si en ESTE turno el cliente aclara, corrige o renombra ` +
+    `ese plato (p. ej. porque buscaste "${hint}" y no apareció nada, y el cliente dijo otra forma de ` +
+    `pedirlo), usá esa palabra nueva como keyword de search_products — NO "${hint}": sigue siendo la ` +
+    `misma línea (mismo orderLineId), nunca un plato nuevo ni una línea nueva.${noteClause} ` +
+    `Si el cliente no aclaró nada en este turno, trabajá "${hint}" como siempre: si nombra un plato, ` +
+    `llamá search_products(keyword="${hint}") con el hint ENTERO — PROHIBIDO ` +
+    `find_products_by_filter(containsIngredient) recortando el hint (ej. "papa" a partir de ` +
+    `"papas a la huancaína": eso suma otro plato). Si el hint es sección o rol ("algo de beber", ` +
+    `"una bebida", "postre", "entrada"), NO uses search_products de esa frase: get_categories + ` +
+    'present_category, o find_products_by_filter(categoryTag=DRINK/DESSERT/STARTER/...).'
+  );
+};
 
 /**
  * Qué línea abierta de la cola corresponde al producto que se está agregando.
@@ -1349,7 +1374,7 @@ export const buildPendingOrderLinesContextLines = (
     `- Cola de pedido (varios platos en un mismo mensaje; NO es confirmación de cantidad): ` +
       `línea activa ahora → ${activeLabel ?? 'ninguna (activá la próxima con la tool que corresponda)'}` +
       (queuedLabels.length > 0 ? `. Después faltan: ${queuedLabels.join(', ')}.` : '.') +
-      ` Trabajá SOLO la línea activa. ${buildOrderLineSearchInstruction(active?.hint ?? '')} ` +
+      ` Trabajá SOLO la línea activa. ${buildOrderLineSearchInstruction(active?.hint ?? '', active?.pendingNote)} ` +
       `Variación y cantidad de esa línea, como el flujo normal ` +
       `— NO relistes ni ofrezcas las demás como si fueran shortlist ahora. ` +
       `Si el requestedQuantity de la línea existe, PRIORIZALO sobre ceil(personas/porción) al sugerir/ask de cantidad. ` +
