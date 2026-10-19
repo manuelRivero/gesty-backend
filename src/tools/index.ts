@@ -47,6 +47,10 @@ import {
   resolveProductForAdd,
   selectProductResolution,
 } from '../services/productResolution.service';
+import {
+  INFORMATIONAL_PRODUCT_REF_KEY,
+  rememberInformationalProductRef,
+} from '../services/informationalProductRef.service';
 import { createOnlinePaymentLink } from '../services/payment/payment.service';
 import { refreshDraftOrderTimeout } from '../services/draftOrderTimeout.service';
 import { assertCanOrder } from '../services/ordersCapabilityGate.service';
@@ -496,9 +500,20 @@ export const searchProductsTool = new DynamicStructuredTool<
           conversationId,
           source: 'search_products',
           status: shortlisted.length === 1 ? 'resolved' : 'candidate',
-          scope: shortlisted.length === 1 ? 'turn' : 'conversation',
+          // Antes 'turn' para el match único: lo ampliamos a 'conversation'
+          // para que el referente informativo (abajo) y un eventual
+          // add_cart_item sigan siendo válidos en un turno posterior, no
+          // solo en el turno de la búsqueda. Resto de validaciones
+          // (disponibilidad, TTL, consumo) sin cambios.
+          scope: 'conversation',
           turnId,
         });
+    if (!reservationTurn && shortlisted.length === 1) {
+      await rememberInformationalProductRef(conversationId, {
+        productId: shortlisted[0].id,
+        name: shortlisted[0].name,
+      });
+    }
     const resolutionByProductId = new Map(resolutions.map((item) => [item.productId, item]));
     const nameMatchIds = productIdsMatchingSearchKeyword(keyword, shortlisted);
     const nameAmbiguous = !reservationTurn && nameMatchIds.length >= 2;
@@ -1365,9 +1380,17 @@ export const findProductsByFilterTool = new DynamicStructuredTool<
           conversationId,
           source: 'find_products_by_filter',
           status: items.length === 1 ? 'resolved' : 'candidate',
-          scope: items.length === 1 ? 'turn' : 'conversation',
+          // Antes 'turn' para el match único: ampliado a 'conversation' por la
+          // misma razón que en search_products (ver comentario ahí).
+          scope: 'conversation',
           turnId,
         });
+    if (!reservationTurn && items.length === 1) {
+      await rememberInformationalProductRef(conversationId, {
+        productId: items[0].id,
+        name: items[0].name,
+      });
+    }
     const resolutionByProductId = new Map(resolutions.map((item) => [item.productId, item]));
 
     return toJson({
@@ -2814,9 +2837,15 @@ export const addCartItemTool = new DynamicStructuredTool<
       await clearPendingAddQuantity(conversationId);
       await clearPendingPartySizeOrder(conversationId);
       await clearLastOffer(conversationId);
+      // El add ya resolvió inequívocamente el producto: el referente
+      // informativo (que podía seguir apuntando a uno anterior, de antes de
+      // que una ambigüedad se resolviera vía resolve_product sin pasar por
+      // una nueva búsqueda) deja de tener sentido. Mismo punto donde ya se
+      // limpia la selección pendiente.
       await omitConversationMetadataKeys(conversationId, [
         ...PENDING_PRODUCT_SELECTION_KEYS,
         SHORTLIST_AWAITING_CHOICE_KEY,
+        INFORMATIONAL_PRODUCT_REF_KEY,
       ]);
       await markComplementEngagedIfOffered(conversationId, productId);
       // Revival del Goal COMPLETAR_PEDIDO (ADR-0005, corolario): si el

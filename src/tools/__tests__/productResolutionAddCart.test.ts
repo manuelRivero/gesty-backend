@@ -877,7 +877,9 @@ describe('search_products → ProductResolution → add_cart_item', () => {
         createdAt: new Date().toISOString(),
       };
     };
-    // search_products con un único match emite una resolución scope "turn".
+    // search_products con un único match emite una resolución scope
+    // "conversation" (Fase 2 referente informativo: sobrevive al cambio de
+    // turno para que un seguimiento o un "agregame uno" posterior la use).
     const resolveInTurn = async (turnId: string, orderLineId = 'task-a') => {
       const search = JSON.parse(
         (await searchProductsTool.func({ keyword: 'producto de prueba' }, undefined, inTurn(turnId))) as string
@@ -899,7 +901,7 @@ describe('search_products → ProductResolution → add_cart_item', () => {
       seed();
       const { resolutionId, resolved } = await resolveInTurn('turn-5');
       expect(resolved.success).toBe(true);
-      expect(ledgerEntry(resolutionId)).toMatchObject({ scope: 'turn', turnId: 'turn-5', status: 'selected' });
+      expect(ledgerEntry(resolutionId)).toMatchObject({ scope: 'conversation', turnId: 'turn-5', status: 'selected' });
       lines()[0].requestedQuantity = 3;
 
       const result = await add({ productId: PRODUCT_ID, orderLineId: 'task-a', resolutionId }, 'turn-7');
@@ -924,17 +926,17 @@ describe('search_products → ProductResolution → add_cart_item', () => {
       expect(prisma.draft_order_item.create).not.toHaveBeenCalled();
     });
 
-    it('TEST 3 — una resolución scope "turn" sin Task sigue venciendo en el turno siguiente', async () => {
+    it('TEST 3 — una resolución de match único sin Task sigue siendo válida en el turno siguiente (referente informativo)', async () => {
       const search = JSON.parse(
         (await searchProductsTool.func({ keyword: 'producto de prueba' }, undefined, inTurn('turn-5'))) as string
       );
       const resolutionId = search.items[0].resolutionId as string;
-      expect(ledgerEntry(resolutionId)).toMatchObject({ scope: 'turn', turnId: 'turn-5' });
+      expect(ledgerEntry(resolutionId)).toMatchObject({ scope: 'conversation', turnId: 'turn-5' });
 
       const result = await add({ productId: PRODUCT_ID, resolutionId, quantity: 1 }, 'turn-7');
 
-      expect(result).toMatchObject({ success: false, error: 'product_resolution_required' });
-      expect(prisma.draft_order_item.create).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ success: true, effect: { kind: 'cart_item_persisted' } });
+      expect(prisma.draft_order_item.create).toHaveBeenCalledOnce();
     });
 
     it.each([

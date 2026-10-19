@@ -11,6 +11,7 @@ import { prisma } from '../lib/prisma';
 import type { EnrichedContext } from '../controllers/webhook/types';
 import { getRequestedPartySize, normalizeMetadata } from '../services/productQuery/utils';
 import { buildPartySizeJustConfirmedContextLines } from '../services/peopleCountGate.service';
+import { buildInformationalProductRefContextLines } from '../services/informationalProductRef.service';
 import {
   deriveConfirmOfferCandidate,
   getConfirmOfferLedgerEntry,
@@ -755,6 +756,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     ...pendingItemNoteLines,
     ...pendingTipablesLines,
     ...pendingSelectionLines,
+    ...buildInformationalProductRefContextLines(meta),
     ...pendingVariationLines,
     ...pendingAddQuantityLines,
     ...pendingOrderLinesLines,

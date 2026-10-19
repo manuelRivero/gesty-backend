@@ -167,6 +167,16 @@ describe('search_products: miss de keyword vs. no disponibilidad confirmada', ()
 
     expect(result.missedOrderLine).toBeUndefined();
     expect(result.lineClosed).toBeUndefined();
-    expect(patchConversationMetadata).not.toHaveBeenCalled();
+    // No se toca la cola de pedido; el único patch es el referente
+    // informativo (Fase 2 — match único), no relacionado a pendingOrderLines.
+    for (const call of patchConversationMetadata.mock.calls) {
+      expect(call[1]).not.toHaveProperty('pendingOrderLines');
+    }
+    expect(patchConversationMetadata).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        lastInformationalProductRef: expect.objectContaining({ productId: 'cev-1' }),
+      })
+    );
   });
 });

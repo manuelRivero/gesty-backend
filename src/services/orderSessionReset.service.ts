@@ -26,6 +26,7 @@ const ORDER_SESSION_OMIT_KEYS = [
   'pendingProductSelection',
   'pendingQuestion',
   'candidateProductIds',
+  'lastInformationalProductRef',
   'intentCandidates',
   'shortlistAwaitingChoice',
   'pendingComplementSelection',

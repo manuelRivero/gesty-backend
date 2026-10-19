@@ -39,6 +39,21 @@ export type ConversationMetadata = {
   pendingQuestion?: string;
   candidateProductIds?: string[];
   /**
+   * Referente informativo: último producto que una consulta de catálogo
+   * resolvió de forma inequívoca (1 solo match), para que un seguimiento sin
+   * nombrarlo ("¿y qué ingredientes tiene?") pueda seguir hablando de él.
+   * NO es una oferta comercial ni una selección: no lo lee `lastOffer`, el
+   * ledger de oportunidades, `ctaResolver` ni ninguna lógica de venta. Un
+   * add_cart_item sobre este producto sigue pasando por las validaciones
+   * normales de `ProductResolution` (ver informationalProductRef.service.ts).
+   */
+  lastInformationalProductRef?: {
+    productId: string;
+    name: string;
+    setAt: string;
+    expiresAt: string;
+  } | null;
+  /**
    * True si este turno ReAct abrió un shortlist de ≥2 platos.
    * No bloquea `add_cart_item`: si el cliente ya nombró el plato, el modelo lo suma.
    * Se limpia al inicio del próximo `runHybridReactAgent`.
