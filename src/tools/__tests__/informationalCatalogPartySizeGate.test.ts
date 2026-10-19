@@ -1,31 +1,54 @@
 /**
- * Las tools de lectura de catálogo (search_products, find_products_by_filter,
- * get_complementary_suggestions, present_category) no deben exigir
- * OBTENER_PERSONAS_DEL_PEDIDO cuando el HumanIntent ACTIVE del turno es
- * puramente informativo (CONSULTAR_NEGOCIO/EXPLORAR). Las operaciones
- * transaccionales (add_cart_item, plan_order_lines) conservan el gate
- * incondicional, pasen o no un goal activo por configurable.
+ * Gesty ya no exige OBTENER_PERSONAS_DEL_PEDIDO (cantidad de personas) para
+ * consultar catálogo ni para operaciones transaccionales de pedido
+ * (add_cart_item, plan_order_lines, present_category, present_product_cta,
+ * search_products, find_products_by_filter): ninguna de estas tools bloquea
+ * sin ese dato, sin importar el HumanIntent activo.
  *
- * Ver docs/arquitectura (auditoría "separar lectura de catálogo y
- * precondición de party size") para el diagnóstico completo.
+ * `get_complementary_suggestions` queda explícitamente FUERA de este cambio
+ * (investigación de "sugerencias de complemento" por separado) y conserva
+ * el gate incondicional anterior.
+ *
+ * Ver docs/arquitectura (auditoría "eliminar party size como requisito
+ * general del pedido") para el diagnóstico completo.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Prisma } from '@prisma/client';
 
 const findOrCreateConversationState = vi.fn();
 const patchConversationMetadata = vi.fn();
 const omitConversationMetadataKeys = vi.fn();
 
-vi.mock('../../lib/prisma', () => ({
-  prisma: {
+vi.mock('../../lib/prisma', () => {
+  const prisma: any = {
     business: { findUnique: vi.fn().mockResolvedValue({ currency_code: 'ARS' }) },
     menu_item: {
       count: vi.fn().mockResolvedValue(0),
       findMany: vi.fn().mockResolvedValue([]),
       findFirst: vi.fn().mockResolvedValue(null),
     },
-  },
-}));
+    draft_order: {
+      findFirst: vi.fn().mockResolvedValue({ id: 'draft-1' }),
+      create: vi.fn(async () => ({ id: 'draft-1' })),
+      update: vi.fn(),
+    },
+    draft_order_item: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      create: vi.fn(async () => ({ id: 'created-line-id' })),
+      update: vi.fn(),
+      aggregate: vi.fn().mockResolvedValue({ _sum: { total_price: 1000 } }),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    conversation_state: { findUnique: vi.fn().mockResolvedValue({ metadata: {} }) },
+    $queryRaw: vi.fn(async () => [
+      { bot_enabled: true, orders_enabled: true, reservations_enabled: true },
+    ]),
+  };
+  prisma.$executeRaw = vi.fn();
+  prisma.$transaction = vi.fn(async (callback: (tx: any) => unknown) => callback(prisma));
+  return { prisma };
+});
 
 vi.mock('../../services/menu.service', () => ({
   MenuService: {
@@ -63,11 +86,35 @@ vi.mock('../../services/productResolution.service', async (importOriginal) => {
     issueProductResolutions: vi.fn(async ({ productIds }: { productIds: string[] }) =>
       productIds.map((productId) => ({ resolutionId: `test:${productId}`, productId }))
     ),
+    resolveProductForAdd: vi.fn(async ({ productId }: { productId: string }) => ({
+      ok: true,
+      resolution: { resolutionId: `test:${productId}`, productId },
+    })),
+    consumeProductResolution: vi.fn(async (_tx: unknown, { productId }: { productId: string }) => ({
+      ok: true,
+      resolution: { resolutionId: `test:${productId}`, productId, status: 'consumed' },
+    })),
   };
 });
 
+vi.mock('../../services/draftOrderTimeout.service', () => ({
+  refreshDraftOrderTimeout: vi.fn(),
+}));
+vi.mock('../../services/lastOffer.service', () => ({ clearLastOffer: vi.fn() }));
+vi.mock('../../services/pendingVariation.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../services/pendingVariation.service')>();
+  return { ...actual, setPendingVariation: vi.fn(), clearPendingVariation: vi.fn() };
+});
+
 import { prisma } from '../../lib/prisma';
-import { searchProductsTool, findProductsByFilterTool, getComplementarySuggestionsTool, presentCategoryTool, addCartItemTool, planOrderLinesTool } from '../index';
+import {
+  searchProductsTool,
+  findProductsByFilterTool,
+  getComplementarySuggestionsTool,
+  presentCategoryTool,
+  addCartItemTool,
+  planOrderLinesTool,
+} from '../index';
 
 const baseConfigurable = {
   businessId: 'biz-1',
@@ -84,7 +131,7 @@ const configWith = (overrides: Record<string, unknown> = {}) => ({
 
 const CEVICHE_CATEGORY_ID = '11111111-1111-4111-8111-111111111111';
 
-describe('gate de party size en tools informativas de catálogo', () => {
+describe('party size ya no bloquea catálogo ni pedido (salvo sugerencias de complemento)', () => {
   let metadata: Record<string, unknown>;
 
   beforeEach(() => {
@@ -104,13 +151,9 @@ describe('gate de party size en tools informativas de catálogo', () => {
   });
 
   describe('search_products', () => {
-    it('con CONSULTAR_NEGOCIO y sin party size, permite consultar el catálogo', async () => {
+    it('sin party size y sin goal activo, permite consultar el catálogo', async () => {
       const result = JSON.parse(
-        (await searchProductsTool.func(
-          { keyword: 'ceviche' },
-          undefined,
-          configWith({ activeHumanIntentGoal: 'CONSULTAR_NEGOCIO' })
-        )) as string
+        (await searchProductsTool.func({ keyword: 'ceviche' }, undefined, configWith())) as string
       );
 
       expect(result.error).toBeUndefined();
@@ -118,20 +161,7 @@ describe('gate de party size en tools informativas de catálogo', () => {
       expect(result.items[0].name).toBe('Ceviche Clásico');
     });
 
-    it('con EXPLORAR y sin party size, permite explorar el catálogo', async () => {
-      const result = JSON.parse(
-        (await searchProductsTool.func(
-          { keyword: 'ceviche' },
-          undefined,
-          configWith({ activeHumanIntentGoal: 'EXPLORAR' })
-        )) as string
-      );
-
-      expect(result.error).toBeUndefined();
-      expect(result.count).toBe(1);
-    });
-
-    it('con PEDIR y sin party size, conserva el bloqueo actual', async () => {
+    it('sin party size y con goal PEDIR (transaccional), igual permite consultar', async () => {
       const result = JSON.parse(
         (await searchProductsTool.func(
           { keyword: 'ceviche' },
@@ -140,31 +170,11 @@ describe('gate de party size en tools informativas de catálogo', () => {
         )) as string
       );
 
-      expect(result.error).toBe('party_size_required');
-      expect(result.pending).toBe(true);
+      expect(result.error).toBeUndefined();
+      expect(result.count).toBe(1);
     });
 
-    it('sin goal activo (señal ausente), mantiene el comportamiento conservador', async () => {
-      const result = JSON.parse(
-        (await searchProductsTool.func({ keyword: 'ceviche' }, undefined, configWith())) as string
-      );
-
-      expect(result.error).toBe('party_size_required');
-    });
-
-    it('no produce ningún efecto transaccional (sin campo "effect" en la respuesta)', async () => {
-      const result = JSON.parse(
-        (await searchProductsTool.func(
-          { keyword: 'ceviche' },
-          undefined,
-          configWith({ activeHumanIntentGoal: 'CONSULTAR_NEGOCIO' })
-        )) as string
-      );
-
-      expect(result.effect).toBeUndefined();
-    });
-
-    it('con un pendingPartySizeOrder ya existente, responde el catálogo sin tocar el pending', async () => {
+    it('con un pendingPartySizeOrder heredado, responde el catálogo sin pedir personas ni tocar el pending', async () => {
       metadata = {
         pendingPartySizeOrder: {
           source: 'lookup',
@@ -177,7 +187,7 @@ describe('gate de party size en tools informativas de catálogo', () => {
         (await searchProductsTool.func(
           { keyword: 'ceviche' },
           undefined,
-          configWith({ activeHumanIntentGoal: 'CONSULTAR_NEGOCIO' })
+          configWith({ activeHumanIntentGoal: 'PEDIR' })
         )) as string
       );
 
@@ -192,20 +202,7 @@ describe('gate de party size en tools informativas de catálogo', () => {
   });
 
   describe('find_products_by_filter', () => {
-    it('con intención informativa (CONSULTAR_NEGOCIO) permite la lectura', async () => {
-      const result = JSON.parse(
-        (await findProductsByFilterTool.func(
-          { limit: 10 },
-          undefined,
-          configWith({ activeHumanIntentGoal: 'CONSULTAR_NEGOCIO' })
-        )) as string
-      );
-
-      expect(result.error).toBeUndefined();
-      expect(result.count).toBe(0);
-    });
-
-    it('con PEDIR y sin party size, conserva el bloqueo', async () => {
+    it('sin party size, con goal PEDIR, permite la lectura', async () => {
       const result = JSON.parse(
         (await findProductsByFilterTool.func(
           { limit: 10 },
@@ -214,23 +211,12 @@ describe('gate de party size en tools informativas de catálogo', () => {
         )) as string
       );
 
-      expect(result.error).toBe('party_size_required');
-    });
-
-    it('no produce ningún efecto transaccional', async () => {
-      const result = JSON.parse(
-        (await findProductsByFilterTool.func(
-          { limit: 10 },
-          undefined,
-          configWith({ activeHumanIntentGoal: 'EXPLORAR' })
-        )) as string
-      );
-
-      expect(result.effect).toBeUndefined();
+      expect(result.error).toBeUndefined();
+      expect(result.count).toBe(0);
     });
   });
 
-  describe('get_complementary_suggestions', () => {
+  describe('get_complementary_suggestions (fuera de alcance: conserva el gate previo)', () => {
     it('con CONSULTAR_NEGOCIO y sin party size, permite la lectura', async () => {
       const result = JSON.parse(
         (await getComplementarySuggestionsTool.func(
@@ -244,7 +230,7 @@ describe('gate de party size en tools informativas de catálogo', () => {
       expect(Array.isArray(result.items)).toBe(true);
     });
 
-    it('con PEDIR y sin party size, conserva el bloqueo', async () => {
+    it('con PEDIR y sin party size, sigue bloqueando (sin cambios)', async () => {
       const result = JSON.parse(
         (await getComplementarySuggestionsTool.func(
           { limit: 6 },
@@ -255,33 +241,10 @@ describe('gate de party size en tools informativas de catálogo', () => {
 
       expect(result.error).toBe('party_size_required');
     });
-
-    it('no toca conversation metadata (no hay efecto transaccional ni de pendings)', async () => {
-      await getComplementarySuggestionsTool.func(
-        { limit: 6 },
-        undefined,
-        configWith({ activeHumanIntentGoal: 'CONSULTAR_NEGOCIO' })
-      );
-
-      expect(patchConversationMetadata).not.toHaveBeenCalled();
-    });
   });
 
   describe('present_category', () => {
-    it('con EXPLORAR y sin party size, permite mostrar la categoría', async () => {
-      const result = JSON.parse(
-        (await presentCategoryTool.func(
-          { categoryId: CEVICHE_CATEGORY_ID },
-          undefined,
-          configWith({ activeHumanIntentGoal: 'EXPLORAR' })
-        )) as string
-      );
-
-      expect(result.error).toBeUndefined();
-      expect(result.signal).toBe('present_category');
-    });
-
-    it('con PEDIR y sin party size, conserva el bloqueo', async () => {
+    it('sin party size, con goal PEDIR, permite mostrar la categoría', async () => {
       const result = JSON.parse(
         (await presentCategoryTool.func(
           { categoryId: CEVICHE_CATEGORY_ID },
@@ -290,22 +253,13 @@ describe('gate de party size en tools informativas de catálogo', () => {
         )) as string
       );
 
-      expect(result.error).toBe('party_size_required');
-    });
-
-    it('no toca conversation metadata', async () => {
-      await presentCategoryTool.func(
-        { categoryId: CEVICHE_CATEGORY_ID },
-        undefined,
-        configWith({ activeHumanIntentGoal: 'EXPLORAR' })
-      );
-
-      expect(patchConversationMetadata).not.toHaveBeenCalled();
+      expect(result.error).toBeUndefined();
+      expect(result.signal).toBe('present_category');
     });
   });
 
-  describe('operaciones transaccionales: gate intacto sin importar activeHumanIntentGoal', () => {
-    it('add_cart_item sigue bloqueando sin party size aunque el goal activo sea informativo', async () => {
+  describe('operaciones transaccionales de pedido: ya no exigen party size', () => {
+    it('add_cart_item agrega el producto sin Fact de personas', async () => {
       vi.mocked(prisma.menu_item.findFirst).mockResolvedValueOnce({
         id: '22222222-2222-4222-8222-222222222222',
         name: 'Ceviche Clásico',
@@ -313,7 +267,7 @@ describe('gate de party size en tools informativas de catálogo', () => {
         discount_type: null,
         discount_value: null,
         variations: [],
-        menu_item_price: [{ amount: 1000, currency_code: 'ARS' }],
+        menu_item_price: [{ amount: new Prisma.Decimal(1000), currency_code: 'ARS' }],
       } as never);
 
       const result = JSON.parse(
@@ -324,10 +278,10 @@ describe('gate de party size en tools informativas de catálogo', () => {
         )) as string
       );
 
-      expect(result.error).toBe('party_size_required');
+      expect(result.error).not.toBe('party_size_required');
     });
 
-    it('plan_order_lines sigue bloqueando sin party size aunque el goal activo sea informativo', async () => {
+    it('plan_order_lines acepta el plan sin Fact de personas', async () => {
       const result = JSON.parse(
         (await planOrderLinesTool.func(
           { lines: [{ hint: 'ceviche', requestedQuantity: 1 }] },
@@ -336,7 +290,7 @@ describe('gate de party size en tools informativas de catálogo', () => {
         )) as string
       );
 
-      expect(result.error).toBe('party_size_required');
+      expect(result.error).not.toBe('party_size_required');
     });
   });
 });

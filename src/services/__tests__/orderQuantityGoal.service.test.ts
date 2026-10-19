@@ -20,12 +20,13 @@ const metadata = {
 };
 
 describe('orderQuantityGoal.service', () => {
-  it('abre solo con PEDIR activo, party size conocido y línea UNKNOWN', () => {
+  it('abre con PEDIR activo y línea UNKNOWN, ya sin exigir party size', () => {
     const common = { checkoutActive: false, partySizeKnown: true, metadata, businessId: 'biz-1', conversationId: 'conv-1' };
     expect(deriveOrderQuantityGoalTarget({ ...common, activePedir: true })?.id).toBe('papas-1');
     expect(deriveOrderQuantityGoalTarget({ ...common, activePedir: false })).toBeNull();
     expect(deriveOrderQuantityGoalTarget({ ...common, activePedir: true, checkoutActive: true })).toBeNull();
-    expect(deriveOrderQuantityGoalTarget({ ...common, activePedir: true, partySizeKnown: false })).toBeNull();
+    // partySizeKnown ya no condiciona la apertura del Goal.
+    expect(deriveOrderQuantityGoalTarget({ ...common, activePedir: true, partySizeKnown: false })?.id).toBe('papas-1');
   });
 
   it('emite fulfillment contract y referencia estable del target', () => {

@@ -375,14 +375,15 @@ describe('pedido en espera del número', () => {
     expect(next?.summary).toBe('pizza');
   });
 
-  it('con personas ya guardadas la línea sigue trayendo el pedido', () => {
+  it('con o sin personas guardadas, la línea siempre retoma el pedido sin pedir el número', () => {
     const lines = buildPendingPartySizeOrderContextLines({
       peopleCount: 3,
       requestedPartySize: 3,
       pendingPartySizeOrder: { ...parked, summary: '1× ceviche' },
     });
-    expect(lines.join('\n')).toMatch(/Pedido en espera \(personas ya guardadas\): 1× ceviche/);
+    expect(lines.join('\n')).toMatch(/Pedido en espera: 1× ceviche/);
     expect(lines.join('\n')).toMatch(/plan_order_lines/);
+    expect(lines.join('\n')).not.toMatch(/preguntá las personas/i);
   });
 
   it('no duplica la misma búsqueda y no escribe vacío', () => {
@@ -396,8 +397,8 @@ describe('pedido en espera del número', () => {
     const lines = buildPendingPartySizeOrderContextLines({
       pendingPartySizeOrder: parked,
     });
-    expect(lines.join('\n')).toMatch(/Pedido en espera del número: ceviche/);
-    expect(lines.join('\n')).toMatch(/save_party_size/);
+    expect(lines.join('\n')).toMatch(/Pedido en espera: ceviche/);
+    expect(lines.join('\n')).not.toMatch(/save_party_size/);
 
     const payload = partySizeRequiredPayload('ceviche, lomo');
     expect('heldOrder' in payload && payload.heldOrder).toBe('ceviche, lomo');

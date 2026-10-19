@@ -4,8 +4,6 @@ import { prisma } from '../lib/prisma';
 import { resolveProductForAdd } from './productResolution.service';
 import { getPendingAddQuantity } from './pendingAddQuantity.service';
 import { getPendingVariation } from './pendingVariation.service';
-import { normalizeMetadata } from './productQuery/utils';
-import { isPartySizeMissingForOrderingTools } from './partySizeGoal.service';
 import {
   getCurrentProductResolutionForTask,
   getPendingOrderLines,
@@ -136,14 +134,6 @@ export const evaluateToolRequirement = async (
       type: 'DEFER',
       reason: validatedResolution.reason,
       missingRequirements: ['PRODUCT_RESOLVED'],
-    };
-  }
-
-  if (isPartySizeMissingForOrderingTools(normalizeMetadata(metadata))) {
-    return {
-      type: 'DEFER',
-      reason: 'party_size_required',
-      missingRequirements: ['PARTY_SIZE_OBTAINED'],
     };
   }
 

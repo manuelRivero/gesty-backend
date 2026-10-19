@@ -2,8 +2,9 @@
  * `add_cart_item` con cola de pedido activa (PLAN-ACCION-PEDIDO-MULTI-LINEA.md).
  *
  * La cantidad de línea (`plan_order_lines`) cuenta como unidades dichas (no ask
- * de quantity). El Fact de personas es obligatorio antes del add: la cantidad
- * de línea no saltea party size.
+ * de quantity). El Fact de personas ya NO es requisito para el add: la cantidad
+ * de línea explícita basta; solo falta cantidad de línea bloquea (Goal
+ * OBTENER_CANTIDAD_DEL_PRODUCTO), no la ausencia de personas.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -257,7 +258,7 @@ describe('add_cart_item — cola de pedido y cantidad por línea', () => {
     );
   });
 
-  it('línea con cantidad: igual exige party size si falta el Fact de personas', async () => {
+  it('línea con cantidad: se agrega igual sin Fact de personas (party size ya no es requisito)', async () => {
     const noParty = metadataWithQueue();
     findOrCreateConversationState.mockResolvedValue({ metadata: noParty });
     vi.mocked(prisma.conversation_state.findUnique).mockResolvedValue({
@@ -265,10 +266,11 @@ describe('add_cart_item — cola de pedido y cantidad por línea', () => {
     } as never);
 
     const result = JSON.parse((await callTool({ productId: PRODUCT_ID })) as string);
-    expect(result).toEqual(
-      expect.objectContaining({ success: false, error: 'party_size_required' })
+    expect(result.success).toBe(true);
+    expect(result.added.quantity).toBe(2);
+    expect(prisma.draft_order_item.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ quantity: 2 }) })
     );
-    expect(prisma.draft_order_item.create).not.toHaveBeenCalled();
   });
 
   it('Task-bound: la cantidad persistida de la línea gana a la quantity del modelo (Test G)', async () => {
@@ -285,7 +287,7 @@ describe('add_cart_item — cola de pedido y cantidad por línea', () => {
     expect(setPendingAddQuantity).not.toHaveBeenCalled();
   });
 
-  it('línea SIN cantidad: sigue bloqueando por personas (Goal blocking)', async () => {
+  it('línea SIN cantidad (sin Fact de personas): sigue bloqueando por cantidad de línea desconocida', async () => {
     const noQty = metadataWithQueue({ requestedQuantity: null });
     findOrCreateConversationState.mockResolvedValue({ metadata: noQty });
     vi.mocked(prisma.conversation_state.findUnique).mockResolvedValue({
@@ -295,7 +297,7 @@ describe('add_cart_item — cola de pedido y cantidad por línea', () => {
     const result = JSON.parse((await callTool({ productId: PRODUCT_ID })) as string);
 
     expect(result).toEqual(
-      expect.objectContaining({ success: false, error: 'party_size_required' })
+      expect.objectContaining({ success: false, error: 'order_line_quantity_required' })
     );
     expect(prisma.draft_order_item.create).not.toHaveBeenCalled();
   });

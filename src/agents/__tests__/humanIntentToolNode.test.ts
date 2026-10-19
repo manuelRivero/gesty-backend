@@ -538,7 +538,7 @@ describe('HumanIntentToolNode', () => {
     });
   });
 
-  it('difiere el ADD sin party size aunque ProductResolution sea válida', async () => {
+  it('permite el ADD sin party size cuando la ProductResolution es válida (ya no es requisito)', async () => {
     conversationStateFindUniqueMock.mockResolvedValue({ metadata: {} });
     const effect = vi.fn();
     const node = new HumanIntentToolNode([
@@ -556,12 +556,11 @@ describe('HumanIntentToolNode', () => {
       config()
     );
 
-    expect(effect).not.toHaveBeenCalled();
+    expect(effect).toHaveBeenCalled();
     expect((result.messages[2] as ToolMessage).tool_call_id).toBe('add-1');
     expect(JSON.parse(String(result.messages[2].content))).toMatchObject({
-      success: false,
-      error: 'party_size_required',
-      missingRequirements: ['PARTY_SIZE_OBTAINED'],
+      success: true,
+      effect: { kind: 'cart_item_persisted' },
     });
   });
 

@@ -1,6 +1,14 @@
 /**
- * El gate de personas no descarta la comida que la tool ya traía.
- * Queda en el estado para el turno siguiente y save_party_size la retoma.
+ * Gesty ya no exige party size para pedidos de catálogo: search_products,
+ * find_products_by_filter, plan_order_lines y add_cart_item ya no generan
+ * `pendingPartySizeOrder` (ese mecanismo solo sigue vivo para las tools de
+ * sugerencias de complemento, fuera de este cambio).
+ *
+ * `save_party_size` sigue disponible para capturar el dato si el cliente lo
+ * ofrece espontáneamente, y sigue retomando un `pendingPartySizeOrder`
+ * heredado de antes del cambio sin perder las líneas armadas. Un
+ * `pendingPartySizeOrder` heredado no debe volver a pedir personas: el
+ * contexto solo invita a retomar la comida pendiente.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -210,7 +218,20 @@ describe('pedido en espera cuando falta el número', () => {
     expect(metadata.requestedPartySize).toBeUndefined();
   });
 
-  it('después de guardar el número el estado sigue mostrando el pedido sin historial', () => {
+  it('un pendingPartySizeOrder heredado ya no pide personas: solo invita a retomar la comida', () => {
+    const lines = buildPendingPartySizeOrderContextLines({
+      pendingPartySizeOrder: {
+        source: 'plan',
+        summary: '1× ceviche, 1× lomo',
+        setAt: '2026-09-27T16:00:00.000Z',
+      },
+    });
+    expect(lines.join('\n')).toContain('1× ceviche, 1× lomo');
+    expect(lines.join('\n')).not.toMatch(/preguntá las personas/i);
+    expect(lines.join('\n')).not.toMatch(/¿para cuántas personas/i);
+  });
+
+  it('con party size ya conocido, el mensaje de retomar es el mismo (sin distinción histórica)', () => {
     const lines = buildPendingPartySizeOrderContextLines({
       peopleCount: 3,
       requestedPartySize: 3,
@@ -221,68 +242,44 @@ describe('pedido en espera cuando falta el número', () => {
       },
     });
     expect(lines.join('\n')).toContain('1× ceviche, 1× lomo');
-    expect(lines.join('\n')).toMatch(/personas ya guardadas/);
+    expect(lines.join('\n')).not.toMatch(/preguntá las personas/i);
   });
 
-  it('lookup y plan en paralelo terminan en el plan', async () => {
-    patchConversationMetadata.mockImplementation(
-      async (_id: string, patch: Record<string, unknown>) => {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-        metadata = { ...metadata, ...patch };
-      }
-    );
+  it('search_products ya no genera pendingPartySizeOrder (el gate ya no aplica a pedido)', async () => {
+    vi.mocked(MenuService.searchMenuItemsByKeyword).mockResolvedValue([] as never);
 
-    await Promise.all([
-      searchProductsTool.func({ keyword: 'ceviche' }, undefined, TURN_1),
-      planOrderLinesTool.func({ lines: planLines }, undefined, TURN_1),
-    ]);
+    await searchProductsTool.func({ keyword: 'ceviche' }, undefined, TURN_1);
 
-    expect(metadata.pendingPartySizeOrder).toMatchObject({
-      source: 'plan',
-      summary: '1× ceviche, 1× lomo',
-      lines: planLines,
-    });
+    expect(metadata.pendingPartySizeOrder).toBeUndefined();
+    expect(patchConversationMetadata).not.toHaveBeenCalled();
   });
 
-  it('dos lookups del mismo turno se suman sin duplicar', async () => {
-    patchConversationMetadata.mockImplementation(
-      async (_id: string, patch: Record<string, unknown>) => {
-        await new Promise((resolve) => setTimeout(resolve, 15));
-        metadata = { ...metadata, ...patch };
-      }
-    );
-
-    await Promise.all([
-      searchProductsTool.func({ keyword: 'ceviche' }, undefined, TURN_1),
-      searchProductsTool.func({ keyword: 'lomo' }, undefined, TURN_1),
-      searchProductsTool.func({ keyword: 'ceviche' }, undefined, TURN_1),
-    ]);
-
-    const pending = metadata.pendingPartySizeOrder as { summary: string; source: string };
-    expect(pending.source).toBe('lookup');
-    expect(pending.summary.split(', ').sort()).toEqual(['ceviche', 'lomo']);
-  });
-
-  it('un lookup de otro turno reemplaza al lookup anterior', async () => {
-    await searchProductsTool.func({ keyword: 'empanadas' }, undefined, TURN_1);
-    await searchProductsTool.func({ keyword: 'pizza' }, undefined, TURN_2);
-
-    expect(metadata.pendingPartySizeOrder).toMatchObject({
-      source: 'lookup',
-      summary: 'pizza',
-    });
-    expect(MenuService.searchMenuItemsByKeyword).not.toHaveBeenCalled();
-  });
-
-  it('el plan gana a un lookup previo y a uno posterior', async () => {
-    await searchProductsTool.func({ keyword: 'papa' }, undefined, TURN_1);
+  it('plan_order_lines ya no genera pendingPartySizeOrder (el gate ya no aplica a pedido)', async () => {
     await planOrderLinesTool.func({ lines: planLines }, undefined, TURN_1);
-    await searchProductsTool.func({ keyword: 'arroz' }, undefined, TURN_1);
 
-    expect(metadata.pendingPartySizeOrder).toMatchObject({
-      source: 'plan',
-      summary: '1× ceviche, 1× lomo',
-    });
+    expect(metadata.pendingPartySizeOrder).toBeUndefined();
+  });
+
+  it('un pendingPartySizeOrder heredado no bloquea una nueva búsqueda de catálogo', async () => {
+    metadata = {
+      pendingPartySizeOrder: {
+        source: 'lookup',
+        summary: 'empanadas',
+        setAt: '2026-09-27T15:00:00.000Z',
+      },
+    };
+    vi.mocked(MenuService.searchMenuItemsByKeyword).mockResolvedValue([
+      { id: 'a', name: 'Pizza Napolitana' },
+    ] as never);
+
+    const result = JSON.parse(
+      (await searchProductsTool.func({ keyword: 'pizza' }, undefined, TURN_2)) as string
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.count).toBe(1);
+    // El pending heredado queda intacto (no lo toca esta tool), pero no bloquea la respuesta.
+    expect(metadata.pendingPartySizeOrder).toMatchObject({ summary: 'empanadas' });
   });
 
   it('plan_order_lines exitoso transfiere la intención a la cola y limpia el pending', async () => {

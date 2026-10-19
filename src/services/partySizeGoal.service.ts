@@ -258,21 +258,20 @@ export const partySizeRequiredPayload = (heldOrder?: string | null) => {
   };
 };
 
+/**
+ * `pendingPartySizeOrder` es estado heredado del gate de personas que ya no
+ * existe para pedidos de catálogo (Gesty no exige esa cantidad). Esta
+ * función nunca debe instruir a preguntar personas: solo retoma la comida
+ * que quedó pendiente, para que un `pendingPartySizeOrder` persistido de
+ * antes del cambio no reintroduzca la pregunta obligatoria.
+ */
 export const buildPendingPartySizeOrderContextLines = (metadata: unknown): string[] => {
   const pending = getPendingPartySizeOrder(metadata);
   if (!pending) return [];
   const resume =
     'Retomalo (si hay varios platos, plan_order_lines; si no, search_products o add_cart_item). ' +
     'No lo trates como ya sumado.';
-  if (getRequestedPartySize(normalizeMetadata(metadata)) != null) {
-    return [
-      `- Pedido en espera (personas ya guardadas): ${pending.summary}. ${resume}`,
-    ];
-  }
-  return [
-    `- Pedido en espera del número: ${pending.summary}. ` +
-      `Preguntá las personas; cuando save_party_size guarde el número, ${resume}`,
-  ];
+  return [`- Pedido en espera: ${pending.summary}. ${resume}`];
 };
 
 /**

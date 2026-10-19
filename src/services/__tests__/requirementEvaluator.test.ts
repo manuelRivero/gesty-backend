@@ -79,15 +79,11 @@ describe('evaluateToolRequirement', () => {
     expect(partySizeMissingMock).not.toHaveBeenCalled();
   });
 
-  it('devuelve DEFER por party size después de validar ProductResolution', async () => {
+  it('devuelve ALLOW con resolución válida aunque party size esté marcado como faltante (ya no es requisito)', async () => {
     partySizeMissingMock.mockReturnValue(true);
 
-    await expect(evaluateToolRequirement(params())).resolves.toMatchObject({
-      type: 'DEFER',
-      reason: 'party_size_required',
-      missingRequirements: ['PARTY_SIZE_OBTAINED'],
-    });
-    expect(resolveProductForAddMock).toHaveBeenCalledOnce();
+    await expect(evaluateToolRequirement(params())).resolves.toEqual({ type: 'ALLOW' });
+    expect(partySizeMissingMock).not.toHaveBeenCalled();
   });
 
   it('devuelve ALLOW con resolución válida y party size permitido', async () => {

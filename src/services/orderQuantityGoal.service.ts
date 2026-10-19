@@ -14,6 +14,11 @@ export const ORDER_QUANTITY_GOAL_TYPE = 'OBTENER_CANTIDAD_DEL_PRODUCTO' as const
 export type OrderQuantityGoalFacts = {
   activePedir: boolean;
   checkoutActive: boolean;
+  /**
+   * Ya no condiciona la apertura del Goal (Gesty no exige cantidad de
+   * personas para pedidos de catálogo); se conserva en el tipo por
+   * compatibilidad con los callers existentes.
+   */
   partySizeKnown: boolean;
   metadata: unknown;
   businessId?: string;
@@ -23,7 +28,7 @@ export type OrderQuantityGoalFacts = {
 export const deriveOrderQuantityGoalTarget = (
   facts: OrderQuantityGoalFacts
 ) => {
-  if (!facts.activePedir || facts.checkoutActive || !facts.partySizeKnown) return null;
+  if (!facts.activePedir || facts.checkoutActive) return null;
   return getNextOrderLineRequiringQuantity(getPendingOrderLines(facts.metadata), {
     metadata: facts.metadata,
     businessId: facts.businessId,

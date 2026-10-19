@@ -41,9 +41,7 @@ import {
 import {
   blocksOrderPartySizeForReservationDomain,
   buildPendingPartySizeOrderContextLines,
-  derivePartySizeGoalCandidate,
   hasActivePedirHumanIntent,
-  isFoodRelatedPartySizeSignal,
   recordPartySizeGoalSurfaced,
   resolvePartySizeLedgerEntry,
   PARTY_SIZE_GOAL_TYPE,
@@ -508,13 +506,6 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
 
   const hasAddress = ctx.hasAddress === true;
 
-  const foodRelatedSignal = hasActivePedirHumanIntent(meta) || isFoodRelatedPartySizeSignal({
-    detectionIntent: detection?.intent ?? null,
-    metadata: meta,
-    lastReferencedProductId:
-      (ctx.conversation as { lastReferencedProductId?: string | null } | undefined)
-        ?.lastReferencedProductId ?? null,
-  });
   const orderQuantityCandidate = deriveOrderQuantityGoalCandidate(
     {
       activePedir: hasActivePedirHumanIntent(meta),
@@ -583,17 +574,8 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
           meta.intentLedger?.[PROMOTION_INTENT_TYPE]
         ),
     // SUGERIR_DIRECCION: no se inyecta en el híbrido — dirección solo onboarding/checkout.
-    reservationFaqMode
-      ? null
-      : derivePartySizeGoalCandidate(
-          {
-            foodRelatedSignal,
-            partySize: partySize ?? null,
-            checkoutActive,
-            reservationDomainActive: reservationDomainBlocksOrderPartySize,
-          },
-          resolvePartySizeLedgerEntry(meta)
-        ),
+    // OBTENER_PERSONAS_DEL_PEDIDO ya no se deriva como Goal bloqueante:
+    // Gesty no exige cantidad de personas para pedidos de catálogo.
     orderQuantityCandidate,
     confirmOfferCandidate,
   ].filter((c): c is NonNullable<typeof c> => c != null);

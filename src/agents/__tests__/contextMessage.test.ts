@@ -150,7 +150,7 @@ describe('buildContextMessage', () => {
     expect(msg).toContain('- Sesión de checkout: activa');
   });
 
-  it('oferta activa sin party: Goal personas gana; carrito por oferta pendiente', async () => {
+  it('oferta activa sin party: ya no hay Goal de personas que la opaque', async () => {
     findFirstMock.mockResolvedValue(null);
     const msg = await buildContextMessage(
       makeCtx({
@@ -167,13 +167,13 @@ describe('buildContextMessage', () => {
       })
     );
     expect(msg).toContain('- Carrito:');
-    expect(msg).toContain('OBTENER_PERSONAS_DEL_PEDIDO');
-    expect(msg).not.toContain('Oferta activa');
+    expect(msg).not.toContain('OBTENER_PERSONAS_DEL_PEDIDO');
+    expect(msg).toContain('Oferta activa');
     expect(msg).toContain('Oferta viva');
     expect(msg).toContain('prod-1');
   });
 
-  it('pedido HumanIntent ACTIVE sin party size deriva el Goal blocking de personas', async () => {
+  it('pedido HumanIntent ACTIVE sin party size ya no deriva el Goal blocking de personas', async () => {
     findFirstMock.mockResolvedValue(null);
     const msg = await buildContextMessage(makeCtx({
       metadata: {
@@ -196,7 +196,7 @@ describe('buildContextMessage', () => {
       },
     }));
 
-    expect(msg).toContain('OBTENER_PERSONAS_DEL_PEDIDO');
+    expect(msg).not.toContain('OBTENER_PERSONAS_DEL_PEDIDO');
     expect(msg).toContain('Personas para el pedido: no informado');
   });
 

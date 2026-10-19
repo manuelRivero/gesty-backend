@@ -45,12 +45,6 @@ import {
   getRequestedPartySize,
   normalizeMetadata,
 } from '../../../services/productQuery/utils';
-import {
-  blocksOrderPartySizeForReservationDomain,
-  derivePartySizeGoal,
-  getPartySizeGoalLedger,
-  isFoodRelatedPartySizeSignal,
-} from '../../../services/partySizeGoal.service';
 import { deriveOrderQuantityGoalTarget } from '../../../services/orderQuantityGoal.service';
 import { ensurePendingOrderLinesFromRequest } from '../../../services/pendingOrderLines.service';
 import { clearWelcomeEligible } from '../../../services/welcomeEligible.service';
@@ -846,25 +840,12 @@ export const nlpSubgraphNode = async (
       const pending = intentState.records
         .filter((intent) => intent.status === 'PENDING')
         .sort((a, b) => a.sequence - b.sequence);
-      const partySizeGoalActive = derivePartySizeGoal(
-        {
-          partySize: getRequestedPartySize(metadataBeforePreflight) ?? null,
-          foodRelatedSignal:
-            active?.goal === 'PEDIR' ||
-            isFoodRelatedPartySizeSignal({
-              metadata: metadataBeforePreflight,
-              lastReferencedProductId:
-                (conversation as { lastReferencedProductId?: string | null })
-                  .lastReferencedProductId ?? null,
-            }),
-          checkoutActive: metadataBeforePreflight.checkout_active === true,
-          reservationDomainActive: blocksOrderPartySizeForReservationDomain(
-            metadataBeforePreflight
-          ),
-        },
-        getPartySizeGoalLedger(metadataBeforePreflight)
-      ).open;
-      const quantityGoalTarget = !partySizeGoalActive && active?.goal === 'PEDIR'
+      // Gesty ya no exige cantidad de personas para pedidos de catálogo:
+      // OBTENER_PERSONAS_DEL_PEDIDO deja de calcularse como Goal bloqueante
+      // (no debe aparecer como activeBlockingGoal ni condicionar el preflight
+      // ni el Goal de cantidad por línea).
+      const partySizeGoalActive = false;
+      const quantityGoalTarget = active?.goal === 'PEDIR'
         ? deriveOrderQuantityGoalTarget({
           activePedir: true,
           checkoutActive: metadataBeforePreflight.checkout_active === true,

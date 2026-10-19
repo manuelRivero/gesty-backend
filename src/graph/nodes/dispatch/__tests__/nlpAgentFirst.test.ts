@@ -331,12 +331,15 @@ describe('nlpSubgraphNode — agent-first', () => {
 
     await nlpSubgraphNode(nlpState('3', lifecycleMock.metadata));
 
+    // activeBlockingGoal ya no se calcula para OBTENER_PERSONAS_DEL_PEDIDO
+    // (Gesty no exige cantidad de personas), pero el fulfillmentCandidate que
+    // devolvió el preflight se sigue pasando igual a ReAct.
     expect(runHybridReactAgent).toHaveBeenCalledWith(
       expect.objectContaining({
-        activeBlockingGoal: 'OBTENER_PERSONAS_DEL_PEDIDO',
         goalFulfillmentCandidate: { goalType: 'OBTENER_PERSONAS_DEL_PEDIDO' },
       })
     );
+    expect(vi.mocked(runHybridReactAgent).mock.calls[0][0].activeBlockingGoal).toBeUndefined();
   });
 
   it('adjunta al fulfillment quantity el target calculado desde la OrderLine', async () => {
@@ -418,7 +421,7 @@ describe('nlpSubgraphNode — agent-first', () => {
     expect(update.handlerResult?.content).toMatch(/no me quedó claro/i);
   });
 
-  it('party-size Goal activo deja que ReAct resuelva una respuesta aunque preflight falle cerrado', async () => {
+  it('pedido activo sin party size: preflight AMBIGUOUS ya no se cede a ReAct (el Goal de personas no existe más)', async () => {
     const activeOrder: HumanIntentRecord = {
       id: 'intent-order',
       sequence: 1,
@@ -435,12 +438,10 @@ describe('nlpSubgraphNode — agent-first', () => {
 
     const update = await nlpSubgraphNode(nlpState('Para 3'));
 
-    expect(runHumanIntentPreflight).toHaveBeenCalledWith(expect.objectContaining({
-      context: expect.objectContaining({ activeBlockingGoal: 'OBTENER_PERSONAS_DEL_PEDIDO' }),
-    }));
+    expect(vi.mocked(runHumanIntentPreflight).mock.calls[0][0].context.activeBlockingGoal).toBeUndefined();
     expect(applyHumanIntentTurnDecision).not.toHaveBeenCalled();
-    expect(runHybridReactAgent).toHaveBeenCalledOnce();
-    expect(update.handlerResult?.content).toBe('respuesta híbrida');
+    expect(runHybridReactAgent).not.toHaveBeenCalled();
+    expect(update.handlerResult?.content).toMatch(/no me quedó claro/i);
     expect(lifecycleMock.state.records).toEqual([activeOrder]);
   });
 

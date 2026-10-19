@@ -199,13 +199,13 @@ const exclusiveAddProductForTurn = (params: {
 const PRODUCT_SHORTLIST_MAX_LIMIT = 12;
 
 /**
- * Gate duro: sin personas no shortlist/add (salvo FAQ reserva / checkout /
- * abandono / consulta bajo un HumanGoal puramente informativo).
- *
- * `activeHumanIntentGoal` solo lo pasan las tools de lectura de catálogo en
- * alcance (search_products, find_products_by_filter, get_complementary_suggestions,
- * present_category); el resto de los callers lo omite a propósito para
- * conservar el gate incondicional de las operaciones de pedido.
+ * Gate duro, ya NO aplica al flujo general de pedido/catálogo (Gesty ya no
+ * exige cantidad de personas para consultar, agregar al carrito o cerrar
+ * pedidos). Sigue vigente únicamente para las tools de sugerencias de
+ * complemento (get_complementary_suggestions, present_complement_suggestions):
+ * esa funcionalidad queda fuera de este cambio y conserva su comportamiento
+ * anterior pasando `enforceGate: true`. Cualquier otro caller debe omitir el
+ * parámetro (default `false`) para que nunca bloquee.
  */
 const rejectMissingPartySize = async (
   conversationId: string,
@@ -216,8 +216,10 @@ const rejectMissingPartySize = async (
     lines?: Array<{ hint: string; requestedQuantity: number | null; pendingNote?: string | null }>;
   } | null,
   turnStartedAt?: string | null,
-  activeHumanIntentGoal?: HumanGoal | null
+  activeHumanIntentGoal?: HumanGoal | null,
+  enforceGate: boolean = false
 ): Promise<string | null> => {
+  if (!enforceGate) return null;
   if (!isPartySizeMissingForOrderingTools(metadata, activeHumanIntentGoal)) return null;
   const held = food?.summary.trim()
     ? await rememberPartySizeBlockedFood(
@@ -237,10 +239,19 @@ const partySizeOrderingGateJson = async (
     lines?: Array<{ hint: string; requestedQuantity: number | null; pendingNote?: string | null }>;
   } | null,
   turnStartedAt?: string | null,
-  activeHumanIntentGoal?: HumanGoal | null
+  activeHumanIntentGoal?: HumanGoal | null,
+  enforceGate: boolean = false
 ): Promise<string | null> => {
+  if (!enforceGate) return null;
   const state = await findOrCreateConversationState(conversationId);
-  return rejectMissingPartySize(conversationId, state.metadata, food, turnStartedAt, activeHumanIntentGoal);
+  return rejectMissingPartySize(
+    conversationId,
+    state.metadata,
+    food,
+    turnStartedAt,
+    activeHumanIntentGoal,
+    enforceGate
+  );
 };
 
 /**
@@ -1798,11 +1809,14 @@ export const getComplementarySuggestionsTool = new DynamicStructuredTool<
     config?: RunnableConfig
   ) => {
     const { businessId, conversationId, activeHumanIntentGoal } = getReactContext(config);
+    // Sugerencias de complemento: fuera de alcance del cambio de party size
+    // general, conserva el gate previo (enforceGate: true).
     const partyGate = await partySizeOrderingGateJson(
       conversationId,
       undefined,
       undefined,
-      activeHumanIntentGoal
+      activeHumanIntentGoal,
+      true
     );
     if (partyGate) return partyGate;
     let baseTag: (typeof MENU_SUGGESTION_ORDER)[number] | null = null;
@@ -4065,7 +4079,15 @@ export const presentComplementSuggestionsTool = new DynamicStructuredTool<
     config?: RunnableConfig
   ) => {
     const { conversationId } = getReactContext(config);
-    const partyGate = await partySizeOrderingGateJson(conversationId);
+    // Sugerencias de complemento: fuera de alcance del cambio de party size
+    // general, conserva el gate previo (enforceGate: true).
+    const partyGate = await partySizeOrderingGateJson(
+      conversationId,
+      undefined,
+      undefined,
+      undefined,
+      true
+    );
     if (partyGate) return partyGate;
     return toJson({
       signal: 'present_complement_suggestions',
