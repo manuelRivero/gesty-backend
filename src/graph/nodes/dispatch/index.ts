@@ -892,6 +892,7 @@ export const nlpSubgraphNode = async (
       console.log(JSON.stringify({
         event: '[preflight]',
         turnId: ctx.turnId,
+        messageId,
         decision: decision.decision,
         active: active?.goal ?? null,
         pending: pending.length,

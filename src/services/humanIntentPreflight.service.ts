@@ -140,20 +140,52 @@ const knownIdsFor = (input: HumanIntentPreflightInput): Set<string> =>
     ...(input.context.visibleReferences ?? []).map((reference) => reference.id),
   ]);
 
-export const validateHumanIntentTurnDecision = (
+export type HumanIntentTurnDecisionRejectionReason =
+  | 'schema_invalid'
+  | 'continue_active_intent_mismatch'
+  | 'continue_active_unknown_blocker'
+  | 'continue_active_duplicate_blocker'
+  | 'continue_active_fulfillment_mismatch'
+  | 'resume_pending_unknown_id'
+  | 'cancel_unknown_id'
+  | 'replace_intent_mismatch'
+  | 'replace_unknown_reference'
+  | 'new_intent_unknown_reference'
+  | 'new_intent_duplicate_proposal'
+  | 'new_intent_duplicate_of_open';
+
+interface HumanIntentTurnDecisionEvaluation {
+  decision: HumanIntentPreflightDecision | null;
+  rejectionReason: HumanIntentTurnDecisionRejectionReason | null;
+}
+
+const rejected = (
+  rejectionReason: HumanIntentTurnDecisionRejectionReason
+): HumanIntentTurnDecisionEvaluation => ({ decision: null, rejectionReason });
+
+/**
+ * Misma lógica de validación que antes; devuelve además un motivo tipado por
+ * cada rechazo para poder distinguir en logs de diagnóstico si una decisión
+ * `AMBIGUOUS` final vino del LLM o de esta validación (ver `runHumanIntentPreflight`).
+ */
+const evaluateHumanIntentTurnDecision = (
   value: unknown,
   input: HumanIntentPreflightInput
-): HumanIntentPreflightDecision | null => {
+): HumanIntentTurnDecisionEvaluation => {
   const parsed = humanIntentTurnDecisionSchema.safeParse(value);
-  if (!parsed.success) return null;
+  if (!parsed.success) return rejected('schema_invalid');
 
   const decision = parsed.data;
   const open = openIntents(input);
   if (decision.decision === 'CONTINUE_ACTIVE') {
-    if (decision.intentId !== input.state.active?.id) return null;
+    if (decision.intentId !== input.state.active?.id) return rejected('continue_active_intent_mismatch');
     const blockerIds = new Set((input.state.active?.blockers ?? []).map((blocker) => blocker.id));
-    if (decision.answeredBlockerIds.some((id) => !blockerIds.has(id))) return null;
-    if (new Set(decision.answeredBlockerIds).size !== decision.answeredBlockerIds.length) return null;
+    if (decision.answeredBlockerIds.some((id) => !blockerIds.has(id))) {
+      return rejected('continue_active_unknown_blocker');
+    }
+    if (new Set(decision.answeredBlockerIds).size !== decision.answeredBlockerIds.length) {
+      return rejected('continue_active_duplicate_blocker');
+    }
     if (decision.fulfillmentCandidate) {
       const goalType = decision.fulfillmentCandidate.goalType;
       if (
@@ -161,27 +193,33 @@ export const validateHumanIntentTurnDecision = (
         !isIntentType(goalType) ||
         !getGoalFulfillmentContract(goalType)
       ) {
-        return null;
+        return rejected('continue_active_fulfillment_mismatch');
       }
     }
   }
   if (decision.decision === 'RESUME_PENDING') {
-    if (!input.state.pending.some((intent) => intent.id === decision.intentId)) return null;
+    if (!input.state.pending.some((intent) => intent.id === decision.intentId)) {
+      return rejected('resume_pending_unknown_id');
+    }
   }
   if (decision.decision === 'CANCEL') {
-    if (!open.some((intent) => intent.id === decision.intentId)) return null;
+    if (!open.some((intent) => intent.id === decision.intentId)) return rejected('cancel_unknown_id');
   }
   if (decision.decision === 'REPLACE') {
-    if (decision.intentId !== input.state.active?.id) return null;
-    if (!requestContainsOnlyKnownIds(decision.replacement.request, knownIdsFor(input))) return null;
+    if (decision.intentId !== input.state.active?.id) return rejected('replace_intent_mismatch');
+    if (!requestContainsOnlyKnownIds(decision.replacement.request, knownIdsFor(input))) {
+      return rejected('replace_unknown_reference');
+    }
   }
   if (decision.decision === 'NEW_INTENT') {
     const proposalKeys = new Set<string>();
     const knownIds = knownIdsFor(input);
     for (const proposal of decision.intents) {
-      if (!requestContainsOnlyKnownIds(proposal.request, knownIds)) return null;
+      if (!requestContainsOnlyKnownIds(proposal.request, knownIds)) {
+        return rejected('new_intent_unknown_reference');
+      }
       const key = `${proposal.goal}:${canonicalJson(proposal.request)}`;
-      if (proposalKeys.has(key)) return null;
+      if (proposalKeys.has(key)) return rejected('new_intent_duplicate_proposal');
       proposalKeys.add(key);
       if (
         open.some(
@@ -198,17 +236,37 @@ export const validateHumanIntentTurnDecision = (
           )
         )
       ) {
-        return null;
+        return rejected('new_intent_duplicate_of_open');
       }
     }
   }
-  return decision;
+  return { decision, rejectionReason: null };
+};
+
+export const validateHumanIntentTurnDecision = (
+  value: unknown,
+  input: HumanIntentPreflightInput
+): HumanIntentPreflightDecision | null => evaluateHumanIntentTurnDecision(value, input).decision;
+
+const describeRawDecisionType = (value: unknown): string => {
+  if (typeof value === 'object' && value !== null && 'decision' in value) {
+    const raw = (value as { decision?: unknown }).decision;
+    if (typeof raw === 'string') return raw;
+  }
+  return 'unrecognized';
+};
+
+const logPreflightDiagnostic = (event: Record<string, unknown>): void => {
+  console.log(JSON.stringify({ event: '[human-intent-preflight] diagnostic', ...event }));
 };
 
 export const runHumanIntentPreflight = async (
   input: HumanIntentPreflightInput
 ): Promise<HumanIntentPreflightDecision> => {
+  const { messageId } = input.turn;
+
   if (!input.turn.messageId.trim() || !input.turn.text.trim()) {
+    logPreflightDiagnostic({ messageId, stage: 'empty_turn', finalDecision: 'AMBIGUOUS' });
     return { decision: 'AMBIGUOUS' };
   }
 
@@ -221,9 +279,21 @@ export const runHumanIntentPreflight = async (
       ],
       { signal: AbortSignal.timeout(5000) }
     );
-    return validateHumanIntentTurnDecision(result, input) ?? { decision: 'AMBIGUOUS' };
+    const rawDecisionType = describeRawDecisionType(result);
+    const { decision, rejectionReason } = evaluateHumanIntentTurnDecision(result, input);
+    const finalDecision = decision ?? { decision: 'AMBIGUOUS' as const };
+    logPreflightDiagnostic({
+      messageId,
+      stage: 'validated',
+      rawDecisionType,
+      accepted: decision !== null,
+      rejectionReason,
+      finalDecision: finalDecision.decision,
+    });
+    return finalDecision;
   } catch (error) {
     console.error('[human-intent-preflight] classification failed:', error);
+    logPreflightDiagnostic({ messageId, stage: 'llm_error', finalDecision: 'AMBIGUOUS' });
     return { decision: 'AMBIGUOUS' };
   }
 };

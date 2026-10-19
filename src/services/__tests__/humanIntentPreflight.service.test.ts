@@ -551,4 +551,109 @@ describe('Human Intent Preflight', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(await runHumanIntentPreflight(input())).toEqual({ decision: 'AMBIGUOUS' });
   });
+
+  describe('diagnóstico de decisión cruda vs. validación', () => {
+    const lastDiagnosticEvent = (logSpy: ReturnType<typeof vi.spyOn>) => {
+      const calls = (logSpy.mock.calls as Array<[string]>)
+        .map(([payload]) => JSON.parse(payload) as Record<string, unknown>)
+        .filter((payload) => payload.event === '[human-intent-preflight] diagnostic');
+      return calls[calls.length - 1];
+    };
+
+    it('registra una decisión aceptada sin motivo de rechazo', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      invokeMock.mockResolvedValue({ decision: 'NO_INTENT' });
+
+      await runHumanIntentPreflight(input({ turn: { messageId: 'wamid.diag-ok', text: 'Hola' } }));
+
+      expect(lastDiagnosticEvent(logSpy)).toMatchObject({
+        messageId: 'wamid.diag-ok',
+        stage: 'validated',
+        rawDecisionType: 'NO_INTENT',
+        accepted: true,
+        rejectionReason: null,
+        finalDecision: 'NO_INTENT',
+      });
+    });
+
+    it('distingue AMBIGUOUS crudo del LLM de un output con schema inválido', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+      invokeMock.mockResolvedValue({ decision: 'AMBIGUOUS' });
+      await runHumanIntentPreflight(input({ turn: { messageId: 'wamid.diag-raw-ambiguous', text: 'Ceviche clasico' } }));
+      expect(lastDiagnosticEvent(logSpy)).toMatchObject({
+        rawDecisionType: 'AMBIGUOUS',
+        accepted: true,
+        rejectionReason: null,
+        finalDecision: 'AMBIGUOUS',
+      });
+
+      invokeMock.mockResolvedValue({ foo: 'bar' });
+      await runHumanIntentPreflight(input({ turn: { messageId: 'wamid.diag-schema-invalid', text: 'Ceviche clasico' } }));
+      expect(lastDiagnosticEvent(logSpy)).toMatchObject({
+        rawDecisionType: 'unrecognized',
+        accepted: false,
+        rejectionReason: 'schema_invalid',
+        finalDecision: 'AMBIGUOUS',
+      });
+    });
+
+    it('etiqueta el rechazo de CONTINUE_ACTIVE con blocker desconocido', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      invokeMock.mockResolvedValue({
+        decision: 'CONTINUE_ACTIVE',
+        intentId: ACTIVE_ID,
+        answeredBlockerIds: [PENDING_ID],
+      });
+
+      await runHumanIntentPreflight(input({ turn: { messageId: 'wamid.diag-blocker', text: 'Para tres' } }));
+
+      expect(lastDiagnosticEvent(logSpy)).toMatchObject({
+        rawDecisionType: 'CONTINUE_ACTIVE',
+        accepted: false,
+        rejectionReason: 'continue_active_unknown_blocker',
+        finalDecision: 'AMBIGUOUS',
+      });
+    });
+
+    it('etiqueta el rechazo de RESUME_PENDING inventado', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      invokeMock.mockResolvedValue({ decision: 'RESUME_PENDING', intentId: '<ID_PENDING>' });
+
+      await runHumanIntentPreflight(input({ turn: { messageId: 'wamid.diag-resume', text: '¿Qué postres tienen?' } }));
+
+      expect(lastDiagnosticEvent(logSpy)).toMatchObject({
+        rawDecisionType: 'RESUME_PENDING',
+        accepted: false,
+        rejectionReason: 'resume_pending_unknown_id',
+        finalDecision: 'AMBIGUOUS',
+      });
+    });
+
+    it('registra stage empty_turn cuando falta texto o messageId', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+      await runHumanIntentPreflight(input({ turn: { messageId: '', text: 'algo' } }));
+
+      expect(lastDiagnosticEvent(logSpy)).toMatchObject({
+        messageId: '',
+        stage: 'empty_turn',
+        finalDecision: 'AMBIGUOUS',
+      });
+    });
+
+    it('registra stage llm_error cuando el LLM lanza una excepción', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      invokeMock.mockRejectedValue(new Error('model unavailable'));
+
+      await runHumanIntentPreflight(input({ turn: { messageId: 'wamid.diag-error', text: 'Ceviche clasico' } }));
+
+      expect(lastDiagnosticEvent(logSpy)).toMatchObject({
+        messageId: 'wamid.diag-error',
+        stage: 'llm_error',
+        finalDecision: 'AMBIGUOUS',
+      });
+    });
+  });
 });
