@@ -64,7 +64,7 @@ import {
   applyHumanIntentTurnDecision,
   getHumanIntentState,
 } from '../../../services/humanIntentState.service';
-import { runHumanIntentPreflight } from '../../../services/humanIntentPreflight.service';
+import { isHumanGoal, runHumanIntentPreflight } from '../../../services/humanIntentPreflight.service';
 import {
   activateCheckoutSessionIfCartHasItems,
   applyDefaultFulfillmentIfSingleOption,
@@ -879,6 +879,8 @@ export const nlpSubgraphNode = async (
           ? 'OBTENER_CANTIDAD_DEL_PRODUCTO'
           : undefined;
       if (activeBlockingGoal) enrichedBase.activeBlockingGoal = activeBlockingGoal;
+      const activeGoal = active?.goal;
+      enrichedBase.activeHumanIntentGoal = isHumanGoal(activeGoal) ? activeGoal : null;
       const decision = await runHumanIntentPreflight({
         turn: { messageId, text: userMessage },
         context: {
@@ -944,6 +946,16 @@ export const nlpSubgraphNode = async (
         workingConversationState = await findOrCreateConversationState(conversation.id);
         enrichedBase.conversationState = workingConversationState;
         enrichedBase.humanIntentGateRevision = applied.state.revision;
+        // Recalculado post-decisión: la ACTIVE pre-turno (L882-883) puede ya
+        // no serlo tras aplicar NEW_INTENT/RESUME_PENDING/REPLACE/CANCEL de
+        // este mismo turno. ReAct corre después de este bloque y necesita la
+        // vigente, no la de antes del turno.
+        const appliedActiveGoal = applied.state.records.find(
+          (intent) => intent.status === 'ACTIVE'
+        )?.goal;
+        enrichedBase.activeHumanIntentGoal = isHumanGoal(appliedActiveGoal)
+          ? appliedActiveGoal
+          : null;
         const activePedir = applied.state.records.find(
           (intent) => intent.goal === 'PEDIR' && intent.status === 'ACTIVE'
         );

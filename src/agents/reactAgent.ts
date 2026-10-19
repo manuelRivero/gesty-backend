@@ -1677,6 +1677,7 @@ export const runHybridReactAgent = async (
       ? (ctx.business as { timezone?: string | null }).timezone
       : null;
   const activeBlockingGoal = ctx.activeBlockingGoal;
+  const activeHumanIntentGoal = ctx.activeHumanIntentGoal ?? null;
   const fulfillmentCandidate = ctx.goalFulfillmentCandidate;
   const fulfillmentContract =
     fulfillmentCandidate && fulfillmentCandidate.goalType === activeBlockingGoal
@@ -1763,6 +1764,7 @@ export const runHybridReactAgent = async (
       turnId: ctx.turnId,
       userMessage: userMessageForTools,
       activeBlockingGoal,
+      activeHumanIntentGoal,
       goalFulfillmentCandidate: fulfillmentCandidate,
       ...(fulfillmentCandidate?.goalType === 'OBTENER_CANTIDAD_DEL_PRODUCTO' && typeof fulfillmentCandidate.target?.orderLineId === 'string'
         ? { orderLineId: fulfillmentCandidate.target.orderLineId }

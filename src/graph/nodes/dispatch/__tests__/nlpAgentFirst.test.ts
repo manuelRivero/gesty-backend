@@ -81,6 +81,19 @@ vi.mock('../../../../services/humanIntentState.service', () => ({
 
 vi.mock('../../../../services/humanIntentPreflight.service', () => ({
   runHumanIntentPreflight: vi.fn().mockResolvedValue({ decision: 'NO_INTENT' }),
+  isHumanGoal: (value: unknown): boolean =>
+    typeof value === 'string' &&
+    [
+      'PEDIR',
+      'EXPLORAR',
+      'GESTIONAR_PEDIDO',
+      'COMPLETAR_COMPRA',
+      'CANCELAR_COMPRA',
+      'SEGUIR_PEDIDO',
+      'RESERVAR',
+      'CONSULTAR_NEGOCIO',
+      'SOPORTE_HUMANO',
+    ].includes(value),
 }));
 
 vi.mock('../../../../services/order.service', () => ({
@@ -246,6 +259,48 @@ describe('nlpSubgraphNode — agent-first', () => {
     const hybridContext = vi.mocked(runHybridReactAgent).mock.calls[0][0];
     expect(hybridContext.conversationState.metadata.humanIntentState.records).toEqual([active]);
     expect(update.handlerResult?.content).toBe('respuesta híbrida');
+    // Regresión: PEDIR recién creado este turno llega como goal activo real
+    // (no null), así que las tools transaccionales siguen viendo un goal que
+    // NO está en la lista informativa y el gate de party size sigue aplicando.
+    expect(hybridContext.activeHumanIntentGoal).toBe('PEDIR');
+  });
+
+  it('conversación sin HumanIntent activo: NEW_INTENT CONSULTAR_NEGOCIO llega a ReAct en el mismo turno', async () => {
+    const decision = {
+      decision: 'NEW_INTENT' as const,
+      intents: [{ goal: 'CONSULTAR_NEGOCIO' as const, request: { subject: 'precio' } }],
+    };
+    const active: HumanIntentRecord = {
+      id: 'intent-precio',
+      sequence: 1,
+      goal: 'CONSULTAR_NEGOCIO',
+      request: { subject: 'precio' },
+      status: 'ACTIVE',
+      blockers: [],
+      createdAt: '2026-09-28T00:00:00.000Z',
+      updatedAt: '2026-09-28T00:00:00.000Z',
+    };
+    // Arranca sin ACTIVE (conversación nueva): este es el caso que fallaba
+    // antes del fix, porque enrichedBase.activeHumanIntentGoal se fijaba en
+    // null (pre-decisión) y nunca se refrescaba tras aplicar NEW_INTENT.
+    expect(lifecycleMock.state.records).toEqual([]);
+    vi.mocked(runHumanIntentPreflight).mockResolvedValueOnce(decision);
+    vi.mocked(applyHumanIntentTurnDecision).mockImplementationOnce(async ({ messageId }) => {
+      const state = {
+        ...lifecycleMock.state,
+        revision: lifecycleMock.state.revision + 1,
+        processedMessageIds: [messageId],
+        records: [active],
+      };
+      lifecycleMock.state = state;
+      lifecycleMock.metadata = { humanIntentState: state };
+      return { status: 'applied', state };
+    });
+
+    await nlpSubgraphNode(nlpState('¿Cuánto cuesta el ceviche?'));
+
+    const hybridContext = vi.mocked(runHybridReactAgent).mock.calls[0][0];
+    expect(hybridContext.activeHumanIntentGoal).toBe('CONSULTAR_NEGOCIO');
   });
 
   it('pasa a ReAct solo el fulfillmentCandidate devuelto por preflight', async () => {

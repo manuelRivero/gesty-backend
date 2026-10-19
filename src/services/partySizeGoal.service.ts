@@ -24,6 +24,7 @@ import {
   getPendingSwitchToReservation,
 } from './switchToReservationConfirm.service';
 import { isReservationFaqMode } from './reservationFaqDelegation.service';
+import type { HumanGoal } from './humanIntentState.service';
 
 export const PARTY_SIZE_GOAL_TYPE = 'OBTENER_PERSONAS_DEL_PEDIDO' as const;
 const PARTY_SIZE_FULFILLMENT = getGoalFulfillmentContract(PARTY_SIZE_GOAL_TYPE);
@@ -352,15 +353,34 @@ export const blocksOrderPartySizeForReservationDomain = (
 };
 
 /**
- * Gate duro de tools de pedido/shortlist: sin Fact PERSONAS no hay catálogo
- * orientado a pedir ni add. Excepciones: checkout, dominio reserva activo, abandono.
+ * HumanGoals puramente informativos: una consulta de catálogo bajo estos
+ * goals no es un acto de compra y no necesita el Fact PERSONAS_DEL_PEDIDO.
+ * Lista cerrada a propósito — cualquier otro goal (incluida su ausencia)
+ * mantiene el comportamiento conservador (gate activo). No usar "distinto
+ * de PEDIR": GESTIONAR_PEDIDO/COMPLETAR_COMPRA/CANCELAR_COMPRA/RESERVAR
+ * son transaccionales y deben seguir bloqueando.
  */
-export const isPartySizeMissingForOrderingTools = (metadata: unknown): boolean => {
+const INFORMATIONAL_HUMAN_GOALS = new Set<HumanGoal>(['CONSULTAR_NEGOCIO', 'EXPLORAR']);
+
+/**
+ * Gate duro de tools de pedido/shortlist: sin Fact PERSONAS no hay catálogo
+ * orientado a pedir ni add. Excepciones: checkout, dominio reserva activo,
+ * abandono, o consulta bajo un HumanGoal puramente informativo.
+ *
+ * `activeHumanIntentGoal` es opcional: si no llega (tool fuera del alcance
+ * informativo, o HumanIntent sin ACTIVE) el comportamiento es el mismo de
+ * siempre — no se asume informativo por ausencia de señal.
+ */
+export const isPartySizeMissingForOrderingTools = (
+  metadata: unknown,
+  activeHumanIntentGoal?: HumanGoal | null
+): boolean => {
   const meta = normalizeMetadata(metadata);
   if (getRequestedPartySize(meta) != null) return false;
   if (meta.checkout_active === true) return false;
   if (blocksOrderPartySizeForReservationDomain(meta)) return false;
   if (getPartySizeGoalLedger(meta).abandonment) return false;
+  if (activeHumanIntentGoal && INFORMATIONAL_HUMAN_GOALS.has(activeHumanIntentGoal)) return false;
   return true;
 };
 

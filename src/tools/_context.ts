@@ -1,5 +1,6 @@
 import type { RunnableConfig } from '@langchain/core/runnables';
 import type { ProductResolution } from '../services/productResolution.service';
+import type { HumanGoal } from '../services/humanIntentState.service';
 
 export interface ReactAgentContext {
   businessId: string;
@@ -17,6 +18,8 @@ export interface ReactAgentContext {
   userMessage?: string;
   /** Resolución validada entregada por el execution plan actual, no por el modelo. */
   validatedProductResolutionFromExecutionContext?: ProductResolution;
+  /** Goal del HumanIntent ACTIVE de este turno, si hay uno. Null/ausente ⇒ sin señal. */
+  activeHumanIntentGoal?: HumanGoal | null;
 }
 
 export const getReactContext = (config?: RunnableConfig): ReactAgentContext => {

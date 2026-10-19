@@ -139,6 +139,7 @@ import {
   summarizeBlockedAdd,
   type PartySizeBlockedFoodSource,
 } from '../services/partySizeGoal.service';
+import type { HumanGoal } from '../services/humanIntentState.service';
 import {
   getReservationCompletionLedger,
   recordReservationCompletionAbandonment,
@@ -197,7 +198,15 @@ const exclusiveAddProductForTurn = (params: {
 
 const PRODUCT_SHORTLIST_MAX_LIMIT = 12;
 
-/** Gate duro: sin personas no shortlist/add (salvo FAQ reserva / checkout / abandono). */
+/**
+ * Gate duro: sin personas no shortlist/add (salvo FAQ reserva / checkout /
+ * abandono / consulta bajo un HumanGoal puramente informativo).
+ *
+ * `activeHumanIntentGoal` solo lo pasan las tools de lectura de catálogo en
+ * alcance (search_products, find_products_by_filter, get_complementary_suggestions,
+ * present_category); el resto de los callers lo omite a propósito para
+ * conservar el gate incondicional de las operaciones de pedido.
+ */
 const rejectMissingPartySize = async (
   conversationId: string,
   metadata: unknown,
@@ -206,9 +215,10 @@ const rejectMissingPartySize = async (
     summary: string;
     lines?: Array<{ hint: string; requestedQuantity: number | null; pendingNote?: string | null }>;
   } | null,
-  turnStartedAt?: string | null
+  turnStartedAt?: string | null,
+  activeHumanIntentGoal?: HumanGoal | null
 ): Promise<string | null> => {
-  if (!isPartySizeMissingForOrderingTools(metadata)) return null;
+  if (!isPartySizeMissingForOrderingTools(metadata, activeHumanIntentGoal)) return null;
   const held = food?.summary.trim()
     ? await rememberPartySizeBlockedFood(
         conversationId,
@@ -226,10 +236,11 @@ const partySizeOrderingGateJson = async (
     summary: string;
     lines?: Array<{ hint: string; requestedQuantity: number | null; pendingNote?: string | null }>;
   } | null,
-  turnStartedAt?: string | null
+  turnStartedAt?: string | null,
+  activeHumanIntentGoal?: HumanGoal | null
 ): Promise<string | null> => {
   const state = await findOrCreateConversationState(conversationId);
-  return rejectMissingPartySize(conversationId, state.metadata, food, turnStartedAt);
+  return rejectMissingPartySize(conversationId, state.metadata, food, turnStartedAt, activeHumanIntentGoal);
 };
 
 /**
@@ -453,13 +464,15 @@ export const searchProductsTool = new DynamicStructuredTool<
   schema: searchProductsSchema,
   func: async ({ keyword }: SearchProductsInput, _runManager, config?: RunnableConfig) => {
     console.debug(JSON.stringify({ event: '[tool:start]', tool: 'search_products', args: { keyword } }));
-    const { businessId, conversationId, turnStartedAt, turnId } = getReactContext(config);
+    const { businessId, conversationId, turnStartedAt, turnId, activeHumanIntentGoal } =
+      getReactContext(config);
     const { reservationTurn, metadata } = await readOrderingTurnScope(conversationId);
     const partyHeld = await rejectMissingPartySize(
       conversationId,
       metadata,
       { source: 'lookup', summary: keyword },
-      turnStartedAt
+      turnStartedAt,
+      activeHumanIntentGoal
     );
     if (partyHeld) return partyHeld;
     const items = await MenuService.searchMenuItemsByKeyword({ businessId, keyword });
@@ -1210,7 +1223,8 @@ export const findProductsByFilterTool = new DynamicStructuredTool<
     _runManager,
     config?: RunnableConfig
   ) => {
-    const { businessId, conversationId, turnStartedAt, turnId } = getReactContext(config);
+    const { businessId, conversationId, turnStartedAt, turnId, activeHumanIntentGoal } =
+      getReactContext(config);
     const { reservationTurn, metadata } = await readOrderingTurnScope(conversationId);
     const partyHeld = await rejectMissingPartySize(
       conversationId,
@@ -1224,7 +1238,8 @@ export const findProductsByFilterTool = new DynamicStructuredTool<
           minServesPeople,
         }),
       },
-      turnStartedAt
+      turnStartedAt,
+      activeHumanIntentGoal
     );
     if (partyHeld) return partyHeld;
 
@@ -1782,8 +1797,13 @@ export const getComplementarySuggestionsTool = new DynamicStructuredTool<
     _runManager,
     config?: RunnableConfig
   ) => {
-    const { businessId, conversationId } = getReactContext(config);
-    const partyGate = await partySizeOrderingGateJson(conversationId);
+    const { businessId, conversationId, activeHumanIntentGoal } = getReactContext(config);
+    const partyGate = await partySizeOrderingGateJson(
+      conversationId,
+      undefined,
+      undefined,
+      activeHumanIntentGoal
+    );
     if (partyGate) return partyGate;
     let baseTag: (typeof MENU_SUGGESTION_ORDER)[number] | null = null;
     let excludeProductId: string | null = null;
@@ -4532,8 +4552,13 @@ export const presentCategoryTool = new DynamicStructuredTool<
   schema: presentCategorySchema,
   returnDirect: true,
   func: async (input: PresentCategoryInput, _runManager, config?: RunnableConfig) => {
-    const { conversationId } = getReactContext(config);
-    const partyGate = await partySizeOrderingGateJson(conversationId);
+    const { conversationId, activeHumanIntentGoal } = getReactContext(config);
+    const partyGate = await partySizeOrderingGateJson(
+      conversationId,
+      undefined,
+      undefined,
+      activeHumanIntentGoal
+    );
     if (partyGate) return partyGate;
     return toJson({
       signal: 'present_category',

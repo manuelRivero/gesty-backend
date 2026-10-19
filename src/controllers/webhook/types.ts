@@ -6,6 +6,7 @@ import type { GoalFulfillmentCandidate, IntentType } from '../../domain/intent/f
 import { ConversationIntent } from '../../types/conversationIntent';
 import { IntentDetectionResult } from '../../services/ai/detection.service';
 import type { CapabilityAccessResult } from '../../services/evaluateBusinessCapabilityAccess.service';
+import type { HumanGoal } from '../../services/humanIntentState.service';
 
 // Payload de WhatsApp (sin cambios)
 export interface WhatsAppWebhookPayload {
@@ -85,6 +86,8 @@ export interface EnrichedContext extends WebhookContext {
   humanIntentGateRevision?: number;
   activeBlockingGoal?: IntentType;
   goalFulfillmentCandidate?: GoalFulfillmentCandidate;
+  /** Goal del HumanIntent ACTIVE de este turno (preflight), si hay uno. */
+  activeHumanIntentGoal?: HumanGoal | null;
 }
 
 export type HandlerFollowUp =
