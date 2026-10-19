@@ -1454,10 +1454,14 @@ export const getProductsDetailsByIdsTool = new DynamicStructuredTool<
         name: true,
         description: true,
         ingredients: true,
+        preparation: true,
+        ingredients_notes: true,
         serves_people: true,
         is_available: true,
         is_featured: true,
         variations: true,
+        discount_type: true,
+        discount_value: true,
         menu_category: { select: { id: true, name: true, category_tag: true } },
         menu_item_price: {
           where: priceWhere,
@@ -1476,6 +1480,8 @@ export const getProductsDetailsByIdsTool = new DynamicStructuredTool<
         name: item.name,
         description: item.description,
         ingredients: item.ingredients,
+        preparation: item.preparation,
+        ingredients_notes: item.ingredients_notes,
         serves_people: item.serves_people,
         is_available: item.is_available,
         is_featured: item.is_featured,
@@ -1484,10 +1490,28 @@ export const getProductsDetailsByIdsTool = new DynamicStructuredTool<
           name: item.menu_category.name,
           tag: item.menu_category.category_tag,
         },
-        prices: item.menu_item_price.map((p) => ({
-          amount: p.amount.toString(),
-          currency: p.currency_code,
-        })),
+        // Descuento: misma fuente de verdad que cobra el carrito
+        // (resolveEffectivePrice, helpers/menuItemPrice.helper.ts). Solo se
+        // agrega discountedAmount/discountAmount cuando hay un descuento
+        // realmente aplicable (hasDiscount); si no, el precio queda igual
+        // que antes (sin campos nuevos) para no sugerir un descuento falso.
+        prices: item.menu_item_price.map((p) => {
+          const resolved = resolveEffectivePrice({
+            discount_type: item.discount_type,
+            discount_value: item.discount_value,
+            menu_item_price: [{ amount: p.amount }],
+          });
+          return {
+            amount: p.amount.toString(),
+            currency: p.currency_code,
+            ...(resolved.hasDiscount
+              ? {
+                  discountedAmount: resolved.finalPrice.toString(),
+                  discountAmount: resolved.discountAmount.toString(),
+                }
+              : {}),
+          };
+        }),
         ...(item.variations.length ? { variations: item.variations } : {}),
       })),
     });
