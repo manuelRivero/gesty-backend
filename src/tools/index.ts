@@ -643,6 +643,22 @@ export const resolveProductTool = new DynamicStructuredTool<
         instruction: TASK_NOT_ACTIVE_INSTRUCTION,
       });
     }
+    // Identidad preservada al crear la línea (ver `knownProductId` en
+    // pendingOrderLines.service.ts): si esta Task ya tiene un producto
+    // confirmado por el backend, el productId de ESTA llamada debe coincidir
+    // ANTES de intentar resolver — rechazo explícito en vez de dejar que
+    // selectProductResolution falle más abajo con un resolutionId de otro
+    // producto (resolution_product_mismatch, ya cubierto aparte).
+    if (targetLine?.knownProductId && targetLine.knownProductId !== productId) {
+      return toJson({
+        success: false,
+        error: 'order_line_product_mismatch',
+        instruction:
+          'Ese productId no corresponde a esta línea del pedido: ya tiene un producto confirmado distinto. ' +
+          'No reintentes con el mismo par productId/resolutionId. Usá el productId correcto para esta línea ' +
+          '(o si es otra línea de la cola, su propio orderLineId).',
+      });
+    }
     const result = await selectProductResolution({
       productId,
       resolutionId,
@@ -4309,6 +4325,16 @@ const planOrderLinesSchema = z.object({
               '(ej. "poco picante", "sin cebolla", "bien cocido"). Omití si no dijo ninguna. ' +
               'Se persiste junto con el producto cuando se agregue al carrito.'
           ),
+        productId: z
+          .string()
+          .uuid()
+          .optional()
+          .describe(
+            'SOLO si este plato ya tiene un productId resuelto en este MISMO turno o uno anterior ' +
+              '(ej. ya consultaste su precio o lo seleccionaste de una lista). El backend valida que ' +
+              'siga teniendo una selección vigente antes de usarlo; si no, la línea sigue el flujo normal ' +
+              'de búsqueda. Omitilo si no tenés un productId ya resuelto para este plato — NO inventes uno.'
+          ),
       })
     )
     .min(2)
@@ -4353,12 +4379,14 @@ export const planOrderLinesTool = new DynamicStructuredTool<
       hint: string;
       requestedQuantity: number | null;
       pendingNote: string | null;
+      productId?: string | null;
     }> = lines.map((line) => ({
       hint: line.hint,
       requestedQuantity: line.requestedQuantity ?? null,
       pendingNote: line.pendingNote?.trim() || null,
+      productId: line.productId ?? null,
     }));
-    const { conversationId, turnStartedAt } = getReactContext(config);
+    const { conversationId, businessId, turnId, turnStartedAt } = getReactContext(config);
     if (!conversationId) {
       return toJson({ success: false, error: 'no_conversation' });
     }
@@ -4381,6 +4409,8 @@ export const planOrderLinesTool = new DynamicStructuredTool<
     const state = await findOrCreateConversationState(conversationId);
     const pending = await reconcileOrderLinesPlan({
       conversationId,
+      businessId,
+      turnId,
       lines: plannedLines,
       sourceMessage: plannedLines.map((l) => l.hint).join(', '),
       metadata: state.metadata,

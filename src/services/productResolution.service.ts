@@ -202,13 +202,21 @@ export const issueProductResolutions = async (params: {
         business_id: params.businessId,
         is_available: true,
       },
-      select: { id: true, is_available: true, business_id: true },
+      select: { id: true },
     });
+    // is_available/business_id no se piden al select (cambia el shape de la
+    // query real y rompe mocks de test que la detectan por su forma exacta,
+    // ver informationalProductRef.test.ts) — igual son redundantes acá: el
+    // WHERE ya garantiza ambos para cada fila devuelta.
     console.log(JSON.stringify({
       event: '[DIAG-ISSUE] after_findMany',
       correlationId,
       resultCount: validProducts.length,
-      results: validProducts,
+      results: validProducts.map((item) => ({
+        id: item.id,
+        is_available: true,
+        business_id: params.businessId,
+      })),
     }));
     const validIds = new Set(validProducts.map((item) => item.id));
     const resolvedIds = uniqueIds.filter((id) => validIds.has(id));
@@ -450,6 +458,123 @@ export const getProductResolutions = async (
   return parseResolutions(row?.metadata);
 };
 
+/**
+ * Único criterio de "¿esta resolución autoriza ya a este producto en este
+ * negocio/conversación?": status `resolved`/`selected` (nunca `candidate`
+ * — ambiguo, ni `consumed` — ya gastada, no reutilizable), vigente (no
+ * vencida) y de scope compatible con el turno (una de scope `turn` solo
+ * cuenta si es de ESTE `turnId`). Predicado compartido por
+ * `findEligibleProductResolution` (una resolución, para un `productId`
+ * puntual) y `listRecentEligibleProductResolutions` (varias, para el
+ * contexto plural de productos recientes) — una sola regla de elegibilidad,
+ * nunca dos criterios distintos para la misma pregunta.
+ */
+const isEligibleResolutionCandidate = (
+  item: ProductResolution,
+  params: { businessId: string; conversationId: string; turnId?: string }
+): boolean =>
+  item.businessId === params.businessId &&
+  item.conversationId === params.conversationId &&
+  (item.status === 'resolved' || item.status === 'selected') &&
+  (!item.expiresAt || Date.parse(item.expiresAt) > Date.now()) &&
+  (item.scope !== 'turn' || item.turnId === params.turnId);
+
+/**
+ * Resolución elegible para `productId` en este negocio/conversación. Lo usa
+ * `resolveProductForAdd` (el add directo) y la preservación de identidad al
+ * crear una `OrderLine` (`pendingOrderLines.service.ts`), para no duplicar
+ * la regla de elegibilidad con criterios distintos entre ambos caminos.
+ */
+export const findEligibleProductResolution = (
+  resolutions: ProductResolution[],
+  params: { productId: string; businessId: string; conversationId: string; turnId?: string }
+): ProductResolution | null => {
+  const eligible = resolutions
+    .filter((item) => item.productId === params.productId && isEligibleResolutionCandidate(item, params))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return eligible[0] ?? null;
+};
+
+/** `selected` (elección explícita) pesa más que `resolved` (auto-resuelto por una búsqueda sin ambigüedad, sin acción del cliente). */
+const RESOLUTION_STATUS_RANK: Record<string, number> = { selected: 2, resolved: 1 };
+
+export const RECENT_PRODUCT_REFS_DEFAULT_LIMIT = 5;
+
+/**
+ * Proyección plural de "productos recientes" de esta conversación: una
+ * entrada elegible por `productId` (igual criterio que
+ * `findEligibleProductResolution`, sin restringir a un producto puntual),
+ * deduplicada quedándose con la de mayor jerarquía (`selected` > `resolved`)
+ * y, en empate, la más reciente por `createdAt`. Ordenada igual (selected
+ * primero, luego recencia) y acotada a `limit`.
+ *
+ * No es una fuente de verdad nueva: es una lectura del mismo
+ * `metadata.productResolutions` que ya usa `findEligibleProductResolution` —
+ * nada se persiste aparte. `candidate` (shortlist ambiguo todavía sin
+ * resolver) y `consumed` (la resolución ya se gastó agregando el producto al
+ * carrito; esa resolutionId puntual no es reutilizable, aunque el producto
+ * en sí pueda volver a pedirse con una resolución nueva) quedan afuera por
+ * el mismo motivo que ya los excluye `isEligibleResolutionCandidate`: no son
+ * "una selección vigente que se le pueda pasar tal cual a una OrderLine
+ * nueva" — no por juzgar si el producto "ya no es relevante".
+ */
+export const listRecentEligibleProductResolutions = (
+  resolutions: ProductResolution[],
+  params: { businessId: string; conversationId: string; turnId?: string; limit?: number }
+): ProductResolution[] => {
+  const limit = params.limit ?? RECENT_PRODUCT_REFS_DEFAULT_LIMIT;
+  const byProduct = new Map<string, ProductResolution>();
+  for (const item of resolutions) {
+    if (!isEligibleResolutionCandidate(item, params)) continue;
+    const current = byProduct.get(item.productId);
+    if (
+      !current ||
+      RESOLUTION_STATUS_RANK[item.status] > RESOLUTION_STATUS_RANK[current.status] ||
+      (RESOLUTION_STATUS_RANK[item.status] === RESOLUTION_STATUS_RANK[current.status] &&
+        item.createdAt > current.createdAt)
+    ) {
+      byProduct.set(item.productId, item);
+    }
+  }
+  return [...byProduct.values()]
+    .sort((a, b) => {
+      const rankDiff = RESOLUTION_STATUS_RANK[b.status] - RESOLUTION_STATUS_RANK[a.status];
+      return rankDiff !== 0 ? rankDiff : b.createdAt.localeCompare(a.createdAt);
+    })
+    .slice(0, limit);
+};
+
+/**
+ * Igual que `listRecentEligibleProductResolutions`, pero resolviendo el
+ * ledger desde la conversación (para usarse directamente al armar contexto).
+ */
+export const listRecentProductResolutions = async (params: {
+  businessId: string;
+  conversationId: string;
+  turnId?: string;
+  limit?: number;
+}): Promise<ProductResolution[]> => {
+  const resolutions = await getProductResolutions(params.conversationId);
+  return listRecentEligibleProductResolutions(resolutions, params);
+};
+
+/**
+ * Igual que `findEligibleProductResolution`, pero resolviendo el ledger desde
+ * la conversación. Pensada para validar, ANTES de preservar una identidad
+ * estructural en una `OrderLine`, que el `productId` propuesto efectivamente
+ * tiene una selección vigente en este negocio/conversación — nunca se
+ * confía en el `productId` que trae el modelo sin este chequeo.
+ */
+export const hasEligibleProductResolution = async (params: {
+  productId: string;
+  businessId: string;
+  conversationId: string;
+  turnId?: string;
+}): Promise<boolean> => {
+  const resolutions = await getProductResolutions(params.conversationId);
+  return findEligibleProductResolution(resolutions, params) !== null;
+};
+
 export const resolveProductForAdd = async (params: {
   productId: string;
   businessId: string;
@@ -494,18 +619,7 @@ export const resolveProductForAdd = async (params: {
         eligible_scopeOk: item.scope !== 'turn' || item.turnId === params.turnId,
       })),
     }));
-    const eligible = resolutions
-      .filter(
-        (item) =>
-          item.productId === params.productId &&
-          item.businessId === params.businessId &&
-          item.conversationId === params.conversationId &&
-          (item.status === 'resolved' || item.status === 'selected') &&
-          (!item.expiresAt || Date.parse(item.expiresAt) > Date.now()) &&
-          (item.scope !== 'turn' || item.turnId === params.turnId)
-      )
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    resolutionId = eligible[0]?.resolutionId ?? '';
+    resolutionId = findEligibleProductResolution(resolutions, params)?.resolutionId ?? '';
     if (!resolutionId) {
       const matching = resolutions
         .filter((item) => item.productId === params.productId)

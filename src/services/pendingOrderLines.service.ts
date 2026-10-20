@@ -20,7 +20,12 @@ import { normalizeMetadata } from './productQuery/utils';
 import type { ConversationMetadata } from './productQuery/types';
 import type { ProductResolution } from './productResolution.service';
 // Ciclo de módulos solo en tiempo de llamada (productResolution.service importa este módulo).
-import { taskBoundResolutionFailure } from './productResolution.service';
+import {
+  findEligibleProductResolution,
+  getProductResolutions,
+  hasEligibleProductResolution,
+  taskBoundResolutionFailure,
+} from './productResolution.service';
 
 export const PENDING_ORDER_LINES_KEY = 'pendingOrderLines' as const;
 
@@ -36,6 +41,21 @@ export type OrderLine = {
   currentResolutionId: string | null;
   /** Instrucción de producto dicha antes de que la línea cierre (ej. "poco picante"). */
   pendingNote: string | null;
+  /**
+   * Identidad de producto preservada al crear la línea (p. ej. el cliente ya
+   * había consultado precio/seleccionado este plato antes del pedido
+   * compuesto). Solo se setea si, al crear la línea, el backend confirmó una
+   * `ProductResolution` vigente para este productId en este negocio y
+   * conversación (`findEligibleProductResolution` / `hasEligibleProductResolution`
+   * en `productResolution.service.ts`) — nunca por coincidencia de texto del
+   * `hint`, y nunca confiando ciegamente en lo que el modelo afirme. `null`
+   * cuando la línea no tiene identidad previa confirmada: sigue el flujo
+   * normal de búsqueda/resolución. `resolve_product` la usa para rechazar,
+   * antes de intentar resolver, un productId que no coincida con esta línea.
+   * Opcional (no todas las líneas construidas en el código/tests lo setean):
+   * ausente equivale a `null`, sin identidad previa.
+   */
+  knownProductId?: string | null;
 };
 
 export type FulfillmentTask = OrderLine;
@@ -81,6 +101,8 @@ const parseLine = (raw: unknown): OrderLine | null => {
         : null;
   const pendingNote =
     typeof raw.pendingNote === 'string' ? raw.pendingNote.trim() || null : null;
+  const knownProductId =
+    typeof raw.knownProductId === 'string' ? raw.knownProductId.trim() || null : null;
   return {
     id: raw.id.trim(),
     hint: raw.hint.trim(),
@@ -88,6 +110,7 @@ const parseLine = (raw: unknown): OrderLine | null => {
     status,
     currentResolutionId,
     pendingNote,
+    knownProductId,
   };
 };
 
@@ -766,12 +789,89 @@ export const normalizeOrderLineInput = (line: {
  * el llamador decide si igual quiere crearla (p. ej. para no reescribir la
  * tool); acá solo se valida y arma el objeto.
  */
+/**
+ * Confirma, contra el ledger real de `ProductResolution` (nunca por texto del
+ * `hint`), si `productId` tiene una selección vigente en este negocio y
+ * conversación — y en ese caso devuelve ese mismo productId para preservarlo
+ * como `knownProductId` de la línea nueva. `null` si no hay `productId`
+ * propuesto, o si el propuesto no tiene una resolución vigente (no se inventa
+ * la asociación: la línea sigue el flujo normal de búsqueda/resolución).
+ */
+const resolveKnownProductId = async (params: {
+  productId?: string | null;
+  businessId?: string;
+  conversationId: string;
+  turnId?: string;
+}): Promise<string | null> => {
+  if (!params.productId || !params.businessId) return null;
+  const ok = await hasEligibleProductResolution({
+    productId: params.productId,
+    businessId: params.businessId,
+    conversationId: params.conversationId,
+    turnId: params.turnId,
+  });
+  return ok ? params.productId : null;
+};
+
+/**
+ * Asocia `currentResolutionId` a la línea ACTIVE recién creada cuando ya trae
+ * `knownProductId` confirmado — sin esto, el modelo tiene que llamar
+ * `resolve_product` para una identidad que el backend ya validó al crear la
+ * línea, y si en cambio intenta `add_cart_item` directo (como permite el
+ * contexto "Productos recientes"), la línea queda sin resolución asociada
+ * aunque haya una `ProductResolution` elegible (ver auditoría "bypass de
+ * resolución en pedidos auto-creados").
+ *
+ * Solo la línea ACTIVE puede recibir una asociación — `associateProductResolutionToTask`
+ * rechaza cualquier otra (`task_not_active`), porque solo una Task ACTIVE
+ * resuelve producto a la vez (D6); una QUEUED se activa recién con
+ * `continue_order_line`. Esta función no fuerza esa regla: la respeta, y por
+ * eso no intenta nada para líneas QUEUED (ver limitación documentada en
+ * `appendOrderLines`, que nunca crea una línea ACTIVE).
+ *
+ * Best-effort: cualquier productId sin resolución elegible, o cualquier fallo
+ * de `associateProductResolutionToTask` (ya sea por conflicto de ownership o
+ * por datos inválidos), deja la línea exactamente como estaba — sigue el
+ * flujo normal de `resolve_product`. Nunca inventa ni weakenea una validación
+ * existente: reutiliza `findEligibleProductResolution` (misma regla de
+ * elegibilidad que ya usa `resolveKnownProductId`) y el mecanismo canónico de
+ * asociación que ya usa `resolve_product`.
+ */
+const associateKnownIdentityForActiveLine = async (params: {
+  conversationId: string;
+  businessId?: string;
+  turnId?: string;
+  pending: PendingOrderLines;
+}): Promise<void> => {
+  if (!params.businessId) return;
+  const activeLine = params.pending.lines.find((line) => line.status === 'active');
+  if (!activeLine || !activeLine.knownProductId || activeLine.currentResolutionId) return;
+  const resolutions = await getProductResolutions(params.conversationId);
+  const eligible = findEligibleProductResolution(resolutions, {
+    productId: activeLine.knownProductId,
+    businessId: params.businessId,
+    conversationId: params.conversationId,
+    turnId: params.turnId,
+  });
+  if (!eligible) return;
+  await associateProductResolutionToTask({
+    conversationId: params.conversationId,
+    businessId: params.businessId,
+    taskId: activeLine.id,
+    resolutionId: eligible.resolutionId,
+    turnId: params.turnId,
+  });
+};
+
 export const setPendingOrderLines = async (params: {
   conversationId: string;
+  businessId?: string;
+  turnId?: string;
   lines: Array<{
     hint: string;
     requestedQuantity?: number | null;
     pendingNote?: string | null;
+    productId?: string | null;
   }>;
   sourceMessage: string;
 }): Promise<PendingOrderLines> => {
@@ -780,18 +880,27 @@ export const setPendingOrderLines = async (params: {
       ...normalizeOrderLineInput(line),
       pendingNote:
         typeof line.pendingNote === 'string' ? line.pendingNote.trim() || null : null,
+      productId: line.productId ?? null,
     }))
     .filter((l) => l.hint.length > 0)
     .slice(0, ORDER_LINES_MAX);
 
-  const lines: OrderLine[] = cleaned.map((l, idx) => ({
-    id: randomUUID().slice(0, 8),
-    hint: l.hint,
-    requestedQuantity: l.requestedQuantity,
-    status: idx === 0 ? 'active' : 'queued',
-    currentResolutionId: null,
-    pendingNote: l.pendingNote,
-  }));
+  const lines: OrderLine[] = await Promise.all(
+    cleaned.map(async (l, idx) => ({
+      id: randomUUID().slice(0, 8),
+      hint: l.hint,
+      requestedQuantity: l.requestedQuantity,
+      status: idx === 0 ? 'active' : 'queued',
+      currentResolutionId: null,
+      pendingNote: l.pendingNote,
+      knownProductId: await resolveKnownProductId({
+        productId: l.productId,
+        businessId: params.businessId,
+        conversationId: params.conversationId,
+        turnId: params.turnId,
+      }),
+    }))
+  );
 
   const pending: PendingOrderLines = {
     lines,
@@ -802,6 +911,12 @@ export const setPendingOrderLines = async (params: {
 
   await patchConversationMetadata(params.conversationId, {
     pendingOrderLines: pending,
+  });
+  await associateKnownIdentityForActiveLine({
+    conversationId: params.conversationId,
+    businessId: params.businessId,
+    turnId: params.turnId,
+    pending,
   });
   return pending;
 };
@@ -841,7 +956,19 @@ const hintAlreadyInLines = (hint: string, lines: OrderLine[]): boolean => {
   });
 };
 
-type OrderLinePlanInput = { hint: string; requestedQuantity: number | null; pendingNote: string | null };
+type OrderLinePlanInput = {
+  hint: string;
+  requestedQuantity: number | null;
+  pendingNote: string | null;
+  /**
+   * Identidad ya conocida para esta línea (p. ej. el cliente ya había
+   * consultado/seleccionado este plato antes del pedido compuesto). Se
+   * preserva como `OrderLine.knownProductId` SOLO si `reconcileOrderLinesPlan`
+   * confirma, contra el ledger de `ProductResolution`, que sigue vigente —
+   * nunca se confía en este campo por sí solo.
+   */
+  productId?: string | null;
+};
 
 /**
  * Único punto que decide qué hacer con una planificación entrante (desde
@@ -883,6 +1010,8 @@ type OrderLinePlanInput = { hint: string; requestedQuantity: number | null; pend
  */
 export const reconcileOrderLinesPlan = async (params: {
   conversationId: string;
+  businessId?: string;
+  turnId?: string;
   lines: OrderLinePlanInput[];
   sourceMessage: string;
   metadata: unknown;
@@ -893,6 +1022,8 @@ export const reconcileOrderLinesPlan = async (params: {
   if (!existing) {
     return setPendingOrderLines({
       conversationId: params.conversationId,
+      businessId: params.businessId,
+      turnId: params.turnId,
       lines: params.lines,
       sourceMessage: params.sourceMessage,
     });
@@ -906,6 +1037,8 @@ export const reconcileOrderLinesPlan = async (params: {
     // platos nuevos abren una cola propia; no se cargan los cerrados.
     return setPendingOrderLines({
       conversationId: params.conversationId,
+      businessId: params.businessId,
+      turnId: params.turnId,
       lines: newLines,
       sourceMessage: params.sourceMessage,
     });
@@ -915,6 +1048,8 @@ export const reconcileOrderLinesPlan = async (params: {
   // orden ni el estado de las líneas existentes (activa, en cola, cerradas).
   return appendOrderLines({
     conversationId: params.conversationId,
+    businessId: params.businessId,
+    turnId: params.turnId,
     newLines,
   });
 };
@@ -933,6 +1068,8 @@ export const reconcileOrderLinesPlan = async (params: {
  */
 export const ensurePendingOrderLinesFromRequest = async (params: {
   conversationId: string;
+  businessId?: string;
+  turnId?: string;
   request: Record<string, unknown>;
   sourceMessage: string;
   metadata: unknown;
@@ -941,6 +1078,8 @@ export const ensurePendingOrderLinesFromRequest = async (params: {
   if (products.length === 0) return getPendingOrderLines(params.metadata);
   return reconcileOrderLinesPlan({
     conversationId: params.conversationId,
+    businessId: params.businessId,
+    turnId: params.turnId,
     lines: products,
     sourceMessage: params.sourceMessage,
     metadata: params.metadata,
@@ -950,20 +1089,41 @@ export const ensurePendingOrderLinesFromRequest = async (params: {
 /** Agrega líneas nuevas al final de una cola abierta, sin alterar las existentes. */
 const appendOrderLines = async (params: {
   conversationId: string;
-  newLines: Array<{ hint: string; requestedQuantity: number | null; pendingNote: string | null }>;
+  businessId?: string;
+  turnId?: string;
+  newLines: Array<{
+    hint: string;
+    requestedQuantity: number | null;
+    pendingNote: string | null;
+    productId?: string | null;
+  }>;
 }): Promise<PendingOrderLines | null> => {
+  // El chequeo de elegibilidad (lectura de ProductResolution) es async y
+  // debe resolverse ANTES de la mutación atómica de metadata — por eso se
+  // calcula afuera de `mutateConversationMetadata` (su callback es sync).
+  const knownProductIds = await Promise.all(
+    params.newLines.map((l) =>
+      resolveKnownProductId({
+        productId: l.productId,
+        businessId: params.businessId,
+        conversationId: params.conversationId,
+        turnId: params.turnId,
+      })
+    )
+  );
   const result = await mutateConversationMetadata<PendingOrderLines | null>(
     params.conversationId,
     (metadata) => {
       const pending = getPendingOrderLines(metadata);
       if (!pending) return { metadata: null, result: null };
-      const appended: OrderLine[] = params.newLines.map((l) => ({
+      const appended: OrderLine[] = params.newLines.map((l, index) => ({
         id: randomUUID().slice(0, 8),
         hint: l.hint,
         requestedQuantity: l.requestedQuantity,
         status: 'queued',
         currentResolutionId: null,
         pendingNote: l.pendingNote,
+        knownProductId: knownProductIds[index],
       }));
       const next: PendingOrderLines = { ...pending, lines: [...pending.lines, ...appended] };
       return { metadata: { ...metadata, pendingOrderLines: next }, result: next };

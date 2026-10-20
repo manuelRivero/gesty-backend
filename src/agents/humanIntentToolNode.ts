@@ -560,6 +560,20 @@ const deferredRequirement = (
   });
 };
 
+/**
+ * Mensaje para un `add_cart_item` diferido en la rama de batch (search/resolve
+ * del mismo lote). Con recuperación canónica (Task ACTIVE con `currentResolutionId`
+ * propio vigente — ver `associateKnownIdentityForActiveLine`), reutiliza el
+ * mismo formato accionable que ya usa el camino solo-add vía `requirementEvaluator`
+ * ('task_resolution_mismatch' + recovery), en vez del mensaje genérico sin
+ * siguiente acción (`deferredProductAdd`). Sin recuperación determinable,
+ * conserva el rechazo seguro existente — nunca inventa un `nextRequiredTool`.
+ */
+const deferredAddMessage = (call: ToolCall, recovery: TaskRecovery): ToolMessage =>
+  recovery?.kind === 'canonical'
+    ? deferredRequirement(call, 'task_resolution_mismatch', ['TASK_RESOLUTION_PAIR'], undefined, recovery)
+    : deferredProductAdd(call);
+
 const traceIdFor = (conversationId?: string, turnId?: string): string | null =>
   conversationId ? `${conversationId}:${turnId ?? 'no-turn'}` : null;
 
@@ -850,7 +864,14 @@ export class HumanIntentToolNode extends PostEffectToolNode {
     const hasMissingResolutionContext =
       typeof configurable?.businessId !== 'string' ||
       typeof configurable?.conversationId !== 'string';
-    const deferredAdds = new Set<ToolCall>();
+    // Recuperación accionable (TaskRecovery | null) por cada add diferido, en
+    // vez de un Set: una Task ACTIVE que YA tiene currentResolutionId propio
+    // (ver `associateKnownIdentityForActiveLine` en pendingOrderLines.service.ts)
+    // tiene una resolución canónica aunque esta llamada concreta no haya
+    // pasado resolutionId — un search_products de OTRO producto en el mismo
+    // batch no debe dejarla en un mensaje sin siguiente acción (ver auditoría
+    // "bypass de resolución en pedidos auto-creados" / "ciclo de reintentos").
+    const deferredAdds = new Map<ToolCall, TaskRecovery>();
     const validatedResolutionByAdd = new Map<
       ToolCall,
       { productId: string; resolutionId?: string }
@@ -865,17 +886,23 @@ export class HumanIntentToolNode extends PostEffectToolNode {
           : '';
       if (hasOpenTaskQueue || explicitTaskId) {
         if (!explicitTaskId || typeof args.resolutionId !== 'string') {
-          deferredAdds.add(call);
+          const recovery =
+            explicitTaskId &&
+            typeof configurable?.conversationId === 'string' &&
+            typeof configurable?.businessId === 'string'
+              ? await taskRecoveryFor(configurable.conversationId, configurable.businessId, call)
+              : null;
+          deferredAdds.set(call, recovery);
         }
         return;
       }
       if (hasMissingResolutionContext) {
-        deferredAdds.add(call);
+        deferredAdds.set(call, null);
         return;
       }
       const productId = productIdFrom(call);
       if (!productId) {
-        deferredAdds.add(call);
+        deferredAdds.set(call, null);
         return;
       }
       try {
@@ -887,7 +914,7 @@ export class HumanIntentToolNode extends PostEffectToolNode {
           turnId: typeof configurable.turnId === 'string' ? configurable.turnId : undefined,
         });
         if (!resolution.ok) {
-          deferredAdds.add(call);
+          deferredAdds.set(call, null);
         } else {
           validatedResolutionByAdd.set(call, {
             productId: resolution.resolution.productId,
@@ -895,7 +922,7 @@ export class HumanIntentToolNode extends PostEffectToolNode {
           });
         }
       } catch {
-        deferredAdds.add(call);
+        deferredAdds.set(call, null);
       }
     }));
 
@@ -912,7 +939,7 @@ export class HumanIntentToolNode extends PostEffectToolNode {
       resolutionCalls.map((call, index) => [call, resolutionResults[index]])
     );
     const addResults = await Promise.all(addCalls.map(async (call) => {
-      if (deferredAdds.has(call)) return deferredProductAdd(call);
+      if (deferredAdds.has(call)) return deferredAddMessage(call, deferredAdds.get(call) ?? null);
       const resolutionCall = resolutionByAdd.get(call);
       let validatedResolution = validatedResolutionByAdd.get(call);
       if (resolutionCall) {

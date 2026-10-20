@@ -108,6 +108,7 @@ describe('continue_order_line', () => {
       status: 'queued',
       currentResolutionId: null,
       pendingNote: null,
+      knownProductId: null,
     });
     expect(store.metadata).toEqual(before);
     expect(patchConversationMetadata).not.toHaveBeenCalled();

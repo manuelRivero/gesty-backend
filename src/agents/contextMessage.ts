@@ -12,6 +12,7 @@ import type { EnrichedContext } from '../controllers/webhook/types';
 import { getRequestedPartySize, normalizeMetadata } from '../services/productQuery/utils';
 import { buildPartySizeJustConfirmedContextLines } from '../services/peopleCountGate.service';
 import { buildInformationalProductRefContextLines } from '../services/informationalProductRef.service';
+import { listRecentProductResolutions } from '../services/productResolution.service';
 import {
   deriveConfirmOfferCandidate,
   getConfirmOfferLedgerEntry,
@@ -277,6 +278,57 @@ export function buildPendingTipablesManagementLines(meta: {
       'Si ya trae plato+nota (ej. "la papa con poca sal"): get_cart → update_item_note ' +
       '(draftOrderItemId / draftOrderItemIds si hay ≥2 líneas del mismo plato; si no, productId) en el mismo turno; ' +
       'solo desambiguá si hay ≥2 matches o falta el texto de la nota.',
+  ];
+}
+
+/**
+ * Proyección plural de "productos recientes" de esta conversación: una línea
+ * por producto con `ProductResolution` vigente (`resolved`/`selected`,
+ * `listRecentProductResolutions` en `productResolution.service.ts` hace el
+ * filtrado/dedupe), con su `productId` real y marcado explícitamente si fue
+ * una elección explícita del cliente o solo una búsqueda sin ambigüedad
+ * (nunca se presenta lo segundo como si fuera selección confirmada).
+ *
+ * Deliberadamente separado de `buildPendingProductSelectionLines` (shortlist
+ * ambiguo en curso) y de `buildInformationalProductRefContextLines` (slot
+ * único, solo habilita `get_products_details_by_ids`): este bloque es de
+ * memoria estructurada de varios productos, no de desambiguación en curso
+ * ni de un referente informativo singular — no reemplaza a ninguno de los
+ * dos ni cambia su semántica.
+ *
+ * Esta función NO instruye todavía a usar estos IDs en `plan_order_lines`
+ * (ver tarea separada de integración de prompt) — solo expone la memoria
+ * estructurada; `resolve_product`/`hasEligibleProductResolution` siguen
+ * siendo quienes autorizan cualquier uso real de estos IDs.
+ */
+export async function buildRecentProductRefsContextLines(
+  metadata: unknown,
+  businessId: string,
+  conversationId: string,
+  turnId?: string
+): Promise<string[]> {
+  if (!businessId || !conversationId) return [];
+  const recent = await listRecentProductResolutions({ businessId, conversationId, turnId });
+  if (recent.length === 0) return [];
+
+  const rows = await prisma.menu_item.findMany({
+    where: { id: { in: recent.map((r) => r.productId) }, business_id: businessId, is_available: true },
+    select: { id: true, name: true },
+  });
+  const nameById = new Map(rows.map((r) => [r.id, r.name]));
+
+  const items = recent
+    .filter((r) => nameById.has(r.productId))
+    .map((r) => {
+      const name = nameById.get(r.productId);
+      const confirmed = r.status === 'selected';
+      return `  · *${name}* (ID: ${r.productId}) — ${confirmed ? 'elegido explícitamente' : 'consultado, sin elegir aún'}`;
+    });
+  if (items.length === 0) return [];
+
+  return [
+    '- Productos recientes de esta conversación (memoria estructurada, no planteés ofertas por esto solo):',
+    ...items,
   ];
 }
 
@@ -709,6 +761,12 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
       : [];
 
   const pendingSelectionLines = await buildPendingProductSelectionLines(meta, businessId);
+  const recentProductRefsLines = await buildRecentProductRefsContextLines(
+    meta,
+    businessId,
+    ctx.conversationId,
+    ctx.turnId
+  );
   const pendingTipablesLines = buildPendingTipablesManagementLines(meta);
   const pendingItemNoteLines = buildPendingItemNoteContextLines(meta);
 
@@ -757,6 +815,7 @@ export const buildContextMessage = async (ctx: EnrichedContext): Promise<string>
     ...pendingTipablesLines,
     ...pendingSelectionLines,
     ...buildInformationalProductRefContextLines(meta),
+    ...recentProductRefsLines,
     ...pendingVariationLines,
     ...pendingAddQuantityLines,
     ...pendingOrderLinesLines,

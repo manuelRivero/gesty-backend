@@ -1371,6 +1371,105 @@ describe('HumanIntentToolNode', () => {
     });
   });
 
+  describe('DEFER accionable en el batch con un search_products no relacionado (bypass de resolución en pedidos auto-creados)', () => {
+    const ORDER_LINE_ID = 'line-ceviche';
+    const RESOLUTION_ID = 'pr1:biz-1:conv-1:res-ceviche-selected';
+
+    const metadataWithActiveLine = (currentResolutionId: string | null) => ({
+      pendingOrderLines: {
+        lines: [
+          { id: ORDER_LINE_ID, hint: 'ceviche', requestedQuantity: 1, status: 'active', currentResolutionId },
+          { id: 'line-ensalada', hint: 'ensalada', requestedQuantity: null, status: 'queued', currentResolutionId: null },
+        ],
+        sourceMessage: 'Bueno, agrega el ceviche y la ensalada',
+        createdAt: '2026-10-20T00:00:00.000Z',
+      },
+      productResolutions: currentResolutionId
+        ? [{
+            resolutionId: currentResolutionId,
+            productId: PRODUCT_ID,
+            businessId: 'biz-1',
+            conversationId: 'conv-1',
+            source: 'search_products',
+            status: 'selected',
+            scope: 'conversation',
+            createdAt: '2026-10-20T00:00:00.000Z',
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          }]
+        : [],
+    });
+
+    it('un search_products de OTRO producto en el mismo batch no impide una recuperación accionable: con currentResolutionId propio vigente, difiere con nextRequiredTool canónico', async () => {
+      conversationStateFindUniqueMock.mockResolvedValue({ metadata: metadataWithActiveLine(RESOLUTION_ID) });
+      const searchEffect = vi.fn();
+      const addEffect = vi.fn();
+      const node = new HumanIntentToolNode([
+        makeTool('search_products', searchEffect),
+        makeAddCartItemTool(addEffect),
+      ]);
+
+      const result = await node.invoke(
+        {
+          messages: [toolCalls([
+            { id: 'add-ceviche', name: 'add_cart_item', args: { productId: PRODUCT_ID, orderLineId: ORDER_LINE_ID, quantity: 1 } },
+            { id: 'search-ensalada', name: 'search_products', args: { keyword: 'ensalada' } },
+          ])],
+        },
+        config()
+      );
+
+      // La búsqueda no relacionada se ejecuta igual (no queda bloqueada por el add).
+      expect(searchEffect).toHaveBeenCalledOnce();
+      expect(addEffect).not.toHaveBeenCalled();
+      const addMessage = result.messages.find(
+        (m: ToolMessage) => m.tool_call_id === 'add-ceviche'
+      ) as ToolMessage;
+      const payload = JSON.parse(String(addMessage.content)) as Record<string, unknown>;
+      expect(payload).toMatchObject({
+        success: false,
+        reason: 'task_resolution_mismatch',
+        nextRequiredTool: 'add_cart_item',
+        nextRequiredToolArgs: { orderLineId: ORDER_LINE_ID, productId: PRODUCT_ID, resolutionId: RESOLUTION_ID },
+      });
+      expect(String(payload.instruction)).toMatch(/No vuelvas a buscar ni resolver/);
+    });
+
+    it('sin currentResolutionId asociado: conserva el rechazo seguro genérico, sin inventar un nextRequiredTool', async () => {
+      conversationStateFindUniqueMock.mockResolvedValue({ metadata: metadataWithActiveLine(null) });
+      const searchEffect = vi.fn();
+      const addEffect = vi.fn();
+      const node = new HumanIntentToolNode([
+        makeTool('search_products', searchEffect),
+        makeAddCartItemTool(addEffect),
+      ]);
+
+      const result = await node.invoke(
+        {
+          messages: [toolCalls([
+            { id: 'add-ceviche', name: 'add_cart_item', args: { productId: PRODUCT_ID, orderLineId: ORDER_LINE_ID, quantity: 1 } },
+            { id: 'search-ensalada', name: 'search_products', args: { keyword: 'ensalada' } },
+          ])],
+        },
+        config()
+      );
+
+      expect(searchEffect).toHaveBeenCalledOnce();
+      expect(addEffect).not.toHaveBeenCalled();
+      const addMessage = result.messages.find(
+        (m: ToolMessage) => m.tool_call_id === 'add-ceviche'
+      ) as ToolMessage;
+      const payload = JSON.parse(String(addMessage.content)) as Record<string, unknown>;
+      expect(payload).toEqual({
+        success: false,
+        error: 'product_resolution_required',
+        reason: 'resolution_missing',
+        message: 'El producto todavía no tiene una resolución vigente.',
+        instruction: 'Esperá los resultados de búsqueda y replanteá en el siguiente paso antes de agregarlo.',
+      });
+      expect(payload.nextRequiredTool).toBeUndefined();
+    });
+  });
+
   it('findDeclaredProducer deriva el productor del contrato', () => {
     expect(findDeclaredProducer('add_cart_item', PRODUCT_RESOLUTION)).toBe('resolve_product');
     expect(findDeclaredProducer('resolve_product', PRODUCT_RESOLUTION)).toBeNull();

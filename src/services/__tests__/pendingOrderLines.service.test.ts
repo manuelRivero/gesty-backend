@@ -47,17 +47,24 @@ vi.mock('../../repositories', () => ({
   },
 }));
 
-const basePending = (over: Partial<PendingOrderLines> = {}): PendingOrderLines => ({
-  lines: [
+// knownProductId se normaliza a `null` acá (incluso si `over.lines` no lo trae)
+// porque `parseLine` (pendingOrderLines.service.ts) siempre materializa esa
+// clave al leer de metadata — sin esto, comparar un fixture crudo contra un
+// resultado ya pasado por `getPendingOrderLines` fallaría con `toEqual`.
+const basePending = (over: Partial<PendingOrderLines> = {}): PendingOrderLines => {
+  const rawLines = over.lines ?? [
     { id: 'l1', hint: 'lomo saltado', requestedQuantity: 3, status: 'active', currentResolutionId: 'pr1:biz-1:conv-1:res-1', pendingNote: null },
     { id: 'l2', hint: 'ceviche', requestedQuantity: 2, status: 'queued', currentResolutionId: 'pr1:biz-1:conv-1:res-2', pendingNote: null },
     { id: 'l3', hint: 'bebida', requestedQuantity: null, status: 'queued', currentResolutionId: 'pr1:biz-1:conv-1:res-3', pendingNote: null },
-  ],
-  sourceMessage: '3 lomos, 2 ceviches y una bebida',
-  createdAt: new Date().toISOString(),
-  closedAt: null,
-  ...over,
-});
+  ];
+  return {
+    sourceMessage: '3 lomos, 2 ceviches y una bebida',
+    createdAt: new Date().toISOString(),
+    closedAt: null,
+    ...over,
+    lines: rawLines.map((line) => ({ knownProductId: null, ...line })),
+  };
+};
 
 describe('pendingOrderLines.service', () => {
   beforeEach(() => {

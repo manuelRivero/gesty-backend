@@ -8,8 +8,11 @@ import {
   buildTextPayload,
   disconnectPrisma,
   extractHandlerText,
+  findE2eAddableProduct,
+  findE2eSecondAddableProduct,
   getActiveDraftItems,
   loadMainGraph,
+  purgeTestCustomerHistory,
   type E2eDraftLine,
   resetE2eCustomer,
   type MainGraph,
@@ -228,11 +231,33 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
       clearPartySizeBeforeTurn?: number[];
       preflightOverrides?: Array<(input: HumanIntentPreflightInput) => unknown>;
       captureTurnLogs?: boolean;
+      /**
+       * `resetE2eCustomer` ya no purga `conversation_message` por defecto —
+       * casos que solo dependen del estado OPERATIVO (metadata/humanIntentState)
+       * no lo necesitan. Un caso cuyas aserciones dependen de que el modelo
+       * CALLE una tool en este turno en particular (en vez de "recordar" una
+       * respuesta de una conversación de horas/sesiones atrás reinyectada por
+       * `buildAgentHistoryMessages`) sí lo necesita — igual que
+       * `agent-history.e2e.test.ts`.
+       */
+      purgeHistoryBeforeStart?: boolean;
+      /**
+       * Hook opt-in para sembrar estado DETERMINISTA (p. ej. `ProductResolution`
+       * ya `selected`/`resolved`) antes del primer turno, cuando el caso no
+       * debe depender de que el modelo decida llamar una tool específica en un
+       * turno de setup (una pregunta informativa simple puede responderse sin
+       * tools — comportamiento real del agente, no un bug de este harness).
+       * Usa el mecanismo real de persistencia (`issueProductResolutions`), no
+       * un mock ni un campo nuevo.
+       */
+      seedBeforeFirstTurn?: (ctx: { conversationId: string; businessId: string }) => Promise<void>;
     }
   ): Promise<HumanIntentCaseTrace> => {
     const reset = await resetE2eCustomer();
     conversationId = reset.conversationId;
     businessId = reset.businessId;
+    if (options?.purgeHistoryBeforeStart) await purgeTestCustomerHistory(conversationId);
+    if (options?.seedBeforeFirstTurn) await options.seedBeforeFirstTurn({ conversationId, businessId });
     const { patchConversationMetadata } = await import('../src/repositories/conversationState.repository');
     if (options?.requirePartySize) await clearPartySize(conversationId);
     await patchConversationMetadata(conversationId, {
@@ -1164,4 +1189,117 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
 
     trace.status = 'PASS';
   }, 900_000);
+
+  it('REGRESSION — recent-refs: productos identificados en turnos previos se asocian a sus líneas sin cruzarse en un pedido compuesto', async () => {
+    // El escenario original (4 turnos conversacionales de setup: preguntar
+    // precio, elegir variación, preguntar por el segundo producto) resultó
+    // ser un escenario de prueba mal construido: una pregunta de precio
+    // simple es respondida por el modelo SIN llamar ninguna tool (comportamiento
+    // real, no un bug del harness), así que nunca se creaba la ProductResolution
+    // que el caso necesitaba para existir. En vez de forzar al modelo a llamar
+    // una tool específica, sembramos el estado determinista directamente con
+    // el mecanismo real de persistencia (`issueProductResolutions`) — igual
+    // que ya hace `ensureE2eButtonProductResolution` en graphHarness — y
+    // dejamos un único turno conversacional real: el pedido compuesto, que es
+    // lo único que esta prueba necesita validar.
+    const { businessId: lookupBusinessId } = await resetE2eCustomer();
+    const productA = await findE2eAddableProduct(lookupBusinessId);
+    const productB = await findE2eSecondAddableProduct(lookupBusinessId, {
+      excludeId: productA.id,
+      preferKeyword: 'papa',
+    });
+
+    const trace = await runCase(
+      'REGRESSION — recent-refs en pedido compuesto',
+      [`Bueno, agrega un ${productA.name} y una ${productB.name}`],
+      {
+        captureTurnLogs: true,
+        seedBeforeFirstTurn: async ({ conversationId: seedConversationId, businessId: seedBusinessId }) => {
+          const { issueProductResolutions } = await import('../src/services/productResolution.service');
+          await issueProductResolutions({
+            productIds: [productA.id],
+            businessId: seedBusinessId,
+            conversationId: seedConversationId,
+            source: 'search_products',
+            status: 'selected',
+            scope: 'conversation',
+          });
+          await issueProductResolutions({
+            productIds: [productB.id],
+            businessId: seedBusinessId,
+            conversationId: seedConversationId,
+            source: 'search_products',
+            status: 'resolved',
+            scope: 'conversation',
+          });
+        },
+      }
+    );
+
+    const turnLogs = turnLogsByTrace.get(trace) ?? [];
+    type Line = {
+      id: string;
+      hint: string;
+      requestedQuantity: number | null;
+      status: string;
+      currentResolutionId: string | null;
+      knownProductId?: string | null;
+    };
+    const linesAt = (turn: number): Line[] =>
+      ((trace.turns[turn - 1]?.conversationMetadataAfter?.pendingOrderLines as { lines?: Line[] } | undefined)
+        ?.lines) ?? [];
+
+    const COMPOUND_TURN = 1;
+
+    // En el turno del pedido compuesto, plan_order_lines crea 2 líneas. Si el
+    // prompt usó "Productos recientes" correctamente, cada línea trae el
+    // knownProductId correcto — sin cruzarse.
+    const compoundLines = linesAt(COMPOUND_TURN);
+    const productALine = compoundLines.find((l) => normalize(l.hint).includes(normalize(productA.name)));
+    const productBLine = compoundLines.find((l) => normalize(l.hint).includes(normalize(productB.name)));
+    assertLifecycleInvariant(
+      trace, COMPOUND_TURN, 'INV-REFS-02',
+      Boolean(productALine) && Boolean(productBLine),
+      `el pedido compuesto planifica ambas líneas (${productA.name} y ${productB.name})`,
+      compactValue(compoundLines)
+    );
+    // No-cruce: si el backend preservó identidad, cada línea la preservó con
+    // SU propio producto — nunca con el del otro. (Si no se identificó con
+    // certeza, knownProductId queda null — igual de válido, ver INV-REFS-04.)
+    assertLifecycleInvariant(
+      trace, COMPOUND_TURN, 'INV-REFS-03',
+      productALine?.knownProductId !== productB.id,
+      `la línea de ${productA.name} no toma la identidad de ${productB.name}`,
+      compactValue({ productALine, productBId: productB.id })
+    );
+    assertLifecycleInvariant(
+      trace, COMPOUND_TURN, 'INV-REFS-03b',
+      productBLine?.knownProductId !== productA.id,
+      `la línea de ${productB.name} no toma la identidad de ${productA.name}`,
+      compactValue({ productBLine, productAId: productA.id })
+    );
+
+    // Resultado final: ambos productos agregados, cada uno UNA sola vez, sin
+    // sustituciones (el producto en el carrito es el mismo que se identificó).
+    const finalDraft = turnLogs[turnLogs.length - 1]?.draftItems ?? [];
+    assertLifecycleInvariant(
+      trace, COMPOUND_TURN, 'INV-REFS-04',
+      finalDraft.some((item) => item.product_id === productA.id),
+      `${productA.name} identificado está en el carrito final`,
+      compactValue({ finalDraft, productAId: productA.id })
+    );
+    assertLifecycleInvariant(
+      trace, COMPOUND_TURN, 'INV-REFS-05',
+      finalDraft.some((item) => item.product_id === productB.id),
+      `${productB.name} identificado está en el carrito final`,
+      compactValue({ finalDraft, productBId: productB.id })
+    );
+    assertLifecycleInvariant(
+      trace, COMPOUND_TURN, 'INV-REFS-06',
+      finalDraft.length === 2,
+      'el carrito final tiene exactamente 2 ítems, sin duplicados',
+      compactValue(finalDraft)
+    );
+    trace.status = 'PASS';
+  }, 600_000);
 });

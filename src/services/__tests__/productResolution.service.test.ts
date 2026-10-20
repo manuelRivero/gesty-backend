@@ -35,8 +35,11 @@ import {
   extendProductResolutionForPending,
   getProductResolutions,
   issueProductResolutions,
+  listRecentEligibleProductResolutions,
+  listRecentProductResolutions,
   selectProductResolution,
   selectProductResolutionFromButton,
+  type ProductResolution,
 } from '../productResolution.service';
 
 const BUSINESS_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -279,5 +282,122 @@ describe('expireOpenProductResolutions', () => {
     const afterSecond = await getProductResolutions(CONVERSATION_ID);
 
     expect(afterSecond).toEqual(afterFirst);
+  });
+});
+
+describe('listRecentEligibleProductResolutions — proyección plural de productos recientes', () => {
+  const FUTURE = new Date(Date.now() + 60_000).toISOString();
+  const PAST = new Date(Date.now() - 60_000).toISOString();
+  const CEVICHE_ID = '11111111-1111-4111-8111-111111111111';
+  const PAPAS_ID = '22222222-2222-4222-8222-222222222222';
+
+  const entry = (over: Partial<ProductResolution> = {}): ProductResolution => ({
+    resolutionId: `pr1:${BUSINESS_ID}:${CONVERSATION_ID}:${Math.random().toString(36).slice(2)}`,
+    productId: CEVICHE_ID,
+    businessId: BUSINESS_ID,
+    conversationId: CONVERSATION_ID,
+    source: 'search_products',
+    status: 'resolved',
+    scope: 'conversation',
+    createdAt: new Date().toISOString(),
+    expiresAt: FUTURE,
+    ...over,
+  });
+
+  it('1) dos productos identificados en turnos distintos aparecen simultáneamente', () => {
+    const result = listRecentEligibleProductResolutions(
+      [entry({ productId: CEVICHE_ID, createdAt: '2026-01-01T00:00:00.000Z' }),
+       entry({ productId: PAPAS_ID, createdAt: '2026-01-02T00:00:00.000Z' })],
+      { businessId: BUSINESS_ID, conversationId: CONVERSATION_ID }
+    );
+    expect(result.map((r) => r.productId).sort()).toEqual([CEVICHE_ID, PAPAS_ID].sort());
+  });
+
+  it('2) selected prevalece sobre resolved para el mismo producto', () => {
+    const result = listRecentEligibleProductResolutions(
+      [
+        entry({ productId: CEVICHE_ID, status: 'resolved', createdAt: '2026-01-02T00:00:00.000Z' }),
+        entry({ productId: CEVICHE_ID, status: 'selected', createdAt: '2026-01-01T00:00:00.000Z' }),
+      ],
+      { businessId: BUSINESS_ID, conversationId: CONVERSATION_ID }
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ status: 'selected' });
+  });
+
+  it('en empate de status, prevalece la más reciente', () => {
+    const result = listRecentEligibleProductResolutions(
+      [
+        entry({ productId: CEVICHE_ID, status: 'resolved', createdAt: '2026-01-01T00:00:00.000Z', resolutionId: 'old' }),
+        entry({ productId: CEVICHE_ID, status: 'resolved', createdAt: '2026-01-02T00:00:00.000Z', resolutionId: 'new' }),
+      ],
+      { businessId: BUSINESS_ID, conversationId: CONVERSATION_ID }
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0].resolutionId).toBe('new');
+  });
+
+  it('3) una resolución vencida no aparece', () => {
+    const result = listRecentEligibleProductResolutions(
+      [entry({ expiresAt: PAST })],
+      { businessId: BUSINESS_ID, conversationId: CONVERSATION_ID }
+    );
+    expect(result).toHaveLength(0);
+  });
+
+  it('4) una referencia de otro negocio o conversación no aparece', () => {
+    const result = listRecentEligibleProductResolutions(
+      [
+        entry({ productId: CEVICHE_ID, businessId: OTHER_BUSINESS_ID }),
+        entry({ productId: PAPAS_ID, conversationId: OTHER_CONVERSATION_ID }),
+      ],
+      { businessId: BUSINESS_ID, conversationId: CONVERSATION_ID }
+    );
+    expect(result).toHaveLength(0);
+  });
+
+  it('6) respeta el límite, priorizando selected y luego recencia', () => {
+    const entries = [
+      entry({ productId: '1', status: 'resolved', createdAt: '2026-01-01T00:00:00.000Z' }),
+      entry({ productId: '2', status: 'resolved', createdAt: '2026-01-02T00:00:00.000Z' }),
+      entry({ productId: '3', status: 'selected', createdAt: '2026-01-03T00:00:00.000Z' }),
+      entry({ productId: '4', status: 'resolved', createdAt: '2026-01-04T00:00:00.000Z' }),
+      entry({ productId: '5', status: 'selected', createdAt: '2026-01-05T00:00:00.000Z' }),
+      entry({ productId: '6', status: 'resolved', createdAt: '2026-01-06T00:00:00.000Z' }),
+    ];
+    const result = listRecentEligibleProductResolutions(
+      entries,
+      { businessId: BUSINESS_ID, conversationId: CONVERSATION_ID, limit: 5 }
+    );
+    expect(result).toHaveLength(5);
+    // Los dos `selected` (3 y 5) primero, por recencia entre ellos; luego los
+    // `resolved` más recientes hasta completar el límite (6, 4 — el más viejo, 1, queda afuera).
+    expect(result.map((r) => r.productId)).toEqual(['5', '3', '6', '4', '2']);
+  });
+
+  it('8) consumed no aparece — no por "producto irrelevante", sino porque esa resolutionId puntual ya no es reutilizable (ver comentario en el código)', () => {
+    const result = listRecentEligibleProductResolutions(
+      [entry({ status: 'consumed' })],
+      { businessId: BUSINESS_ID, conversationId: CONVERSATION_ID }
+    );
+    expect(result).toHaveLength(0);
+  });
+
+  it('candidate (shortlist ambiguo, sin resolver) tampoco aparece', () => {
+    const result = listRecentEligibleProductResolutions(
+      [entry({ status: 'candidate' })],
+      { businessId: BUSINESS_ID, conversationId: CONVERSATION_ID }
+    );
+    expect(result).toHaveLength(0);
+  });
+
+  it('listRecentProductResolutions (async) resuelve el ledger real de la conversación', async () => {
+    await issue({ status: 'selected' });
+    const result = await listRecentProductResolutions({
+      businessId: BUSINESS_ID,
+      conversationId: CONVERSATION_ID,
+    });
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ productId: PRODUCT_ID, status: 'selected' });
   });
 });

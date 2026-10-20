@@ -951,6 +951,8 @@ export const nlpSubgraphNode = async (
           await clearWelcomeEligible(conversation.id);
           await ensurePendingOrderLinesFromRequest({
             conversationId: conversation.id,
+            businessId: business.id,
+            turnId: ctx.turnId,
             request: activePedir.request,
             sourceMessage: userMessage,
             metadata: workingConversationState.metadata,
