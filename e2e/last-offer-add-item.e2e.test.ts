@@ -92,6 +92,7 @@ describe.sequential.skipIf(!isE2eEnabled())('lastOffer add-item (e2e)', () => {
     conversationId = reset.conversationId;
 
     await persistLastOffer({
+      businessId,
       conversationId,
       productId,
       productName,
@@ -115,6 +116,7 @@ describe.sequential.skipIf(!isE2eEnabled())('lastOffer add-item (e2e)', () => {
     conversationId = reset.conversationId;
 
     await persistLastOffer({
+      businessId,
       conversationId,
       productId,
       productName,
@@ -137,6 +139,7 @@ describe.sequential.skipIf(!isE2eEnabled())('lastOffer add-item (e2e)', () => {
     conversationId = reset.conversationId;
 
     await persistLastOffer({
+      businessId,
       conversationId,
       productId,
       productName,
@@ -164,6 +167,7 @@ describe.sequential.skipIf(!isE2eEnabled())('lastOffer add-item (e2e)', () => {
     conversationId = reset.conversationId;
 
     await persistLastOffer({
+      businessId,
       conversationId,
       productId,
       productName,
@@ -189,6 +193,7 @@ describe.sequential.skipIf(!isE2eEnabled())('lastOffer add-item (e2e)', () => {
     conversationId = reset.conversationId;
 
     await persistLastOffer({
+      businessId,
       conversationId,
       productId,
       productName,
@@ -249,6 +254,7 @@ describe.sequential.skipIf(!isE2eEnabled())('lastOffer add-item (e2e)', () => {
     // Happy path determinístico: ofrecer el producto filtrado (sin variación /
     // qty gate) aunque el LLM haya fijado otro ceviche con variaciones.
     await persistLastOffer({
+      businessId,
       conversationId,
       productId: productId,
       productName: productName,
@@ -283,6 +289,7 @@ describe.sequential.skipIf(!isE2eEnabled())('lastOffer add-item (e2e)', () => {
     conversationId = reset.conversationId;
 
     await persistLastOffer({
+      businessId,
       conversationId,
       productId,
       productName,
@@ -305,6 +312,7 @@ describe.sequential.skipIf(!isE2eEnabled())('lastOffer add-item (e2e)', () => {
     conversationId = reset.conversationId;
 
     await persistLastOffer({
+      businessId,
       conversationId,
       productId,
       productName,
@@ -333,6 +341,7 @@ describe.sequential.skipIf(!isE2eEnabled())('lastOffer add-item (e2e)', () => {
     });
 
     await persistLastOffer({
+      businessId,
       conversationId,
       productId,
       productName,
@@ -344,6 +353,7 @@ describe.sequential.skipIf(!isE2eEnabled())('lastOffer add-item (e2e)', () => {
     expect(isLastOfferAlive(await getFreshConversationMetadata(conversationId))).toBe(false);
 
     await persistLastOffer({
+      businessId,
       conversationId,
       productId: productY.id,
       productName: productY.name,
@@ -371,6 +381,7 @@ describe.sequential.skipIf(!isE2eEnabled())('lastOffer add-item (e2e)', () => {
     });
 
     await persistLastOffer({
+      businessId,
       conversationId,
       productId,
       productName,
@@ -378,6 +389,7 @@ describe.sequential.skipIf(!isE2eEnabled())('lastOffer add-item (e2e)', () => {
       source: 'hybrid_cta',
     });
     await persistLastOffer({
+      businessId,
       conversationId,
       productId: productY.id,
       productName: productY.name,
@@ -402,6 +414,7 @@ describe.sequential.skipIf(!isE2eEnabled())('lastOffer add-item (e2e)', () => {
     conversationId = reset.conversationId;
 
     await persistLastOffer({
+      businessId,
       conversationId,
       productId,
       productName,

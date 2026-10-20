@@ -168,26 +168,77 @@ export const issueProductResolutions = async (params: {
   turnId?: string;
   expiresAt?: string | null;
 }): Promise<ProductResolution[]> => {
+  // DIAG-ISSUE (temporal — retirar tras el diagnóstico de resolution_expired,
+  // ver informe de investigación). correlationId solo para vincular los logs
+  // de esta misma llamada entre sí; no es un dato persistido.
+  const correlationId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  console.log(JSON.stringify({
+    event: '[DIAG-ISSUE] enter',
+    correlationId,
+    productIds: params.productIds,
+    businessId: params.businessId,
+    conversationId: params.conversationId,
+    source: params.source,
+    status: params.status,
+    scope: params.scope,
+  }));
+
   const uniqueIds = [...new Set(params.productIds.filter((id) => id.trim()))];
-  if (uniqueIds.length === 0) return [];
+  if (uniqueIds.length === 0) {
+    console.log(JSON.stringify({ event: '[DIAG-ISSUE] early_return', correlationId, reason: 'uniqueIds_empty' }));
+    return [];
+  }
 
   return prisma.$transaction(async (tx) => {
+    console.log(JSON.stringify({
+      event: '[DIAG-ISSUE] before_findMany',
+      correlationId,
+      uniqueIds,
+      businessIdUsed: params.businessId,
+    }));
     const validProducts = await tx.menu_item.findMany({
       where: {
         id: { in: uniqueIds },
         business_id: params.businessId,
         is_available: true,
       },
-      select: { id: true },
+      select: { id: true, is_available: true, business_id: true },
     });
+    console.log(JSON.stringify({
+      event: '[DIAG-ISSUE] after_findMany',
+      correlationId,
+      resultCount: validProducts.length,
+      results: validProducts,
+    }));
     const validIds = new Set(validProducts.map((item) => item.id));
     const resolvedIds = uniqueIds.filter((id) => validIds.has(id));
-    if (resolvedIds.length === 0) return [];
+    if (resolvedIds.length === 0) {
+      console.log(JSON.stringify({
+        event: '[DIAG-ISSUE] early_return',
+        correlationId,
+        reason: 'resolvedIds_empty',
+        uniqueIds,
+        businessIdUsed: params.businessId,
+      }));
+      return [];
+    }
 
     const metadata = await lockConversationState(tx, params.conversationId);
     const resolutions = parseResolutions(metadata);
     const added = resolvedIds.map((productId) => createResolution({ ...params, productId }));
     await writeResolutionLedger(tx, params.conversationId, [...resolutions, ...added].slice(-200));
+    console.log(JSON.stringify({
+      event: '[DIAG-ISSUE] persisted',
+      correlationId,
+      added: added.map((r) => ({
+        resolutionId: r.resolutionId,
+        productId: r.productId,
+        source: r.source,
+        status: r.status,
+        scope: r.scope,
+        expiresAt: r.expiresAt,
+      })),
+    }));
     return added;
   });
 };
@@ -413,6 +464,36 @@ export const resolveProductForAdd = async (params: {
   let resolutionId = params.resolutionId?.trim() || params.pendingResolutionId?.trim() || '';
   if (!resolutionId) {
     const resolutions = await getProductResolutions(params.conversationId);
+    // DIAG-RESOLUTION (temporal — retirar tras el diagnóstico de resolution_expired,
+    // ver informe de investigación): solo registra las entradas del mismo
+    // productId/businessId/conversationId de esta llamada; nada de contenido de
+    // conversación ni datos de cliente.
+    const now = Date.now();
+    const sameProduct = resolutions.filter((item) => item.productId === params.productId);
+    console.log(JSON.stringify({
+      event: '[DIAG-RESOLUTION] candidates',
+      productId: params.productId,
+      businessId: params.businessId,
+      conversationId: params.conversationId,
+      turnId: params.turnId ?? null,
+      nowIso: new Date(now).toISOString(),
+      candidates: sameProduct.map((item) => ({
+        resolutionId: item.resolutionId,
+        status: item.status,
+        scope: item.scope,
+        source: item.source,
+        businessId: item.businessId,
+        conversationId: item.conversationId,
+        turnId: item.turnId ?? null,
+        createdAt: item.createdAt,
+        expiresAt: item.expiresAt,
+        eligible_businessMatch: item.businessId === params.businessId,
+        eligible_conversationMatch: item.conversationId === params.conversationId,
+        eligible_statusOk: item.status === 'resolved' || item.status === 'selected',
+        eligible_notExpired: !item.expiresAt || Date.parse(item.expiresAt) > now,
+        eligible_scopeOk: item.scope !== 'turn' || item.turnId === params.turnId,
+      })),
+    }));
     const eligible = resolutions
       .filter(
         (item) =>
@@ -429,6 +510,29 @@ export const resolveProductForAdd = async (params: {
       const matching = resolutions
         .filter((item) => item.productId === params.productId)
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+      console.log(JSON.stringify({
+        event: '[DIAG-RESOLUTION] fallback_matching',
+        productId: params.productId,
+        matching: matching
+          ? {
+              resolutionId: matching.resolutionId,
+              status: matching.status,
+              scope: matching.scope,
+              businessId: matching.businessId,
+              conversationId: matching.conversationId,
+              createdAt: matching.createdAt,
+              expiresAt: matching.expiresAt,
+            }
+          : null,
+        reason: matching?.status === 'consumed'
+          ? 'resolution_consumed'
+          : matching?.expiresAt &&
+            (!Number.isFinite(Date.parse(matching.expiresAt)) || Date.parse(matching.expiresAt) <= Date.now())
+            ? 'resolution_expired'
+            : matching?.status === 'candidate'
+              ? 'resolution_not_selected'
+              : 'resolution_missing',
+      }));
       if (matching?.status === 'consumed') {
         return { ok: false, reason: 'resolution_consumed' };
       }

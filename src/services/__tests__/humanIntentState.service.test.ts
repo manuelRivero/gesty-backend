@@ -748,5 +748,27 @@ describe('humanIntentState V1', () => {
       expect(merged).not.toBeNull();
       expect(merged?.products).toEqual(['ceviche', 'papas']);
     });
+
+    /**
+     * Documenta (no corrige) una limitación conocida de usar "offeredProducts"
+     * en la transición de aceptación de oferta viva (ver humanIntentPreflight.ts):
+     * el dedupe de mergeEquivalentPedirRequest solo mira la clave literal
+     * "products" (línea 353-354 de humanIntentState.service.ts). Un PEDIR
+     * activo con offeredProducts (ceviche aceptado) y un NEW_INTENT PEDIR
+     * posterior con products (p. ej. "y también una gaseosa") NO se fusionan
+     * en un único registro — quedan como dos HumanIntentRecord PEDIR
+     * independientes (el de la gaseosa reemplaza al del ceviche como ACTIVE;
+     * el del ceviche pasa a PENDING). Esto no afecta el carrito real (el
+     * ceviche ya se agregó via add_cart_item en su propio turno, antes de
+     * que exista la segunda intención) ni duplica/pierde el producto en
+     * draft_order — solo fragmenta la narrativa del Human Intent ledger.
+     */
+    it('offeredProducts NO fusiona con un products posterior (limitación conocida, no corregida en este cambio)', () => {
+      const merged = mergeEquivalentPedirRequest(
+        { offeredProducts: [{ name: 'Ceviche Clásico', productId: 'prod-1' }] },
+        { products: ['gaseosa'] }
+      );
+      expect(merged).toBeNull();
+    });
   });
 });

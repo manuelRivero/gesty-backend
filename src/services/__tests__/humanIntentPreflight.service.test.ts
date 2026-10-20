@@ -246,6 +246,66 @@ describe('Human Intent Preflight', () => {
     expect(validateHumanIntentTurnDecision(decision, requestInput)).toEqual(decision);
   });
 
+  it('acepta NEW_INTENT PEDIR con el productId de una oferta viva (activeOffer) aunque ACTIVE sea EXPLORAR', async () => {
+    const OFFER_PRODUCT_ID = '66666666-6666-4666-8666-666666666666';
+    const requestInput = input({
+      turn: { messageId: 'wamid.accept-offer', text: 'Bueno dale' },
+      context: {
+        recentTurns: [
+          { role: 'assistant', text: '¿Lo agrego al pedido?' },
+          { role: 'user', text: 'Bueno dale' },
+        ],
+        lastAssistantQuestion: '¿Lo agrego al pedido?',
+        activeOffer: { productId: OFFER_PRODUCT_ID, productName: 'Ceviche Clásico' },
+      },
+      state: {
+        revision: 2,
+        active: { ...active, goal: 'EXPLORAR', request: { category: 'ceviche' }, blockers: [] },
+        pending: [],
+      },
+    });
+    const decision = {
+      decision: 'NEW_INTENT',
+      intents: [{
+        goal: 'PEDIR',
+        // "offeredProducts" (no "products"): identidad conservada sin disparar
+        // ensurePendingOrderLinesFromRequest (ver pendingOrderLines.service.ts).
+        request: { offeredProducts: [{ name: 'Ceviche Clásico', productId: OFFER_PRODUCT_ID }] },
+      }],
+    };
+    invokeMock.mockResolvedValue(decision);
+
+    await expect(runHumanIntentPreflight(requestInput)).resolves.toEqual(decision);
+    expect(validateHumanIntentTurnDecision(decision, requestInput)).toEqual(decision);
+  });
+
+  it('rechaza NEW_INTENT PEDIR con un productId que no es el de ninguna oferta/referencia conocida', async () => {
+    const requestInput = input({
+      turn: { messageId: 'wamid.invented-product-id', text: 'Bueno dale' },
+      context: {
+        recentTurns: [{ role: 'user', text: 'Bueno dale' }],
+        activeOffer: { productId: '66666666-6666-4666-8666-666666666666', productName: 'Ceviche Clásico' },
+      },
+      state: {
+        revision: 2,
+        active: { ...active, goal: 'EXPLORAR', request: { category: 'ceviche' }, blockers: [] },
+        pending: [],
+      },
+    });
+    const decision = {
+      decision: 'NEW_INTENT',
+      intents: [{
+        goal: 'PEDIR',
+        // productId inventado: no es el de activeOffer ni de ninguna referencia visible.
+        request: { offeredProducts: [{ name: 'Ceviche Clásico', productId: '77777777-7777-4777-8777-777777777777' }] },
+      }],
+    };
+    invokeMock.mockResolvedValue(decision);
+
+    await expect(runHumanIntentPreflight(requestInput)).resolves.toEqual({ decision: 'AMBIGUOUS' });
+    expect(validateHumanIntentTurnDecision(decision, requestInput)).toBeNull();
+  });
+
   it('rechaza un RESUME_PENDING inventado cuando no hay pending compatible', async () => {
     const requestInput = input({
       turn: { messageId: 'wamid.invalid-pending', text: '¿Qué postres tienen?' },

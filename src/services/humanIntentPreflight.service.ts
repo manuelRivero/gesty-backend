@@ -36,6 +36,14 @@ export interface HumanIntentPreflightInput {
       label: string;
     }>;
     activeBlockingGoal?: IntentType;
+    /**
+     * Oferta de compra viva (CONFIRMAR_OFERTA, ver `lastOffer.service.ts`): el
+     * asistente ya propuso agregar este producto y no venció. Solo evidencia
+     * para que el clasificador reconozca una aceptación explícita como
+     * NEW_INTENT PEDIR — nunca se asume una transición sin que el mensaje la
+     * exprese con claridad (ver reglas del prompt).
+     */
+    activeOffer?: { productId: string; productName: string } | null;
   };
   state: {
     revision: number;
@@ -138,6 +146,7 @@ const knownIdsFor = (input: HumanIntentPreflightInput): Set<string> =>
   new Set([
     ...openIntents(input).map((intent) => intent.id),
     ...(input.context.visibleReferences ?? []).map((reference) => reference.id),
+    ...(input.context.activeOffer ? [input.context.activeOffer.productId] : []),
   ]);
 
 export type HumanIntentTurnDecisionRejectionReason =

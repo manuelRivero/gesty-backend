@@ -6,6 +6,7 @@ import { z } from 'zod';
 const {
   getStateMock,
   itemFindFirstMock,
+  itemFindManyMock,
   categoryFindFirstMock,
   conversationStateFindUniqueMock,
   findOrCreateConversationStateMock,
@@ -15,6 +16,7 @@ const {
 } = vi.hoisted(() => ({
   getStateMock: vi.fn(),
   itemFindFirstMock: vi.fn(),
+  itemFindManyMock: vi.fn(),
   categoryFindFirstMock: vi.fn(),
   conversationStateFindUniqueMock: vi.fn(),
   findOrCreateConversationStateMock: vi.fn(),
@@ -49,7 +51,7 @@ vi.mock('../../repositories', async (importOriginal) => {
 
 vi.mock('../../lib/prisma', () => ({
   prisma: {
-    menu_item: { findFirst: itemFindFirstMock, findMany: vi.fn() },
+    menu_item: { findFirst: itemFindFirstMock, findMany: itemFindManyMock },
     menu_category: { findFirst: categoryFindFirstMock },
     conversation_state: { findUnique: conversationStateFindUniqueMock },
   },
@@ -156,6 +158,17 @@ const makeResolveProductTool = (effect: () => unknown, success = true) =>
     },
   });
 
+const makeSavePartySizeTool = (effect: () => unknown) =>
+  new DynamicStructuredTool({
+    name: 'save_party_size',
+    description: 'test tool',
+    schema: z.object({ count: z.number() }),
+    func: async (args: { count: number }) => {
+      await effect();
+      return JSON.stringify({ success: true, effect: { kind: 'party_size_persisted' }, partySize: args.count });
+    },
+  });
+
 const config = (revision = 7, configurableOverrides: Record<string, unknown> = {}) => ({
   configurable: {
     conversationId: 'conv-1',
@@ -185,6 +198,7 @@ describe('HumanIntentToolNode', () => {
     );
     conversationStateFindUniqueMock.mockResolvedValue({ metadata: { peopleCount: 2 } });
     itemFindFirstMock.mockResolvedValue({ name: 'Ceviche Clásico' });
+    itemFindManyMock.mockResolvedValue([]);
     categoryFindFirstMock.mockResolvedValue({ name: 'Postres' });
   });
 
@@ -547,7 +561,7 @@ describe('HumanIntentToolNode', () => {
       name: 'present_product_cta',
       description: 'test cta',
       schema: z.object({ primaryKind: z.string(), productId: z.string().uuid().optional() }),
-      func: async (args) => {
+      func: async (args: { primaryKind: string; productId?: string }) => {
         ctaEffect();
         return JSON.stringify({ signal: 'present_product_cta', primaryKind: args.primaryKind });
       },
@@ -577,7 +591,7 @@ describe('HumanIntentToolNode', () => {
       name: 'present_product_cta',
       description: 'test cta',
       schema: z.object({ primaryKind: z.string(), productIds: z.array(z.string().uuid()).optional() }),
-      func: async (args) => {
+      func: async (args: { primaryKind: string; productIds?: string[] }) => {
         ctaEffect();
         return JSON.stringify({ signal: 'present_product_cta', primaryKind: args.primaryKind });
       },
@@ -597,6 +611,80 @@ describe('HumanIntentToolNode', () => {
     expect(ctaEffect).toHaveBeenCalledTimes(1);
     const toolMessage = result.messages.find(ToolMessage.isInstance) as ToolMessage;
     expect(JSON.parse(String(toolMessage.content))).toMatchObject({ primaryKind: 'SELECT_FROM_LIST' });
+  });
+
+  it('rechaza save_party_size cuando su count coincide con serves_people del producto que se agrega en la misma iteración', async () => {
+    itemFindManyMock.mockResolvedValue([{ serves_people: 2 }]);
+    resolveProductForAddMock.mockResolvedValue({ ok: true, resolution: { productId: PRODUCT_ID } });
+    const partySizeEffect = vi.fn();
+    const addEffect = vi.fn();
+    const node = new HumanIntentToolNode([
+      makeSavePartySizeTool(partySizeEffect),
+      makeAddCartItemTool(addEffect),
+    ]);
+
+    const result = await node.invoke(
+      {
+        messages: [toolCalls([
+          { id: 'party-1', name: 'save_party_size', args: { count: 2 } },
+          { id: 'add-1', name: 'add_cart_item', args: { productId: PRODUCT_ID } },
+        ])],
+      },
+      config()
+    );
+
+    expect(partySizeEffect).not.toHaveBeenCalled();
+    expect(addEffect).toHaveBeenCalledTimes(1);
+    const rejected = result.messages.find(
+      (message: BaseMessage) => ToolMessage.isInstance(message) && message.tool_call_id === 'party-1'
+    ) as ToolMessage;
+    expect(JSON.parse(String(rejected.content))).toMatchObject({
+      success: false,
+      error: 'party_size_matches_serves_people',
+    });
+  });
+
+  it('permite save_party_size cuyo count NO coincide con serves_people del producto agregado en la misma iteración', async () => {
+    itemFindManyMock.mockResolvedValue([{ serves_people: 2 }]);
+    resolveProductForAddMock.mockResolvedValue({ ok: true, resolution: { productId: PRODUCT_ID } });
+    const partySizeEffect = vi.fn();
+    const addEffect = vi.fn();
+    const node = new HumanIntentToolNode([
+      makeSavePartySizeTool(partySizeEffect),
+      makeAddCartItemTool(addEffect),
+    ]);
+
+    const result = await node.invoke(
+      {
+        messages: [toolCalls([
+          { id: 'party-2', name: 'save_party_size', args: { count: 4 } },
+          { id: 'add-2', name: 'add_cart_item', args: { productId: PRODUCT_ID } },
+        ])],
+      },
+      config()
+    );
+
+    expect(partySizeEffect).toHaveBeenCalledTimes(1);
+    const persisted = result.messages.find(
+      (message: BaseMessage) => ToolMessage.isInstance(message) && message.tool_call_id === 'party-2'
+    ) as ToolMessage;
+    expect(JSON.parse(String(persisted.content))).toMatchObject({ success: true, partySize: 4 });
+  });
+
+  it('permite save_party_size solo (sin add_cart_item en la misma iteración) aunque el count coincida con un serves_people cualquiera', async () => {
+    itemFindManyMock.mockResolvedValue([{ serves_people: 2 }]);
+    const partySizeEffect = vi.fn();
+    const node = new HumanIntentToolNode([makeSavePartySizeTool(partySizeEffect)]);
+
+    const result = await node.invoke(
+      { messages: [toolCall('save_party_size', { count: 2 })] },
+      config()
+    );
+
+    expect(itemFindManyMock).not.toHaveBeenCalled();
+    expect(partySizeEffect).toHaveBeenCalledTimes(1);
+    const persisted = result.messages.find(ToolMessage.isInstance) as ToolMessage;
+    expect(JSON.parse(String(persisted.content))).toMatchObject({ success: true, partySize: 2 });
   });
 
   it('permite el ADD sin party size cuando la ProductResolution es válida (ya no es requisito)', async () => {
@@ -716,6 +804,35 @@ describe('HumanIntentToolNode', () => {
       error: HUMAN_INTENT_TOOL_DENIED,
       pendingIntentId: PENDING.id,
     });
+  });
+
+  it('offeredProducts en ACTIVE matchea igual que products: no bloquea el add legítimo de una oferta aceptada aunque PENDING mencione el mismo plato', async () => {
+    // Reproduce el riesgo encontrado al evaluar vaciar `request` en la
+    // transición EXPLORAR→PEDIR por aceptación de oferta viva: si ACTIVE
+    // (PEDIR) no reconociera "offeredProducts" como target, un PENDING
+    // EXPLORAR sobre el mismo plato (p. ej. el EXPLORAR suspendido al aceptar
+    // la oferta) haría creer al guard que el add pertenece a esa PENDING, no
+    // a la ACTIVE — HUMAN_INTENT_TOOL_DENIED falso. Con "offeredProducts"
+    // reconocido por collectRequestTargets, matchesIntent(active, targets)
+    // es true y el add sigue su curso normal (acá: ProductResolution
+    // ausente → DEFER por resolution_missing, NO por HUMAN_INTENT_TOOL_DENIED).
+    getStateMock.mockResolvedValue(
+      state([
+        { ...ACTIVE, goal: 'PEDIR', request: { offeredProducts: [{ name: 'Ceviche Clásico', productId: PRODUCT_ID }] } },
+        { ...PENDING, goal: 'EXPLORAR', request: { category: 'Ceviche Clásico' } },
+      ])
+    );
+    const effect = vi.fn();
+    const node = new HumanIntentToolNode([makeAddCartItemTool(effect)]);
+
+    const result = await node.invoke(
+      { messages: [toolCall('add_cart_item', { productId: PRODUCT_ID })] },
+      config()
+    );
+    const message = result.messages[0] as ToolMessage;
+
+    expect(JSON.parse(String(message.content))).not.toMatchObject({ error: HUMAN_INTENT_TOOL_DENIED });
+    expect(effect).not.toHaveBeenCalled(); // sin ProductResolution previa, DEFER — pero no por el guard de intención pendiente.
   });
 
   it('permite una tool neutral', async () => {
@@ -1268,6 +1385,13 @@ describe('HumanIntentToolNode', () => {
       });
       expect(targets).toContain('ceviche');
       expect(targets).not.toContain('poca cebolla');
+    });
+
+    it('offeredProducts:[{name,productId}] (aceptación de oferta viva) expone el nombre como target igual que products', () => {
+      const targets = collectRequestTargets({
+        offeredProducts: [{ name: 'Ceviche Clásico', productId: 'prod-1' }],
+      });
+      expect(targets).toEqual(['Ceviche Clásico']);
     });
 
     it('legacy: products:string[] sigue exponiendo cada string como target', () => {

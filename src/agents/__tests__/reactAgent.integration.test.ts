@@ -1393,6 +1393,37 @@ describe('runHybridReactAgent', () => {
     expect(buildCartSummaryMessage).not.toHaveBeenCalled();
   });
 
+  it('add_cart_item rechazado por human_intent_incompatible: usa la prosa del LLM respondiendo la intención real, no el error genérico de compra', async () => {
+    const incompatible = (id: string) => new ToolMessage({
+      tool_call_id: id,
+      name: 'add_cart_item',
+      content: JSON.stringify({
+        success: false,
+        error: 'human_intent_incompatible',
+        instruction: 'No reintentes agregarlo ni mostrar un CTA de compra sobre él por ninguna otra tool en este turno.',
+      }),
+    });
+    mockAgent({
+      invoke: vi.fn().mockImplementation(async (input: { messages: unknown[] }) => ({
+        messages: [
+          ...input.messages,
+          new AIMessage({
+            content: '',
+            tool_calls: [{ id: 'tc-add-1', name: 'add_cart_item', args: { productId: 'prod-ceviche' }, type: 'tool_call' }],
+          }),
+          incompatible('tc-add-1'),
+          new AIMessage({ content: '*Ceviche Clásico* cuesta $100 ARS, ración para dos personas.' }),
+        ],
+      })),
+    });
+
+    const result = unwrap(await runHybridReactAgent(makeCtx({ message: { text: { body: 'El ceviche clásico' } } }) as any));
+    const visible = JSON.stringify(result?.content ?? '');
+
+    expect(visible).toMatch(/cuesta \$100/);
+    expect(visible).not.toMatch(/No pude confirmar el agregado/);
+  });
+
   it('recuperación de task_resolution_mismatch agotada → respuesta segura, sin silencio ni confirmación falsa', async () => {
     const mismatch = (id: string) => new ToolMessage({
       tool_call_id: id,

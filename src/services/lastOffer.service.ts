@@ -183,6 +183,16 @@ export const persistLastOffer = async (params: {
   // Flip: ya no escribimos el bag paralelo. Limpiamos legacy si existía.
   await omitConversationMetadataKeys(params.conversationId, ['lastOffer']);
   await setLastReferencedProductId(params.conversationId, params.productId);
+  // DIAG-ISSUE (temporal — retirar junto con la instrumentación de
+  // issueProductResolutions en productResolution.service.ts): businessId tal
+  // cual lo recibió persistLastOffer, para comparar contra el businessId que
+  // usa el runtime real (getReactContext) en el mismo turno.
+  console.log(JSON.stringify({
+    event: '[DIAG-ISSUE] persistLastOffer_call',
+    conversationId: params.conversationId,
+    businessId: params.businessId,
+    productId: params.productId,
+  }));
   await issueProductResolutions({
     productIds: [params.productId],
     businessId: params.businessId,

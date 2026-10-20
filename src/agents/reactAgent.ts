@@ -430,6 +430,14 @@ export interface HybridAgentSignals {
   cartAddSucceeded: boolean;
   /** Un add fallido no puede quedar cubierto por prosa afirmativa del LLM. */
   cartAddFailed: boolean;
+  /**
+   * El add fue rechazado por `human_intent_incompatible`: nunca estuvo
+   * autorizado este turno (la intención activa no es PEDIR), no es un fallo
+   * operativo del add. No debe disparar el mensaje genérico de "no pude
+   * confirmar el agregado" — el turno puede resolverse con la prosa del LLM
+   * si responde la intención real (p. ej. una consulta de precio).
+   */
+  cartAddIncompatible: boolean;
   /** Pregunta específica cuando un ADD se difiere porque la línea sigue UNKNOWN. */
   cartAddQuantityAskMessage: string | null;
   /** Resultado ausente/no booleano: dejar que dispatch verifique el draft persistido. */
@@ -707,6 +715,7 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
     presentationCommands: [],
     cartAddSucceeded: false,
       cartAddFailed: false,
+    cartAddIncompatible: false,
     cartAddQuantityAskMessage: null,
     cartAddUnknown: false,
     successfulEffectCount: 0,
@@ -786,6 +795,15 @@ const extractHybridSignals = (messages: unknown[]): HybridAgentSignals => {
       }
       if (m.name === 'add_cart_item' && data.success === false) {
         signals.cartAddFailed = true;
+        if (data.error === 'human_intent_incompatible') {
+          // No es un fallo operativo del add (cantidad, resolución, etc.): la
+          // operación nunca estuvo autorizada este turno porque la intención
+          // activa no es PEDIR. El turno puede seguir siendo una consulta
+          // válida (precio, atributos) — no hay "agregado" que confirmar ni
+          // negar, así que no corresponde el mensaje genérico de "no pude
+          // confirmar el agregado" (ver signals.cartAddIncompatible abajo).
+          signals.cartAddIncompatible = true;
+        }
         if (data.error === 'order_line_quantity_required' && typeof data.askMessage === 'string') {
           signals.cartAddQuantityAskMessage = data.askMessage;
         }
@@ -2307,7 +2325,7 @@ export const runHybridReactAgent = async (
     }
   }
 
-  if (signals.cartAddFailed && !signals.cartAddSucceeded) {
+  if (signals.cartAddFailed && !signals.cartAddSucceeded && !signals.cartAddIncompatible) {
     if (signals.cartAddQuantityAskMessage) {
       return {
         kind: 'response',
@@ -2335,6 +2353,11 @@ export const runHybridReactAgent = async (
   }
 
   if (signals.cartAddUnknown) return null;
+  // human_intent_incompatible: a diferencia de cartAddUnknown (resultado ambiguo
+  // que el caller debe resolver verificando el draft persistido), aquí el
+  // rechazo es certero — no hay nada que verificar. Seguimos el flujo normal
+  // para que, a falta de otra señal de presentación, la respuesta final sea
+  // la prosa del LLM respondiendo la intención real del turno (más abajo).
 
   // Varias presentaciones del turno (categoría y/o CTA) salen en el orden de
   // tool_calls: la primera es el mensaje, el resto followUps. Un CTA solo sigue

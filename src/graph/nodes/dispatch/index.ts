@@ -59,6 +59,7 @@ import {
   getHumanIntentState,
 } from '../../../services/humanIntentState.service';
 import { isHumanGoal, runHumanIntentPreflight } from '../../../services/humanIntentPreflight.service';
+import { getLastOffer, isLastOfferAlive } from '../../../services/lastOffer.service';
 import {
   activateCheckoutSessionIfCartHasItems,
   applyDefaultFulfillmentIfSingleOption,
@@ -862,6 +863,9 @@ export const nlpSubgraphNode = async (
       if (activeBlockingGoal) enrichedBase.activeBlockingGoal = activeBlockingGoal;
       const activeGoal = active?.goal;
       enrichedBase.activeHumanIntentGoal = isHumanGoal(activeGoal) ? activeGoal : null;
+      const liveOffer = isLastOfferAlive(freshConversationState.metadata)
+        ? getLastOffer(freshConversationState.metadata)
+        : null;
       const decision = await runHumanIntentPreflight({
         turn: { messageId, text: userMessage },
         context: {
@@ -869,6 +873,9 @@ export const nlpSubgraphNode = async (
           ...(lastAssistantQuestion ? { lastAssistantQuestion } : {}),
           visibleReferences,
           ...(activeBlockingGoal ? { activeBlockingGoal } : {}),
+          ...(liveOffer
+            ? { activeOffer: { productId: liveOffer.productId, productName: liveOffer.productName } }
+            : {}),
         },
         state: { revision: intentState.revision, active, pending },
       });

@@ -582,6 +582,51 @@ export class HumanIntentToolNode extends PostEffectToolNode {
     const pendingCalls = calls.filter((call) => call.id == null || !completedCallIds.has(call.id));
     if (pendingCalls.length === 0) return super.run(input, config);
 
+    // Un turno que acepta una oferta de compra (add_cart_item / present_product_cta
+    // ADD_ITEM) no debe arrastrar, como efecto incidental de la misma iteración, un
+    // save_party_size cuyo count sea idéntico a serves_people del producto que se
+    // está comprometiendo — esa coincidencia es la firma exacta de confundir "rinde
+    // para N personas" (dato del plato) con comensales (dato que solo el cliente
+    // puede dar). No se toca activeBlockingGoal (el Goal de personas está
+    // deshabilitado como bloqueante, ver dispatch/index.ts) ni se exige evidencia
+    // textual: solo se rechaza la coincidencia exacta y trazable con el catálogo.
+    const commitToCartCalls = pendingCalls.filter(
+      (call) =>
+        call.name === 'add_cart_item' ||
+        (call.name === 'present_product_cta' &&
+          (call.args as Record<string, unknown>)?.primaryKind === 'ADD_ITEM')
+    );
+    const savePartySizeCall = pendingCalls.find((call) => call.name === 'save_party_size');
+    let partySizeServesPeopleCollisionCallId: string | null = null;
+    if (savePartySizeCall && commitToCartCalls.length > 0) {
+      const count = (savePartySizeCall.args as Record<string, unknown>)?.count;
+      const productIds = [
+        ...new Set(
+          commitToCartCalls
+            .map((call) => (call.args as Record<string, unknown>)?.productId)
+            .filter((id): id is string => typeof id === 'string')
+        ),
+      ];
+      if (typeof count === 'number' && productIds.length > 0) {
+        const servedRows = await prisma.menu_item.findMany({
+          where: { id: { in: productIds } },
+          select: { serves_people: true },
+        });
+        if (servedRows.some((row) => row.serves_people === count)) {
+          partySizeServesPeopleCollisionCallId = savePartySizeCall.id ?? null;
+        }
+      }
+    }
+    if (partySizeServesPeopleCollisionCallId) {
+      config = {
+        ...config,
+        configurable: {
+          ...config.configurable,
+          partySizeServesPeopleCollisionCallId,
+        },
+      };
+    }
+
     const goalConfig = config.configurable as {
       activeBlockingGoal?: unknown;
       goalFulfillmentCandidate?: {
@@ -1023,6 +1068,29 @@ export class HumanIntentToolNode extends PostEffectToolNode {
     const pending = state.records.filter((intent) => intent.status === 'PENDING');
     if (!active) {
       return super.runTool(call, tracedToolConfig);
+    }
+
+    if (call.name === 'save_party_size' && !skipRequirementEvaluation) {
+      const collisionCallId = (
+        config.configurable as { partySizeServesPeopleCollisionCallId?: unknown } | undefined
+      )?.partySizeServesPeopleCollisionCallId;
+      if (typeof collisionCallId === 'string' && collisionCallId === call.id) {
+        return new ToolMessage({
+          name: call.name,
+          tool_call_id: call.id ?? '',
+          status: 'success',
+          content: JSON.stringify({
+            success: false,
+            error: 'party_size_matches_serves_people',
+            instruction:
+              'Ese count es igual a serves_people (cuántas personas rinde el plato) del producto que ' +
+              'estás agregando en este mismo turno, no un dato que el cliente haya dicho sobre comensales. ' +
+              'No llames save_party_size con ese número salvo que el cliente lo haya dicho él mismo como ' +
+              'cantidad de personas que van a comer. Si hay otra operación pendiente en este turno (agregar ' +
+              'el producto), continuá con ella normalmente.',
+          }),
+        });
+      }
     }
 
     if (call.name === 'present_product_cta' && !skipRequirementEvaluation) {

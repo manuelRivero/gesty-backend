@@ -404,6 +404,27 @@ describe('pendingOrderLines.service', () => {
         { hint: 'papas a la huancaína', pendingNote: null },
       ]);
     });
+
+    it('I — offeredProducts (aceptación de oferta viva) NO materializa cola: solo "products" dispara reconcileOrderLinesPlan', async () => {
+      const pending = await ensurePendingOrderLinesFromRequest({
+        conversationId: 'conv-1',
+        request: { offeredProducts: [{ name: 'Ceviche Clásico', productId: 'prod-1' }] },
+        sourceMessage: 'Bueno dale',
+        metadata: {},
+      });
+      expect(pending).toBeNull();
+      expect(patchConversationMetadata).not.toHaveBeenCalled();
+    });
+
+    it('I.1 — control: la misma forma bajo la clave "products" SÍ materializa la cola (confirma que el gate es la clave, no el shape)', async () => {
+      const pending = await ensurePendingOrderLinesFromRequest({
+        conversationId: 'conv-1',
+        request: { products: [{ name: 'Ceviche Clásico', productId: 'prod-1' }] },
+        sourceMessage: 'Quiero un ceviche',
+        metadata: {},
+      });
+      expect(pending?.lines).toMatchObject([{ hint: 'Ceviche Clásico', status: 'active' }]);
+    });
   });
 
   describe('ensurePendingOrderLinesFromRequest — no resucita una cola ya procesada (CASE08)', () => {
