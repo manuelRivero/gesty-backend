@@ -51,14 +51,14 @@ export const getReactReasonerLlm = (): ChatOpenAI => {
   return cachedReactReasoner;
 };
 
-/** `gpt-4o-mini` — ReAct del agente híbrido (menú / carrito / prosa principal). */
+/** `gpt-6-luna` `reasoning_effort: none` — ReAct del agente híbrido (menú / carrito / prosa principal). */
 export const getHybridReasonerLlm = (): ChatOpenAI => {
   if (!cachedHybridReasoner) {
     cachedHybridReasoner = new ChatOpenAI({
-      model: 'gpt-4o-mini',
-      temperature: 0,
+      model: 'gpt-6-luna',
       apiKey: env.OPENAI_API_KEY,
       maxRetries: 2,
+      modelKwargs: { reasoning_effort: 'none' },
     });
   }
   return cachedHybridReasoner;
