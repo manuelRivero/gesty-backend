@@ -71,6 +71,23 @@ export const getInformationalProductRef = (
 };
 
 /**
+ * Referente informativo vigente, o `null` si hay una selección pendiente
+ * (`pendingProductSelection`) activa: esa ambigüedad tiene prioridad y la
+ * resuelve el mecanismo existente — nunca se elige en su lugar un producto
+ * del referente informativo. Único punto de esta regla; tanto el prompt de
+ * ReAct (`buildInformationalProductRefContextLines`) como el contexto que
+ * recibe el Human Intent Preflight (`recentProductRef`, ver
+ * `humanIntentPreflight.service.ts`) la consultan acá en vez de duplicarla.
+ */
+export const getApplicableInformationalProductRef = (
+  metadata: unknown
+): InformationalProductRef | null => {
+  const meta: ConversationMetadata = normalizeMetadata(metadata);
+  if (meta.pendingProductSelection) return null;
+  return getInformationalProductRef(meta);
+};
+
+/**
  * Línea de `[ESTADO DEL CLIENTE]` para el referente informativo. Se omite
  * si hay una selección pendiente (`pendingProductSelection`) activa: esa
  * ambigüedad tiene prioridad y la resuelve el mecanismo existente.
@@ -78,9 +95,7 @@ export const getInformationalProductRef = (
 export const buildInformationalProductRefContextLines = (
   metadata: unknown
 ): string[] => {
-  const meta: ConversationMetadata = normalizeMetadata(metadata);
-  if (meta.pendingProductSelection) return [];
-  const ref = getInformationalProductRef(meta);
+  const ref = getApplicableInformationalProductRef(metadata);
   if (!ref) return [];
   return [
     `- Último producto consultado (informativo, NO es oferta ni selección): ` +

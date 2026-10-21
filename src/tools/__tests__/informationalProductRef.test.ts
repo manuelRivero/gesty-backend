@@ -253,6 +253,48 @@ describe('referente informativo de producto (Fase 2)', () => {
     expect(getInformationalProductRef(database.state.metadata)).toMatchObject({ productId: CEVICHE_ID });
   });
 
+  it('4c) get_products_details_by_ids con un único producto fija el referente, sin búsqueda previa', async () => {
+    database.filterState.items = [CEVICHE];
+    await getProductsDetailsByIdsTool.func(
+      { productIds: [CEVICHE_ID] },
+      undefined,
+      configFor('turn-1')
+    );
+
+    expect(getInformationalProductRef(database.state.metadata)).toMatchObject({ productId: CEVICHE_ID });
+  });
+
+  it('4d) get_products_details_by_ids con varios productos no fija ninguno (ambigüedad)', async () => {
+    database.filterState.items = [CEVICHE, MILANESA];
+    await getProductsDetailsByIdsTool.func(
+      { productIds: [CEVICHE_ID, MILANESA_ID] },
+      undefined,
+      configFor('turn-1')
+    );
+
+    expect(getInformationalProductRef(database.state.metadata)).toBeNull();
+  });
+
+  it('4e) get_products_details_by_ids con varios productos no pisa un referente único previo', async () => {
+    database.filterState.items = [CEVICHE];
+    await getProductsDetailsByIdsTool.func(
+      { productIds: [CEVICHE_ID] },
+      undefined,
+      configFor('turn-1')
+    );
+    expect(getInformationalProductRef(database.state.metadata)).toMatchObject({ productId: CEVICHE_ID });
+
+    database.filterState.items = [CEVICHE, MILANESA];
+    await getProductsDetailsByIdsTool.func(
+      { productIds: [CEVICHE_ID, MILANESA_ID] },
+      undefined,
+      configFor('turn-2')
+    );
+
+    // Ambigüedad: no se borra ni se reemplaza por una elección arbitraria.
+    expect(getInformationalProductRef(database.state.metadata)).toMatchObject({ productId: CEVICHE_ID });
+  });
+
   it('5) una búsqueda sin resultados no inventa ni selecciona un producto', async () => {
     vi.mocked(MenuService.searchMenuItemsByKeyword).mockResolvedValue([] as never);
 

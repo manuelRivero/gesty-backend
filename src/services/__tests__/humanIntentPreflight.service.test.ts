@@ -306,6 +306,154 @@ describe('Human Intent Preflight', () => {
     expect(validateHumanIntentTurnDecision(decision, requestInput)).toBeNull();
   });
 
+  describe('recentProductRef (referente informativo, no comercial)', () => {
+    const REF_PRODUCT_ID = '88888888-8888-4888-8888-888888888888';
+
+    it('1) acepta NEW_INTENT PEDIR con el productId de un referente informativo vigente ("Dame 1")', async () => {
+      const requestInput = input({
+        turn: { messageId: 'wamid.recent-ref-accept', text: 'Dame 1' },
+        context: {
+          recentTurns: [
+            { role: 'user', text: '¿Cuánto cuesta el ceviche?' },
+            { role: 'assistant', text: 'El Ceviche Clásico cuesta $100 y rinde para 2 personas.' },
+            { role: 'user', text: 'Dame 1' },
+          ],
+          recentProductRef: { productId: REF_PRODUCT_ID, productName: 'Ceviche Clásico' },
+        },
+        state: {
+          revision: 2,
+          active: { ...active, goal: 'EXPLORAR', request: { category: 'ceviche' }, blockers: [] },
+          pending: [],
+        },
+      });
+      const decision = {
+        decision: 'NEW_INTENT',
+        intents: [{
+          goal: 'PEDIR',
+          request: { offeredProducts: [{ name: 'Ceviche Clásico', productId: REF_PRODUCT_ID }] },
+        }],
+      };
+      invokeMock.mockResolvedValue(decision);
+
+      await expect(runHumanIntentPreflight(requestInput)).resolves.toEqual(decision);
+      expect(validateHumanIntentTurnDecision(decision, requestInput)).toEqual(decision);
+    });
+
+    it('3) rechaza un productId que no es el del referente informativo ni de ninguna otra referencia conocida (sin selección silenciosa)', async () => {
+      const requestInput = input({
+        turn: { messageId: 'wamid.recent-ref-unknown-id', text: 'Dame 1' },
+        context: {
+          recentTurns: [{ role: 'user', text: 'Dame 1' }],
+          recentProductRef: { productId: REF_PRODUCT_ID, productName: 'Ceviche Clásico' },
+        },
+        state: {
+          revision: 2,
+          active: { ...active, goal: 'EXPLORAR', request: { category: 'ceviche' }, blockers: [] },
+          pending: [],
+        },
+      });
+      const decision = {
+        decision: 'NEW_INTENT',
+        intents: [{
+          goal: 'PEDIR',
+          // productId inventado: no es el del referente informativo del contexto.
+          request: { offeredProducts: [{ name: 'Milanesa', productId: '99999999-9999-4999-8999-999999999999' }] },
+        }],
+      };
+      invokeMock.mockResolvedValue(decision);
+
+      await expect(runHumanIntentPreflight(requestInput)).resolves.toEqual({ decision: 'AMBIGUOUS' });
+      expect(validateHumanIntentTurnDecision(decision, requestInput)).toBeNull();
+    });
+
+    it('4) un producto nombrado explícitamente sigue resolviéndose por nombre, sin depender de recentProductRef', async () => {
+      const requestInput = input({
+        turn: { messageId: 'wamid.recent-ref-explicit-name', text: 'Dame 1 milanesa' },
+        context: {
+          recentTurns: [{ role: 'user', text: 'Dame 1 milanesa' }],
+          recentProductRef: { productId: REF_PRODUCT_ID, productName: 'Ceviche Clásico' },
+        },
+        state: {
+          revision: 2,
+          active: { ...active, goal: 'EXPLORAR', request: { category: 'ceviche' }, blockers: [] },
+          pending: [],
+        },
+      });
+      // El nombre explícito en el mensaje ("milanesa") no requiere ningún ID
+      // conocido: sigue el mismo camino que "Quiero un ceviche" hoy.
+      const decision = {
+        decision: 'NEW_INTENT',
+        intents: [{ goal: 'PEDIR', request: { products: ['milanesa'] } }],
+      };
+      invokeMock.mockResolvedValue(decision);
+
+      await expect(runHumanIntentPreflight(requestInput)).resolves.toEqual(decision);
+      expect(validateHumanIntentTurnDecision(decision, requestInput)).toEqual(decision);
+    });
+
+    it('5/9) con activeOffer vigente sobre OTRO producto, también se acepta el productId de activeOffer (precedencia la aplica dispatch al construir el contexto, no esta validación)', async () => {
+      const OFFER_PRODUCT_ID = '77777777-7777-4777-8777-aaaaaaaaaaaa';
+      const requestInput = input({
+        turn: { messageId: 'wamid.recent-ref-vs-active-offer', text: 'Dale' },
+        context: {
+          recentTurns: [{ role: 'user', text: 'Dale' }],
+          activeOffer: { productId: OFFER_PRODUCT_ID, productName: 'Milanesa Napolitana' },
+          // En producción dispatch nunca envía ambos a la vez (ver
+          // dispatch/index.ts: recentProductRef se omite si hay activeOffer).
+          // Esta prueba documenta que, si igual llegara, el allowlist de IDs
+          // conocidos sigue aceptando el de la oferta comercial sin problema.
+        },
+        state: {
+          revision: 2,
+          active: { ...active, goal: 'EXPLORAR', request: { category: 'milanesa' }, blockers: [] },
+          pending: [],
+        },
+      });
+      const decision = {
+        decision: 'NEW_INTENT',
+        intents: [{
+          goal: 'PEDIR',
+          request: { offeredProducts: [{ name: 'Milanesa Napolitana', productId: OFFER_PRODUCT_ID }] },
+        }],
+      };
+      invokeMock.mockResolvedValue(decision);
+
+      await expect(runHumanIntentPreflight(requestInput)).resolves.toEqual(decision);
+      expect(validateHumanIntentTurnDecision(decision, requestInput)).toEqual(decision);
+    });
+
+    it('8) el prompt instruye explícitamente a NO activar la regla ante una aceptación desnuda sin verbo de pedido', () => {
+      expect(HUMAN_INTENT_PREFLIGHT_SYSTEM_PROMPT).toContain(
+        '"ok", "gracias", "ya veo", "ah bueno", "dale" sin más) NO activa esta regla'
+      );
+    });
+
+    it('2) el prompt instruye explícitamente a no forzar recentProductRef cuando el mensaje nombra otro producto', () => {
+      expect(HUMAN_INTENT_PREFLIGHT_SYSTEM_PROMPT).toContain(
+        'Si el mensaje nombra otro plato distinto del de recentProductRef, no lo fuerces'
+      );
+    });
+
+    it('10) el referente informativo no cambia qué decide la capa de preflight sobre otros goals ni pisa un RESUME_PENDING válido', async () => {
+      // Regresión: con recentProductRef presente, un RESUME_PENDING legítimo
+      // (sin relación con el producto referenciado) sigue validando igual que
+      // sin la nueva propiedad de contexto.
+      const requestInput = input({
+        turn: { messageId: 'wamid.recent-ref-no-interference', text: '¿Qué postres tienen?' },
+        context: {
+          recentTurns: [{ role: 'user', text: '¿Qué postres tienen?' }],
+          recentProductRef: { productId: REF_PRODUCT_ID, productName: 'Ceviche Clásico' },
+        },
+        state: { revision: 3, active: { ...active, blockers: [] }, pending: [pending] },
+      });
+      const decision = { decision: 'RESUME_PENDING', intentId: PENDING_ID };
+      invokeMock.mockResolvedValue(decision);
+
+      await expect(runHumanIntentPreflight(requestInput)).resolves.toEqual(decision);
+      expect(validateHumanIntentTurnDecision(decision, requestInput)).toEqual(decision);
+    });
+  });
+
   it('rechaza un RESUME_PENDING inventado cuando no hay pending compatible', async () => {
     const requestInput = input({
       turn: { messageId: 'wamid.invalid-pending', text: '¿Qué postres tienen?' },

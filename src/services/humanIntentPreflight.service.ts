@@ -44,6 +44,19 @@ export interface HumanIntentPreflightInput {
      * exprese con claridad (ver reglas del prompt).
      */
     activeOffer?: { productId: string; productName: string } | null;
+    /**
+     * Referente conversacional informativo (`lastInformationalProductRef`,
+     * ver `informationalProductRef.service.ts`): último producto del que se
+     * habló en una consulta de catálogo (no de compra). A diferencia de
+     * `activeOffer`, el asistente nunca propuso agregarlo — por eso NUNCA
+     * autoriza por sí solo una aceptación desnuda ("ok", "dale"); solo
+     * permite resolver el productId cuando el propio mensaje expresa una
+     * intención de compra explícita sin nombrar el plato (ver reglas del
+     * prompt). Ausente/null si no hay referente vigente, si venció, o si hay
+     * una selección pendiente ambigua (`pendingProductSelection`) — en ese
+     * caso ya no llega acá, por diseño de `getApplicableInformationalProductRef`.
+     */
+    recentProductRef?: { productId: string; productName: string } | null;
   };
   state: {
     revision: number;
@@ -147,6 +160,7 @@ const knownIdsFor = (input: HumanIntentPreflightInput): Set<string> =>
     ...openIntents(input).map((intent) => intent.id),
     ...(input.context.visibleReferences ?? []).map((reference) => reference.id),
     ...(input.context.activeOffer ? [input.context.activeOffer.productId] : []),
+    ...(input.context.recentProductRef ? [input.context.recentProductRef.productId] : []),
   ]);
 
 export type HumanIntentTurnDecisionRejectionReason =

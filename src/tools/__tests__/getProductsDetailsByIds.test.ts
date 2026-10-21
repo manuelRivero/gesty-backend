@@ -19,6 +19,15 @@ vi.mock('../../lib/prisma', () => ({
   },
 }));
 
+// Este archivo cubre el mapeo de campos del catálogo; el efecto sobre el
+// referente informativo (fijación en match único) tiene su propia cobertura
+// de integración en informationalProductRef.test.ts, con el harness de
+// conversation_state real. Acá solo se evita que ese side-effect pegue contra
+// un prisma mock que no modela conversation_state.
+vi.mock('../../services/informationalProductRef.service', () => ({
+  rememberInformationalProductRef: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { getProductsDetailsByIdsTool } from '../index';
 
 const CONFIG = {

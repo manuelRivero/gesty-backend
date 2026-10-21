@@ -797,3 +797,116 @@ describe('nlpSubgraphNode — comando de dominio', () => {
     expect(result.handlerResult?.content).toBe('pedido wipe');
   });
 });
+
+describe('nlpSubgraphNode — recentProductRef (referente informativo) hacia el preflight', () => {
+  const REF_PRODUCT_ID = '66666666-6666-4666-8666-666666666666';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    lifecycleMock.state = {
+      version: 1,
+      revision: 0,
+      nextSequence: 1,
+      processedMessageIds: [],
+      records: [],
+    };
+    lifecycleMock.metadata = {};
+    vi.mocked(isCheckoutAgentEnabled).mockReturnValue(false);
+    vi.mocked(isReservationAgentEnabled).mockReturnValue(false);
+    vi.mocked(runHybridReactAgent).mockResolvedValue({
+      kind: 'response',
+      handlerResult: { content: 'respuesta híbrida', isInteractive: false },
+    } as never);
+  });
+
+  it('7) un referente informativo vigente y sin ambigüedad llega al preflight como context.recentProductRef', async () => {
+    lifecycleMock.metadata = {
+      lastInformationalProductRef: {
+        productId: REF_PRODUCT_ID,
+        name: 'Ceviche Clásico',
+        setAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+    };
+
+    await nlpSubgraphNode(nlpState('Dame 1'));
+
+    const preflightInput = vi.mocked(runHumanIntentPreflight).mock.calls[0][0];
+    expect(preflightInput.context.recentProductRef).toEqual({
+      productId: REF_PRODUCT_ID,
+      productName: 'Ceviche Clásico',
+    });
+  });
+
+  it('7b) un referente informativo vencido no llega al preflight', async () => {
+    lifecycleMock.metadata = {
+      lastInformationalProductRef: {
+        productId: REF_PRODUCT_ID,
+        name: 'Ceviche Clásico',
+        setAt: new Date(Date.now() - 60 * 60_000).toISOString(),
+        expiresAt: new Date(Date.now() - 60_000).toISOString(),
+      },
+    };
+
+    await nlpSubgraphNode(nlpState('Dame 1'));
+
+    const preflightInput = vi.mocked(runHumanIntentPreflight).mock.calls[0][0];
+    expect(preflightInput.context.recentProductRef).toBeUndefined();
+  });
+
+  it('9) con activeOffer (lastOffer) vigente, no se envía recentProductRef aunque también haya un referente informativo (precedencia de la oferta comercial)', async () => {
+    lifecycleMock.metadata = {
+      lastOffer: {
+        kind: 'ADD_ITEM',
+        productId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+        productName: 'Milanesa Napolitana',
+        suggestedQuantity: 1,
+        offeredAt: new Date().toISOString(),
+        source: 'hybrid_cta',
+      },
+      lastInformationalProductRef: {
+        productId: REF_PRODUCT_ID,
+        name: 'Ceviche Clásico',
+        setAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+    };
+
+    await nlpSubgraphNode(nlpState('Dale'));
+
+    const preflightInput = vi.mocked(runHumanIntentPreflight).mock.calls[0][0];
+    expect(preflightInput.context.activeOffer).toEqual({
+      productId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      productName: 'Milanesa Napolitana',
+    });
+    expect(preflightInput.context.recentProductRef).toBeUndefined();
+  });
+
+  it('3) con una selección pendiente ambigua, no se envía recentProductRef (sin selección silenciosa)', async () => {
+    lifecycleMock.metadata = {
+      pendingProductSelection: true,
+      candidateProductIds: [REF_PRODUCT_ID, '55555555-5555-4555-8555-555555555555'],
+      lastInformationalProductRef: {
+        productId: REF_PRODUCT_ID,
+        name: 'Ceviche Clásico',
+        setAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+    };
+
+    await nlpSubgraphNode(nlpState('Dame 1'));
+
+    const preflightInput = vi.mocked(runHumanIntentPreflight).mock.calls[0][0];
+    expect(preflightInput.context.recentProductRef).toBeUndefined();
+  });
+
+  it('6) sin ningún referente disponible, add_cart_item sigue bloqueado por el guard de intención incompatible (no se debilitó nada)', async () => {
+    // Sin lastOffer ni lastInformationalProductRef: el contexto no trae
+    // ninguna referencia de producto, tal como hoy.
+    await nlpSubgraphNode(nlpState('Dame 1'));
+
+    const preflightInput = vi.mocked(runHumanIntentPreflight).mock.calls[0][0];
+    expect(preflightInput.context.activeOffer).toBeUndefined();
+    expect(preflightInput.context.recentProductRef).toBeUndefined();
+  });
+});

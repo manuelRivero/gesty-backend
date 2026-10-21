@@ -1460,7 +1460,7 @@ export const getProductsDetailsByIdsTool = new DynamicStructuredTool<
     _runManager,
     config?: RunnableConfig
   ) => {
-    const { businessId } = getReactContext(config);
+    const { businessId, conversationId } = getReactContext(config);
     const uniqueIds = Array.from(
       new Set(productIds.map((id) => id.trim()).filter(Boolean))
     );
@@ -1510,6 +1510,18 @@ export const getProductsDetailsByIdsTool = new DynamicStructuredTool<
         },
       },
     });
+
+    // Referente informativo (no oferta, no autorización): igual criterio que
+    // search_products/find_products_by_filter — solo cuando la respuesta
+    // resuelve exactamente 1 producto sin ambigüedad (ver
+    // informationalProductRef.service.ts). Con 0 o ≥2 items no se toca el
+    // referente anterior, que puede seguir vigente o vencer por su propio TTL.
+    if (items.length === 1) {
+      await rememberInformationalProductRef(conversationId, {
+        productId: items[0].id,
+        name: items[0].name,
+      });
+    }
 
     return toJson({
       count: items.length,

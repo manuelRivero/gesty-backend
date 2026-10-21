@@ -18,6 +18,7 @@ vi.mock('../../repositories', async (importOriginal) => {
 
 import {
   buildInformationalProductRefContextLines,
+  getApplicableInformationalProductRef,
   getInformationalProductRef,
   rememberInformationalProductRef,
 } from '../informationalProductRef.service';
@@ -125,5 +126,45 @@ describe('informationalProductRef.service', () => {
       },
     };
     expect(buildInformationalProductRefContextLines(metadata)).toEqual([]);
+  });
+
+  it('getApplicableInformationalProductRef devuelve el referente vigente sin selección pendiente', () => {
+    const now = Date.now();
+    const metadata = {
+      lastInformationalProductRef: {
+        productId: PRODUCT_A,
+        name: 'Ceviche Clásico',
+        setAt: new Date(now).toISOString(),
+        expiresAt: new Date(now + 60_000).toISOString(),
+      },
+    };
+    expect(getApplicableInformationalProductRef(metadata)).toMatchObject({ productId: PRODUCT_A });
+  });
+
+  it('getApplicableInformationalProductRef devuelve null si hay una selección pendiente (ambigüedad con prioridad), aunque el referente esté vigente', () => {
+    const now = Date.now();
+    const metadata = {
+      pendingProductSelection: true,
+      lastInformationalProductRef: {
+        productId: PRODUCT_A,
+        name: 'Ceviche Clásico',
+        setAt: new Date(now).toISOString(),
+        expiresAt: new Date(now + 60_000).toISOString(),
+      },
+    };
+    expect(getApplicableInformationalProductRef(metadata)).toBeNull();
+  });
+
+  it('getApplicableInformationalProductRef devuelve null si el referente venció', () => {
+    const now = Date.now();
+    const metadata = {
+      lastInformationalProductRef: {
+        productId: PRODUCT_A,
+        name: 'Ceviche Clásico',
+        setAt: new Date(now - 60_000).toISOString(),
+        expiresAt: new Date(now - 1_000).toISOString(),
+      },
+    };
+    expect(getApplicableInformationalProductRef(metadata)).toBeNull();
   });
 });

@@ -60,6 +60,7 @@ import {
 } from '../../../services/humanIntentState.service';
 import { isHumanGoal, runHumanIntentPreflight } from '../../../services/humanIntentPreflight.service';
 import { getLastOffer, isLastOfferAlive } from '../../../services/lastOffer.service';
+import { getApplicableInformationalProductRef } from '../../../services/informationalProductRef.service';
 import {
   activateCheckoutSessionIfCartHasItems,
   applyDefaultFulfillmentIfSingleOption,
@@ -866,6 +867,12 @@ export const nlpSubgraphNode = async (
       const liveOffer = isLastOfferAlive(freshConversationState.metadata)
         ? getLastOffer(freshConversationState.metadata)
         : null;
+      // recentProductRef solo se envía si no hay activeOffer vigente: activeOffer
+      // es una oferta comercial real (precedencia), mientras que el referente
+      // informativo nunca debe competir con ella ni duplicar la misma señal.
+      const informationalRef = liveOffer
+        ? null
+        : getApplicableInformationalProductRef(freshConversationState.metadata);
       const decision = await runHumanIntentPreflight({
         turn: { messageId, text: userMessage },
         context: {
@@ -875,6 +882,14 @@ export const nlpSubgraphNode = async (
           ...(activeBlockingGoal ? { activeBlockingGoal } : {}),
           ...(liveOffer
             ? { activeOffer: { productId: liveOffer.productId, productName: liveOffer.productName } }
+            : {}),
+          ...(informationalRef
+            ? {
+                recentProductRef: {
+                  productId: informationalRef.productId,
+                  productName: informationalRef.name,
+                },
+              }
             : {}),
         },
         state: { revision: intentState.revision, active, pending },
