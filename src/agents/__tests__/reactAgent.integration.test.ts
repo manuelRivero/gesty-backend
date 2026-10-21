@@ -16,8 +16,6 @@ vi.mock('../../config/env', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../config/env')>();
   return {
     ...actual,
-    isHybridCtaEnabled: vi.fn(() => false),
-    isHybridCtaEnabledForBusiness: vi.fn(() => false),
     getHybridCtaTargetIntents: vi.fn(() => new Set(['PRODUCT_ATTRIBUTE_QUESTION', 'PRODUCT_QUERY'])),
     isDryRunWhatsAppSend: vi.fn(() => false),
   };
@@ -109,7 +107,6 @@ vi.mock('../../services/cart.service', () => ({
 import { runHybridReactAgent, resetAgentCacheForTesting } from '../reactAgent';
 import type { HybridAgentRunResult } from '../reactAgent';
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
-import { isHybridCtaEnabled, isHybridCtaEnabledForBusiness } from '../../config/env';
 import { planCta } from '../ctaPlanner';
 import { resolveCta } from '../ctaResolver';
 import {
@@ -319,8 +316,6 @@ describe('runHybridReactAgent', () => {
   });
 
   it('sin present_product_cta → texto plano y planCta no corre', async () => {
-    vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
-    vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
 
     const result = unwrap(await runHybridReactAgent(makeCtx() as any));
 
@@ -718,8 +713,6 @@ describe('runHybridReactAgent', () => {
     const productB = '22222222-2222-4222-8222-222222222222';
     const terminalText =
       '🤖\n\n*Elegí el ceviche* 🐟\n\nTenés dos opciones. Decime cuál preferís.';
-    vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
-    vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
     vi.mocked(prisma.menu_item.findMany).mockResolvedValue([
       { id: productA, name: 'Ceviche Clásico', description: null, menu_item_price: [{ amount: 100 }] },
       { id: productB, name: 'Ceviche clásico con variaciones', description: null, menu_item_price: [{ amount: 25000 }] },
@@ -837,8 +830,6 @@ describe('runHybridReactAgent', () => {
   });
 
   it('present_product_cta ADD_ITEM con productId → interactive sin planCta', async () => {
-    vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
-    vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
     mockAgent({
       invoke: makeAgentInvokeWithPresentCta(BOT_TEXT, {
         primaryKind: 'ADD_ITEM',
@@ -865,8 +856,6 @@ describe('runHybridReactAgent', () => {
   });
 
   it('present_product_cta SELECT_FROM_LIST con productHints → resolveCta + interactive', async () => {
-    vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
-    vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
     mockAgent({
       invoke: makeAgentInvokeWithPresentCta(BOT_TEXT, {
         primaryKind: 'SELECT_FROM_LIST',
@@ -905,8 +894,6 @@ describe('runHybridReactAgent', () => {
     const introText =
       '🤖\n\n*Opciones* 🍽️\n\n¡Qué buena idea! Hay varias pizzanesas que te pueden gustar.';
 
-    vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
-    vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
     vi.mocked(prisma.menu_item.findMany).mockResolvedValue([
       {
         id: idA,
@@ -959,8 +946,6 @@ describe('runHybridReactAgent', () => {
   });
 
   it('update_item_note sin present_product_cta → texto solo (caso poca sal)', async () => {
-    vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
-    vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
     mockAgent({
       invoke: makeAgentInvokeWithNote(
         '🤖\n\n*Respuesta* 💬\n\n¡Anotado! El lomo va con poca sal.'
@@ -981,7 +966,6 @@ describe('runHybridReactAgent', () => {
   });
 
   it('update_item_note exitoso → lista con guías de gestión', async () => {
-    vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
     vi.mocked(prisma.draft_order.findFirst).mockResolvedValue({
       total_amount: 4100,
       fulfillment_type: null,
@@ -1010,20 +994,41 @@ describe('runHybridReactAgent', () => {
     expect(list.body.text).not.toContain('acá van unos platos');
   });
 
-  it('flag CTA off + present_product_cta → texto plano', async () => {
-    vi.mocked(isHybridCtaEnabled).mockReturnValue(false);
-    vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(false);
+  it('present_product_cta se materializa siempre (sin feature flag) → interactive', async () => {
     mockAgent({
       invoke: makeAgentInvokeWithPresentCta(BOT_TEXT, {
         primaryKind: 'ADD_ITEM',
         productId: 'prod-1',
       }),
     } as any);
+    vi.mocked(buildHybridCtaInteractive).mockReturnValue({
+      content: { type: 'interactive', interactive: {} },
+      isInteractive: true,
+    });
 
     const result = unwrap(await runHybridReactAgent(makeCtx() as any));
 
-    expect(result!.isInteractive).toBe(false);
+    expect(result!.isInteractive).toBe(true);
+    expect(buildHybridCtaInteractive).toHaveBeenCalledOnce();
+  });
+
+  it('present_product_cta SELECT_FROM_LIST con productIds no disponibles → no presenta opciones incorrectas', async () => {
+    const idA = '11111111-1111-1111-1111-111111111111';
+    const idB = '22222222-2222-2222-2222-222222222222';
+    vi.mocked(prisma.menu_item.findMany).mockResolvedValue([]);
+    vi.mocked(resolveCta).mockResolvedValue(null as never);
+    mockAgent({
+      invoke: makeAgentInvokeWithPresentCta(BOT_TEXT, {
+        primaryKind: 'SELECT_FROM_LIST',
+        productIds: [idA, idB],
+      }),
+    } as any);
+
+    const result = unwrap(await runHybridReactAgent(makeCtx() as any));
+
     expect(buildHybridCtaInteractive).not.toHaveBeenCalled();
+    expect(result!.isInteractive).toBe(false);
+    expect(result!.content).toBe(BOT_TEXT);
   });
 
   it('agent sin texto útil → retorna null', async () => {
@@ -1074,8 +1079,6 @@ describe('runHybridReactAgent', () => {
   });
 
   it('shortlist de tools ≥2 sin present_product_cta → texto plano (sin lista automática)', async () => {
-    vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
-    vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
 
     const introText =
       '🤖\n\n*Opciones* 🍽️\n\n¡Qué buena idea! Hay varias pizzanesas que te pueden gustar.';
@@ -1663,8 +1666,6 @@ describe('runHybridReactAgent', () => {
     const bebidasId = 'a7f6a71e-1574-41d9-bf3a-b3b411dc25af';
     const intro = '🤖\n\n*Opciones* 🍽️\n\nElegí el ceviche.';
 
-    vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
-    vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
     vi.mocked(prisma.menu_item.findMany).mockResolvedValue([
       { id: cevicheA, name: 'Ceviche clásico', description: null, menu_item_price: [{ amount: 11 }] },
       { id: cevicheB, name: 'Ceviche mixto', description: null, menu_item_price: [{ amount: 13 }] },
@@ -1794,8 +1795,6 @@ describe('runHybridReactAgent', () => {
   });
 
   it('una sola present_product_cta sigue siendo un mensaje, sin followUps ni JSON de señal', async () => {
-    vi.mocked(isHybridCtaEnabled).mockReturnValue(true);
-    vi.mocked(isHybridCtaEnabledForBusiness).mockReturnValue(true);
     mockAgent({
       invoke: makeAgentInvokeWithPresentCta(BOT_TEXT, {
         primaryKind: 'ADD_ITEM',

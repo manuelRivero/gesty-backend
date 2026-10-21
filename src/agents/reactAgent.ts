@@ -50,8 +50,6 @@ import { normalizeWhatsAppBoldMarkers } from '../utils/whatsappBold';
 
 import { prisma } from '../lib/prisma';
 import {
-  isHybridCtaEnabled,
-  isHybridCtaEnabledForBusiness,
   isCheckoutAgentEnabled,
   isReservationAgentEnabled,
 } from '../config/env';
@@ -1629,7 +1627,7 @@ const materializeProductCtaPresentation = async (
 const composeOrderedPresentations = async (
   commands: PresentationCommand[],
   buildCtx: PresentationBuildCtx,
-  options: { ctaFeatureOn: boolean; cartAddSucceeded: boolean }
+  options: { cartAddSucceeded: boolean }
 ): Promise<HandlerResult | null> => {
   const parts: HandlerResult[] = [];
   for (const command of commands) {
@@ -1639,16 +1637,6 @@ const composeOrderedPresentations = async (
           JSON.stringify({
             event: '[hybrid-cta] cta_skipped',
             reason: 'cart_add_same_turn',
-            conversationId: buildCtx.conversationId,
-          })
-        );
-        continue;
-      }
-      if (!options.ctaFeatureOn) {
-        console.debug(
-          JSON.stringify({
-            event: '[hybrid-cta] cta_skipped',
-            reason: 'feature_off',
             conversationId: buildCtx.conversationId,
           })
         );
@@ -2367,8 +2355,6 @@ export const runHybridReactAgent = async (
     signals.presentationCommands[0]?.type === 'product_cta';
 
   if (!deferSingleProductCta && signals.presentationCommands.length > 0) {
-    const ctaFeatureOnEarly =
-      isHybridCtaEnabled() && isHybridCtaEnabledForBusiness(businessId);
     const presentationProse = llmProse?.trim() ? ensureWhatsAppBotFormat(llmProse) : '';
     const packed = await composeOrderedPresentations(
       signals.presentationCommands,
@@ -2385,7 +2371,6 @@ export const runHybridReactAgent = async (
             .lastReferencedProductId ?? null,
       },
       {
-        ctaFeatureOn: ctaFeatureOnEarly,
         cartAddSucceeded: signals.cartAddSucceeded,
       }
     );
@@ -2432,15 +2417,12 @@ export const runHybridReactAgent = async (
   const userMessage = ctx.message?.text?.body ?? '';
 
   const detectedProductName = ctx.detection?.detectedProductName ?? null;
-  const ctaFeatureOn =
-    isHybridCtaEnabled() && isHybridCtaEnabledForBusiness(businessId);
 
   // Un solo present_product_cta: mismo camino de antes (intro = prosa del modelo).
   // Si ya sumó al carrito en este turno, no reabrir shortlist (evita «Sumé» + lista).
   if (
     deferSingleProductCta &&
     signals.presentProductCta &&
-    ctaFeatureOn &&
     !signals.cartAddSucceeded
   ) {
     const handlerResult = await materializeProductCtaPresentation(signals.presentProductCta, {
@@ -2467,14 +2449,6 @@ export const runHybridReactAgent = async (
       JSON.stringify({
         event: '[hybrid-cta] cta_skipped',
         reason: 'cart_add_same_turn',
-        conversationId,
-      })
-    );
-  } else if (deferSingleProductCta && signals.presentProductCta) {
-    console.debug(
-      JSON.stringify({
-        event: '[hybrid-cta] cta_skipped',
-        reason: 'feature_off',
         conversationId,
       })
     );

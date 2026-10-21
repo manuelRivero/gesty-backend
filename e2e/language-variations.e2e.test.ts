@@ -54,7 +54,7 @@ describe.sequential.skipIf(!isE2eEnabled())('language variations (e2e fase 3)', 
   let conversationId: string;
 
   beforeAll(async () => {
-    applyE2eEnv({ CHECKOUT_AGENT_ENABLED: 'true', HYBRID_CTA_ENABLED: 'true' });
+    applyE2eEnv({ CHECKOUT_AGENT_ENABLED: 'true' });
     graph = await loadMainGraph();
     const reset = await resetE2eCustomer();
     businessId = reset.businessId;

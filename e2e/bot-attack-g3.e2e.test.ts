@@ -104,7 +104,6 @@ describe.sequential.skipIf(!isE2eEnabled())('bot attack grado 3 (diagnóstica)',
     applyE2eEnv({
       RESERVATION_AGENT_ENABLED: 'true',
       CHECKOUT_AGENT_ENABLED: 'true',
-      HYBRID_CTA_ENABLED: 'true',
     });
     graph = await loadMainGraph();
     const reset = await resetE2eCustomer();

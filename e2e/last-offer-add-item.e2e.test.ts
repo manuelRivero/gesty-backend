@@ -44,7 +44,6 @@ describe.sequential.skipIf(!isE2eEnabled())('lastOffer add-item (e2e)', () => {
   beforeAll(async () => {
     applyE2eEnv({
       CHECKOUT_AGENT_ENABLED: 'false',
-      HYBRID_CTA_ENABLED: 'true',
     });
     graph = await loadMainGraph();
     const reset = await resetE2eCustomer();

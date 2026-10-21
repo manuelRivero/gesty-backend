@@ -110,7 +110,6 @@ describe.sequential.skipIf(!isE2eEnabled())('text-only completions (e2e etapa E2
   beforeAll(async () => {
     applyE2eEnv({
       CHECKOUT_AGENT_ENABLED: 'true',
-      HYBRID_CTA_ENABLED: 'true',
       RESERVATION_AGENT_ENABLED: 'true',
     });
     graph = await loadMainGraph();

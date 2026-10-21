@@ -186,7 +186,7 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
   const turnLogsByTrace = new Map<HumanIntentCaseTrace, TurnLogs[]>();
 
   beforeAll(async () => {
-    applyE2eEnv({ CHECKOUT_AGENT_ENABLED: 'true', HYBRID_CTA_ENABLED: 'true' });
+    applyE2eEnv({ CHECKOUT_AGENT_ENABLED: 'true' });
     graph = await loadMainGraph();
   }, 60_000);
 
