@@ -1776,7 +1776,19 @@ export const runHybridReactAgent = async (
         ? { orderLineId: fulfillmentCandidate.target.orderLineId }
         : {}),
       ...(typeof ctx.humanIntentGateRevision === 'number'
-        ? { humanIntentGateRevision: ctx.humanIntentGateRevision }
+        ? {
+            humanIntentGateRevision: ctx.humanIntentGateRevision,
+            // Mutable, single-turn container: `HumanIntentToolNode`'s staleness
+            // guard reads `.current` instead of the literal above so that a
+            // post-effect this same turn already authorized (see
+            // `PostEffectToolNode.runTool`) can advance it without requiring a
+            // fresh preflight. The literal above is kept untouched for existing
+            // readers/tests of `configurable.humanIntentGateRevision`. This
+            // object is created once per turn (here) — never on the cached
+            // agent/node instance, which is shared across unrelated
+            // conversations (see `buildAgent`'s cache).
+            humanIntentGateRevisionBox: { current: ctx.humanIntentGateRevision },
+          }
         : {}),
     },
   }, { conversationId, turnId: ctx.turnId });

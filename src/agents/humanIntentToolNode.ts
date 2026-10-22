@@ -996,13 +996,23 @@ export class HumanIntentToolNode extends PostEffectToolNode {
           businessId?: unknown;
           orderLineId?: unknown;
           humanIntentGateRevision?: unknown;
+          humanIntentGateRevisionBox?: unknown;
           turnId?: unknown;
           turnStartedAt?: unknown;
         }
       | undefined;
     const conversationId = configurable?.conversationId;
     const businessId = configurable?.businessId;
-    const expectedRevision = configurable?.humanIntentGateRevision;
+    // The box (see reactAgent.ts) tracks this turn's own authorized mutations
+    // of humanIntentState (bumped by PostEffectToolNode.runTool); it is the
+    // source of truth whenever present. The literal field is kept only as a
+    // fallback for callers that never attach a box (handoffs, legacy direct
+    // invocations, existing fixtures) — never both at once.
+    const revisionBox = configurable?.humanIntentGateRevisionBox as
+      | { current?: unknown }
+      | undefined;
+    const expectedRevision =
+      typeof revisionBox?.current === 'number' ? revisionBox.current : configurable?.humanIntentGateRevision;
     const turnId = configurable?.turnId;
     const turnStartedAt = configurable?.turnStartedAt;
     const traceConversationId = typeof conversationId === 'string' ? conversationId : undefined;

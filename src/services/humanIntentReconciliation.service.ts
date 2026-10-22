@@ -89,8 +89,20 @@ export const reconcileHumanIntentAfterToolEffect = async (params: {
  * more precisely than that (see `reconcileOrderLinesPlan` in
  * pendingOrderLines.service.ts, documented, pre-existing limitation). A
  * `pendingOrderLines` queue is a conversation-wide singleton, so "the queue"
- * and "the one ACTIVE human intent" coincide by construction, same as today's
- * success path.
+ * and "the one ACTIVE human intent" coincide by construction — UNLESS the
+ * ACTIVE record was substituted (REPLACE) after the queue was opened: REPLACE
+ * always creates a brand-new record (new `id`, new `createdAt` — see
+ * `applyHumanIntentTurnDecision`'s `REPLACE` case in
+ * `humanIntentState.service.ts`), so a substitute's `createdAt` is strictly
+ * later than the `createdAt` of a queue that was opened for the PEDIR it
+ * replaced. That ordering is the only binding available without adding an
+ * `intentId` to `pendingOrderLines` (out of scope here — see the file-level
+ * comment above `reconcileOrderLinesPlan`), so it is treated as a timing
+ * heuristic, not a strong identity check: a queue whose `createdAt` is not
+ * demonstrably *after* the ACTIVE record's `createdAt` could never have been
+ * opened for that record, so it is never treated as abandoned on its behalf
+ * (fail closed — ties/unparseable timestamps also fail closed, never close
+ * silently).
  */
 export const isPedirOrderFullyAbandoned = (
   intent: HumanIntentRecord,
@@ -105,7 +117,11 @@ export const isPedirOrderFullyAbandoned = (
     (line) => line.status === 'active' || line.status === 'queued'
   );
   if (hasOpenLines) return false;
-  return pending.lines.every((line) => line.status === 'cancelled');
+  if (!pending.lines.every((line) => line.status === 'cancelled')) return false;
+  const intentCreatedAt = Date.parse(intent.createdAt);
+  const queueCreatedAt = Date.parse(pending.createdAt);
+  if (!Number.isFinite(intentCreatedAt) || !Number.isFinite(queueCreatedAt)) return false;
+  return queueCreatedAt > intentCreatedAt;
 };
 
 /** Exact message `requireOpenIntent` throws via `cancelHumanIntent` when the

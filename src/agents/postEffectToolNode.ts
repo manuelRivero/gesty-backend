@@ -60,12 +60,26 @@ export class PostEffectToolNode extends ToolNode {
           businessId?: unknown;
           customerPhone?: unknown;
           turnId?: unknown;
+          humanIntentGateRevisionBox?: unknown;
         }
       | undefined;
     const conversationId = configurable?.conversationId;
     const businessId = configurable?.businessId;
     const customerPhone = configurable?.customerPhone;
     const turnId = configurable?.turnId;
+    // Advances this turn's revision box by exactly the one increment
+    // `mutateState` (humanIntentState.service.ts) already applied for a
+    // confirmed write below — never a generic re-read of persisted state,
+    // which could paper over an unrelated concurrent external change. See
+    // `humanIntentGateRevisionBox` in reactAgent.ts for why this lives on the
+    // per-turn config object, not on this (cached, cross-conversation) node
+    // instance.
+    const revisionBox = configurable?.humanIntentGateRevisionBox as
+      | { current?: unknown }
+      | undefined;
+    const advanceRevisionBox = (): void => {
+      if (typeof revisionBox?.current === 'number') revisionBox.current += 1;
+    };
 
     // Única señal, garantizada por el sistema (no por el modelo), de si el
     // intento de tool inmediatamente anterior de este turno falló a nivel
@@ -128,11 +142,13 @@ export class PostEffectToolNode extends ToolNode {
           success: true,
         },
       });
+      if (resolved) advanceRevisionBox();
       // cancel_order_line's effect never carries a cart `reference` (it cancels,
       // it doesn't add), so it can never satisfy the success path above. Check
       // separately whether that cancellation just emptied the whole order.
       if (!resolved && kind === 'order_plan_line_cancelled') {
-        await closeAbandonedPedirIntent({ conversationId, businessId, customerPhone });
+        const closed = await closeAbandonedPedirIntent({ conversationId, businessId, customerPhone });
+        if (closed) advanceRevisionBox();
       }
       if (kind === 'party_size_persisted' || kind === 'order_line_quantity_persisted') {
         const fresh = await prismaConversationMetadata(conversationId);

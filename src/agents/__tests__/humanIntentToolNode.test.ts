@@ -12,6 +12,7 @@ const {
   findOrCreateConversationStateMock,
   patchConversationMetadataMock,
   reconcileAfterToolMock,
+  closeAbandonedPedirIntentMock,
   resolveProductForAddMock,
 } = vi.hoisted(() => ({
   getStateMock: vi.fn(),
@@ -22,6 +23,7 @@ const {
   findOrCreateConversationStateMock: vi.fn(),
   patchConversationMetadataMock: vi.fn(),
   reconcileAfterToolMock: vi.fn(),
+  closeAbandonedPedirIntentMock: vi.fn(),
   resolveProductForAddMock: vi.fn(),
 }));
 
@@ -31,6 +33,7 @@ vi.mock('../../services/humanIntentState.service', () => ({
 
 vi.mock('../../services/humanIntentReconciliation.service', () => ({
   reconcileHumanIntentAfterToolEffect: reconcileAfterToolMock,
+  closeAbandonedPedirIntent: closeAbandonedPedirIntentMock,
 }));
 
 vi.mock('../../services/productResolution.service', async (importOriginal) => ({
@@ -187,6 +190,7 @@ describe('HumanIntentToolNode', () => {
     persistedConversationMetadata = { peopleCount: 2 };
     getStateMock.mockResolvedValue(state());
     reconcileAfterToolMock.mockResolvedValue(null);
+    closeAbandonedPedirIntentMock.mockResolvedValue(null);
     resolveProductForAddMock.mockResolvedValue({ ok: false, reason: 'resolution_missing' });
     findOrCreateConversationStateMock.mockImplementation(async () => ({
       metadata: persistedConversationMetadata,
@@ -932,6 +936,130 @@ describe('HumanIntentToolNode', () => {
     expect(JSON.parse(String(result.messages[2].content))).toMatchObject({
       success: false,
       error: 'product_resolution_required',
+    });
+  });
+
+  describe('contenedor de revisión por turno (humanIntentGateRevisionBox)', () => {
+    const makeCancelOrderLineTool = (effect: () => unknown = vi.fn()) =>
+      new DynamicStructuredTool({
+        name: 'cancel_order_line',
+        description: 'test tool',
+        schema: z.object({ hint: z.string().optional() }),
+        func: async () => {
+          await effect();
+          return JSON.stringify({ cancelled: true, effect: { kind: 'order_plan_line_cancelled' } });
+        },
+      });
+
+    const turnConfig = (box: { current: number }, revision = 7) => ({
+      configurable: {
+        conversationId: 'conv-1',
+        customerPhone: '+5491100000000',
+        businessId: 'biz-1',
+        humanIntentGateRevision: revision,
+        humanIntentGateRevisionBox: box,
+      },
+    });
+
+    it('Test A: una mutación propia (post-effect autorizado) permite continuar en el mismo turno sin volver a hacer preflight', async () => {
+      const box = { current: 7 };
+      const config1 = turnConfig(box);
+      closeAbandonedPedirIntentMock.mockResolvedValue({ id: 'intent-order', status: 'CANCELLED' });
+
+      const node = new HumanIntentToolNode([
+        makeCancelOrderLineTool(),
+        makeTool('search_products', vi.fn()),
+      ]);
+
+      // 1) cancel_order_line: el guard lee la revisión persistida real (7),
+      // coincide con la caja (7); su propio post-effect cierra el PEDIR
+      // abandonado y avanza la caja a 8 — exactamente el incremento que
+      // `mutateState` ya aplicó del lado de la persistencia.
+      getStateMock.mockResolvedValueOnce(state([ACTIVE, PENDING], 7));
+      const cancelResult = await node.invoke(
+        { messages: [toolCall('cancel_order_line', { hint: 'lomo saltado' })] },
+        config1
+      );
+      expect(JSON.parse(String(cancelResult.messages[0].content))).toMatchObject({ cancelled: true });
+      expect(box.current).toBe(8);
+
+      // 2) search_products, MISMO turno (mismo objeto de config/caja): la
+      // revisión real ya está en 8 (la misma mutación propia de arriba); el
+      // guard debe leerla de la caja, no del literal congelado (7), y dejar
+      // pasar la tool sin exigir un nuevo preflight.
+      getStateMock.mockResolvedValueOnce(state([ACTIVE, PENDING], 8));
+      const searchResult = await node.invoke(
+        { messages: [toolCall('search_products', { keyword: 'pollo a la brasa' })] },
+        config1
+      );
+      const payload = JSON.parse(String(searchResult.messages[0].content));
+      expect(payload.error).not.toBe(HUMAN_INTENT_STATE_STALE);
+      expect(payload.success).toBe(true);
+    });
+
+    it('Test B: sin mutación propia la caja no avanza, y un cambio externo real sigue siendo detectado como stale', async () => {
+      const box = { current: 7 };
+      const config1 = turnConfig(box);
+      reconcileAfterToolMock.mockResolvedValue(null);
+      closeAbandonedPedirIntentMock.mockResolvedValue(null);
+
+      const node = new HumanIntentToolNode([
+        makeTool('present_category', vi.fn()),
+        makeTool('search_products', vi.fn()),
+      ]);
+
+      // Una tool cuyo post-effect no reporta ninguna mutación (ninguna de las
+      // dos funciones de reconciliación devuelve un registro): la caja se
+      // queda en 7, nunca se "adelanta" sin evidencia de una escritura real.
+      getStateMock.mockResolvedValueOnce(state([ACTIVE, PENDING], 7));
+      await node.invoke(
+        { messages: [toolCall('present_category', { categoryId: 'category-desserts' })] },
+        config1
+      );
+      expect(box.current).toBe(7);
+
+      // Una modificación externa real (otro handoff/turno concurrente, no una
+      // mutación propia de este turno) sube la revisión persistida sin que la
+      // caja lo sepa: debe seguir bloqueando, no aceptarse automáticamente.
+      getStateMock.mockResolvedValueOnce(state([ACTIVE, PENDING], 9));
+      const result = await node.invoke(
+        { messages: [toolCall('search_products', { keyword: 'pollo a la brasa' })] },
+        config1
+      );
+      expect(JSON.parse(String(result.messages[0].content))).toMatchObject({
+        error: HUMAN_INTENT_STATE_STALE,
+      });
+    });
+
+    it('aísla la caja de revisión por turno: la misma instancia cacheada no comparte estado entre conversaciones distintas', async () => {
+      closeAbandonedPedirIntentMock.mockResolvedValue({ id: 'intent-order', status: 'CANCELLED' });
+      const node = new HumanIntentToolNode([makeCancelOrderLineTool()]);
+
+      const box1 = { current: 7 };
+      getStateMock.mockResolvedValueOnce(state([ACTIVE, PENDING], 7));
+      await node.invoke(
+        { messages: [toolCall('cancel_order_line', { hint: 'lomo saltado' })] },
+        turnConfig(box1)
+      );
+      expect(box1.current).toBe(8);
+
+      const box2 = { current: 7 };
+      getStateMock.mockResolvedValueOnce(state([ACTIVE, PENDING], 7));
+      await node.invoke(
+        {
+          messages: [toolCall('cancel_order_line', { hint: 'ceviche' })],
+        },
+        {
+          configurable: {
+            ...turnConfig(box2).configurable,
+            conversationId: 'conv-2',
+            customerPhone: '+5491100000001',
+          },
+        }
+      );
+
+      expect(box2.current).toBe(8); // partió de 7, no heredó el 8 del turno anterior
+      expect(box1.current).toBe(8); // y el turno 1 no fue tocado por el turno 2
     });
   });
 
