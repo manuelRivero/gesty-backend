@@ -153,7 +153,25 @@ export const isPartySizeStored = (
 export const isPartySizeUnset = (meta: Record<string, unknown> | undefined): boolean =>
   meta?.peopleCount == null && meta?.requestedPartySize == null;
 
-/** Señales estructurales de que se reanudó una consulta de menú (sin depender del copy del LLM). */
+/**
+ * Señales estructurales de que se reanudó una consulta de menú (sin depender
+ * del copy del LLM). No cae de vuelta a "respondió algo" cuando ninguna señal
+ * aplica: esa rama lo volvía tautológico (el caller ya exige
+ * `hasHandlerResponse` aparte) y dejaba pasar una respuesta no relacionada
+ * con el menú como si fuera una reanudación real.
+ *
+ * Límite conocido (auditoría E2E, Fase 4.1): la rama
+ * `options?.lastReferencedProductId` no es inmune a un valor residual. La
+ * conversación de prueba es la misma que reutilizan todos los archivos de
+ * `test:e2e` en serie y `resetTestCustomerOperationalState` NUNCA limpia
+ * `conversation.lastReferencedProductId` (solo limpia
+ * `conversation_state.metadata`). Si un caso/archivo anterior dejó esa
+ * columna apuntando a un producto, esta función podría devolver `true` sin
+ * que el turno actual haya referenciado nada — no se corrigió acá porque
+ * limpiar esa columna pertenece al reset compartido (fuera del alcance de
+ * esta revisión puntual) y otros casos de la suite dependen a propósito de
+ * que persista entre turnos DENTRO de un mismo caso.
+ */
 export const looksLikeMenuResume = (
   result: HandlerResult | null | undefined,
   options?: {
@@ -165,14 +183,11 @@ export const looksLikeMenuResume = (
     return true;
   }
   if (options?.lastReferencedProductId) return true;
-  if (
+  return (
     options?.intent === 'PRODUCT_QUERY' ||
     options?.intent === 'PRODUCT_ATTRIBUTE_QUESTION' ||
     options?.intent === 'ORDER_FOOD'
-  ) {
-    return hasHandlerResponse(result);
-  }
-  return hasHandlerResponse(result);
+  );
 };
 
 export type MainGraph = {
@@ -1029,6 +1044,47 @@ export const getActiveDraftItemCount = async (
     select: { _count: { select: { draft_order_item: true } } },
   });
   return draft?._count.draft_order_item ?? 0;
+};
+
+/**
+ * Cierra tipables de add (variación/cantidad) si el híbrido los abrió tras un
+ * add. Extraído de `language-variations.e2e.test.ts` y
+ * `natural-conversations.e2e.test.ts`, donde estaba duplicado literalmente.
+ */
+export const resolvePendingAddGates = async (params: {
+  graph: MainGraph;
+  businessId: string;
+  conversationId: string;
+  maxSteps?: number;
+}): Promise<void> => {
+  const { graph, businessId, conversationId, maxSteps = 4 } = params;
+  const { getPendingAddQuantity } = await import(
+    '../../src/services/pendingAddQuantity.service'
+  );
+  const { getPendingVariation } = await import(
+    '../../src/services/pendingVariation.service'
+  );
+
+  for (let i = 0; i < maxSteps; i++) {
+    const count = await getActiveDraftItemCount(businessId);
+    if (count > 0) return;
+
+    const meta = await getFreshConversationMetadata(conversationId);
+    const pendingVar = getPendingVariation(meta);
+    if (pendingVar?.variations?.length) {
+      await runGraphTurn(graph, buildTextPayload(pendingVar.variations[0]));
+      continue;
+    }
+    const pendingQty = getPendingAddQuantity(meta);
+    if (pendingQty) {
+      await runGraphTurn(
+        graph,
+        buildTextPayload(String(pendingQty.suggestedQuantity))
+      );
+      continue;
+    }
+    break;
+  }
 };
 
 /** Fulfillment del draft activo (fuente de verdad; no copy del LLM). */

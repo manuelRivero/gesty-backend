@@ -5,6 +5,16 @@
  * estado real (carrito, pending, Facts, metadata). Misma conversación entre
  * turnos (sin reset intermedio). No copy del LLM.
  *
+ * Nota de alcance (auditoría E2E, Fase 4): los casos 3 (interrupt-resume-shortlist),
+ * 7 (reference-correction), 8 (sequential-multi-item) y 9 (pending-qty-interrupt)
+ * ejercitan por TEXTO real (LLM) la interrupción informativa / el rechazo que
+ * da nombre al caso, pero resuelven el paso posterior de "agregar" vía
+ * `addItemViaButtonHappyPath` (botón determinista), no por texto libre — así
+ * evitan reabrir una shortlist ambigua que no es el foco del caso. Lo que
+ * verifican es el invariante de negocio (no-compra en la pregunta, rechazo
+ * no re-ejecutado, continuidad de líneas), no la capacidad de NLU del agente
+ * para retomar la conversación en texto natural tras la interrupción.
+ *
  * Ver RESULTADOS-E2E-NATURAL-CONVERSATIONS.md y e2e/README.md.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -33,6 +43,7 @@ import {
   hasListFollowUp,
   loadMainGraph,
   resetE2eCustomer,
+  resolvePendingAddGates as resolvePendingAddGatesHelper,
   runGraphTurn,
   type MainGraph,
 } from './helpers/graphHarness';
@@ -66,28 +77,8 @@ describe.sequential.skipIf(!isE2eEnabled())('natural conversations (e2e fase 4)'
   });
 
   /** Cierra tipables de add (variación/cantidad) si el LLM los abrió tras un add. */
-  const resolvePendingAddGates = async (): Promise<void> => {
-    for (let i = 0; i < 4; i++) {
-      const count = await getActiveDraftItemCount(businessId);
-      if (count > 0) return;
-
-      const meta = await getFreshConversationMetadata(conversationId);
-      const pendingVar = getPendingVariation(meta);
-      if (pendingVar?.variations?.length) {
-        await runGraphTurn(graph, buildTextPayload(pendingVar.variations[0]));
-        continue;
-      }
-      const pendingQty = getPendingAddQuantity(meta);
-      if (pendingQty) {
-        await runGraphTurn(
-          graph,
-          buildTextPayload(String(pendingQty.suggestedQuantity))
-        );
-        continue;
-      }
-      break;
-    }
-  };
+  const resolvePendingAddGates = (): Promise<void> =>
+    resolvePendingAddGatesHelper({ graph, businessId, conversationId });
 
   // ── 1. Corrección de cantidad en pending (antes de escribir carrito) ───
   //

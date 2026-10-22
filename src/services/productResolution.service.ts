@@ -45,7 +45,8 @@ export type ProductResolutionFailure =
   | 'task_not_open'
   | 'task_resolution_mismatch'
   | 'resolution_already_owned'
-  | 'order_line_id_required';
+  | 'order_line_id_required'
+  | 'resolution_offer_invalidated';
 
 type MetadataRecord = Record<string, unknown>;
 
@@ -92,6 +93,22 @@ const pendingResolutionForProduct = (
 
 const resolutionIdFor = (businessId: string, conversationId: string): string =>
   `pr1:${businessId}:${conversationId}:${randomUUID()}`;
+
+/**
+ * `productId` de la oferta CONFIRMAR_OFERTA vigente en el Ledger (mismo
+ * `conversation_state.metadata` que ya cargan `selectProductResolution` /
+ * `consumeProductResolution` — no requiere importar `lastOffer.service.ts`,
+ * que ya importa este módulo). Null si no hay oferta en el Ledger (nunca se
+ * creó, o `clearLastOffer`/una oferta nueva la reemplazó).
+ */
+const confirmOfferLedgerProductId = (metadata: unknown): string | null => {
+  if (!isRecord(metadata)) return null;
+  const ledger = metadata.intentLedger;
+  if (!isRecord(ledger)) return null;
+  const entry = ledger.CONFIRMAR_OFERTA;
+  if (!isRecord(entry)) return null;
+  return typeof entry.productId === 'string' && entry.productId ? entry.productId : null;
+};
 
 const lockConversationState = async (
   tx: Prisma.TransactionClient,
@@ -287,6 +304,12 @@ const validateResolution = (
      * TTL, consumo, producto, business y conversación se validan igual.
      */
     taskBound?: boolean;
+    /**
+     * `conversation_state.metadata` vigente (ya cargado por el llamador).
+     * Única fuente usada para el chequeo de `source: 'last_offer'` —
+     * ver `confirmOfferLedgerProductId`.
+     */
+    metadata?: unknown;
   }
 ): ProductResolutionFailure | null => {
   if (resolution.businessId !== params.businessId) return 'resolution_wrong_business';
@@ -296,6 +319,18 @@ const validateResolution = (
   if (resolution.expiresAt) {
     const expiresAt = Date.parse(resolution.expiresAt);
     if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return 'resolution_expired';
+  }
+  // Una resolución emitida por `persistLastOffer` (ver `lastOffer.service.ts`)
+  // solo autoriza mientras siga siendo LA oferta vigente del Ledger para este
+  // producto. `clearLastOffer` (rechazo) o una oferta nueva (reemplazo) la
+  // invalidan de inmediato, sin que nadie tenga que "revocar" la resolución
+  // explícitamente — se relee el mismo dato en cada consumo. No afecta
+  // resoluciones de otras fuentes (search_products, complement, etc.).
+  if (
+    resolution.source === 'last_offer' &&
+    confirmOfferLedgerProductId(params.metadata) !== resolution.productId
+  ) {
+    return 'resolution_offer_invalidated';
   }
   if (resolution.scope === 'turn' && !params.taskBound && resolution.turnId !== params.turnId) {
     return 'resolution_expired';
@@ -337,6 +372,7 @@ export const selectProductResolution = async (params: {
       ...params,
       pendingResolutionId: pendingResolutionForProduct(metadata, current.productId),
       allowCandidate: params.explicitButtonSelection === true,
+      metadata,
     });
     if (failure) return { ok: false, reason: failure };
     const selected = { ...current, status: 'selected' as const };
@@ -736,6 +772,7 @@ export const consumeProductResolution = async (
     allowCandidate: params.explicitButtonSelection === true,
     // Ownership de la Task validado arriba (validateTaskResolutionOwnership).
     taskBound: Boolean(params.orderLineId),
+    metadata,
   });
   if (failure) return { ok: false, reason: failure };
 
@@ -765,6 +802,7 @@ export const taskBoundResolutionFailure = (
     conversationId: params.conversationId,
     pendingResolutionId: pendingResolutionForProduct(params.metadata, params.productId),
     taskBound: true,
+    metadata: params.metadata,
   });
 
 export const productResolutionErrorMessage = (reason: ProductResolutionFailure): string => {
@@ -788,5 +826,7 @@ export const productResolutionErrorMessage = (reason: ProductResolutionFailure):
       return 'Indicá la línea exacta del pedido antes de agregar el producto.';
     case 'resolution_missing':
       return 'No hay una selección válida de ese producto. Buscalo o elegilo desde el menú antes de agregarlo.';
+    case 'resolution_offer_invalidated':
+      return 'Esa oferta ya no está vigente (se rechazó o se reemplazó). Volvé a pedir el producto si todavía lo querés.';
   }
 };

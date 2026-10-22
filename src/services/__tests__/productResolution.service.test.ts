@@ -226,6 +226,97 @@ describe('ProductResolution', () => {
   });
 });
 
+describe('revocación de ProductResolution al invalidarse la oferta (source: last_offer)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fakeDb.state.metadata = {};
+    fakeDb.tx.menu_item.findMany.mockImplementation(async ({ where }) =>
+      where.id.in.map((id) => ({ id }))
+    );
+  });
+
+  it('con el Ledger CONFIRMAR_OFERTA apuntando al mismo producto, la resolución last_offer autoriza el add (no-regresión: aceptación válida)', async () => {
+    const resolution = await issue({ source: 'last_offer' });
+    fakeDb.state.metadata.intentLedger = { CONFIRMAR_OFERTA: { productId: PRODUCT_ID } };
+    await expect(consume({ resolutionId: resolution.resolutionId })).resolves.toMatchObject({
+      ok: true,
+      resolution: { status: 'consumed' },
+    });
+  });
+
+  it('limpiar la oferta (Ledger CONFIRMAR_OFERTA vacío, como hace clearLastOffer) invalida la resolución last_offer de ese producto', async () => {
+    const resolution = await issue({ source: 'last_offer' });
+    fakeDb.state.metadata.intentLedger = { CONFIRMAR_OFERTA: { productId: PRODUCT_ID } };
+    // Rechazo: clearLastOffer hace patchIntentLedgerEntry(conv, 'CONFIRMAR_OFERTA', {}).
+    fakeDb.state.metadata.intentLedger = { CONFIRMAR_OFERTA: {} };
+    await expect(consume({ resolutionId: resolution.resolutionId })).resolves.toMatchObject({
+      ok: false,
+      reason: 'resolution_offer_invalidated',
+    });
+  });
+
+  it('sin ningún Ledger CONFIRMAR_OFERTA en absoluto (nunca hubo oferta, o ya se limpió del todo), la resolución last_offer tampoco autoriza', async () => {
+    const resolution = await issue({ source: 'last_offer' });
+    // metadata.intentLedger ausente por completo.
+    await expect(consume({ resolutionId: resolution.resolutionId })).resolves.toMatchObject({
+      ok: false,
+      reason: 'resolution_offer_invalidated',
+    });
+  });
+
+  it('una oferta nueva que reemplaza a la anterior invalida la resolución last_offer del producto reemplazado, sin depender de qué tool hizo el reemplazo', async () => {
+    const resolutionX = await issue({ source: 'last_offer' });
+    fakeDb.state.metadata.intentLedger = { CONFIRMAR_OFERTA: { productId: PRODUCT_ID } };
+
+    // persistLastOffer(Y) reemplaza el Ledger por el producto nuevo — mismo
+    // efecto esté detrás de clear_last_offer, de una oferta nueva, o de
+    // cualquier otro mecanismo que el ReAct decida invocar.
+    fakeDb.state.metadata.intentLedger = { CONFIRMAR_OFERTA: { productId: OTHER_PRODUCT_ID } };
+
+    await expect(consume({ resolutionId: resolutionX.resolutionId })).resolves.toMatchObject({
+      ok: false,
+      reason: 'resolution_offer_invalidated',
+    });
+  });
+
+  it('no-regresión: una resolución independiente (search_products) para el mismo producto sigue autorizando aunque la oferta se haya rechazado/reemplazado', async () => {
+    const independent = await issue({ source: 'search_products' });
+    fakeDb.state.metadata.intentLedger = { CONFIRMAR_OFERTA: {} };
+    await expect(consume({ resolutionId: independent.resolutionId })).resolves.toMatchObject({
+      ok: true,
+      resolution: { status: 'consumed' },
+    });
+  });
+
+  it('no-regresión: revocar la oferta de un producto no afecta una resolución last_offer vigente de otro producto', async () => {
+    const resolutionX = await issue({ source: 'last_offer' });
+    const resolutionOther = await issue({ productIds: [OTHER_PRODUCT_ID], source: 'last_offer' });
+    // Ledger actual: la oferta vigente es la del otro producto (reemplazo de X por OTHER).
+    fakeDb.state.metadata.intentLedger = { CONFIRMAR_OFERTA: { productId: OTHER_PRODUCT_ID } };
+
+    await expect(consume({ resolutionId: resolutionX.resolutionId })).resolves.toMatchObject({
+      ok: false,
+      reason: 'resolution_offer_invalidated',
+    });
+    await expect(
+      consume({ resolutionId: resolutionOther.resolutionId, productId: OTHER_PRODUCT_ID })
+    ).resolves.toMatchObject({ ok: true, resolution: { status: 'consumed' } });
+  });
+
+  it('selectProductResolution (el paso previo a consumir) también rechaza una resolución last_offer cuya oferta ya no está en el Ledger', async () => {
+    const resolution = await issue({ source: 'last_offer' });
+    // Ledger vacío: nunca hubo oferta vigente para este productId.
+    await expect(
+      selectProductResolution({
+        productId: PRODUCT_ID,
+        resolutionId: resolution.resolutionId,
+        businessId: BUSINESS_ID,
+        conversationId: CONVERSATION_ID,
+      })
+    ).resolves.toMatchObject({ ok: false, reason: 'resolution_offer_invalidated' });
+  });
+});
+
 describe('expireOpenProductResolutions', () => {
   beforeEach(() => {
     vi.clearAllMocks();

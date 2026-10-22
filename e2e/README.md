@@ -63,7 +63,6 @@ npm run test:e2e
 
 # Un flujo
 npm run test:last-offer
-npm run test:party-checkout-flow
 npm run test:checkout-flow
 npm run test:agent-history
 npm run test:agent-gates
@@ -91,13 +90,12 @@ Si faltan variables, los tests se **saltan** (no fallan) y un test documenta el 
 | Archivo | Qué valida |
 |---------|------------|
 | `last-offer-add-item.e2e.test.ts` | `lastOffer` + "Agrega uno" → ítem en carrito |
-| `party-checkout-flow.e2e.test.ts` | Party size → menú → checkout → fulfillment |
-| `checkout-flow.e2e.test.ts` | ADD_ITEM, CHECKOUT botón/texto, fulfillment |
+| `checkout-flow.e2e.test.ts` | ADD_ITEM, CHECKOUT botón/texto, fulfillment, party size → menú → checkout (fusiona el antiguo `party-checkout-flow.e2e.test.ts`) |
 | `agent-history.e2e.test.ts` | Historial conversacional real inyectado a los agentes (`buildAgentHistoryMessages`) |
 | `agent-gates.e2e.test.ts` | Fase 2: variación, cantidad, local cerrado, carrito vacío, Order |
 | `language-variations.e2e.test.ts` | Fase 3: misma intención con formulaciones distintas de WhatsApp → mismo efecto |
 | `natural-conversations.e2e.test.ts` | Fase 4: micro-conversaciones multi-turno (corrección, interrupción, referencia, continuidad) |
-| `human-intent-lifecycle.e2e.test.ts` | Lifecycle de `HumanIntentState`: active/pending, blockers, resolve/promote, replace y trace JSON en `e2e/.last-human-intent-lifecycle-report.json` |
+| `human-intent-lifecycle.e2e.test.ts` | Lifecycle de `HumanIntentState`: active/pending, blockers, resolve/promote, replace y trace JSON en `e2e/.last-human-intent-lifecycle-report.json`. **Deuda abierta al cierre:** CASE 03, 04, 05 y 06 fallan contra el agente real; INV-3/4, 7, 8, 9 y la dirección inversa de INV-6 no tienen evidencia verde. Ver el comentario del Bloque A en el propio archivo. |
 | `reservation-production.e2e.test.ts` | **Diagnóstica** (independiente): replay de reservas reales (Picado). Soft-asserts + log JSON. Requiere slots (`seed:reservation-slots`) y `RESERVATION_AGENT_ENABLED=true`. Reporte en `e2e/.last-reservation-production-report.json` |
 | `bot-attack.e2e.test.ts` | **Diagnóstica** (independiente): prosa hostil contra el bot (dominio reserva/pedido, plato inventado, variedad fantasma, pago inexistente, afirmaciones sueltas, pending abandonado, inyección). Mismo molde: hard = respondió; soft = Facts. Reporte en `e2e/.last-bot-attack-report.json` |
 | `bot-attack-g2.e2e.test.ts` | **Diagnóstica grado 2** (independiente): insiste después del rechazo (aceptar shortlist falso, variedad inventada, bitcoin con retiro ya elegido, confirmar carrito vacío, 999 unidades, reserva imposible, pedido+reserva juntos). Reporte en `e2e/.last-bot-attack-g2-report.json` |

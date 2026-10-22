@@ -8,6 +8,17 @@
  * escritura real de Postgres) y lee `conversation_state.metadata` después.
  * Mismo gate (`isE2eEnabled`) que el resto de `e2e/`: requiere `E2E_RUN=1` y,
  * desde este cambio, se niega explícitamente si `NODE_ENV=production`.
+ *
+ * Alcance real (auditoría E2E, Fase 4): a pesar del nombre del archivo, este
+ * test cubre ÚNICAMENTE el vector de contaminación de `humanIntentState` en
+ * `conversation_state.metadata`. `resetE2eCustomer` /
+ * `resetTestCustomerOperationalState` NUNCA tocan `conversation_message`
+ * (historial), `orders` confirmadas ni `reservation` — esos tres tipos de
+ * dato pueden seguir contaminándose/acumulándose entre corridas E2E y no
+ * tienen un test de aislamiento dedicado. No ampliar este test ni el reset
+ * para cubrirlos sin una decisión explícita (ver riesgos pendientes del
+ * informe de la Fase 4): borrar `orders`/`reservation`/mensajes reales de
+ * forma indiscriminada sería una operación destructiva sobre BD compartida.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { isE2eEnabled, applyE2eEnv } from './helpers/env';

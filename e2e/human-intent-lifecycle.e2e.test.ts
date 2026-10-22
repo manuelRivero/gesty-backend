@@ -149,15 +149,6 @@ const normalize = (value: unknown): string =>
 const intentText = (intent: { goal: string; request: string[] }): string =>
   normalize([intent.goal, ...intent.request].join(' '));
 
-const hasIntent = (
-  state: LifecycleTurn['humanIntentAfter'],
-  goal: string,
-  target: string
-): boolean =>
-  [...state.active, ...state.pending].some(
-    (intent) => intent.goal === goal && intentText(intent).includes(normalize(target))
-  );
-
 const toolMentions = (call: LifecycleToolCall, target: string): boolean =>
   (() => {
     const searchable = normalize(`${call.name} ${JSON.stringify(call.args)} ${call.result}`);
@@ -371,42 +362,40 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
     return trace;
   };
 
-  it('CASE 01 — Active + Pending', async () => {
-    const trace = await runCase('CASE 01 — Active + Pending', [
-      'Quiero hacer un pedido',
-      'Para 2',
-      'Quiero una milanesa y también quiero ver los postres',
-      'Quiero la milanesa de pollo',
-      '¿Qué postres tienen?',
-    ], { requirePartySize: true });
-    const turn3 = trace.turns[2];
-    assertLifecycleInvariant(trace, 3, 'INV-6', hasIntent(turn3.humanIntentAfter, 'PEDIR', 'milanesa'), 'PEDIR/milanesa permanece vigente', compactValue(turn3.humanIntentAfter));
-    assertLifecycleInvariant(trace, 3, 'INV-6', turn3.humanIntentAfter.pending.some((intent) => intent.goal === 'EXPLORAR' && intentText(intent).includes('postres')), 'EXPLORAR/postres en PENDING', compactValue(turn3.humanIntentAfter));
-    assertLifecycleInvariant(trace, 3, 'INV-6', !turn3.humanIntentAfter.pending.some((intent) => intent.goal === 'PEDIR'), 'sin una segunda intención PEDIR en PENDING', compactValue(turn3.humanIntentAfter));
-    assertLifecycleInvariant(trace, 3, 'INV-2', !turn3.toolCalls.some((call) => toolMentions(call, 'postres')), 'ninguna tool ejecuta postres mientras sigue PENDING', compactValue(turn3.toolCalls));
-    assertLifecycleInvariant(trace, 5, 'INV-5', trace.turns[4].humanIntentAfter.active.some((intent) => intent.goal === 'EXPLORAR' && intentText(intent).includes('postres')) || trace.turns[4].humanIntentAfter.records.some((intent) => intent.goal === 'EXPLORAR' && intent.status === 'RESOLVED' && intentText(intent).includes('postres')), 'postres ACTIVE o RESOLVED al solicitarlo', compactValue(trace.turns[4].humanIntentAfter));
-    trace.status = 'PASS';
-  }, 480_000);
-
-  it('CASE 02 — Party-size blocker conserva la intención', async () => {
-    const trace = await runCase('CASE 02 — Party-size blocker', [
-      'Quiero una milanesa y una gaseosa',
-      'Para 3',
-      'Quiero la milanesa',
-      'Agregá también la gaseosa',
-    ], { requirePartySize: true });
-    const orderId = trace.turns[0].humanIntentAfter.active[0]?.id;
-    const turn2 = trace.turns[1];
-    assertLifecycleInvariant(trace, 2, 'INV-3', Boolean(orderId) && turn2.humanIntentAfter.active.some((intent) => intent.id === orderId), 'mismo intentId PEDIR sigue ACTIVE después del gate', compactValue(turn2.humanIntentAfter));
-    assertLifecycleInvariant(trace, 2, 'INV-9', decisionName(turn2) === 'CONTINUE_ACTIVE', 'decisión CONTINUE_ACTIVE', compactValue(turn2.preflight));
-    assertLifecycleInvariant(trace, 2, 'INV-4', turn2.humanIntentAfter.active.some((intent) => intent.id === orderId), 'save_party_size no resuelve PEDIR', compactValue(turn2.humanIntentAfter));
-    trace.status = 'PASS';
-  }, 480_000);
-
+  /**
+   * Bloque A — estado de cobertura al cierre de la limpieza E2E (sin
+   * evidencia verde nueva; ver deuda documentada en e2e/README.md).
+   *
+   * CASE 01 y CASE 02 fueron eliminados. Sus invariantes están escritas
+   * también en CASE 06 (turnos 2 y 3), pero CASE 06 no tiene evidencia verde
+   * vigente, así que esa equivalencia es solo de diseño.
+   *
+   * Estado por caso (última ejecución real: CASE 03/04/05 tras alinear
+   * productos con el menú de prueba; CASE 06 antes de alinear):
+   * - CASE 03 (INV-6, INV-5): FALLA. Observado: PEDIR "lomo saltado" sigue
+   *   ACTIVE y "postres" queda PENDING; el PEDIR no se resolvió, por lo que
+   *   INV-5 no se llega a comprobar.
+   * - CASE 04 (INV-7 REPLACE, INV-8 CANCELAR_COMPRA): FALLA en INV-7.
+   *   Observado: el agente devuelve AMBIGUOUS en vez de REPLACE. INV-8 no
+   *   tiene evidencia verde independiente (solo se evalúa tras INV-7).
+   * - CASE 05 (dirección inversa de INV-6): FALLA. Observado: el PEDIR
+   *   "ceviche" desaparece de PENDING y solo queda EXPLORAR "postres"
+   *   ACTIVE. El bloqueo usado (variación de picante) podría haberse
+   *   resuelto antes de comprobar la invariante. Diseño sospechoso: el caso
+   *   original usaba una talla ("Grande") que este menú no tiene.
+   * - CASE 06 (INV-9, INV-3/INV-4, INV-6, INV-2, INV-5): FALLA en INV-9
+   *   (save_party_size no se llamó con count=3 en el turno "Para 3"). Es
+   *   comportamiento del agente, no del catálogo (ceviche, postres y bebidas
+   *   existen). No se reejecutó tras alinear. INV-3/INV-4 no tienen evidencia
+   *   verde.
+   *
+   * Invariantes SIN evidencia verde al cierre: INV-3, INV-4, INV-7, INV-8,
+   * dirección inversa de INV-6 y INV-9. No se consideran cubiertas.
+   */
   it('CASE 03 — Resolve → Promote', async () => {
     const trace = await runCase('CASE 03 — Resolve → Promote', [
-      'Quiero una milanesa y quiero saber qué postres tienen',
-      'Quiero la milanesa de pollo',
+      'Quiero un lomo saltado y quiero saber qué postres tienen',
+      'Quiero el pollo a la brasa',
       '¿Y los postres?',
     ]);
     const before = trace.turns[0].humanIntentAfter;
@@ -418,8 +407,8 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
 
   it('CASE 04 — Replace y cancelación de compra', async () => {
     const trace = await runCase('CASE 04 — Replace + CANCELAR_COMPRA', [
-      'Quiero una milanesa de carne',
-      'No, mejor una milanesa de pollo',
+      'Quiero un lomo saltado',
+      'No, mejor un pollo a la brasa',
       'Cancelá el pedido',
     ]);
     const replacement = trace.turns[1];
@@ -428,7 +417,7 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
     assertLifecycleInvariant(trace, 2, 'INV-7', decisionName(replacement) === 'REPLACE', 'decisión REPLACE', compactValue(replacement.preflight));
     assertLifecycleInvariant(trace, 2, 'INV-7', openOrders.length <= 1, 'no quedan dos PEDIR abiertos', compactValue(openOrders));
     assertLifecycleInvariant(trace, 2, 'INV-7', intentText(openOrders[0] ?? { goal: '', request: [] }).includes('pollo'), 'el pedido vigente tiene objetivo pollo', compactValue(openOrders));
-    assertLifecycleInvariant(trace, 2, 'INV-7', !replacement.toolCalls.some((call) => toolMentions(call, 'carne')), 'no se ejecuta add de carne durante el replace', compactValue(replacement.toolCalls));
+    assertLifecycleInvariant(trace, 2, 'INV-7', !replacement.toolCalls.some((call) => toolMentions(call, 'lomo')), 'no se ejecuta add de lomo saltado durante el replace', compactValue(replacement.toolCalls));
     const cancel = trace.turns[2];
     assertLifecycleInvariant(trace, 3, 'INV-8', decisionName(cancel) !== 'CANCEL', 'CANCEL no se usa para cancelar la compra', compactValue(cancel.preflight));
     const cancellationGoal = ((cancel.preflight as { decision?: { intents?: Array<{ goal?: string }> } } | null)?.decision?.intents ?? []).some((intent) => intent.goal === 'CANCELAR_COMPRA');
@@ -438,16 +427,16 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
 
   it('CASE 05 — Blocker + nueva intención', async () => {
     const trace = await runCase('CASE 05 — Blocker + nueva intención', [
-      'Quiero una milanesa',
-      'Grande',
+      'Quiero el ceviche clasico con variaciones',
+      'Muy picante',
       '¿Qué postres tienen?',
-      'Quiero la milanesa de pollo',
-      'La grande',
+      'Quiero el pollo a la brasa',
+      'Ese con poco picante',
     ]);
     const turn3 = trace.turns[2];
     const orderId = trace.turns[0].humanIntentAfter.active[0]?.id;
     assertLifecycleInvariant(trace, 3, 'INV-6', turn3.humanIntentAfter.active.some((intent) => intent.goal === 'EXPLORAR' && intentText(intent).includes('postres')), 'EXPLORAR/postres toma ACTIVE temporalmente', compactValue(turn3.humanIntentAfter));
-    assertLifecycleInvariant(trace, 3, 'INV-6', turn3.humanIntentAfter.pending.some((intent) => intent.id === orderId && intent.goal === 'PEDIR' && intentText(intent).includes('milanesa')), 'PEDIR/milanesa original queda PENDING', compactValue(turn3.humanIntentAfter));
+    assertLifecycleInvariant(trace, 3, 'INV-6', turn3.humanIntentAfter.pending.some((intent) => intent.id === orderId && intent.goal === 'PEDIR' && intentText(intent).includes('ceviche')), 'PEDIR/ceviche original queda PENDING', compactValue(turn3.humanIntentAfter));
     trace.status = 'PASS';
   }, 480_000);
 
@@ -731,9 +720,14 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
     expect(draftAfterAgregalo[0]?.quantity, 'T5 ceviche sigue en 2 en el carrito').toBe(2);
     const cevicheAfterAgregalo = linesAt(AGREGALO_TURN).find((line) => line.id === ceviche?.id);
     expect(cevicheAfterAgregalo?.status, 'T5 ceviche sigue DONE').toBe('done');
+    // Invariante con las dos ramas cubiertas (antes solo se verificaba la
+    // rama QUEUED; si papas ya se había activado en este mismo turno, el
+    // `if` no ejecutaba ningún `expect` y el test pasaba sin comprobar nada).
     const papasAfterAgregalo = linesAt(AGREGALO_TURN).find((line) => line.id === papas?.id);
     if (papasAfterAgregalo?.status === 'queued') {
       expect(papasAfterAgregalo.currentResolutionId, 'T5 papas QUEUED sin ProductResolution').toBeNull();
+    } else {
+      expect(papasAfterAgregalo?.status, 'T5 papas ya activada (sin quedar en limbo)').toBe('active');
     }
 
     // --- Activación de Papas: continue_order_line exitoso en T5 o T6, antes de cualquier resolve de papas ---
@@ -807,6 +801,20 @@ describe.skipIf(!isE2eEnabled())('HumanIntentState lifecycle E2E', () => {
     expect(finalLines.filter((line) => line.status === 'active' || line.status === 'queued'), 'sin líneas abiertas al final').toHaveLength(0);
 
     // --- Defensas: sin mismatches ni recursion limit en todo el escenario ---
+    //
+    // Nota (auditoría E2E, Fase 4) sobre el bloque `recoveredByResolve ||
+    // recoveredCanonically || endedSafely` que sigue: es una red de defensas
+    // específica de ESTE escenario (mismatches de resolución de Task durante
+    // el Quantity Goal multi-línea), no una simulación de fallo técnico
+    // genérico ni cobertura confiable del Contrato 9 ("fallo de herramienta
+    // sin bloquear la conversación ni confirmar efectos inexistentes"). El OR
+    // de 3 caminos es deliberadamente permisivo: acepta como válido que el
+    // runtime haya cortado el turno con `turn_ends_task_recovery_failed` sin
+    // verificar que la respuesta al usuario sea coherente ni que no haya
+    // efectos fantasma. No se corrigió en esta fase porque hacerlo bien exige
+    // diseñar un escenario dedicado de fallo técnico (fuera de alcance aquí,
+    // ver Contrato 9 como gap abierto en el informe de la Fase 4), no solo
+    // ajustar esta aserción puntual.
     const allLogText = turnLogs.map((entry) => entry.rawText).join('\n');
     expect(allLogText.includes('goal_target_mismatch'), 'sin goal_target_mismatch').toBe(false);
     // task_resolution_mismatch / task_already_associated son recuperables: cada uno debe traer

@@ -133,60 +133,10 @@ describe.sequential.skipIf(!isE2eEnabled())('lastOffer add-item (e2e)', () => {
     ).toBe(productId);
   }, 180_000);
 
-  it('A: lastOffer → "¿Cuánto cuesta?" → "Agrega uno" suma el mismo productId', async () => {
-    const reset = await resetE2eCustomer();
-    conversationId = reset.conversationId;
-
-    await persistLastOffer({
-      businessId,
-      conversationId,
-      productId,
-      productName,
-      suggestedQuantity: 1,
-      source: 'hybrid_cta',
-    });
-
-    const askTurn = await runGraphTurn(graph, buildTextPayload('¿Cuánto cuesta?'));
-    expect(hasHandlerResponse(askTurn.handlerResult)).toBe(true);
-    expect(await getActiveDraftItemCount(businessId)).toBe(0);
-    expect(
-      getLastOffer(await getFreshConversationMetadata(conversationId))?.productId
-    ).toBe(productId);
-
-    const addTurn = await runGraphTurn(graph, buildTextPayload('Agrega uno'));
-    expect(hasHandlerResponse(addTurn.handlerResult)).toBe(true);
-    await resolvePendingAddGates();
-
-    const items = await getActiveDraftItems(businessId);
-    expect(items.some((i) => i.product_id === productId)).toBe(true);
-  }, 300_000);
-
-  it('B: lastOffer → "¿Cuánto cuesta?" → "Dale, agregalo" suma el mismo productId', async () => {
-    const reset = await resetE2eCustomer();
-    conversationId = reset.conversationId;
-
-    await persistLastOffer({
-      businessId,
-      conversationId,
-      productId,
-      productName,
-      suggestedQuantity: 1,
-      source: 'hybrid_cta',
-    });
-
-    await runGraphTurn(graph, buildTextPayload('¿Cuánto cuesta?'));
-    expect(await getActiveDraftItemCount(businessId)).toBe(0);
-
-    // "Dale" solo, tras una respuesta de precio, el LLM lo toma como acuse
-    // (no add). La confirmación post-consulta tiene que ser de sumar.
-    const addTurn = await runGraphTurn(graph, buildTextPayload('Dale, agregalo'));
-    expect(hasHandlerResponse(addTurn.handlerResult)).toBe(true);
-    await resolvePendingAddGates();
-
-    const items = await getActiveDraftItems(businessId);
-    expect(items.some((i) => i.product_id === productId)).toBe(true);
-  }, 300_000);
-
+  // Consolidado: A/B/C cubrían el mismo contrato (continuidad tras consulta
+  // informativa) variando solo la frase de confirmación o la cantidad de
+  // preguntas intermedias. Se conserva C (la variante con dos preguntas, la
+  // más exigente) como representativa; A y B quedaban subsumidos por ella.
   it('C: lastOffer → dos preguntas → "Agrega uno" suma el mismo productId', async () => {
     const reset = await resetE2eCustomer();
     conversationId = reset.conversationId;
@@ -372,41 +322,9 @@ describe.sequential.skipIf(!isE2eEnabled())('lastOffer add-item (e2e)', () => {
     expect(items.some((i) => i.product_id === productId)).toBe(false);
   }, 300_000);
 
-  it('R4: persistLastOffer(Y) reemplaza X → "Agrega uno" suma Y', async () => {
-    const reset = await resetE2eCustomer();
-    conversationId = reset.conversationId;
-    const productY = await findE2eSecondAddableProduct(businessId, {
-      excludeId: productId,
-    });
-
-    await persistLastOffer({
-      businessId,
-      conversationId,
-      productId,
-      productName,
-      suggestedQuantity: 1,
-      source: 'hybrid_cta',
-    });
-    await persistLastOffer({
-      businessId,
-      conversationId,
-      productId: productY.id,
-      productName: productY.name,
-      suggestedQuantity: 1,
-      source: 'product_query',
-    });
-    expect(
-      getLastOffer(await getFreshConversationMetadata(conversationId))?.productId
-    ).toBe(productY.id);
-
-    const addTurn = await runGraphTurn(graph, buildTextPayload('Agrega uno'));
-    expect(hasHandlerResponse(addTurn.handlerResult)).toBe(true);
-    await resolvePendingAddGates();
-
-    const items = await getActiveDraftItems(businessId);
-    expect(items.some((i) => i.product_id === productY.id)).toBe(true);
-    expect(items.some((i) => i.product_id === productId)).toBe(false);
-  }, 300_000);
+  // R4 eliminado: probaba `persistLastOffer` directamente (sin turno real de
+  // rechazo), duplicando R3 con menos rigor E2E — R3 ya cubre "rechazo →
+  // nueva oferta Y → Agrega uno suma Y" pasando por un turno real.
 
   it('R5: pregunta genérica de catálogo NO limpia lastOffer', async () => {
     const reset = await resetE2eCustomer();

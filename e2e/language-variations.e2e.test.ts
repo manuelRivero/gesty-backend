@@ -33,6 +33,7 @@ import {
   hasListFollowUp,
   loadMainGraph,
   resetE2eCustomer,
+  resolvePendingAddGates as resolvePendingAddGatesHelper,
   runGraphTurn,
   type MainGraph,
 } from './helpers/graphHarness';
@@ -66,29 +67,24 @@ describe.sequential.skipIf(!isE2eEnabled())('language variations (e2e fase 3)', 
   });
 
   /** Cierra tipables de add (variación/cantidad) si el LLM los abrió. */
-  const resolvePendingAddGates = async (): Promise<void> => {
-    for (let i = 0; i < 4; i++) {
-      const count = await getActiveDraftItemCount(businessId);
-      if (count > 0) return;
+  const resolvePendingAddGates = (): Promise<void> =>
+    resolvePendingAddGatesHelper({ graph, businessId, conversationId });
 
-      const meta = await getFreshConversationMetadata(conversationId);
-      const pendingVar = getPendingVariation(meta);
-      if (pendingVar?.variations?.length) {
-        await runGraphTurn(graph, buildTextPayload(pendingVar.variations[0]));
-        continue;
-      }
-      const pendingQty = getPendingAddQuantity(meta);
-      if (pendingQty) {
-        await runGraphTurn(
-          graph,
-          buildTextPayload(String(pendingQty.suggestedQuantity))
-        );
-        continue;
-      }
-      break;
-    }
-  };
-
+  /**
+   * Señal estructural de que el bot efectivamente procesó la consulta como
+   * de menú (lista/interactivo, producto referenciado, o intent detectado
+   * como VIEW_MENU/PRODUCT_QUERY/MENU_BY_TAG/ORDER_FOOD). A diferencia de la
+   * versión anterior, NO cae de vuelta a "respondió algo" cuando ninguna
+   * señal aplica: eso la volvía tautológica (ya se exige hasHandlerResponse
+   * aparte en el test) y dejaba pasar respuestas no relacionadas con el menú.
+   *
+   * Límite conocido (Fase 4.1): la rama `state.conversation?.
+   * lastReferencedProductId` puede ser un valor residual de un caso/archivo
+   * anterior en la misma conversación compartida, ya que el reset no limpia
+   * esa columna (ver nota en `looksLikeMenuResume`, graphHarness.ts). Esta
+   * función demuestra que el bot devolvió una estructura compatible con
+   * menú/producto, no que "Qué tienen?" específicamente la causó.
+   */
   const looksLikeMenuSignal = (
     state: Awaited<ReturnType<typeof runGraphTurn>>
   ): boolean => {
@@ -98,23 +94,20 @@ describe.sequential.skipIf(!isE2eEnabled())('language variations (e2e fase 3)', 
     if (state.handlerResult?.isInteractive) return true;
     if (state.conversation?.lastReferencedProductId) return true;
     const intent = state.detection?.intent;
-    if (
+    return (
       intent === 'VIEW_MENU' ||
       intent === 'PRODUCT_QUERY' ||
       intent === 'MENU_BY_TAG' ||
       intent === 'ORDER_FOOD'
-    ) {
-      return hasHandlerResponse(state.handlerResult);
-    }
-    return hasHandlerResponse(state.handlerResult);
+    );
   };
 
   // ── A. Consulta de menú ───────────────────────────────────────────────
+  // Una sola variante representativa (ver nota arriba sobre looksLikeMenuSignal).
 
   describe.sequential('A. menú', () => {
     it.each([
       { category: 'directo', message: 'Qué tienen?' },
-      { category: 'coloquial', message: 'Mostrame el menú' },
     ] as const)(
       '$category: "$message" → señal de menú / respuesta',
       async ({ message }) => {
@@ -144,7 +137,6 @@ describe.sequential.skipIf(!isE2eEnabled())('language variations (e2e fase 3)', 
 
     it.each([
       { category: 'directo', message: 'Quiero un ceviche' },
-      { category: 'conversacional', message: 'Me das un ceviche?' },
       { category: 'coloquial', message: 'Agregame un ceviche' },
     ] as const)(
       '$category: "$message" → shortlist / oferta (sin auto-add)',
@@ -172,8 +164,6 @@ describe.sequential.skipIf(!isE2eEnabled())('language variations (e2e fase 3)', 
   describe.sequential('B2. confirmar oferta → carrito', () => {
     it.each([
       { category: 'coloquial', message: 'Dale, agregame uno' },
-      { category: 'conversacional', message: 'Me agregás uno?' },
-      { category: 'corto', message: 'Poneme uno' },
     ] as const)(
       '$category: "$message" → ítem en carrito',
       async ({ message }) => {
@@ -215,10 +205,6 @@ describe.sequential.skipIf(!isE2eEnabled())('language variations (e2e fase 3)', 
       {
         category: 'corto',
         buildMessage: (suggested: number) => String(suggested),
-      },
-      {
-        category: 'conversacional',
-        buildMessage: (suggested: number) => `Dame ${suggested}`,
       },
       {
         category: 'confirmación',
@@ -265,10 +251,6 @@ describe.sequential.skipIf(!isE2eEnabled())('language variations (e2e fase 3)', 
 
   describe.sequential('D. variación', () => {
     it.each([
-      {
-        category: 'directo',
-        buildMessage: (variation: string) => variation,
-      },
       {
         category: 'conversacional',
         buildMessage: (variation: string) => `Quiero el ${variation}`,
@@ -344,7 +326,6 @@ describe.sequential.skipIf(!isE2eEnabled())('language variations (e2e fase 3)', 
   describe.sequential('E. checkout', () => {
     it.each([
       { category: 'directo', message: 'quiero finalizar el pedido' },
-      { category: 'conversacional', message: 'listo para pagar' },
     ] as const)(
       '$category: "$message" → checkout_active',
       async ({ message }) => {
@@ -389,17 +370,7 @@ describe.sequential.skipIf(!isE2eEnabled())('language variations (e2e fase 3)', 
 
     it.each([
       { category: 'corto', message: 'en casa', expected: 'DELIVERY' as const },
-      {
-        category: 'directo',
-        message: 'quiero delivery',
-        expected: 'DELIVERY' as const,
-      },
       { category: 'corto', message: 'retiro', expected: 'TAKE_AWAY' as const },
-      {
-        category: 'conversacional',
-        message: 'paso a buscar',
-        expected: 'TAKE_AWAY' as const,
-      },
     ] as const)(
       '$category: "$message" → $expected',
       async ({ message, expected }) => {

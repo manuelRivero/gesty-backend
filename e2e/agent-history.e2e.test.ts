@@ -12,11 +12,12 @@
  * Aserciones sobre estructura/efectos (no copy del LLM); ver e2e/README.md.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { HumanMessage } from '@langchain/core/messages';
+import { AIMessage, HumanMessage } from '@langchain/core/messages';
 import { applyE2eEnv, e2eSkipReason, isE2eEnabled } from './helpers/env';
 import {
   buildTextPayload,
   disconnectPrisma,
+  findE2eAddableProduct,
   hasHandlerResponse,
   loadMainGraph,
   purgeTestCustomerHistory,
@@ -43,15 +44,29 @@ const conversationStartedAt = async (
   return row?.started_at ?? null;
 };
 
+/** `lastReferencedProductId` persistido en `conversation` (columna real, no metadata). */
+const freshLastReferencedProductId = async (
+  conversationId: string
+): Promise<string | null> => {
+  const { prisma } = await import('../src/lib/prisma');
+  const row = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    select: { lastReferencedProductId: true },
+  });
+  return row?.lastReferencedProductId ?? null;
+};
+
 describe.sequential.skipIf(!isE2eEnabled())('agent history (e2e)', () => {
   let graph: MainGraph;
   let conversationId: string;
+  let businessId: string;
 
   beforeAll(async () => {
     applyE2eEnv();
     graph = await loadMainGraph();
     const reset = await resetE2eCustomer();
     conversationId = reset.conversationId;
+    businessId = reset.businessId;
     // `resetE2eCustomer` ya no purga el historial por defecto (ver
     // `resetTestCustomerOperationalState`/`purgeTestCustomerHistory` en
     // graphHarness.ts). Este archivo SÍ depende de arrancar sin mensajes
@@ -124,22 +139,81 @@ describe.sequential.skipIf(!isE2eEnabled())('agent history (e2e)', () => {
     ).toBe(false);
   }, 240_000);
 
-  it('tras establecer contexto, una confirmación escueta ("Sí") produce respuesta', async () => {
+  it('tras establecer contexto, una confirmación escueta ("Sí") conserva la referencia al producto', async () => {
     const reset = await resetE2eCustomer();
     conversationId = reset.conversationId;
 
-    // Turno 1: establece tema.
-    const s1 = await runGraphTurn(graph, buildTextPayload('¿Tienen ceviche?'));
+    // Siembra determinista de `lastReferencedProductId` (columna real de
+    // `conversation`): una pregunta informativa no garantiza que el modelo
+    // llame una tool que fije la referencia. Esto NO demuestra que el agente
+    // use el historial; solo fija el estado de partida del caso siguiente.
+    const product = await findE2eAddableProduct(businessId);
+    const { prisma } = await import('../src/lib/prisma');
+    await prisma.conversation.update({
+      where: { id: conversationId },
+      data: { lastReferencedProductId: product.id },
+    });
+
+    // Turno 1: pregunta real sobre el producto ya referenciado (no se exige
+    // que esta pregunta en sí misma fije la referencia — ya está sembrada).
+    const s1 = await runGraphTurn(
+      graph,
+      buildTextPayload(`¿El ${product.name} tiene alguna promo?`)
+    );
     expect(hasHandlerResponse(s1.handlerResult)).toBe(true);
 
-    // Turno 2: confirmación breve. Con historial cableado el agente responde
-    // (no debe romper por los mensajes prependidos ni quedar mudo).
+    // Turno 2: confirmación breve. Verifica solo que la referencia sembrada
+    // se conserva tras la confirmación (no se limpia ni se reemplaza). No
+    // verifica que el agente use el historial ni que la respuesta sea
+    // contextual: `hasHandlerResponse` tampoco distingue un saludo genérico.
     const s2 = await runGraphTurn(
       graph,
       buildTextPayload('Sí, contame más')
     );
     expect(hasHandlerResponse(s2.handlerResult)).toBe(true);
+    const referencedAfterT2 =
+      s2.conversation?.lastReferencedProductId ??
+      (await freshLastReferencedProductId(conversationId));
+    expect(referencedAfterT2).toBe(product.id);
   }, 240_000);
+
+  it('historial mixto (user + ai) conserva ambos turnos en orden cronológico', async () => {
+    const reset = await resetE2eCustomer();
+    conversationId = reset.conversationId;
+    await purgeTestCustomerHistory(conversationId);
+
+    // Bajo E2E (`DRY_RUN_WHATSAPP_SEND=true`) `persistAIMessageNode` se salta,
+    // así que insertamos la fila 'ai' a mano para que el historial sea mixto.
+    // Este test solo verifica el orden y los roles que devuelve
+    // `buildAgentHistoryMessages`; no reproduce la regresión de producción
+    // (saludo genérico tras "Sí") ni verifica que un agente use ese historial.
+    const t1 = buildTextPayload('¿Tienen ceviche?');
+    const s1 = await runGraphTurn(graph, t1);
+    expect(hasHandlerResponse(s1.handlerResult)).toBe(true);
+
+    const { prisma } = await import('../src/lib/prisma');
+    await prisma.conversation_message.create({
+      data: {
+        conversation_id: conversationId,
+        sender: 'ai',
+        message: 'Sí, tenemos ceviche clásico y mixto.',
+        is_ai_generated: true,
+      },
+    });
+
+    const startedAt = await conversationStartedAt(conversationId);
+    const history = await buildAgentHistoryMessages({
+      conversationId,
+      startedAt,
+      currentMessageId: null,
+    });
+
+    const userIdx = history.findIndex((m) => String(m.content).includes('ceviche') && m instanceof HumanMessage);
+    const aiIdx = history.findIndex((m) => m instanceof AIMessage);
+    expect(userIdx).toBeGreaterThanOrEqual(0);
+    expect(aiIdx).toBeGreaterThanOrEqual(0);
+    expect(userIdx).toBeLessThan(aiIdx); // cronológico: turno del cliente antes de la respuesta del bot
+  }, 180_000);
 });
 
 describe('agent history (e2e) — skip info', () => {
