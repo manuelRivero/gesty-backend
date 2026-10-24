@@ -94,6 +94,7 @@ import {
 } from '../services/pendingTipables.service';
 import {
   buildPendingOrderLinesContextLines,
+  getPendingOrderLines,
   hasOpenOrderLines,
 } from '../services/pendingOrderLines.service';
 import { buildSwitchToReservationContextLines } from '../services/switchToReservationConfirm.service';
@@ -131,6 +132,28 @@ export async function buildPendingProductSelectionLines(
     (id): id is string => typeof id === 'string' && id.length > 0
   );
   if (ids.length === 0) return [];
+
+  // La línea activa ya puede tener la ambigüedad resuelta (resolve_product
+  // confirmó un candidato) aunque add_cart_item haya bloqueado después por
+  // otra precondición (ej. order_line_quantity_required) — en ese caso el
+  // shortlist ya no está pendiente y no hay que volver a presentarlo
+  // (mismo corte que `shortlistAwaitingUserChoice` en
+  // pendingOrderLines.service.ts, evidencia: CASE08). `currentResolutionId`
+  // por sí solo no basta: hay que confirmar que esa ProductResolution está
+  // `selected` (no solo `candidate`), es del mismo negocio y corresponde a
+  // uno de los candidatos de este shortlist.
+  const active = getPendingOrderLines(meta)?.lines.find((line) => line.status === 'active') ?? null;
+  if (active?.currentResolutionId) {
+    const confirmedForShortlist = (meta.productResolutions ?? []).some(
+      (item) =>
+        item.resolutionId === active.currentResolutionId &&
+        item.status === 'selected' &&
+        item.businessId === businessId &&
+        typeof item.productId === 'string' &&
+        ids.includes(item.productId)
+    );
+    if (confirmedForShortlist) return [];
+  }
 
   const labelCandidate = (id: string, index: number, name?: string | null): string => {
     const n = index + 1;
