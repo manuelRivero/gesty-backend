@@ -109,6 +109,48 @@ describe('Human Intent Preflight', () => {
       .toEqual(decision);
   });
 
+  // R3: la ausencia de contexto previo (ACTIVE/PENDING vacíos) no debe por sí
+  // sola forzar AMBIGUOUS. El único mecanismo real que produce AMBIGUOUS acá
+  // es la validación de IDs desconocidos en `requestContainsOnlyKnownIds`
+  // (ver `rechaza NEW_INTENT PEDIR con un productId...` más abajo) — nunca el
+  // estado vacío en sí. Este par de tests fija ese contrato explícitamente
+  // con `active: null, pending: []`, en vez de con el ACTIVE/EXPLORAR no
+  // relacionado que ya cubría la prueba de línea ~282.
+  it('NEW_INTENT PEDIR por nombre, sin IDs, con estado completamente vacío: nunca cae a AMBIGUOUS', async () => {
+    const requestInput = input({
+      turn: { messageId: 'wamid.lomo-saltado', text: 'Quiero un lomo saltado' },
+      context: { recentTurns: [{ role: 'user', text: 'Quiero un lomo saltado' }] },
+      state: { revision: 0, active: null, pending: [] },
+    });
+    const decision = {
+      decision: 'NEW_INTENT',
+      intents: [{ goal: 'PEDIR', request: { products: ['lomo saltado'] } }],
+    };
+    invokeMock.mockResolvedValue(decision);
+
+    await expect(runHumanIntentPreflight(requestInput)).resolves.toEqual(decision);
+  });
+
+  it('con estado completamente vacío, un productId inventado en la propuesta sigue cayendo a AMBIGUOUS (no por el estado vacío, sino por el ID desconocido)', async () => {
+    const requestInput = input({
+      turn: { messageId: 'wamid.lomo-saltado-id-inventado', text: 'Quiero un lomo saltado' },
+      context: { recentTurns: [{ role: 'user', text: 'Quiero un lomo saltado' }] },
+      state: { revision: 0, active: null, pending: [] },
+    });
+    const decision = {
+      decision: 'NEW_INTENT',
+      intents: [{
+        goal: 'PEDIR',
+        // productId inventado: con estado vacío no hay ninguna referencia conocida posible.
+        request: { offeredProducts: [{ name: 'Lomo saltado', productId: '99999999-9999-4999-8999-999999999999' }] },
+      }],
+    };
+    invokeMock.mockResolvedValue(decision);
+
+    await expect(runHumanIntentPreflight(requestInput)).resolves.toEqual({ decision: 'AMBIGUOUS' });
+    expect(validateHumanIntentTurnDecision(decision, requestInput)).toBeNull();
+  });
+
   it('representa "Ceviche, postre y bebidas" con tres objetivos en intents', () => {
     const decision = {
       decision: 'NEW_INTENT',
@@ -467,6 +509,24 @@ describe('Human Intent Preflight', () => {
     expect(HUMAN_INTENT_PREFLIGHT_SYSTEM_PROMPT).toContain(
       'Nunca devuelvas los placeholders literales <ID_PENDING>, <pending-id> o <some-id>'
     );
+  });
+
+  // Contrato #4: una intención PENDING sin ACTIVE (p. ej. tras un CONTINUE_ACTIVE
+  // o REPLACE previo que dejó el ACTIVE resuelto/cerrado) debe poder retomarse
+  // igual que con ACTIVE presente, y un ID inventado debe seguir rechazándose —
+  // el contrato de RESUME_PENDING no depende de que exista un ACTIVE.
+  it('retoma un PENDING válido sin ACTIVE, y rechaza un ID inventado en el mismo escenario', async () => {
+    const requestInput = input({
+      turn: { messageId: 'wamid.pending-no-active', text: '¿Qué postres tienen?' },
+      state: { revision: 1, active: null, pending: [pending] },
+    });
+    const decision = { decision: 'RESUME_PENDING', intentId: PENDING_ID };
+    invokeMock.mockResolvedValue(decision);
+    await expect(runHumanIntentPreflight(requestInput)).resolves.toEqual(decision);
+
+    const invented = { decision: 'RESUME_PENDING', intentId: '99999999-9999-4999-8999-999999999999' };
+    invokeMock.mockResolvedValue(invented);
+    await expect(runHumanIntentPreflight(requestInput)).resolves.toEqual({ decision: 'AMBIGUOUS' });
   });
 
   it.each([
