@@ -880,3 +880,109 @@ describe('reservationAgentNode — present_slots adjunta la lista', () => {
     expect(String(result.handlerResult?.content)).toMatch(/No hay horarios disponibles/i);
   });
 });
+
+// Caso real auditado (turnId 7cc40292): el LLM persiste la fecha con
+// save_reservation_date y termina el turno con texto (sin tool_call de
+// get_available_slots) — el ReAct no reintenta solo. El nodo no puede
+// depender de esa segunda llamada: debe presentar los horarios él mismo.
+describe('reservationAgentNode — backup determinístico de horarios (paso slot sin señal del LLM)', () => {
+  const draftDateOnly = { date: '01/11/2026', partySize: 2 };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedEnvs.mockResolvedValue([]);
+    mockedMaxParty.mockResolvedValue(20);
+    mockedExtractConfirm.mockResolvedValue({ status: 'delegate' });
+    mockedExtractEnv.mockResolvedValue({ status: 'delegate' });
+    mockedExtractSlot.mockResolvedValue({ status: 'delegate' });
+    mockedExtractParty.mockResolvedValue({ status: 'delegate' });
+    mockedFindFirst.mockResolvedValue({
+      metadata: { reservation_agent_active: true, reservation_draft: draftDateOnly },
+    });
+  });
+
+  const stateWithDateOnlyDraft = () =>
+    baseState({
+      webhookContext: {
+        payloadId: undefined,
+        message: { text: { body: 'Para el 1/11 a las 8:00pm' } },
+      } as never,
+      workingConversationState: {
+        metadata: { reservation_agent_active: true, reservation_draft: draftDateOnly },
+      } as never,
+    });
+
+  it('LLM termina con texto sin señal present_slots → el nodo consulta y presenta los horarios igual', async () => {
+    mockedSlotsForDate.mockResolvedValue([
+      { id: 'slot-20', start_time: '20:00', end_time: '21:00' },
+    ]);
+    mockedRunAgent.mockResolvedValue({
+      text: '🤖\n\nAnoté el 1/11. Ya te busco los horarios disponibles.',
+      signals: idleSignals, // sin present_slots: el LLM no llamó get_available_slots
+    });
+
+    const result = await reservationAgentNode(stateWithDateOnlyDraft());
+
+    expect(mockedSlotsForDate).toHaveBeenCalledWith(
+      'biz-1',
+      expect.anything()
+    );
+    expect(result.handlerResult?.isInteractive).toBe(true);
+    expect(JSON.stringify(result.handlerResult?.content)).toMatch(
+      /RESERVATION_SLOT:slot-20/
+    );
+  });
+
+  it('no duplica la consulta/presentación si el LLM ya presentó horarios este turno', async () => {
+    mockedSlotsForDate.mockResolvedValue([
+      { id: 'slot-20', start_time: '20:00', end_time: '21:00' },
+    ]);
+    mockedRunAgent.mockResolvedValue({
+      text: '🤖\n\n¿A qué hora preferís?',
+      signals: {
+        ...idleSignals,
+        presentSlots: true,
+        presentSlotsDate: '01/11/2026',
+      },
+    });
+
+    const result = await reservationAgentNode(stateWithDateOnlyDraft());
+
+    // El nodo ya consulta el catálogo de slots una vez por turno (tipable
+    // select_slot) y una segunda vez al presentar la señal del LLM — el
+    // backup no debe sumar una tercera: `signals.presentSlots` ya es true.
+    expect(mockedSlotsForDate).toHaveBeenCalledTimes(2);
+    expect(result.handlerResult?.isInteractive).toBe(true);
+    expect(JSON.stringify(result.handlerResult?.content)).toMatch(
+      /RESERVATION_SLOT:slot-20/
+    );
+  });
+
+  it('sin disponibilidad para la fecha: avisa en texto, no manda lista ficticia', async () => {
+    mockedSlotsForDate.mockResolvedValue([]);
+    mockedRunAgent.mockResolvedValue({
+      text: '🤖\n\nAnoté el 1/11. Ya te busco los horarios disponibles.',
+      signals: idleSignals,
+    });
+
+    const result = await reservationAgentNode(stateWithDateOnlyDraft());
+
+    expect(result.handlerResult?.isInteractive).toBe(false);
+    expect(String(result.handlerResult?.content)).toMatch(/No hay horarios disponibles/i);
+  });
+
+  it('la consulta de disponibilidad falla: no inventa resultados ni afirma éxito', async () => {
+    mockedSlotsForDate.mockRejectedValue(new Error('db down'));
+    mockedRunAgent.mockResolvedValue({
+      text: '🤖\n\nAnoté el 1/11. Ya te busco los horarios disponibles.',
+      signals: idleSignals,
+    });
+
+    const result = await reservationAgentNode(stateWithDateOnlyDraft());
+
+    expect(result.handlerResult?.isInteractive).toBe(false);
+    expect(result.handlerResult?.content).toBe(
+      '🤖\n\nAnoté el 1/11. Ya te busco los horarios disponibles.'
+    );
+  });
+});

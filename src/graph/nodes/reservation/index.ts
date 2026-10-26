@@ -1156,20 +1156,22 @@ export const reservationAgentNode = async (
     return { handlerResult, dataCollectionDelegated: true };
   }
 
-  // ── Señal: mostrar lista de horarios disponibles ───────────────────────────
-  // `presentSlotsDate` es la fecha del borrador, no la que dijo el modelo: el gate
-  // duro vive en `get_available_slots` (sin fecha guardada no hay señal).
-  if (signals.presentSlots && signals.presentSlotsDate) {
+  // ── Helper: consultar y armar la lista interactiva de horarios ───────────
+  // Compartido por la señal del LLM y por el backup determinístico de abajo —
+  // misma lógica de negocio, una sola vez (reglas de disponibilidad/horarios
+  // ya resueltas en `fetchReservationSlotsForBusinessDate`).
+  // `null` = la consulta falló; el caller decide el fallback sin inventar
+  // disponibilidad.
+  const presentSlotsForDate = async (
+    dateStr: string
+  ): Promise<HandlerResult | null> => {
     try {
-      const parsedDate = normalizeDate(signals.presentSlotsDate);
+      const parsedDate = normalizeDate(dateStr);
       const slots = await fetchReservationSlotsForBusinessDate(business.id, parsedDate);
       if (slots.length === 0) {
         return {
-          handlerResult: {
-            content: `${text}\n\n_No hay horarios disponibles para esa fecha. Probá con otra._`,
-            isInteractive: false,
-          },
-          dataCollectionDelegated: true,
+          content: `${text}\n\n_No hay horarios disponibles para esa fecha. Probá con otra._`,
+          isInteractive: false,
         };
       }
 
@@ -1185,13 +1187,44 @@ export const reservationAgentNode = async (
         '',
         'Elegí un horario'
       );
-      return {
-        handlerResult: { content: slotList, isInteractive: true },
-        dataCollectionDelegated: true,
-      };
+      return { content: slotList, isInteractive: true };
     } catch {
+      return null;
+    }
+  };
+
+  // ── Señal: mostrar lista de horarios disponibles ───────────────────────────
+  // `presentSlotsDate` es la fecha del borrador, no la que dijo el modelo: el gate
+  // duro vive en `get_available_slots` (sin fecha guardada no hay señal).
+  if (signals.presentSlots && signals.presentSlotsDate) {
+    const result = await presentSlotsForDate(signals.presentSlotsDate);
+    return {
+      handlerResult: result ?? { content: text, isInteractive: false },
+      dataCollectionDelegated: true,
+    };
+  }
+
+  // ── Backup por estado: el ReAct terminó con texto sin llamar get_available_slots ──
+  // Mismo criterio que el backup de `confirm` más abajo (D4): si el paso
+  // derivado es `slot` y hay fecha persistida, la consulta no puede depender
+  // de que el modelo repita el tool_call en esta u otra vuelta — el nodo la
+  // ejecuta él mismo. Solo corre cuando el LLM no presentó horarios este
+  // turno (rama anterior), así que nunca duplica la consulta/presentación.
+  if (!signals.presentSlots) {
+    const draftForSlotBackup = await readReservationDraft(conversationId);
+    const stepForSlotBackup = nextReservationStep(
+      {
+        date: draftForSlotBackup.date,
+        slotId: draftForSlotBackup.slotId,
+        partySize: draftForSlotBackup.partySize,
+        environmentId: draftForSlotBackup.environmentId,
+      },
+      { hasEnvironments: environments.length > 0 }
+    );
+    if (stepForSlotBackup === 'slot' && draftForSlotBackup.date) {
+      const result = await presentSlotsForDate(draftForSlotBackup.date);
       return {
-        handlerResult: { content: text, isInteractive: false },
+        handlerResult: result ?? { content: text, isInteractive: false },
         dataCollectionDelegated: true,
       };
     }

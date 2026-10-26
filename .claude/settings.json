@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "ask": [
+      "Bash(git commit*)",
+      "Bash(git commit --amend*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.command // \"\"' | { read -r cmd; if echo \"$cmd\" | grep -Eq 'git +commit\\b'; then echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"git commit requiere autorizacion explicita del usuario (politica del proyecto) - no crear commits sin que el usuario lo pida para esta operacion especifica.\"}}'; fi; }",
+            "onFailure": "continue"
+          }
+        ]
+      }
+    ]
+  }
+}
