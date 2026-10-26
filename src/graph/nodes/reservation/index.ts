@@ -1193,15 +1193,82 @@ export const reservationAgentNode = async (
     }
   };
 
+  // ── Helper: resolver la hora pedida en el MISMO mensaje contra el catálogo real ──
+  // Cubre "para el 1/11 a las 8pm": la fecha ya se persistió, pero el ReAct no
+  // tenía el catálogo de slots disponible dentro de esa misma invocación (se
+  // calcula antes de que `save_reservation_date` corra). Reusa el mismo
+  // matcher y el mismo camino de persistencia validada que ya resuelve
+  // "a las 19:00" / bandas cuando el cliente responde en el turno del paso
+  // `slot` (más abajo, tipable) — ninguna regla ni extractor nuevo.
+  // Memoizado: la señal y el backup nunca intentan resolver dos veces.
+  let slotFromSameMessageAttempted = false;
+  let slotResolvedFromSameMessage = false;
+  const tryResolveRequestedSlotFromMessage = async (dateStr: string): Promise<boolean> => {
+    if (slotFromSameMessageAttempted) return slotResolvedFromSameMessage;
+    slotFromSameMessageAttempted = true;
+
+    const userText = ctx.message?.text?.body?.trim() ?? '';
+    const hasPayload = Boolean(payloadId?.trim());
+    if (!userText || hasPayload) return false;
+
+    try {
+      const parsedDate = normalizeDate(dateStr);
+      const slotsForDate = await fetchReservationSlotsForBusinessDate(business.id, parsedDate);
+      const catalog = slotsForDate.map((s) => ({
+        id: s.id,
+        startTime: s.start_time,
+        endTime: s.end_time,
+      }));
+      if (catalog.length === 0) return false;
+
+      const extraction = await extractSelectSlotPending(userText, catalog);
+      console.log(
+        JSON.stringify({
+          event: '[reservation-agent] select_slot_same_message_extraction',
+          status: extraction.status,
+          confidence: extraction.confidence,
+          source: extraction.source,
+          conversationId,
+        })
+      );
+      if (
+        extraction.status !== 'fulfilled' ||
+        !extraction.value ||
+        !isValidSlotSelection(extraction.value.slotId, catalog)
+      ) {
+        return false;
+      }
+
+      const chosen = catalog.find((s) => s.id === extraction.value!.slotId);
+      if (!chosen) return false;
+
+      await patchReservationDraft(conversationId, {
+        slotId: chosen.id,
+        time: chosen.startTime,
+        endTime: chosen.endTime,
+      });
+      slotResolvedFromSameMessage = true;
+      return true;
+    } catch (err) {
+      console.error('[reservation-agent] error resolviendo hora del mismo mensaje:', err);
+      return false;
+    }
+  };
+
   // ── Señal: mostrar lista de horarios disponibles ───────────────────────────
   // `presentSlotsDate` es la fecha del borrador, no la que dijo el modelo: el gate
   // duro vive en `get_available_slots` (sin fecha guardada no hay señal).
   if (signals.presentSlots && signals.presentSlotsDate) {
-    const result = await presentSlotsForDate(signals.presentSlotsDate);
-    return {
-      handlerResult: result ?? { content: text, isInteractive: false },
-      dataCollectionDelegated: true,
-    };
+    const resolved = await tryResolveRequestedSlotFromMessage(signals.presentSlotsDate);
+    if (!resolved) {
+      const result = await presentSlotsForDate(signals.presentSlotsDate);
+      return {
+        handlerResult: result ?? { content: text, isInteractive: false },
+        dataCollectionDelegated: true,
+      };
+    }
+    // Resuelto: el slot ya quedó persistido; seguir al tramo de abajo, que
+    // recalcula el paso derivado y presenta confirmación/siguiente paso.
   }
 
   // ── Backup por estado: el ReAct terminó con texto sin llamar get_available_slots ──
@@ -1222,16 +1289,23 @@ export const reservationAgentNode = async (
       { hasEnvironments: environments.length > 0 }
     );
     if (stepForSlotBackup === 'slot' && draftForSlotBackup.date) {
-      const result = await presentSlotsForDate(draftForSlotBackup.date);
-      return {
-        handlerResult: result ?? { content: text, isInteractive: false },
-        dataCollectionDelegated: true,
-      };
+      const resolved = await tryResolveRequestedSlotFromMessage(draftForSlotBackup.date);
+      if (!resolved) {
+        const result = await presentSlotsForDate(draftForSlotBackup.date);
+        return {
+          handlerResult: result ?? { content: text, isInteractive: false },
+          dataCollectionDelegated: true,
+        };
+      }
+      // Resuelto: mismo criterio que arriba, seguir al tramo de abajo.
     }
   }
 
-  // ── Señal: mostrar lista de ambientes ────────────────────────────────────
-  if (signals.presentEnvironments) {
+  // ── Helper: armar la lista interactiva de ambientes ──────────────────────
+  // Compartido por la señal del LLM y por el backup determinístico de abajo —
+  // mismo catálogo (`environments`, ya cargado al inicio del nodo), una sola
+  // construcción de la lista.
+  const presentEnvironmentsList = (): HandlerResult => {
     const buttons = [
       ...environments.map((env) => ({
         title: env.name,
@@ -1254,10 +1328,43 @@ export const reservationAgentNode = async (
       '',
       'Elegí un ambiente'
     );
+    return { content: envList, isInteractive: true };
+  };
+
+  // ── Señal: mostrar lista de ambientes ────────────────────────────────────
+  if (signals.presentEnvironments) {
     return {
-      handlerResult: { content: envList, isInteractive: true },
+      handlerResult: presentEnvironmentsList(),
       dataCollectionDelegated: true,
     };
+  }
+
+  // ── Backup por estado: paso derivado es `environment` sin señal del LLM ──
+  // Mismo criterio que el backup de `slot` más arriba: si el slot se acaba
+  // de resolver (por el LLM o por `tryResolveRequestedSlotFromMessage`) y el
+  // siguiente paso requerido es `environment`, el nodo no puede depender de
+  // que el modelo llame `get_available_environments` en esta u otra vuelta —
+  // presenta las opciones él mismo. Si el negocio no tiene ambientes
+  // configurados, `nextReservationStep` nunca devuelve `'environment'` (salta
+  // directo a `confirm`), así que este backup no se activa y no hace falta
+  // distinguir ese caso acá.
+  if (!signals.presentEnvironments) {
+    const draftForEnvBackup = await readReservationDraft(conversationId);
+    const stepForEnvBackup = nextReservationStep(
+      {
+        date: draftForEnvBackup.date,
+        slotId: draftForEnvBackup.slotId,
+        partySize: draftForEnvBackup.partySize,
+        environmentId: draftForEnvBackup.environmentId,
+      },
+      { hasEnvironments: environments.length > 0 }
+    );
+    if (stepForEnvBackup === 'environment') {
+      return {
+        handlerResult: presentEnvironmentsList(),
+        dataCollectionDelegated: true,
+      };
+    }
   }
 
   // ── Señal o backup por estado: mostrar confirmación (D4) ─────────────────

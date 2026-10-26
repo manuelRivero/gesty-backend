@@ -948,14 +948,22 @@ describe('reservationAgentNode — backup determinístico de horarios (paso slot
 
     const result = await reservationAgentNode(stateWithDateOnlyDraft());
 
-    // El nodo ya consulta el catálogo de slots una vez por turno (tipable
-    // select_slot) y una segunda vez al presentar la señal del LLM — el
-    // backup no debe sumar una tercera: `signals.presentSlots` ya es true.
-    expect(mockedSlotsForDate).toHaveBeenCalledTimes(2);
+    // El backup de resolución-por-mensaje no encuentra match (el mock de
+    // extractSelectSlotPending devuelve 'delegate' por defecto) y la señal
+    // del LLM presenta la lista una sola vez — nunca dos listas ni dos
+    // persistencias de slot para el mismo turno.
+    expect(mockedPatch).not.toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({
+        reservation_draft: expect.objectContaining({ slotId: expect.anything() }),
+      })
+    );
     expect(result.handlerResult?.isInteractive).toBe(true);
     expect(JSON.stringify(result.handlerResult?.content)).toMatch(
       /RESERVATION_SLOT:slot-20/
     );
+    // Una sola lista interactiva en el resultado (no se presenta dos veces).
+    expect(mockedSlotsForDate.mock.calls.length).toBeGreaterThan(0);
   });
 
   it('sin disponibilidad para la fecha: avisa en texto, no manda lista ficticia', async () => {
@@ -984,5 +992,352 @@ describe('reservationAgentNode — backup determinístico de horarios (paso slot
     expect(result.handlerResult?.content).toBe(
       '🤖\n\nAnoté el 1/11. Ya te busco los horarios disponibles.'
     );
+  });
+});
+
+// Auditoría de seguimiento: «Para el 1/11 a las 8:00pm» persiste la fecha
+// pero pierde la hora, porque el catálogo de slots no existe todavía dentro
+// de la invocación del ReAct que guarda la fecha. El backup resuelve la hora
+// contra el catálogo real una vez que ya está disponible, reusando el mismo
+// matcher (`extractSelectSlotPending`/`isValidSlotSelection`) y el mismo
+// camino de persistencia validada que el paso `slot` tipable.
+describe('reservationAgentNode — resolver la hora del mismo mensaje contra el catálogo', () => {
+  // Arranca SIN fecha en el draft — como en el bug real, la fecha todavía no
+  // existe cuando el nodo lee el estado antes de invocar al ReAct (gate de
+  // `tipableStep`/catálogo previo). La persistencia de `date` ocurre recién
+  // *dentro* de `runReservationAgent` (la tool `save_reservation_date` real
+  // corre ahí); el mock la simula mutando `currentMetadata` como efecto
+  // secundario de esa llamada, igual que lo haría la DB real.
+  const draftBeforeTurn = { partySize: 2 };
+  let currentMetadata: Record<string, unknown>;
+
+  const mockRunAgentPersistingDate = (result: {
+    text: string;
+    signals: Omit<typeof idleSignals, 'presentSlotsDate'> & { presentSlotsDate?: string | null };
+  }) =>
+    mockedRunAgent.mockImplementation(async () => {
+      const draft = (currentMetadata.reservation_draft ?? {}) as Record<string, unknown>;
+      currentMetadata = {
+        ...currentMetadata,
+        reservation_draft: { ...draft, date: '01/11/2026' },
+      };
+      return result;
+    });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    currentMetadata = {
+      reservation_agent_active: true,
+      reservation_draft: { ...draftBeforeTurn },
+    };
+    mockedEnvs.mockResolvedValue([]);
+    mockedMaxParty.mockResolvedValue(20);
+    mockedExtractConfirm.mockResolvedValue({ status: 'delegate' });
+    mockedExtractEnv.mockResolvedValue({ status: 'delegate' });
+    mockedExtractParty.mockResolvedValue({ status: 'delegate' });
+    // Lectura con estado: refleja los merges que `patchReservationDraft` ya
+    // escribe vía `patchConversationMetadata` (shallow merge de 1er nivel,
+    // igual que la implementación real — ver draft.repository.ts).
+    mockedFindFirst.mockImplementation(async () => ({ metadata: currentMetadata }));
+    mockedPatch.mockImplementation(async (_cid: string, partial: Record<string, unknown>) => {
+      currentMetadata = { ...currentMetadata, ...partial };
+      return undefined;
+    });
+    mockRunAgentPersistingDate({
+      text: '🤖\n\nAnoté el 1/11. Ya te busco los horarios disponibles.',
+      signals: idleSignals, // el LLM no llamó get_available_slots ni save_reservation_slot
+    });
+  });
+
+  const stateWithDateAndHourMessage = () =>
+    baseState({
+      webhookContext: {
+        payloadId: undefined,
+        message: { text: { body: 'Para el 1/11 a las 8:00pm' } },
+      } as never,
+      workingConversationState: {
+        metadata: { reservation_agent_active: true, reservation_draft: draftBeforeTurn },
+      } as never,
+    });
+
+  it('hora disponible: persiste el slot correcto y presenta confirmación, no la lista genérica', async () => {
+    mockedSlotsForDate.mockResolvedValue([
+      { id: 'slot-17', start_time: '17:00', end_time: '18:00' },
+      { id: 'slot-20', start_time: '20:00', end_time: '21:00' },
+    ]);
+    mockedExtractSlot.mockResolvedValue({
+      status: 'fulfilled',
+      value: { slotId: 'slot-20' },
+      confidence: 0.95,
+      source: 'llm',
+      reason: null,
+    });
+
+    const result = await reservationAgentNode(stateWithDateAndHourMessage());
+
+    expect(mockedExtractSlot).toHaveBeenCalledWith(
+      'Para el 1/11 a las 8:00pm',
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'slot-20', startTime: '20:00', endTime: '21:00' }),
+      ])
+    );
+    expect(mockedPatch).toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({
+        reservation_draft: expect.objectContaining({
+          slotId: 'slot-20',
+          time: '20:00',
+          endTime: '21:00',
+        }),
+      })
+    );
+    // Sin ambientes configurados y con partySize/date/slotId completos, el
+    // paso derivado ya es `confirm`: tarjeta de confirmación, no lista.
+    expect(result.handlerResult?.isInteractive).toBe(true);
+    expect(JSON.stringify(result.handlerResult?.content)).toMatch(/RESERVATION_CONFIRM/);
+    expect(JSON.stringify(result.handlerResult?.content)).not.toMatch(/RESERVATION_SLOT:/);
+  });
+
+  it('hora no disponible: no selecciona otro slot, presenta la lista real', async () => {
+    mockedSlotsForDate.mockResolvedValue([
+      { id: 'slot-17', start_time: '17:00', end_time: '18:00' },
+    ]);
+    // El catálogo no tiene las 20:00 pedidas: el extractor no puede resolver
+    // un match inequívoco contra ese catálogo.
+    mockedExtractSlot.mockResolvedValue({
+      status: 'reprompt',
+      value: null,
+      confidence: 0.4,
+      source: 'llm',
+      reason: 'hora_no_en_catalogo',
+    });
+
+    const result = await reservationAgentNode(stateWithDateAndHourMessage());
+
+    expect(mockedPatch).not.toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({
+        reservation_draft: expect.objectContaining({ slotId: expect.anything() }),
+      })
+    );
+    expect(result.handlerResult?.isInteractive).toBe(true);
+    expect(JSON.stringify(result.handlerResult?.content)).toMatch(
+      /RESERVATION_SLOT:slot-17/
+    );
+  });
+
+  it('sin hora explícita en el mensaje: conserva el comportamiento actual (lista completa)', async () => {
+    mockedSlotsForDate.mockResolvedValue([
+      { id: 'slot-17', start_time: '17:00', end_time: '18:00' },
+    ]);
+    mockedExtractSlot.mockResolvedValue({ status: 'delegate', value: null, confidence: 0, source: 'llm', reason: null });
+
+    const result = await reservationAgentNode(
+      baseState({
+        webhookContext: {
+          payloadId: undefined,
+          message: { text: { body: '¿Para qué fecha tienen lugar?' } },
+        } as never,
+        workingConversationState: {
+          metadata: { reservation_agent_active: true, reservation_draft: draftBeforeTurn },
+        } as never,
+      })
+    );
+
+    expect(mockedPatch).not.toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({
+        reservation_draft: expect.objectContaining({ slotId: expect.anything() }),
+      })
+    );
+    expect(result.handlerResult?.isInteractive).toBe(true);
+    expect(JSON.stringify(result.handlerResult?.content)).toMatch(
+      /RESERVATION_SLOT:slot-17/
+    );
+  });
+
+  it('no procesa dos veces la misma selección si la señal del LLM y el backup podrían ambos aplicar', async () => {
+    mockedSlotsForDate.mockResolvedValue([
+      { id: 'slot-20', start_time: '20:00', end_time: '21:00' },
+    ]);
+    mockedExtractSlot.mockResolvedValue({
+      status: 'fulfilled',
+      value: { slotId: 'slot-20' },
+      confidence: 0.95,
+      source: 'llm',
+      reason: null,
+    });
+    // El LLM sí llamó get_available_slots este turno (señal presente) — la
+    // resolución por mensaje debe intentarse una sola vez, dentro de esa
+    // rama, y el backup posterior (guardado por `!signals.presentSlots`) no
+    // debe volver a intentarla.
+    mockRunAgentPersistingDate({
+      text: '🤖\n\n¿A qué hora preferís?',
+      signals: {
+        ...idleSignals,
+        presentSlots: true,
+        presentSlotsDate: '01/11/2026',
+      },
+    });
+
+    await reservationAgentNode(stateWithDateAndHourMessage());
+
+    expect(mockedExtractSlot).toHaveBeenCalledTimes(1);
+    expect(
+      mockedPatch.mock.calls.filter(
+        (call) =>
+          typeof call[1] === 'object' &&
+          call[1] !== null &&
+          'reservation_draft' in (call[1] as Record<string, unknown>) &&
+          (call[1] as { reservation_draft?: { slotId?: string } }).reservation_draft?.slotId ===
+            'slot-20'
+      ).length
+    ).toBe(1);
+  });
+
+  // Tras el fix de continuidad de `environment` (tarea siguiente): el slot
+  // queda persistido y, como el paso derivado ahora es `environment`, el
+  // nodo presenta las opciones de ambiente él mismo en el mismo turno —
+  // en vez de devolver el texto original del LLM sin avanzar.
+  it('con ambientes configurados: persiste el slot y presenta las opciones de ambiente en el mismo turno', async () => {
+    mockedEnvs.mockResolvedValue([{ id: 'env-salon', name: 'Salón principal' }]);
+    mockedSlotsForDate.mockResolvedValue([
+      { id: 'slot-20', start_time: '20:00', end_time: '21:00' },
+    ]);
+    mockedExtractSlot.mockResolvedValue({
+      status: 'fulfilled',
+      value: { slotId: 'slot-20' },
+      confidence: 0.95,
+      source: 'llm',
+      reason: null,
+    });
+
+    const result = await reservationAgentNode(stateWithDateAndHourMessage());
+
+    // El slot sí quedó resuelto y persistido por el fix anterior.
+    expect(mockedPatch).toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({
+        reservation_draft: expect.objectContaining({ slotId: 'slot-20' }),
+      })
+    );
+    // El paso derivado es `environment`: el backup presenta la lista real de
+    // ambientes, no el texto original del LLM ni la tarjeta de confirmación.
+    expect(result.handlerResult?.isInteractive).toBe(true);
+    expect(JSON.stringify(result.handlerResult?.content)).toMatch(
+      /RESERVATION_ENV:env-salon/
+    );
+    expect(JSON.stringify(result.handlerResult?.content)).not.toMatch(/RESERVATION_CONFIRM/);
+  });
+});
+
+// Backup determinístico del paso `environment`: mismo criterio que el de
+// `slot`/`confirm` — si el ReAct termina con texto sin llamar
+// `get_available_environments`, el nodo no puede depender de que el modelo
+// repita el tool_call; presenta las opciones de ambiente él mismo.
+describe('reservationAgentNode — backup determinístico de ambientes (paso environment sin señal del LLM)', () => {
+  const draftReadySlotPendingEnv = {
+    date: '20/08/2026',
+    slotId: 'slot-1',
+    time: '20:00',
+    endTime: '21:00',
+    partySize: 4,
+  };
+  const salonPrincipal = { id: 'env-salon', name: 'Salón principal' };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedMaxParty.mockResolvedValue(20);
+    mockedExtractConfirm.mockResolvedValue({ status: 'delegate' });
+    mockedExtractEnv.mockResolvedValue({ status: 'delegate' });
+    mockedExtractSlot.mockResolvedValue({ status: 'delegate' });
+    mockedExtractParty.mockResolvedValue({ status: 'delegate' });
+    mockedSlotsForDate.mockResolvedValue([]);
+  });
+
+  const stateWithDraft = (draft: Record<string, unknown>) =>
+    baseState({
+      webhookContext: {
+        payloadId: undefined,
+        message: { text: { body: 'listo' } },
+      } as never,
+      workingConversationState: {
+        metadata: { reservation_agent_active: true, reservation_draft: draft },
+      } as never,
+    });
+
+  it('ambiente obligatorio (hay opciones configuradas): presenta la lista de ambientes', async () => {
+    mockedEnvs.mockResolvedValue([salonPrincipal]);
+    mockedFindFirst.mockResolvedValue({
+      metadata: { reservation_draft: draftReadySlotPendingEnv },
+    });
+    mockedRunAgent.mockResolvedValue({
+      text: '🤖\n\nListo, anoté el horario.',
+      signals: idleSignals, // el LLM no llamó get_available_environments
+    });
+
+    const result = await reservationAgentNode(stateWithDraft(draftReadySlotPendingEnv));
+
+    expect(result.handlerResult?.isInteractive).toBe(true);
+    expect(JSON.stringify(result.handlerResult?.content)).toMatch(
+      /RESERVATION_ENV:env-salon/
+    );
+    // No confirma prematuramente: todavía falta elegir ambiente.
+    expect(JSON.stringify(result.handlerResult?.content)).not.toMatch(/RESERVATION_CONFIRM/);
+  });
+
+  it('sin ambientes configurados: el paso salta directo a confirm, no se presenta lista de ambientes', async () => {
+    mockedEnvs.mockResolvedValue([]);
+    mockedFindFirst.mockResolvedValue({
+      metadata: { reservation_draft: draftReadySlotPendingEnv },
+    });
+    mockedRunAgent.mockResolvedValue({
+      text: '🤖\n\nListo, anoté el horario.',
+      signals: idleSignals,
+    });
+
+    const result = await reservationAgentNode(stateWithDraft(draftReadySlotPendingEnv));
+
+    expect(result.handlerResult?.isInteractive).toBe(true);
+    expect(JSON.stringify(result.handlerResult?.content)).toMatch(/RESERVATION_CONFIRM/);
+    expect(JSON.stringify(result.handlerResult?.content)).not.toMatch(/RESERVATION_ENV:/);
+  });
+
+  it('selección de ambiente todavía pendiente: no confirma la reserva prematuramente', async () => {
+    mockedEnvs.mockResolvedValue([salonPrincipal]);
+    mockedFindFirst.mockResolvedValue({
+      metadata: { reservation_draft: draftReadySlotPendingEnv },
+    });
+    mockedRunAgent.mockResolvedValue({
+      text: '🤖\n\nListo, anoté el horario.',
+      signals: idleSignals,
+    });
+
+    const result = await reservationAgentNode(stateWithDraft(draftReadySlotPendingEnv));
+
+    // El backup presenta opciones, nunca una confirmación con el ambiente sin elegir.
+    expect(result.handlerResult?.isInteractive).toBe(true);
+    expect(JSON.stringify(result.handlerResult?.content)).not.toMatch(/RESERVATION_CONFIRM/);
+  });
+
+  it('no duplica la presentación si el LLM ya mostró los ambientes este turno', async () => {
+    mockedEnvs.mockResolvedValue([salonPrincipal]);
+    mockedFindFirst.mockResolvedValue({
+      metadata: { reservation_draft: draftReadySlotPendingEnv },
+    });
+    mockedRunAgent.mockResolvedValue({
+      text: '🤖\n\n¿En qué ambiente preferís?',
+      signals: { ...idleSignals, presentEnvironments: true },
+    });
+
+    const result = await reservationAgentNode(stateWithDraft(draftReadySlotPendingEnv));
+
+    // Una sola lista en el resultado final (la de la señal); el backup no
+    // se ejecuta porque `signals.presentEnvironments` ya es true.
+    expect(result.handlerResult?.isInteractive).toBe(true);
+    const content = JSON.stringify(result.handlerResult?.content);
+    expect(content).toMatch(/RESERVATION_ENV:env-salon/);
+    const occurrences = content.match(/RESERVATION_ENV:env-salon/g) ?? [];
+    expect(occurrences.length).toBe(1);
   });
 });
