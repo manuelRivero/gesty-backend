@@ -64,7 +64,14 @@ export type ContextRoute =
   | 'nlp'
   | 'checkout'
   | 'payment_proof'
-  | 'owner_assistant';
+  | 'owner_assistant'
+  /**
+   * Click de una interacción (lista/botón) que ya no es la vigente de la
+   * conversación — ver `activeInteraction.service.ts`. Va directo a
+   * `NODE.SEND` con un `handlerResult` fijo, sin pasar por ningún subflujo
+   * (ni dispatch de carrito, ni agente de reservas/checkout/onboarding).
+   */
+  | 'stale_interaction';
 
 /** Decisión de routing tras NLP / payload mapping. */
 export type IntentRoute =

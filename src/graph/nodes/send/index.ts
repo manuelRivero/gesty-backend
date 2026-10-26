@@ -25,6 +25,7 @@ import { NEGATIVE_SENTIMENTS } from '../../../types/conversationSentiment';
 import { z } from 'zod';
 import { parseAddItemButtonPayload, parseProductId } from '../../../controllers/webhook/utils';
 import { issueProductResolutions } from '../../../services/productResolution.service';
+import { registerActiveInteraction } from '../../../services/activeInteraction.service';
 import type { HandlerResult } from '../../../controllers/webhook/types';
 import type { AgentState, AgentStateUpdate } from '../../state';
 
@@ -74,6 +75,54 @@ const collectProductPayloadIds = (result: HandlerResult): string[] => {
           if (!row || typeof row !== 'object') continue;
           const id = productIdFromPayload((row as Record<string, unknown>).id);
           if (id) ids.push(id);
+        }
+      }
+    }
+  };
+
+  collectContent(result.content);
+  for (const followUp of result.followUps ?? []) {
+    if (followUp.type === 'list') collectContent(followUp.listMessage);
+    if (followUp.type === 'interactive') collectContent(followUp.message);
+  }
+  return [...new Set(ids)];
+};
+
+/**
+ * Igual recorrido que `collectProductPayloadIds`, pero sin filtrar por
+ * producto: todos los `button.reply.id` / `row.id` del mensaje interactivo
+ * (y sus followUps) tal cual se van a enviar. Alimenta `activeInteraction`
+ * (vigencia genérica de listas/botones), no la ledger de productos.
+ */
+const collectAllInteractiveOptionIds = (result: HandlerResult): string[] => {
+  const ids: string[] = [];
+  const collectContent = (content: unknown): void => {
+    if (!content || typeof content !== 'object') return;
+    const root = content as Record<string, unknown>;
+    if (root.type === 'interactive') {
+      const interactive = root.interactive as Record<string, unknown> | undefined;
+      const action = interactive?.action as Record<string, unknown> | undefined;
+      const buttons = action?.buttons;
+      if (Array.isArray(buttons)) {
+        for (const button of buttons) {
+          if (!button || typeof button !== 'object') continue;
+          const reply = (button as Record<string, unknown>).reply as Record<string, unknown> | undefined;
+          if (typeof reply?.id === 'string') ids.push(reply.id);
+        }
+      }
+    }
+    if (root.type === 'list') {
+      const action = root.action as Record<string, unknown> | undefined;
+      const sections = action?.sections;
+      if (!Array.isArray(sections)) return;
+      for (const section of sections) {
+        if (!section || typeof section !== 'object') continue;
+        const rows = (section as Record<string, unknown>).rows;
+        if (!Array.isArray(rows)) continue;
+        for (const row of rows) {
+          if (!row || typeof row !== 'object') continue;
+          const id = (row as Record<string, unknown>).id;
+          if (typeof id === 'string') ids.push(id);
         }
       }
     }
@@ -217,6 +266,20 @@ export const sendResponseNode = async (
         status: 'candidate',
         scope: 'conversation',
       });
+    }
+
+    // Vigencia genérica (RESERVATION_SLOT, CATEGORY, confirmaciones puntuales,
+    // etc. — todo lo que no gobierna ya ProductResolution ni es navegación
+    // global). Se mira el contenido real (main + followUps), no solo
+    // `isInteractive` del main: un `textResponse(main, [{type:'list', ...}])`
+    // (p. ej. `addItemHandler`) también presenta una lista nueva aunque el
+    // contenido principal sea texto. Un turno sin ningún elemento interactivo
+    // (ni main ni followUps) no toca `activeInteraction` — lo que haya
+    // quedado del lado de lectura del turno (consumido/invalidado/intacto)
+    // se mantiene igual.
+    const presentedOptionIds = collectAllInteractiveOptionIds(humanizedResult);
+    if (presentedOptionIds.length > 0) {
+      await registerActiveInteraction(conversationId, presentedOptionIds, ctx.turnId);
     }
   }
   return { handlerResult: humanizedResult };

@@ -1,8 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const { issueProductResolutionsMock, sendResponseMock, conversationMetadata } = vi.hoisted(() => ({
+const {
+  issueProductResolutionsMock,
+  sendResponseMock,
+  registerActiveInteractionMock,
+  conversationMetadata,
+} = vi.hoisted(() => ({
   issueProductResolutionsMock: vi.fn().mockResolvedValue([]),
   sendResponseMock: vi.fn().mockResolvedValue(undefined),
+  registerActiveInteractionMock: vi.fn().mockResolvedValue(undefined),
   conversationMetadata: { current: {} as Record<string, unknown> },
 }));
 
@@ -17,6 +23,9 @@ vi.mock('../../../../services/ai/humanizeBotBody.service', () => ({
 }));
 vi.mock('../../../../services/productResolution.service', () => ({
   issueProductResolutions: issueProductResolutionsMock,
+}));
+vi.mock('../../../../services/activeInteraction.service', () => ({
+  registerActiveInteraction: registerActiveInteractionMock,
 }));
 vi.mock('../../../../repositories', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../../repositories')>();
@@ -61,6 +70,11 @@ describe('sendResponseNode ProductResolution issuance', () => {
     } as never);
 
     expect(sendResponseMock).toHaveBeenCalledOnce();
+    expect(registerActiveInteractionMock).toHaveBeenCalledWith(
+      CONVERSATION_ID,
+      [`ADD_ITEM:${MENU_ITEM_ID}:1`, `SELECT_PRODUCT:${QUERY_ITEM_ID}`, 'VIEW_MENU'],
+      undefined
+    );
     expect(issueProductResolutionsMock).toHaveBeenCalledWith({
       productIds: [MENU_ITEM_ID, QUERY_ITEM_ID],
       businessId: BUSINESS_ID,

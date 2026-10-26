@@ -177,6 +177,8 @@ export const routeAfterDetectionContext = (
       return NODE.INTERACTIVE;
     case 'nlp':
       return NODE.NLP;
+    case 'stale_interaction':
+      return NODE.SEND;
     default:
       return END;
   }

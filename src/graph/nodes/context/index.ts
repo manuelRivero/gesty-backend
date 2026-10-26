@@ -27,7 +27,8 @@ import { getBusinessConfig } from '../../../services/businessConfig.service';
 import { getBusinessOpenInfo } from '../../../services/businessHours.service';
 import { formatInboundMessageForLog } from '../../../controllers/webhook/utils/messageLog';
 import { sendTypingIndicator } from '../../../services/whatsappTypingIndicator.service';
-import { normalizeMetadata } from '../../../services/productQuery/utils';
+import { formatBotUserMessage, normalizeMetadata } from '../../../services/productQuery/utils';
+import { evaluateIncomingInteraction } from '../../../services/activeInteraction.service';
 import { isCheckoutAgentEnabled, isReservationAgentEnabled, isOwnerAssistantEnabled } from '../../../config/env';
 import { isOwnerPhone } from '../../../services/ownerAssistant/matchOwnerPhone';
 import { getRefusalCount } from '../../../services/intent/intentRefusal.service';
@@ -221,6 +222,53 @@ export const buildDetectionContextNode = async (
         }
       );
       return { earlyExit: 'bot_disabled_or_human_handled' };
+    }
+
+    // Vigencia de interacciones (ver `activeInteraction.service.ts`): corre
+    // antes de decidir a qué subflujo rutear el turno (reserva, checkout,
+    // onboarding, interactive, nlp), así que ninguno de ellos llega a
+    // ejecutar la acción de un click de lista/botón que ya no es el vigente.
+    // Un click vigente ("valid") o un mensaje que invalida la interacción
+    // anterior ("invalidated"/"bypass"/"none") sigue el routing normal más
+    // abajo; solo "stale" corta acá.
+    const interactionOutcome = await evaluateIncomingInteraction(conversation.id, {
+      isInteractivePayload: ctx.message?.type === 'interactive',
+      payloadId: ctx.payloadId ?? null,
+    });
+    if (interactionOutcome === 'stale') {
+      console.log(
+        JSON.stringify({
+          event: '[active-interaction] stale_click_rejected',
+          conversationId: conversation.id,
+          payloadId: ctx.payloadId ?? null,
+        })
+      );
+      return {
+        conversationId: conversation.id,
+        contextRoute: 'stale_interaction',
+        handlerResult: {
+          content: {
+            type: 'interactive',
+            interactive: {
+              type: 'button',
+              header: { type: 'text', text: '' },
+              body: {
+                text: formatBotUserMessage(
+                  'Opción vencida',
+                  '⚠️',
+                  'Esa opción ya no corresponde a la conversación actual. Elegí una opción vigente o escribime de nuevo.'
+                ),
+              },
+              footer: { text: 'Elegí una opción' },
+              action: {
+                buttons: [{ type: 'reply', reply: { id: 'VIEW_MENU', title: 'Ver menú' } }],
+              },
+            },
+          },
+          isInteractive: true,
+          skipBodyHumanization: true,
+        },
+      };
     }
 
     const inboundMessageId = ctx.message?.id;
