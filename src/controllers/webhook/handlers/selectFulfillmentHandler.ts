@@ -1,8 +1,8 @@
-import { prisma } from '../../../lib/prisma';
-import { omitConversationMetadataKeys } from '../../../repositories/conversationState.repository';
+import { applyFulfillmentSelectionIfPending } from '../../../tools/checkout';
 import { handleViewCartFromWebhook } from '../../../services/cart.service';
 import { ConversationIntent } from '../../../types/conversationIntent';
 import { formatBotUserMessage } from '../../../services/productQuery/utils';
+import { buildStaleOptionMessage } from '../../../services/activeInteraction.service';
 import { interactiveResponse, noResponse, textResponse } from '../utils';
 import type { EnrichedContext, HandlerResult, IntentHandler } from '../types';
 
@@ -23,29 +23,27 @@ class SelectFulfillmentHandler implements IntentHandler {
     const { business, customer } = ctx;
     const phone = customer?.phone_number ?? ctx.to;
 
-    const draft = await prisma.draft_order.findFirst({
-      where: { business_id: business.id, customer_phone: phone, status: 'active' },
-      select: { id: true }
-    });
+    const { applied, error } = await applyFulfillmentSelectionIfPending(
+      business.id,
+      phone,
+      ctx.conversationId,
+      this.fulfillmentType
+    );
 
-    if (!draft) {
-      return textResponse(
-        formatBotUserMessage(
-          'Sin pedido activo',
-          '🛒',
-          'No encontré un pedido activo. ¿Querés explorar el menú?'
-        )
-      );
+    if (!applied) {
+      if (error === 'no_active_cart') {
+        return textResponse(
+          formatBotUserMessage(
+            'Sin pedido activo',
+            '🛒',
+            'No encontré un pedido activo. ¿Querés explorar el menú?'
+          )
+        );
+      }
+      // 'already_resolved' | 'no_pending' | 'wrong_draft': botón de una tanda
+      // vieja — no corresponde a una solicitud vigente para el draft actual.
+      return buildStaleOptionMessage();
     }
-
-    await prisma.$executeRaw`
-      UPDATE draft_order
-      SET fulfillment_type = ${this.fulfillmentType}::"FulfillmentType"
-      WHERE id = ${draft.id}::uuid
-    `;
-
-    // Limpiar la acción pendiente del metadata de conversación
-    await omitConversationMetadataKeys(ctx.conversationId, ['pending_fulfillment_action']);
 
     // Mostrar el carrito con el tipo de entrega ya seteado
     const result = await handleViewCartFromWebhook(ctx.payload);

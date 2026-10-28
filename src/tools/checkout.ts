@@ -18,6 +18,10 @@ import {
   findDefaultCustomerAddress,
 } from '../repositories/customer.repository';
 import { prisma } from '../lib/prisma';
+import {
+  patchConversationMetadata,
+  mutateConversationMetadata,
+} from '../repositories/conversationState.repository';
 import type { RunnableConfig } from '@langchain/core/runnables';
 import { PAYMENT_METHOD_IDS, type PaymentMethodId } from '../domain/payment/paymentMethods';
 import { isPaymentMethodOffered } from '../services/paymentMethods.service';
@@ -222,6 +226,129 @@ export const setDraftFulfillmentType = async (
     WHERE id = ${draft.id}::uuid
   `;
   return { success: true };
+};
+
+const PENDING_FULFILLMENT_METADATA_KEY = 'pending_fulfillment_action' as const;
+
+interface PendingFulfillmentRequest {
+  draftId: string;
+  askedAt: string;
+}
+
+const readPendingFulfillmentRequest = (
+  metadata: Record<string, unknown>
+): PendingFulfillmentRequest | null => {
+  const raw = metadata[PENDING_FULFILLMENT_METADATA_KEY];
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const candidate = raw as Record<string, unknown>;
+  if (typeof candidate.draftId !== 'string') return null;
+  return {
+    draftId: candidate.draftId,
+    askedAt: typeof candidate.askedAt === 'string' ? candidate.askedAt : new Date(0).toISOString(),
+  };
+};
+
+/**
+ * Registra (o renueva) la solicitud de fulfillment pendiente, vinculada al
+ * draft activo en este momento. Se llama en cada punto de presentación de
+ * `FULFILLMENT_DELIVERY`/`FULFILLMENT_TAKE_AWAY` (gate legacy y
+ * `checkoutAgentNode`), para que el click solo tenga autoridad sobre el
+ * draft al que realmente correspondía cuando se mostró el botón.
+ *
+ * No-op si no hay draft activo (nada que vincular).
+ */
+export const markFulfillmentPending = async (
+  businessId: string,
+  customerPhone: string,
+  conversationId: string
+): Promise<void> => {
+  const draft = await prisma.draft_order.findFirst({
+    where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
+    select: { id: true },
+  });
+  if (!draft) return;
+  await patchConversationMetadata(conversationId, {
+    [PENDING_FULFILLMENT_METADATA_KEY]: { draftId: draft.id, askedAt: new Date().toISOString() },
+  });
+};
+
+/**
+ * Aplica el tipo de entrega de un click de botón `FULFILLMENT_DELIVERY`/
+ * `FULFILLMENT_TAKE_AWAY`, solo si:
+ * 1. Existe una solicitud pendiente registrada por `markFulfillmentPending`.
+ * 2. Esa solicitud corresponde al draft activo AHORA (no a uno viejo ya
+ *    convertido/cancelado y reemplazado por uno nuevo).
+ * 3. El draft activo todavía no tiene `fulfillment_type` resuelto.
+ *
+ * (1)+(2) se validan y consumen atómicamente con `mutateConversationMetadata`
+ * (misma primitiva `SELECT ... FOR UPDATE` que usa `activeInteraction` —
+ * ver AUDITORIA-REPLY-BUTTONS-VIGENCIA): dos clicks concurrentes para la
+ * misma conversación se serializan sobre la fila de `conversation_state`, así
+ * que como máximo uno ve la solicitud todavía no consumida.
+ *
+ * (3) se protege además con un UPDATE condicionado a
+ * `fulfillment_type IS NULL` en la propia fila de `draft_order` (compare-
+ * and-swap a nivel de fila), independiente de la fila de `conversation_state`
+ * — belt-and-suspenders ante cualquier escritura de `fulfillment_type` que
+ * no pase por este mismo camino (`save_fulfillment_type` en texto libre,
+ * `applyDefaultFulfillmentIfSingleOption`).
+ *
+ * El orden importa para no perder una selección válida: la solicitud
+ * pendiente se consume (limpia) ANTES de escribir el draft. Si el UPDATE
+ * perdiera la carrera (0 filas afectadas), es porque alguna otra vía ya
+ * resolvió `fulfillment_type` en el ínterin — el estado resultante
+ * (`already_resolved`) es coherente, no hay nada que recuperar. Si el UPDATE
+ * lanza una excepción real (fallo de DB), la solicitud queda consumida sin
+ * aplicarse: no es una pérdida irrecuperable porque ambos flujos
+ * (`fulfillmentSelectionNode` y `checkoutAgentNode`) vuelven a registrar una
+ * solicitud fresca la próxima vez que presenten los botones mientras
+ * `fulfillment_type` siga `null`.
+ */
+export const applyFulfillmentSelectionIfPending = async (
+  businessId: string,
+  customerPhone: string,
+  conversationId: string,
+  type: 'DELIVERY' | 'TAKE_AWAY'
+): Promise<{ applied: boolean; error?: string }> => {
+  const draft = await prisma.draft_order.findFirst({
+    where: { business_id: businessId, customer_phone: customerPhone, status: 'active' },
+    select: { id: true, fulfillment_type: true },
+  });
+  if (!draft) {
+    return { applied: false, error: 'no_active_cart' };
+  }
+  if (draft.fulfillment_type) {
+    return { applied: false, error: 'already_resolved' };
+  }
+
+  const consumeOutcome = await mutateConversationMetadata<
+    'ok' | 'no_pending' | 'wrong_draft'
+  >(conversationId, (current) => {
+    const pending = readPendingFulfillmentRequest(current);
+    if (!pending) {
+      return { metadata: null, result: 'no_pending' };
+    }
+    if (pending.draftId !== draft.id) {
+      return { metadata: null, result: 'wrong_draft' };
+    }
+    const next = { ...current };
+    delete next[PENDING_FULFILLMENT_METADATA_KEY];
+    return { metadata: next, result: 'ok' };
+  });
+
+  if (consumeOutcome !== 'ok') {
+    return { applied: false, error: consumeOutcome };
+  }
+
+  const affectedRows = await prisma.$executeRaw`
+    UPDATE draft_order
+    SET fulfillment_type = ${type}::"FulfillmentType"
+    WHERE id = ${draft.id}::uuid AND fulfillment_type IS NULL
+  `;
+  if (affectedRows === 0) {
+    return { applied: false, error: 'already_resolved' };
+  }
+  return { applied: true };
 };
 
 // ---------------------------------------------------------------------------

@@ -27,8 +27,8 @@ import { getBusinessConfig } from '../../../services/businessConfig.service';
 import { getBusinessOpenInfo } from '../../../services/businessHours.service';
 import { formatInboundMessageForLog } from '../../../controllers/webhook/utils/messageLog';
 import { sendTypingIndicator } from '../../../services/whatsappTypingIndicator.service';
-import { formatBotUserMessage, normalizeMetadata } from '../../../services/productQuery/utils';
-import { evaluateIncomingInteraction } from '../../../services/activeInteraction.service';
+import { normalizeMetadata } from '../../../services/productQuery/utils';
+import { evaluateIncomingInteraction, buildStaleOptionMessage } from '../../../services/activeInteraction.service';
 import { isCheckoutAgentEnabled, isReservationAgentEnabled, isOwnerAssistantEnabled } from '../../../config/env';
 import { isOwnerPhone } from '../../../services/ownerAssistant/matchOwnerPhone';
 import { getRefusalCount } from '../../../services/intent/intentRefusal.service';
@@ -246,28 +246,7 @@ export const buildDetectionContextNode = async (
       return {
         conversationId: conversation.id,
         contextRoute: 'stale_interaction',
-        handlerResult: {
-          content: {
-            type: 'interactive',
-            interactive: {
-              type: 'button',
-              header: { type: 'text', text: '' },
-              body: {
-                text: formatBotUserMessage(
-                  'Opción vencida',
-                  '⚠️',
-                  'Esa opción ya no corresponde a la conversación actual. Elegí una opción vigente o escribime de nuevo.'
-                ),
-              },
-              footer: { text: 'Elegí una opción' },
-              action: {
-                buttons: [{ type: 'reply', reply: { id: 'VIEW_MENU', title: 'Ver menú' } }],
-              },
-            },
-          },
-          isInteractive: true,
-          skipBodyHumanization: true,
-        },
+        handlerResult: buildStaleOptionMessage(),
       };
     }
 

@@ -15,9 +15,13 @@ vi.mock('../../../../repositories', () => ({
   findDefaultCustomerAddress: vi.fn(async () => null),
   findCoverageZoneForAddress: vi.fn(async () => null),
 }));
-vi.mock('../../../../services/activeInteraction.service', () => ({
-  evaluateIncomingInteraction: evaluateIncomingInteractionMock,
-}));
+vi.mock('../../../../services/activeInteraction.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../../services/activeInteraction.service')>();
+  return {
+    ...actual,
+    evaluateIncomingInteraction: evaluateIncomingInteractionMock,
+  };
+});
 vi.mock('../../../../services/whatsappTypingIndicator.service', () => ({
   sendTypingIndicator: vi.fn(),
 }));

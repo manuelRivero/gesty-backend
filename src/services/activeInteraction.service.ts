@@ -22,6 +22,8 @@
 
 import { randomUUID } from 'node:crypto';
 import { mutateConversationMetadata } from '../repositories';
+import { formatBotUserMessage } from './productQuery/utils';
+import type { HandlerResult } from '../controllers/webhook/types';
 
 export const ACTIVE_INTERACTION_METADATA_KEY = 'activeInteraction' as const;
 
@@ -125,6 +127,36 @@ export const registerActiveInteraction = async (
     };
   });
 };
+
+/**
+ * Mensaje fijo para una selección que ya no corresponde a la conversación
+ * actual. Lo usa el short-circuit de `buildDetectionContextNode` para
+ * `activeInteraction` y, por el mismo criterio, cualquier validación de
+ * dominio puntual que detecte un click vencido (ver `checkout/index.ts`):
+ * un solo texto para no tener dos mensajes distintos de "esto ya no vale".
+ */
+export const buildStaleOptionMessage = (): HandlerResult => ({
+  content: {
+    type: 'interactive',
+    interactive: {
+      type: 'button',
+      header: { type: 'text', text: '' },
+      body: {
+        text: formatBotUserMessage(
+          'Opción vencida',
+          '⚠️',
+          'Esa opción ya no corresponde a la conversación actual. Elegí una opción vigente o escribime de nuevo.'
+        ),
+      },
+      footer: { text: 'Elegí una opción' },
+      action: {
+        buttons: [{ type: 'reply', reply: { id: 'VIEW_MENU', title: 'Ver menú' } }],
+      },
+    },
+  },
+  isInteractive: true,
+  skipBodyHumanization: true,
+});
 
 export type ActiveInteractionOutcome = 'none' | 'bypass' | 'valid' | 'stale' | 'invalidated';
 

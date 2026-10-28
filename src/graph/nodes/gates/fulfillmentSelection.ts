@@ -1,6 +1,5 @@
 import { prisma } from '../../../lib/prisma';
-import { patchConversationMetadata } from '../../../repositories/conversationState.repository';
-import { normalizeMetadata } from '../../../services/productQuery/utils';
+import { markFulfillmentPending } from '../../../tools/checkout';
 import { detectIntentFromPayload } from '../../../controllers/webhook/payloadMapper';
 import { isCheckoutAgentEnabled } from '../../../config/env';
 import { ConversationIntent } from '../../../types/conversationIntent';
@@ -109,15 +108,11 @@ export const fulfillmentSelectionNode = async (
   // Ambos habilitados: verificar si ya eligió
   if (draft.fulfillment_type) return {};
 
-  // Mostrar selección
+  // Mostrar selección: vincula la solicitud pendiente al draft activo ahora
+  // (ver `applyFulfillmentSelectionIfPending`), para que un click posterior
+  // solo tenga autoridad sobre este mismo draft.
   const conversation = state.conversation!;
-  const meta = normalizeMetadata(state.workingConversationState?.metadata);
-
-  if (!meta.pending_fulfillment_action) {
-    await patchConversationMetadata(conversation.id, {
-      pending_fulfillment_action: currentIntent
-    });
-  }
+  await markFulfillmentPending(business.id, phone, conversation.id);
 
   return {
     handlerResult: { content: buildFulfillmentSelectionMessage(), isInteractive: true }

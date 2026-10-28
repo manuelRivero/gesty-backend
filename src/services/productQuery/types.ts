@@ -276,8 +276,13 @@ export type ConversationMetadata = {
   pending_address_lat?: number | null;
   pending_address_lng?: number | null;
   pending_address_zone_id?: string | null;
-  /** Intent de carrito que quedó pendiente mientras el usuario elige delivery vs take-away. */
-  pending_fulfillment_action?: string | null;
+  /**
+   * Solicitud de tipo de entrega pendiente: vincula el prompt mostrado
+   * (`FULFILLMENT_DELIVERY`/`FULFILLMENT_TAKE_AWAY`) al draft activo en ese
+   * momento. Se consume atómicamente al llegar el click — ver
+   * `applyFulfillmentSelectionIfPending` (`tools/checkout.ts`).
+   */
+  pending_fulfillment_action?: { draftId: string; askedAt: string } | null;
   /**
    * Desambiguación de cancel: hay draft activo Y orden creada cancelable.
    * El cliente elige con botones CANCEL_TARGET:draft | CANCEL_TARGET:order

@@ -50,12 +50,15 @@ import type { WhatsAppInteractiveMessage } from '../../../domain/intent/whatsapp
 import type { AgentState, AgentStateUpdate } from '../../state';
 import type { DetectionContext } from '../../../services/ai/detection.service';
 import {
+  applyFulfillmentSelectionIfPending,
+  markFulfillmentPending,
   setDraftFulfillmentType,
   getDraftCheckoutState,
   setDraftPaymentMethod,
   clearDraftPaymentMethod,
   loadLiveCheckoutFacts,
 } from '../../../tools/checkout';
+import { buildStaleOptionMessage } from '../../../services/activeInteraction.service';
 import { validateCheckoutResponse } from '../../../services/checkout/checkoutValidation';
 import { applyCheckoutResponsePolicy } from '../../../services/checkout/checkoutResponsePolicy';
 import { nextCheckoutStep } from '../../../services/checkout/nextCheckoutStep';
@@ -464,6 +467,7 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
     if (typeof baseResult.content === 'string' && resume.checkoutPendingAction) {
       const combinedBody = `${baseResult.content}\n\n${resume.text}`;
       if (resume.checkoutPendingAction === 'fulfillment_type') {
+        await markFulfillmentPending(businessId, customerPhone, conversationId);
         return { ...baseResult, content: buildFulfillmentSelectionMessage(combinedBody), isInteractive: true };
       }
       if (resume.checkoutPendingAction === 'payment_method') {
@@ -485,6 +489,7 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
     // botones de fulfillment/pago como followUp aparte, como antes.
     const resumeFollowUps: HandlerFollowUp[] = [];
     if (resume.checkoutPendingAction === 'fulfillment_type') {
+      await markFulfillmentPending(businessId, customerPhone, conversationId);
       resumeFollowUps.push({
         type: 'interactive',
         message: buildFulfillmentSelectionMessage(resume.text) as WhatsAppInteractiveMessage,
@@ -644,6 +649,7 @@ export const resolveCheckoutAgentHandlerResult = async (params: {
   // depender de que el modelo recuerde llamar la tool — mismo criterio que
   // ya se aplicó en `onboardingAgentNode` para la confirmación de dirección.
   if (signals.presentFulfillmentOptions || currentStep === 'fulfillment') {
+    await markFulfillmentPending(businessId, customerPhone, conversationId);
     return {
       content: buildFulfillmentSelectionMessage(safeText),
       isInteractive: true,
@@ -771,6 +777,7 @@ export const checkoutAgentNode = async (
         { deliveryEnabled, takeawayEnabled }
       );
       if (step === 'fulfillment') {
+        await markFulfillmentPending(business.id, phone, conversationId);
         return {
           handlerResult: {
             content: buildFulfillmentSelectionMessage(
@@ -870,10 +877,27 @@ export const checkoutAgentNode = async (
     };
   }
 
-  if (payloadId === 'FULFILLMENT_DELIVERY') {
-    await setDraftFulfillmentType(business.id, phone, 'DELIVERY');
-  } else if (payloadId === 'FULFILLMENT_TAKE_AWAY') {
-    await setDraftFulfillmentType(business.id, phone, 'TAKE_AWAY');
+  if (payloadId === 'FULFILLMENT_DELIVERY' || payloadId === 'FULFILLMENT_TAKE_AWAY') {
+    const requestedType = payloadId === 'FULFILLMENT_DELIVERY' ? 'DELIVERY' : 'TAKE_AWAY';
+    const { applied } = await applyFulfillmentSelectionIfPending(
+      business.id,
+      phone,
+      conversationId,
+      requestedType
+    );
+    if (!applied) {
+      console.log(
+        JSON.stringify({
+          event: '[checkout-agent] stale_fulfillment_click_rejected',
+          conversationId,
+          payloadId,
+        })
+      );
+      return {
+        handlerResult: buildStaleOptionMessage(),
+        dataCollectionDelegated: true,
+      };
+    }
   }
 
   if (payloadId === 'CHECKOUT') {
