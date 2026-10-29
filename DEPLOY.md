@@ -32,9 +32,7 @@ son **runtime**: cambiás `.env` en el VPS y `docker compose up -d` sin rebuild.
 | `DATABASE_URL` | Runtime | `.env` del VPS |
 | `OPENAI_API_KEY` | Runtime | `.env` del VPS |
 | `DRY_RUN_WHATSAPP_SEND` | Runtime | `.env` del VPS |
-| `HYBRID_CTA_ENABLED` | Runtime | `.env` del VPS |
 | `HYBRID_CTA_TARGET_INTENTS` | Runtime | `.env` del VPS |
-| `HYBRID_CTA_ENABLED_BUSINESS_IDS` | Runtime | `.env` del VPS |
 | `WHATSAPP_ACCESS_TOKEN` | Runtime | `.env` del VPS |
 | `PHONE_NUMBER_ID` | Runtime | `.env` del VPS |
 | `WABA_ID` | Runtime | `.env` del VPS |
@@ -142,8 +140,8 @@ cd /opt/apps/food-service-agent
 Copiar desde tu máquina local **solo estos archivos**:
 
 ```bash
-scp -P 5698 docker-compose.prod.yml root@138.36.238.15:/opt/apps/food-service-agent/
-scp -P 5698 .env.example root@138.36.238.15:/opt/apps/food-service-agent/
+scp -P 5698 docker-compose.prod.yml root@201.32.132.31:/opt/apps/food-service-agent/
+scp -P 5698 .env.example root@201.32.132.31:/opt/apps/food-service-agent/
 ```
 
 En el VPS, crear `.env` con secretos reales:

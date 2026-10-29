@@ -160,7 +160,7 @@ Viven en el **borde de las Tools** (ADR-0002). **Ninguno puede existir únicamen
 | No crear la orden sin confirmación final del total | crear orden / cobrar | el cliente confirmó el resumen (envío + ajuste de pago incluidos) |
 | No operar fuera de horario | Tools de escritura | horario + `operate_when_closed` |
 | No modificar un pedido ya confirmado | Tools de carrito | orden no confirmada |
-| No sumar al carrito sin personas (Goal abierto) | `add_cart_item` → `party_size_required` | Fact `PERSONAS_DEL_PEDIDO` |
+| No shortlist/add sin personas | `search_products` / `present_*` / `add_cart_item` → `party_size_required` | Fact `PERSONAS_DEL_PEDIDO` |
 | **Orden del checkout** (entrega → dirección → nombre → pago) | función de orden | Facts del pedido y del cliente |
 | No agregar un producto sin stock | agregar ítem | disponibilidad |
 | No plantear COMPLETAR_PEDIDO / SUGERIR_COMPLEMENTO con cola de pedido abierta | derivadores de esos dos Intents (`orderCompletionGoal`, `opportunities.service`) | `hasOpenOrderLines` (`pendingOrderLines.service`) |

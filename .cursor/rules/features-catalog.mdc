@@ -1,0 +1,39 @@
+---
+description: Catálogo de features de producto de gesty-backend (docs/FEATURES.md)
+alwaysApply: true
+---
+
+# Catálogo de features (gesty-backend)
+
+Este repo trackea **solo** sus propias features. No copies ni sincronices catálogos de otros repos.
+
+## Obligatorio en el mismo trabajo
+
+Cada vez que se **proponga**, **avance**, deje **parcial** o **complete** una funcionalidad de producto aquí, actualizar `docs/FEATURES.md` en el mismo cambio (no en un follow-up aparte).
+
+## Estados
+
+`propuesto` → `en desarrollo` → `parcial` → `disponible`
+
+## Campos de fila
+
+`ID | Feature | Estado | Ofrecible | Remunerable | Valor para el local | Notas/plan`
+
+- **Ofrecible:** `sí` | `interno` | `no`
+- **Remunerable:** `sí` | `incluido` | `n/d`
+- Al pasar a `disponible`: anotar en historial + si queda `incluido` o `remunerable` (`sí`).
+
+## IDs
+
+Prefijos propios del backend (documentados en `docs/FEATURES.md`): `BE-`, `WA-`, `PAY-`, `ORD-`, `RES-`, `AUTH-`, `RT-`, `BILL-`, `BOT-`.
+
+## Planes de acción
+
+- Nuevos planes solo en `docs/planes-accion/PLAN-ACCION-<TEMA>.md`
+- Briefs opcionales: `docs/planes-accion/CONTEXTO-<DESTINO>-<TEMA>.md`
+- **Prohibido** dejar `PLAN-ACCION-*.md` en la raíz del repo
+- Linkear el plan desde la fila en `docs/FEATURES.md`
+
+## Qué no anotar
+
+No agregar filas por refactors internos, chores, ni fixes sin valor de producto para el local o la plataforma.

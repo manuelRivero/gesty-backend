@@ -38,6 +38,7 @@ Registro de las decisiones arquitectónicas fundamentales del sistema.
 | ADR | Decisión | Estado |
 |---|---|---|
 | [0013](0013-migracion-sin-downtime.md) | Toda migración usa shadow → dual-write → shadow-read → flip → cleanup | Aceptado |
+| [0014](0014-intencion-pendiente-sobrevive-al-gate.md) | Un gate resuelve la precondición y no consume la intención que bloqueó | Aceptado |
 
 ---
 

@@ -1,0 +1,29 @@
+---
+description: Ante un síntoma conversacional, mostrar evidencia de código y esperar decisión; no parchear en el mismo turno
+alwaysApply: true
+---
+
+# Evidencia antes de parche
+
+Cuando el usuario describe un **síntoma de conversación** (transcripción WhatsApp, “el bot hizo X”, tono, relistó, no entendió, loop):
+
+1. **Primero evidencia, cero diff.** Buscá en el repo el camino que explica el comportamiento (prompt, ledger `[ESTADO DEL CLIENTE]`, metadata, tool, nodo, CTA, gate). Mostrá:
+   - idea en una frase (qué foco usó el modelo: shortlist, carrito, pending, etc.);
+   - citas de código (`start:end:path`) de los puntos que **revelan** ese comportamiento, no un dump del archivo.
+2. **Pará.** No edites archivos, no “aprovechés” a ajustar prompt/ledger/tools en el mismo turno. El usuario decide con esa lectura.
+3. **Implementá solo** cuando lo pida de forma explícita **después** de ver la evidencia (este chat o un “ahora sí, cambialo”). “Buscá evidencia” / “entendé por qué” **no** autoriza parche.
+
+## Qué cuenta como evidencia
+
+- Ledger o metadata que el modelo vio (`pendingProductSelection`, `pendingTipables`, Facts).
+- Instrucción de prompt que empuja el copy o la tool.
+- Quién **escribió** ese estado (CTA `SELECT_FROM_LIST`, handler, tool).
+
+No alcanza con “el LLM se confundió” sin ancla en código.
+
+## Excepciones (no bloquean)
+
+- Bug mecánico sin juicio de producto: typecheck, test roto por un cambio ya pedido, typo, import.
+- El usuario ya pegó el archivo/líneas y pide el cambio concreto sobre eso.
+
+Norma hermana: no inventar `tryHandle*` / regex pre-ReAct para “arreglar” prosa (ver `hybrid-pending-autonomy.mdc`).

@@ -168,6 +168,8 @@ export async function createBusinessForSuperAdmin(
 
     // D1/D11/BE-15: create explícito — capacidades off, bot on, storefront on (incluido; admin apaga).
     // No heredar defaults legacy de filas existentes; el schema también ya defaulta a limpio.
+    // takeaway_enabled arranca en true: la base exige delivery_enabled o
+    // takeaway_enabled en true (constraint business_config_fulfillment_at_least_one).
     await tx.business_config.create({
       data: {
         business_id: business.id,
@@ -177,7 +179,7 @@ export async function createBusinessForSuperAdmin(
         checkout_enabled: false,
         reservations_enabled: false,
         delivery_enabled: false,
-        takeaway_enabled: false,
+        takeaway_enabled: true,
         external_delivery_enabled: false,
       },
     });

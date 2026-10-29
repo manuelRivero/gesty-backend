@@ -28,7 +28,7 @@ services:
       - ./backups:/backups
     ports:
       # Solo localhost del VPS (dump/restore / admin local). La app usa la red Docker.
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:5735:5735"
     networks:
       - proxy-network
     healthcheck:

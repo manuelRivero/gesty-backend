@@ -1,0 +1,65 @@
+---
+description: Pendings tipables — ledger + LLM; en agentes de sesión, fulfilled se aplica en el nodo
+alwaysApply: true
+---
+
+# Autonomía del agente en pendings tipables
+
+## Regla de oro
+
+Para confirmaciones conversacionales en texto libre (**variación**, **cantidad/party size**, **nota**, tipables de gestión Menú/Nota/etc. en el **híbrido**):
+
+1. **Gate duro en tools/handlers** — no escribir Facts (carrito, etc.) si falta el dato.
+2. **Ledger en metadata** — `pendingVariation`, `pendingAddQuantity`, `pendingItemNote`, `pendingTipables`, etc. inyectados en `[ESTADO DEL CLIENTE]`.
+3. **Interpretación = ReAct** — el modelo lee el ledger y llama tools (`add_cart_item`, `start_item_note`, `clear_pending_*`, `update_item_note`, `present_cart`, …).
+
+**PROHIBIDO** agregar `tryHandle*Hybrid` / matchers regex / diccionarios de frases que intercepten el mensaje **antes** del ReAct para “resolver” tipables. Eso se ve inteligente en el happy path y falla en prosa real; además los agentes de código lo reintroducen por defecto.
+
+## Agentes de sesión (checkout / onboarding / reservas / nuevos)
+
+Cuando hay **botón + texto libre** para la misma confirmación (ej. “¿es correcta?” → Confirmar | “sí”):
+
+1. Interpretar con `extractPendingTurnResponse` (clasificador LLM — **no** regex).
+2. Si `status === 'fulfilled'`, el **nodo aplica el mismo efecto que el payload del botón** en ese turno, **antes** del ReAct.
+3. Dejar el fulfilled “solo en el prompt” para que el ReAct llame la tool es un bug: el cliente tipa “sí” y el bot vuelve a preguntar.
+
+Norma completa: `agent-factory/agent-factory.md` §3.3 / §3.11.
+
+## Qué SÍ es determinístico (válido)
+
+| OK | Ejemplo |
+|----|---------|
+| Validar **argumento de tool** contra catálogo/BD | `matchVariation(variationArg, item.variations)` dentro de `add_cart_item` |
+| Payloads de botón/lista WA | `ADD_ITEM:<uuid>`, `SELECT_PRODUCT:<id>` → handlers |
+| Aplicar `extractPendingTurnResponse` **fulfilled** en el nodo de sesión | mismo camino que `ONBOARDING_CONFIRM_ADDRESS` |
+| Gates de sesión / horario / onboarding | closed order, party size **ask** (pedir el dato), checkout |
+| Fórmulas de sugerencia (no decisión) | `ceil(party/serves)` para copy de sugerencia |
+
+## Qué NO es determinístico
+
+| NO | Por qué |
+|----|---------|
+| Regex sobre el mensaje del usuario para elegir variedad/cantidad/nota | Es tipable; lo interpreta el agente / clasificador |
+| Auto-add al carrito desde un matcher pre-ReAct | Saltea tools, notas, cantidad, closed-order |
+| “Resolver sin LLM porque es un número” | El ledger + tool bastan; el agente pasa `quantity` |
+| Tipable confirm solo advisory al ReAct (sesión) | Asimetría botón vs “sí” — §3.11 agent-factory |
+
+## Checklist al implementar un pending nuevo
+
+- [ ] Metadata tipada + `build*ContextLines` en `contextMessage`
+- [ ] Tool escribe error estructurado (`*_required`) y **setea** el pending; no escribe el Fact
+- [ ] Prompt: cómo confirmar / cancelar (`clear_pending_*`)
+- [ ] **No** hay `tryHandle*Hybrid` en `reactAgent.ts`
+- [ ] Si es agente de sesión con botones de confirmación: short-circuit fulfilled en el **nodo**
+- [ ] Tests del gate en la tool / del fulfilled en el nodo; no tests de regex de frases del usuario
+
+## Referencias en código
+
+- Tipables gestión: `pendingTipables.service.ts` (comentario de módulo)
+- Nota por ítem: `pendingItemNote.service.ts` (`start_item_note` / `clear_pending_item_note`; payload `ITEM_NOTE`)
+- Cantidad: `pendingAddQuantity.service.ts`
+- Variación: `pendingVariation.service.ts`
+- Norma de producto: `PLAN-ACCION-PARTY-SIZE-CANTIDAD.md` (D6/D7)
+- Checkout (fulfillment/dirección/nombre en prosa): `nextCheckoutStep.ts`, `PLAN-ACCION-CHECKOUT-AUTONOMIA-POLICY.md`
+- Onboarding (dirección en prosa/pin + tipable confirm en nodo): `nextOnboardingStep.ts`, `agent-factory/agent-factory.md` §3.11
+- Factory (agentes nuevos): `agent-factory/agent-factory.md`
