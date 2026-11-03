@@ -91,6 +91,15 @@ const envSchema = z.object({
     .optional()
     .transform((v) => v === 'true' || v === '1'),
 
+  /**
+   * Reconcilia comprobantes en `processing`/`requires_review` contra el proveedor de
+   * facturación (ver `services/invoicing/invoice.service.ts`). Default off; opt-in con `true`/`1`.
+   */
+  ENABLE_INVOICING_RECONCILIATION_WORKER: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true' || v === '1'),
+
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 
   /**

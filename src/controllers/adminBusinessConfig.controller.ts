@@ -1,12 +1,18 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import {
+  AI_NOT_ENABLED,
   BusinessConfigValidationError,
   deleteBusinessConfig,
   getBusinessConfig,
   upsertBusinessConfig
 } from "../services/businessConfig.service";
 import { getBotPersonalitySummary } from "../services/botPersonality.service";
+import { resolveBusinessCapabilities } from "../services/billing/businessCapabilities.service";
+
+function validationErrorStatus(code?: string): number {
+  return code === AI_NOT_ENABLED ? 403 : 400;
+}
 
 const configPatchSchema = z.object({
   bot_enabled: z.boolean().optional(),
@@ -55,11 +61,16 @@ export async function getAdminBusinessConfig(req: Request, res: Response) {
   }
   const cfg = await getBusinessConfig(businessId);
   const botPersonality = await getBotPersonalitySummary(cfg.bot_personality_id);
+  const capabilities = await resolveBusinessCapabilities(businessId);
   return res.json({
     ...cfg,
     bot_personality: botPersonality
       ? { id: botPersonality.id, slug: botPersonality.slug, name: botPersonality.name }
       : null,
+    capabilities: {
+      ai: capabilities.ai.allowed,
+      shopping: capabilities.shopping.allowed,
+    },
   });
 }
 
@@ -80,7 +91,7 @@ export async function createAdminBusinessConfig(req: Request, res: Response) {
     return res.status(201).json(cfg);
   } catch (err) {
     if (err instanceof BusinessConfigValidationError) {
-      return res.status(400).json({
+      return res.status(validationErrorStatus(err.code)).json({
         error: err.message,
         ...(err.code ? { code: err.code } : {}),
       });
@@ -106,7 +117,7 @@ export async function patchAdminBusinessConfig(req: Request, res: Response) {
     return res.json(cfg);
   } catch (err) {
     if (err instanceof BusinessConfigValidationError) {
-      return res.status(400).json({
+      return res.status(validationErrorStatus(err.code)).json({
         error: err.message,
         ...(err.code ? { code: err.code } : {}),
       });

@@ -35,6 +35,7 @@ import {
 } from './controllers/payments/paymentReturn.controller';
 import { billingStripeWebhookHandler } from './controllers/billingStripeWebhook.controller';
 import { handleAdminOrderConfirmationWebhook } from './services/adminOrderConfirmationWebhook.service';
+import { processInvoicingReconciliation } from './workers/invoicingReconciliation';
 
 if (env.ENABLE_DRAFT_ORDER_WORKER) {
   const DRAFT_ORDER_TICK_MS = 60_000;
@@ -61,6 +62,20 @@ if (env.ENABLE_HANDOFF_TIMEOUT_WORKER) {
 } else {
   console.log(
     '[worker:handoffTimeout] disabled (set ENABLE_HANDOFF_TIMEOUT_WORKER=true to enable)'
+  );
+}
+
+if (env.ENABLE_INVOICING_RECONCILIATION_WORKER) {
+  const INVOICING_RECONCILIATION_TICK_MS = 5 * 60_000;
+  setInterval(() => {
+    void processInvoicingReconciliation().catch((err) => {
+      console.error('[worker:invoicingReconciliation] tick error', err);
+    });
+  }, INVOICING_RECONCILIATION_TICK_MS);
+  console.log('[worker:invoicingReconciliation] enabled (tick every 5m)');
+} else {
+  console.log(
+    '[worker:invoicingReconciliation] disabled (set ENABLE_INVOICING_RECONCILIATION_WORKER=true to enable)'
   );
 }
 

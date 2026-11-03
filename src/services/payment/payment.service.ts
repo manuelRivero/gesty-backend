@@ -19,6 +19,7 @@ import { resolveDeliveryContext } from '../deliveryFee.service';
 import { resolvePaymentAdjustment } from '../paymentAdjustment.service';
 import { getBusinessConfig } from '../businessConfig.service';
 import { notifyAmbassadorSaleIfNeeded } from '../ambassador/ambassadorSale.service';
+import { triggerAutomaticInvoiceEmission } from '../invoicing/invoice.service';
 
 export interface PaymentLinkResult {
   initPoint: string;
@@ -688,6 +689,10 @@ export const handleApprovedStorefrontPayment = async (
     emitAdminOrderPaymentStatusChanged(intent.business_id, {
       orderId: order.id,
       payment_status: OrderPaymentStatus.paid,
+    });
+    // Facturación electrónica (add-on opcional): best-effort, nunca bloquea ni revierte el pago.
+    void triggerAutomaticInvoiceEmission(intent.business_id, order.id, 'online').catch((err) => {
+      console.error('[Invoicing] Error al emitir comprobante automático (online):', err);
     });
   }
 

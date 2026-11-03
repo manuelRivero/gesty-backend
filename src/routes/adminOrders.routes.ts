@@ -169,6 +169,20 @@ import {
   postAdminDraftOrderRequestConfirmationHandler,
   postAdminDraftOrderItemHandler
 } from "../controllers/adminDraftOrder.controller";
+import {
+  getArcaHealthHandler,
+  getFiscalConfigurationHandler,
+  getInvoicingAddonHandler,
+  getInvoicingUsageHandler,
+  getIssuerConnectivityHandler,
+  getOrderInvoicePdfHandler,
+  getOrderInvoicesHandler,
+  listInvoicesHandler,
+  postEmitOrderInvoiceHandler,
+  postProvisionEmisorHandler,
+  putFiscalConfigurationHandler,
+  putInvoicingAddonHandler
+} from "../controllers/adminInvoicing.controller";
 
 const router = Router();
 
@@ -584,6 +598,20 @@ router.delete(
   requireRoles("OWNER", "ADMIN"),
   removeBusinessUser
 );
+
+// Facturación electrónica (add-on opcional, ver FASE 7 del encargo de invoicing)
+router.get("/invoicing/arca-health", requireRoles("OWNER", "ADMIN"), getArcaHealthHandler);
+router.get("/invoicing/fiscal-configuration", requireRoles("OWNER", "ADMIN"), getFiscalConfigurationHandler);
+router.put("/invoicing/fiscal-configuration", requireRoles("OWNER", "ADMIN"), putFiscalConfigurationHandler);
+router.get("/invoicing/fiscal-configuration/issuer-connectivity", requireRoles("OWNER", "ADMIN"), getIssuerConnectivityHandler);
+router.get("/invoicing/addon", requireRoles("OWNER", "ADMIN"), getInvoicingAddonHandler);
+router.put("/invoicing/addon", requireRoles("OWNER", "ADMIN"), putInvoicingAddonHandler);
+router.get("/invoicing/usage", requireRoles("OWNER", "ADMIN"), getInvoicingUsageHandler);
+router.get("/invoicing/invoices", requireRoles("OWNER", "ADMIN"), listInvoicesHandler);
+router.get("/invoicing/orders/:orderId/invoices", requireRoles("OWNER", "ADMIN"), getOrderInvoicesHandler);
+router.get("/invoicing/orders/:orderId/invoices/:invoiceId/pdf", requireRoles("OWNER", "ADMIN"), getOrderInvoicePdfHandler);
+router.post("/invoicing/orders/:orderId/emit", requireRoles("OWNER", "ADMIN"), postEmitOrderInvoiceHandler);
+router.post("/invoicing/fiscal-configuration/provision-emisor", requireRoles("OWNER", "ADMIN"), postProvisionEmisorHandler);
 
 // Announcements inbox (business)
 router.get("/announcements", listAnnouncementsForBusinessHandler);

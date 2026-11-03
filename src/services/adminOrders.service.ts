@@ -11,6 +11,7 @@ import {
   emitAdminOrderStatusChanged
 } from "../socket/adminSocket";
 import { notifyAmbassadorSaleIfNeeded } from "./ambassador/ambassadorSale.service";
+import { triggerAutomaticInvoiceEmission } from "./invoicing/invoice.service";
 
 dayjs.extend(utc);
 
@@ -266,6 +267,9 @@ export async function updateAdminOrderDeliveryStatus(
     void notifyAmbassadorSaleIfNeeded(orderId).catch((err) => {
       console.error("[AdminOrders] Error al notificar venta de embajador (cash):", err);
     });
+    void triggerAutomaticInvoiceEmission(businessId, orderId, "cash").catch((err) => {
+      console.error("[Invoicing] Error al emitir comprobante automático (cash, entrega):", err);
+    });
   }
 
   const notify = await notifyCustomerOrderStatusFromAdmin({
@@ -331,6 +335,9 @@ export async function updateAdminOrderPaymentStatus(
   if (payment_status === OrderPaymentStatus.paid && existing.payment_status !== OrderPaymentStatus.paid) {
     void notifyAmbassadorSaleIfNeeded(orderId).catch((err) => {
       console.error("[AdminOrders] Error al notificar venta de embajador (manual/proof):", err);
+    });
+    void triggerAutomaticInvoiceEmission(businessId, orderId, "cash").catch((err) => {
+      console.error("[Invoicing] Error al emitir comprobante automático (cash, manual/comprobante):", err);
     });
   }
 

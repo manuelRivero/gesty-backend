@@ -17,6 +17,9 @@ import {
   normalizePhoneDigits,
   sanitizeOwnerPhones,
 } from "./ownerAssistant/matchOwnerPhone";
+import { resolveBusinessCapabilities } from "./billing/businessCapabilities.service";
+
+export const AI_NOT_ENABLED = "AI_NOT_ENABLED";
 
 /** Códigos estables al habilitar pedidos sin prerequisitos (contrato panel). */
 export const ORDERS_REQUIRES_MENU = "ORDERS_REQUIRES_MENU";
@@ -297,6 +300,14 @@ export async function getBusinessConfig(businessId: string): Promise<BusinessCon
   merged.owner_whatsapp_phones = sanitizeOwnerPhones(
     merged.owner_whatsapp_phones ?? []
   );
+  // Defense-in-depth: si el plan perdió IA después de guardado, no mostrar
+  // `humanize_messages` como activo aunque el valor persistido siga en true.
+  if (merged.humanize_messages) {
+    const capabilities = await resolveBusinessCapabilities(businessId);
+    if (!capabilities.ai.allowed) {
+      merged.humanize_messages = false;
+    }
+  }
   return merged;
 }
 
@@ -320,6 +331,23 @@ export async function upsertBusinessConfig(
     );
   }
   const next = applyBusinessConfigRules(nextRaw);
+
+  // D18: "Humanizar mensajes" dispara llamadas a IA en runtime — requiere
+  // `plan.ai_enabled` (businessCapabilities.service). Un intento explícito de
+  // activarlo sin esa capacidad se rechaza; si quedó en true por un downgrade
+  // posterior del plan, se auto-corrige en silencio (no bloquea el resto del patch).
+  if (next.humanize_messages) {
+    const capabilities = await resolveBusinessCapabilities(businessId);
+    if (!capabilities.ai.allowed) {
+      if (patch.humanize_messages === true) {
+        throw new BusinessConfigValidationError(
+          'Tu plan actual no incluye IA: no podés habilitar "Humanizar mensajes". Actualizá tu plan desde Facturación.',
+          AI_NOT_ENABLED
+        );
+      }
+      next.humanize_messages = false;
+    }
+  }
 
   // Delivery externo: el rider no puede cobrar efectivo. Seed defaults,
   // desactivamos cash; la combinación con 0 activos es válida (D3).

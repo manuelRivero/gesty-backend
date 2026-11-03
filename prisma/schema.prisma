@@ -64,6 +64,10 @@ model business {
   canned_reply              canned_reply[]
   storefront_order_push_subscription storefront_order_push_subscription[]
   checkout_attempt          checkout_attempt[]
+  fiscal_configuration       fiscal_configuration?
+  fiscal_invoice             fiscal_invoice[]
+  invoicing_addon            invoicing_addon?
+  invoicing_usage_period     invoicing_usage_period[]
 }
 
 model business_user {
@@ -469,6 +473,7 @@ model orders {
   payment_intent            payment_intent[]
   payment_proof             payment_proof[]
   storefront_order_push_subscription storefront_order_push_subscription[]
+  fiscal_invoice             fiscal_invoice[]
 
   @@index([customer_address_id], map: "idx_orders_customer_address")
   @@index([assigned_delivery_user_id], map: "idx_orders_assigned_delivery_user")
@@ -1037,4 +1042,191 @@ enum MenuCategoryTag {
   DRINK
   DESSERT
   OTHER
+}
+
+/// Estado de alta/validación del emisor fiscal ante el proveedor de facturación.
+enum FiscalConfigStatus {
+  not_configured
+  pending_validation
+  validated
+  rejected
+}
+
+/// Tipo de comprobante (condición fiscal del emisor frente al cliente), independiente del proveedor.
+enum FiscalVoucherType {
+  A
+  B
+  C
+}
+
+/// Comprobante de venta o nota de crédito.
+enum FiscalInvoiceKind {
+  invoice
+  credit_note
+}
+
+/// Estados normalizados de una operación de facturación electrónica, independientes del proveedor.
+enum FiscalInvoiceStatus {
+  /// Creado en Gesty, aún no enviado al proveedor.
+  pending
+  /// Enviado al proveedor, resultado todavía no confirmado (ver `requires_review` ante timeout).
+  processing
+  /// CAE obtenido: comprobante válido ante AFIP/ARCA.
+  authorized
+  /// El proveedor/AFIP rechazó el comprobante (error fiscal, no técnico).
+  rejected
+  /// Error técnico (red, proveedor caído, credenciales, etc.) antes de obtener un resultado fiscal.
+  failed
+  /// Resultado desconocido tras un timeout: no reintentar a ciegas, requiere reconciliación.
+  requires_review
+  cancelled
+  /// Emitido contra un token/entorno de pruebas del proveedor (p. ej. `modo_simulacion` de
+  /// Sistemas 360): tiene CAE de prueba, SIN validez fiscal real. Nunca mostrar como "autorizado".
+  simulated
+}
+
+/// Configuración fiscal individual de cada restaurante (business). 1:1 con `business`.
+/// Las credenciales de Sistemas 360 son centrales y no se almacenan en esta configuración.
+model fiscal_configuration {
+  id                  String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id         String             @unique @db.Uuid
+  cuit                String?
+  razon_social        String?
+  /// Condición frente al IVA del emisor (p. ej. "RI", "CF", "MONOTRIBUTO"). Determina qué tipo de comprobante puede emitir.
+  condicion_iva       String?
+  domicilio_fiscal    String?
+  punto_venta         Int?
+  /// Emisión automática para pedidos pagados online (Mercado Pago, tarjeta, transferencia online).
+  auto_issue_online   Boolean            @default(true)
+  /// Emisión automática para pedidos pagados en efectivo. Default false: requiere decisión explícita del restaurante.
+  auto_issue_cash     Boolean            @default(false)
+  status              FiscalConfigStatus @default(not_configured)
+  validated_at        DateTime?          @db.Timestamptz(6)
+  /// Identificador del emisor en la cuenta central de Sistemas 360.
+  external_issuer_id  String?
+  /// CUIT normalizado al que se verificó que corresponde `external_issuer_id`.
+  external_issuer_cuit String?
+  created_at          DateTime           @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime           @default(now()) @db.Timestamptz(6)
+  business            business           @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([business_id], map: "idx_fiscal_configuration_business")
+}
+
+/// Registro de comprobantes (facturas y notas de crédito) emitidos o en curso de emisión.
+/// La idempotencia es estructural: a lo sumo un registro por (business_id, order_id, kind) vía
+/// `@@unique` — reintentos, webhooks duplicados y timeouts deben actualizar la misma fila, nunca crear otra.
+model fiscal_invoice {
+  id                  String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id         String              @db.Uuid
+  order_id            String              @db.Uuid
+  kind                FiscalInvoiceKind   @default(invoice)
+  provider            String
+  /// "sandbox" | "production" (solo Sistemas 360, vía cuenta central): entorno con el que se
+  /// INICIÓ esta operación, capturado una sola vez al crear la fila e inmutable después. La
+  /// reconciliación debe usar este valor, no el `active_environment` vigente al momento de
+  /// reconciliar — ver `invoice.service.ts` (hallazgo "aislamiento del entorno de emisión").
+  /// `null` = entorno no registrado; en ese caso se usa el entorno activo actual.
+  provider_environment String?
+  /// Identificador enviado como referencia externa a Sistemas 360.
+  /// Calculado de forma determinística a partir de (business_id, order_id, kind) — ver `invoice.service.ts`.
+  idempotency_key     String              @unique
+  provider_invoice_id String?
+  voucher_type        FiscalVoucherType?
+  punto_venta         Int?
+  comprobante_numero  Int?
+  cae                 String?
+  cae_vencimiento     DateTime?           @db.Timestamptz(6)
+  issued_at           DateTime?           @db.Timestamptz(6)
+  amount              Decimal             @db.Decimal(12, 2)
+  currency_code       String              @db.Char(3)
+  status              FiscalInvoiceStatus @default(pending)
+  /// Referencia segura al PDF (URL firmada por el proveedor); no se persiste el binario.
+  pdf_url             String?
+  /// Respuesta normalizada del proveedor (DTO del dominio, no la estructura propietaria cruda) para trazabilidad.
+  provider_response   Json?
+  error_message       String?
+  retry_count         Int                 @default(0)
+  created_at          DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime            @default(now()) @updatedAt @db.Timestamptz(6)
+  business            business            @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  orders              orders              @relation(fields: [order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([business_id, order_id, kind], map: "unique_fiscal_invoice_business_order_kind")
+  @@index([business_id, status], map: "idx_fiscal_invoice_business_status")
+  @@index([business_id, order_id], map: "idx_fiscal_invoice_business_order")
+}
+
+/// Complemento comercial opcional de facturación electrónica. Independiente de `plan`/`subscription`
+/// (la suscripción base de Gesty no cambia): activación, límites y precios configurables sin deploy.
+model invoicing_addon {
+  id                        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id               String    @unique @db.Uuid
+  enabled                   Boolean   @default(false)
+  monthly_voucher_limit     Int?
+  /// Precio comercial por comprobante autorizado (no por request técnico). Null = sin definir todavía (ver FASE 6).
+  price_per_voucher         Decimal?  @db.Decimal(10, 4)
+  /// Costo operativo del proveedor por comprobante, para calcular margen. Null = no confirmado todavía.
+  provider_cost_per_voucher Decimal?  @db.Decimal(10, 4)
+  currency_code             String    @db.Char(3) @default("USD")
+  activated_at              DateTime? @db.Timestamptz(6)
+  created_at                DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at                DateTime  @default(now()) @db.Timestamptz(6)
+  business                  business  @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([business_id], map: "idx_invoicing_addon_business")
+}
+
+/// Consumo comercial agregado por restaurante y período (mensual). Contabiliza comprobantes
+/// autorizados, no cada request técnico al proveedor (ver FASE 6: no cobrar validaciones/reintentos).
+model invoicing_usage_period {
+  id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id             String   @db.Uuid
+  /// Período en formato "YYYY-MM".
+  period                  String
+  vouchers_authorized     Int      @default(0)
+  /// Requests técnicos al proveedor (emisión + consultas + reintentos), solo para diagnóstico/costeo interno.
+  provider_requests       Int      @default(0)
+  provider_cost_total     Decimal  @db.Decimal(12, 2) @default(0)
+  commercial_amount_total Decimal  @db.Decimal(12, 2) @default(0)
+  currency_code           String   @db.Char(3)
+  /// open = período en curso; closed = cerrado, pendiente de conciliar; invoiced = conciliado/cobrado.
+  reconciliation_status   String   @default("open")
+  created_at              DateTime @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+  business                business @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([business_id, period], map: "unique_invoicing_usage_period")
+}
+
+/// Configuración central de Sistemas 360 (token de cuenta que administra múltiples emisores).
+/// Administrable EXCLUSIVAMENTE por SUPER_ADMIN.
+/// Credenciales centrales de Sistemas 360, administradas exclusivamente por SUPER_ADMIN.
+model invoicing_central_provider_config {
+  id                         String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Identificador fijo del proveedor fiscal único.
+  provider                   String             @unique
+  /// "sandbox" | "production". Determina qué token se usa en cada request — el entorno real lo
+  /// termina determinando el token (ver `services/invoicing/providers/sistemas360Client.ts`).
+  active_environment         String             @default("sandbox")
+  sandbox_token_encrypted    String?
+  production_token_encrypted String?
+  /// Si la cuenta está habilitada para las operaciones fiscales.
+  is_active                  Boolean            @default(false)
+  status                     FiscalConfigStatus @default(not_configured)
+  last_validated_at          DateTime?          @db.Timestamptz(6)
+  /// Último mensaje de `GET /api/ping` (o del intento), sin datos sensibles.
+  last_validation_detail     String?
+  /// "sandbox" | "production": a qué entorno corresponde la última validación exitosa. Si no
+  /// coincide con `active_environment`, `status = validated` NO habilita activar producción —
+  /// ver `setCentralProviderActive` (hallazgo "activación de producción sin validación").
+  last_validated_environment String?
+  /// Consumo técnico TOTAL de la cuenta (todas las llamadas HTTP reales, de todos los negocios)
+  /// — ver `sistemas360RequestMetrics.ts`. Distinto de `invoicing_usage_period.provider_requests`
+  /// (atribución por negocio) y de `vouchers_authorized` (facturable).
+  total_requests_count       Int                @default(0)
+  created_at                 DateTime           @default(now()) @db.Timestamptz(6)
+  updated_at                 DateTime           @default(now()) @db.Timestamptz(6)
+
+  @@index([provider], map: "idx_invoicing_central_provider_config_provider")
 }
