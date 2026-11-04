@@ -250,16 +250,83 @@ docker compose -f docker-compose.prod.yml up -d
 
 ## 7. Migraciones de base de datos
 
-Esta imagen **no** incluye el CLI de Prisma ni ejecuta migraciones al arrancar.
+Esta imagen **no** incluye el CLI de Prisma ni ejecuta migraciones al arrancar. El Postgres
+de producción vive en el VPS (`food-postgres`, ver §8) y solo escucha en `127.0.0.1:5433`
+dentro del servidor — se accede desde tu máquina local vía túnel SSH.
 
-El esquema se sincroniza desde `food-service-backend`:
+**Regla de oro: nunca corras `npx prisma` (ni ningún proceso Node pesado) directamente en
+el VPS.** El servidor tiene recursos muy limitados (~1 GB RAM, sin swap) y descargar/ejecutar
+el CLI de Prisma ahí puede agotar la memoria y colgar el sistema completo (ya pasó). Todo el
+cálculo de diffs se hace desde tu máquina local, contra el VPS a través del túnel.
+
+### 7.1 Flujo por defecto: sincronizar esquema desde Neon (dev) hacia el VPS (prod)
+
+1. **Abrí un túnel SSH hacia el Postgres del VPS** (dejalo corriendo en una terminal aparte):
+
+   ```bash
+   ssh -p5735 -L 5433:127.0.0.1:5433 root@201.32.132.31
+   ```
+
+2. **Backup de seguridad de producción** (en otra terminal local, usando el túnel):
+
+   ```bash
+   PGPASSWORD='<password_vps>' pg_dump -h localhost -p 5433 -U <usuario_vps> -d <db_vps> \
+     > /tmp/backup_prod_$(date +%Y%m%d_%H%M).sql
+   ```
+
+   Requiere `postgresql-client` en la **misma versión mayor que el servidor** (el VPS corre
+   Postgres 17): `sudo apt-get install -y postgresql-client-17` si `pg_dump --version` no
+   coincide.
+
+3. **Generar el diff de esquema** (VPS prod → Neon dev). El CLI de Prisma del proyecto (v7)
+   eliminó `--from-url`/`--to-url`; usar temporalmente `prisma@5` solo para este comando:
+
+   ```bash
+   npx prisma@5 migrate diff \
+     --from-url 'postgresql://<usuario_vps>:<password_vps>@localhost:5433/<db_vps>' \
+     --to-url 'postgresql://<usuario_neon>:<password_neon>@<host_neon>/<db_neon>?sslmode=require&channel_binding=require' \
+     --script > /tmp/diff_prod_to_dev.sql
+   ```
+
+   Usar el host de Neon **sin** `-pooler` (conexión directa) para evitar problemas con el
+   introspection de Prisma.
+
+4. **Revisar el script a mano antes de aplicar nada.** Buscar específicamente
+   `DROP COLUMN`, `DROP TABLE` o `ALTER ... TYPE` — si aparecen, puede significar que el VPS
+   tiene columnas/tablas que Neon no tiene (señal de que apuntaste al proyecto/branch de Neon
+   equivocado, o de que prod tiene cambios que dev no tiene). Un diff sano para "promover dev
+   a prod" solo debería traer `CREATE TYPE`, `ADD COLUMN`, `CREATE TABLE`, `CREATE INDEX` y
+   `ADD CONSTRAINT` (foreign keys), más algún `ALTER COLUMN ... SET DEFAULT` o
+   `DROP NOT NULL` no destructivo.
+
+5. **Aplicar el script contra el VPS** (mismo túnel):
+
+   ```bash
+   PGPASSWORD='<password_vps>' psql -h localhost -p 5433 -U <usuario_vps> -d <db_vps> \
+     -f /tmp/diff_prod_to_dev.sql
+   ```
+
+6. **Reiniciar la app y verificar logs:**
+
+   ```bash
+   ssh -p5735 root@201.32.132.31 \
+     "docker restart food-service-agent && docker logs --tail 50 food-service-agent"
+   ```
+
+### 7.2 (Legacy / deprecado) Migrar desde `food-service-backend`
+
+Método anterior, ya no es el flujo recomendado — se documenta solo por referencia histórica.
+Dependía de un repo separado (`food-service-backend`) gestionando el esquema y de scripts SQL
+sueltos (p. ej. `prisma/sql/*.sql`) aplicados manualmente, lo cual generó desfases entre el
+schema de Prisma y la base real (columnas esperadas por el cliente que no existían en la BD).
 
 ```bash
-# En el repo food-service-backend (no en el VPS de esta app)
+# En el repo food-service-backend (no en el VPS de esta app) — DEPRECADO
 npx prisma migrate deploy
 ```
 
-Aplicar migraciones **antes** de desplegar una versión que dependa de cambios de esquema.
+Si encontrás un script suelto en `prisma/sql/` sin migración formal asociada, preferí el
+flujo de §7.1 (diff contra Neon) en vez de aplicar el script a ciegas.
 
 ## 8. Migrar Neon → Postgres en el VPS
 
