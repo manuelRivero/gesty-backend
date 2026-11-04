@@ -75,6 +75,7 @@ export async function upsertFiscalConfiguration(
           ? {
               external_issuer_id: null,
               external_issuer_cuit: null,
+              external_issuer_environment: null,
               punto_venta: null,
               validated_at: null,
               status: FiscalConfigStatus.pending_validation,
@@ -98,6 +99,7 @@ export async function markFiscalConfigurationValidated(
         validated_at: new Date(),
         external_issuer_id: externalIssuerId,
         external_issuer_cuit: null,
+        external_issuer_environment: null,
       },
     });
   });

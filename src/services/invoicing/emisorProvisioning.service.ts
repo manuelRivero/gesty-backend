@@ -1,6 +1,7 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import type { CondicionIva, IssuerStatusResult } from "../../domain/invoicing/types";
-import { resolveBillingProvider } from "./billingProviderFactory";
+import { resolveBillingProvider, resolveCurrentEnvironment } from "./billingProviderFactory";
 import { getFiscalConfiguration } from "./fiscalConfiguration.service";
 import { withFiscalConfigurationLock } from "./fiscalConfigurationLock";
 
@@ -13,6 +14,27 @@ export interface EmisorProvisioningResult {
 
 function normalizeCuit(cuit: string | null | undefined): string {
   return (cuit ?? "").replace(/\D/g, "");
+}
+
+function isExternalIssuerUniqueConflict(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") {
+    return false;
+  }
+  const externalIssuerUniqueIndexNames = [
+    "unique_fiscal_configuration_external_issuer_id",
+    "unique_fiscal_configuration_issuer_environment_id",
+    "unique_fiscal_configuration_issuer_id_without_environment",
+    "unique_fiscal_configuration_issuer_id_except_production",
+    "unique_fiscal_configuration_issuer_id_except_sandbox",
+  ];
+  const target = (error.meta as { target?: unknown } | undefined)?.target;
+  if (typeof target === "string") {
+    return (
+      target.includes("external_issuer_id") ||
+      externalIssuerUniqueIndexNames.some((indexName) => target.includes(indexName))
+    );
+  }
+  return Array.isArray(target) && target.includes("external_issuer_id");
 }
 
 /**
@@ -43,14 +65,20 @@ export async function ensureEmisorProvisioned(businessId: string): Promise<Emiso
 
     const cuit = fresh.cuit;
     const normalizedCuit = normalizeCuit(cuit);
+    const environment = await resolveCurrentEnvironment();
+    if (!environment) {
+      return { provisioned: false, externalIssuerId: null, status: "not_configured", detail: "No se pudo determinar el entorno activo de Sistemas 360." };
+    }
+
     if (
       fresh.external_issuer_id &&
+      fresh.external_issuer_environment === environment &&
       normalizeCuit(fresh.external_issuer_cuit) === normalizedCuit
     ) {
       return { provisioned: true, externalIssuerId: fresh.external_issuer_id, status: "pending_validation", detail: "Ya asociado." };
     }
 
-    const provider = await resolveBillingProvider(businessId);
+    const provider = await resolveBillingProvider(businessId, { environment });
     if (!provider) {
       return { provisioned: false, externalIssuerId: null, status: "not_configured", detail: "No hay token central de Sistemas 360 configurado/activo." };
     }
@@ -66,7 +94,14 @@ export async function ensureEmisorProvisioned(businessId: string): Promise<Emiso
 
     if (result.externalIssuerId) {
       const ownedByOther = await prisma.fiscal_configuration.findFirst({
-        where: { external_issuer_id: result.externalIssuerId, business_id: { not: businessId } },
+        where: {
+          external_issuer_id: result.externalIssuerId,
+          business_id: { not: businessId },
+          OR: [
+            { external_issuer_environment: environment },
+            { external_issuer_environment: null },
+          ],
+        },
         select: { id: true },
       });
       if (ownedByOther) {
@@ -79,23 +114,38 @@ export async function ensureEmisorProvisioned(businessId: string): Promise<Emiso
         };
       }
 
-      const saved = await prisma.fiscal_configuration.updateMany({
-        where: {
-          business_id: businessId,
-          cuit,
-          external_issuer_id: fresh.external_issuer_id,
-          external_issuer_cuit: fresh.external_issuer_cuit,
-        },
-        data: {
-          external_issuer_id: result.externalIssuerId,
-          external_issuer_cuit: normalizedCuit,
-          updated_at: new Date(),
-        },
-      });
+      let saved: { count: number };
+      try {
+        saved = await prisma.fiscal_configuration.updateMany({
+          where: {
+            business_id: businessId,
+            cuit,
+            external_issuer_id: fresh.external_issuer_id,
+            external_issuer_cuit: fresh.external_issuer_cuit,
+            external_issuer_environment: fresh.external_issuer_environment,
+          },
+          data: {
+            external_issuer_id: result.externalIssuerId,
+            external_issuer_cuit: normalizedCuit,
+            external_issuer_environment: environment,
+            updated_at: new Date(),
+          },
+        });
+      } catch (error) {
+        if (!isExternalIssuerUniqueConflict(error)) throw error;
+        return {
+          provisioned: false,
+          externalIssuerId: null,
+          status: "conflict",
+          detail:
+            "El emisor de Sistemas 360 se asoció a otro negocio durante la operación. No se asignó a este negocio; contactá a soporte para resolverlo.",
+        };
+      }
       if (saved.count !== 1) {
         const latest = await getFiscalConfiguration(businessId);
         const alreadyAssociated =
           latest?.external_issuer_id === result.externalIssuerId &&
+          latest.external_issuer_environment === environment &&
           normalizeCuit(latest.external_issuer_cuit) === normalizeCuit(latest.cuit);
         return {
           provisioned: alreadyAssociated,

@@ -1106,11 +1106,17 @@ model fiscal_configuration {
   external_issuer_id  String?
   /// CUIT normalizado al que se verificó que corresponde `external_issuer_id`.
   external_issuer_cuit String?
+  /// Entorno de Sistemas 360 al que corresponde la asociación del emisor.
+  external_issuer_environment String?
   created_at          DateTime           @default(now()) @db.Timestamptz(6)
   updated_at          DateTime           @default(now()) @db.Timestamptz(6)
   business            business           @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([business_id], map: "idx_fiscal_configuration_business")
+  @@unique([external_issuer_environment, external_issuer_id], map: "unique_fiscal_configuration_issuer_environment_id", where: raw("(external_issuer_environment IS NOT NULL AND external_issuer_id IS NOT NULL)"))
+  @@unique([external_issuer_id], map: "unique_fiscal_configuration_issuer_id_without_environment", where: raw("(external_issuer_environment IS NULL AND external_issuer_id IS NOT NULL)"))
+  @@unique([external_issuer_id], map: "unique_fiscal_configuration_issuer_id_except_production", where: raw("(external_issuer_id IS NOT NULL AND (external_issuer_environment IS NULL OR external_issuer_environment <> 'production'))"))
+  @@unique([external_issuer_id], map: "unique_fiscal_configuration_issuer_id_except_sandbox", where: raw("(external_issuer_id IS NOT NULL AND (external_issuer_environment IS NULL OR external_issuer_environment <> 'sandbox'))"))
 }
 
 /// Registro de comprobantes (facturas y notas de crédito) emitidos o en curso de emisión.

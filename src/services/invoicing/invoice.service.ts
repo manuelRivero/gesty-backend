@@ -414,8 +414,11 @@ export async function requestInvoiceEmission(
   // `emisorProvisioning.service.ts`): solo se acepta una asociación con prueba local de que
   // pertenece al CUIT vigente. Las asociaciones previas a ese registro se vuelven a resolver.
   const normalizedCuit = fiscalConfig.cuit.replace(/\D/g, "");
+  const providerEnvironment = await resolveCurrentEnvironment();
   if (
+    !providerEnvironment ||
     !fiscalConfig.external_issuer_id ||
+    fiscalConfig.external_issuer_environment !== providerEnvironment ||
     (fiscalConfig.external_issuer_cuit ?? "").replace(/\D/g, "") !== normalizedCuit
   ) {
     const provisioning = await ensureEmisorProvisioned(businessId);
@@ -426,6 +429,7 @@ export async function requestInvoiceEmission(
     if (
       !fiscalConfig?.cuit ||
       !fiscalConfig.external_issuer_id ||
+      fiscalConfig.external_issuer_environment !== providerEnvironment ||
       (fiscalConfig.external_issuer_cuit ?? "").replace(/\D/g, "") !==
         fiscalConfig.cuit.replace(/\D/g, "")
     ) {
@@ -463,8 +467,6 @@ export async function requestInvoiceEmission(
   // Capturado una sola vez, ANTES de reclamar la fila: queda inmutable en `provider_environment`
   // para que una reconciliación futura nunca use un entorno distinto del que existía al emitir
   // (hallazgo "aislamiento del entorno de emisión").
-  const providerEnvironment = await resolveCurrentEnvironment();
-
   let claim: ClaimDecision;
   try {
     claim = await withBillingLock(INVOICING_EMISSION_NAMESPACE, key, () =>
@@ -515,6 +517,7 @@ export async function requestInvoiceEmission(
       if (
         !currentConfig?.cuit ||
         !currentConfig.external_issuer_id ||
+        currentConfig.external_issuer_environment !== providerEnvironment ||
         (currentConfig.external_issuer_cuit ?? "").replace(/\D/g, "") !==
           currentConfig.cuit.replace(/\D/g, "")
       ) {

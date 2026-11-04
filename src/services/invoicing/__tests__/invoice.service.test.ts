@@ -31,7 +31,7 @@ vi.mock("../invoicingAddon.service", () => ({
 
 vi.mock("../billingProviderFactory", () => ({
   resolveBillingProvider: vi.fn(),
-  resolveCurrentEnvironment: vi.fn().mockResolvedValue(null),
+  resolveCurrentEnvironment: vi.fn().mockResolvedValue("sandbox"),
 }));
 
 vi.mock("../invoicingUsage.service", () => ({
@@ -81,6 +81,7 @@ function baseFiscalConfig() {
     punto_venta: 3,
     external_issuer_id: "100",
     external_issuer_cuit: "20123456786",
+    external_issuer_environment: "sandbox",
     auto_issue_online: true,
     auto_issue_cash: false,
     status: "validated",

@@ -37,7 +37,7 @@ export async function resolveBillingProvider(
  * una `fiscal_invoice` (`invoice.service.ts`, `provider_environment`) para que la reconciliación
  * posterior no dependa de qué entorno esté activo en ese momento.
  */
-export async function resolveCurrentEnvironment(): Promise<string | null> {
+export async function resolveCurrentEnvironment(): Promise<CentralProviderEnvironment | null> {
   const central = await getActiveCentralToken("sistemas360");
   return central?.environment ?? null;
 }

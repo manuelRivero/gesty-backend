@@ -37,6 +37,7 @@ vi.mock("../../billing/billingLock", () => ({
 
 vi.mock("../billingProviderFactory", () => ({
   resolveBillingProvider: vi.fn(),
+  resolveCurrentEnvironment: vi.fn().mockResolvedValue("sandbox"),
 }));
 
 import { prisma } from "../../../lib/prisma";
