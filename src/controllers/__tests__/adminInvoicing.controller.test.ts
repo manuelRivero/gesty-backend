@@ -68,11 +68,12 @@ import {
   upsertFiscalConfiguration,
   getFiscalConfiguration,
 } from "../../services/invoicing/fiscalConfiguration.service";
-import { requestInvoiceEmission } from "../../services/invoicing/invoice.service";
+import { listInvoices, requestInvoiceEmission } from "../../services/invoicing/invoice.service";
 import { InvalidCuitError, lookupCuit, NoCentralProviderError } from "../../services/invoicing/cuitLookup.service";
 import {
   getCuitLookupHandler,
   getOrderInvoicePdfHandler,
+  listInvoicesHandler,
   postEmitOrderInvoiceHandler,
   postProvisionEmisorHandler,
   putFiscalConfigurationHandler,
@@ -318,5 +319,49 @@ describe("postEmitOrderInvoiceHandler", () => {
     await postEmitOrderInvoiceHandler(makeRequest(), res);
 
     expect(res.status).toHaveBeenCalledWith(201);
+  });
+});
+
+describe("listInvoicesHandler", () => {
+  function makeListRequest(query: Record<string, string>): Request {
+    return { user: { businessId: "business-1" }, params: {}, query } as unknown as Request;
+  }
+
+  it("pasa status, dateFrom y dateTo al servicio", async () => {
+    mocked(listInvoices).mockResolvedValue([]);
+    const res = makeResponse();
+
+    await listInvoicesHandler(
+      makeListRequest({ status: "authorized", dateFrom: "2026-01-01", dateTo: "2026-01-31" }),
+      res,
+    );
+
+    expect(listInvoices).toHaveBeenCalledWith("business-1", {
+      status: "authorized",
+      dateFrom: "2026-01-01",
+      dateTo: "2026-01-31",
+      take: undefined,
+      skip: undefined,
+    });
+    expect(res.json).toHaveBeenCalledWith({ invoices: [] });
+  });
+
+  it("rechaza un status desconocido sin llegar al servicio", async () => {
+    const res = makeResponse();
+
+    await listInvoicesHandler(makeListRequest({ status: "no-existe" }), res);
+
+    expect(listInvoices).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it("devuelve 400 cuando el servicio rechaza una fecha inválida", async () => {
+    mocked(listInvoices).mockRejectedValue(new Error("INVALID_DATE_FROM"));
+    const res = makeResponse();
+
+    await listInvoicesHandler(makeListRequest({ dateFrom: "no-es-una-fecha" }), res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({ error: "Fecha inválida (dateFrom / dateTo)" });
   });
 });

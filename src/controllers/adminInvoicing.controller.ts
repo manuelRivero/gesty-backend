@@ -1,5 +1,5 @@
 import type { Request, Response } from "express";
-import { FiscalInvoiceKind } from "@prisma/client";
+import { FiscalInvoiceKind, FiscalInvoiceStatus } from "@prisma/client";
 import { BillingProviderTechnicalError, CuitNotFoundError } from "../domain/invoicing/types";
 import {
   checkFiscalConfigurationConnectivity,
@@ -146,14 +146,36 @@ export async function getInvoicingUsageHandler(req: Request, res: Response): Pro
   res.json({ current, history });
 }
 
+/** Filtro por período (`dateFrom`/`dateTo`, "YYYY-MM-DD"): mismo nombrado y convención que `adminOrders`/`adminReservations`. */
 export async function listInvoicesHandler(req: Request, res: Response): Promise<void> {
   const businessId = businessIdOrThrow(req, res);
   if (!businessId) return;
-  const invoices = await listInvoices(businessId, {
-    take: req.query.take ? Number(req.query.take) : undefined,
-    skip: req.query.skip ? Number(req.query.skip) : undefined,
-  });
-  res.json({ invoices });
+
+  const statusParam = req.query.status;
+  if (
+    typeof statusParam === "string" &&
+    !Object.values(FiscalInvoiceStatus).includes(statusParam as FiscalInvoiceStatus)
+  ) {
+    res.status(400).json({ error: "Estado inválido." });
+    return;
+  }
+
+  try {
+    const invoices = await listInvoices(businessId, {
+      status: typeof statusParam === "string" ? (statusParam as FiscalInvoiceStatus) : undefined,
+      dateFrom: typeof req.query.dateFrom === "string" ? req.query.dateFrom : undefined,
+      dateTo: typeof req.query.dateTo === "string" ? req.query.dateTo : undefined,
+      take: req.query.take ? Number(req.query.take) : undefined,
+      skip: req.query.skip ? Number(req.query.skip) : undefined,
+    });
+    res.json({ invoices });
+  } catch (err) {
+    if (err instanceof Error && (err.message === "INVALID_DATE_FROM" || err.message === "INVALID_DATE_TO")) {
+      res.status(400).json({ error: "Fecha inválida (dateFrom / dateTo)" });
+      return;
+    }
+    throw err;
+  }
 }
 
 export async function getOrderInvoicesHandler(req: Request, res: Response): Promise<void> {

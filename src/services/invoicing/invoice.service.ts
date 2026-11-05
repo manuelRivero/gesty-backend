@@ -1,4 +1,6 @@
 import { FiscalInvoiceStatus, FiscalInvoiceKind, Prisma, type fiscal_invoice } from "@prisma/client";
+import dayjs from "dayjs";
+import utc from "dayjs/plugin/utc";
 import { prisma } from "../../lib/prisma";
 import {
   BillingLockTimeoutError,
@@ -22,6 +24,8 @@ import { withFiscalConfigurationLock } from "./fiscalConfigurationLock";
 import { isInvoicingAddonEnabled } from "./invoicingAddon.service";
 import { recordProviderRequest, recordVoucherAuthorized } from "./invoicingUsage.service";
 import { resolveVoucherTypeForConsumidorFinal } from "./voucherTypeResolver";
+
+dayjs.extend(utc);
 
 export interface InvoiceEmissionOutcome {
   emitted: boolean;
@@ -594,12 +598,41 @@ export async function getInvoicesForOrder(businessId: string, orderId: string): 
   });
 }
 
+/** Mismo patrón que `adminOrders.service.ts`/`adminReservations.service.ts`: acepta "YYYY-MM-DD" (día completo en UTC) o un ISO completo. */
+function parseDateFrom(s: string): Date {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return dayjs.utc(s).startOf("day").toDate();
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) throw new Error("INVALID_DATE_FROM");
+  return d;
+}
+
+function parseDateTo(s: string): Date {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return dayjs.utc(s).endOf("day").toDate();
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) throw new Error("INVALID_DATE_TO");
+  return d;
+}
+
 export async function listInvoices(
   businessId: string,
-  options: { status?: FiscalInvoiceStatus; take?: number; skip?: number } = {}
+  options: {
+    status?: FiscalInvoiceStatus;
+    dateFrom?: string;
+    dateTo?: string;
+    take?: number;
+    skip?: number;
+  } = {}
 ): Promise<fiscal_invoice[]> {
+  const createdAt: Prisma.DateTimeFilter = {};
+  if (options.dateFrom) createdAt.gte = parseDateFrom(options.dateFrom);
+  if (options.dateTo) createdAt.lte = parseDateTo(options.dateTo);
+
   return prisma.fiscal_invoice.findMany({
-    where: { business_id: businessId, ...(options.status ? { status: options.status } : {}) },
+    where: {
+      business_id: businessId,
+      ...(options.status ? { status: options.status } : {}),
+      ...(options.dateFrom || options.dateTo ? { created_at: createdAt } : {}),
+    },
     orderBy: { created_at: "desc" },
     take: options.take ?? 50,
     skip: options.skip ?? 0,

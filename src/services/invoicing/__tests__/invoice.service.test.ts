@@ -62,6 +62,7 @@ import { withBillingLock } from "../../billing/billingLock";
 import {
   requestInvoiceEmission,
   reconcilePendingInvoices,
+  listInvoices,
 } from "../invoice.service";
 
 function mocked(fn: unknown): ReturnType<typeof vi.fn> {
@@ -746,5 +747,55 @@ describe("requestInvoiceEmission", () => {
     expect(getInvoiceStatus).toHaveBeenCalledTimes(1);
     expect(prisma.fiscal_invoice.create).not.toHaveBeenCalled();
     expect(result.reconciled).toBe(1);
+  });
+});
+
+describe("listInvoices", () => {
+  beforeEach(() => {
+    mocked(prisma.fiscal_invoice.findMany).mockResolvedValue([]);
+  });
+
+  it("filtra por status cuando se indica", async () => {
+    await listInvoices(BUSINESS_A, { status: FiscalInvoiceStatus.authorized });
+
+    expect(prisma.fiscal_invoice.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          business_id: BUSINESS_A,
+          status: FiscalInvoiceStatus.authorized,
+        }),
+      }),
+    );
+  });
+
+  it("filtra por período (dateFrom/dateTo en formato YYYY-MM-DD) usando created_at", async () => {
+    await listInvoices(BUSINESS_A, { dateFrom: "2026-01-01", dateTo: "2026-01-31" });
+
+    const call = mocked(prisma.fiscal_invoice.findMany).mock.calls[0][0] as {
+      where: { created_at?: { gte?: Date; lte?: Date } };
+    };
+    expect(call.where.created_at?.gte?.toISOString()).toBe("2026-01-01T00:00:00.000Z");
+    expect(call.where.created_at?.lte?.toISOString()).toBe("2026-01-31T23:59:59.999Z");
+  });
+
+  it("no agrega filtro de created_at si no se pasa dateFrom/dateTo", async () => {
+    await listInvoices(BUSINESS_A, {});
+
+    const call = mocked(prisma.fiscal_invoice.findMany).mock.calls[0][0] as {
+      where: Record<string, unknown>;
+    };
+    expect(call.where.created_at).toBeUndefined();
+  });
+
+  it("rechaza un dateFrom inválido con un error reconocible por el controller", async () => {
+    await expect(listInvoices(BUSINESS_A, { dateFrom: "no-es-una-fecha" })).rejects.toThrow(
+      "INVALID_DATE_FROM",
+    );
+  });
+
+  it("rechaza un dateTo inválido con un error reconocible por el controller", async () => {
+    await expect(listInvoices(BUSINESS_A, { dateTo: "no-es-una-fecha" })).rejects.toThrow(
+      "INVALID_DATE_TO",
+    );
   });
 });
