@@ -552,8 +552,12 @@ router.delete(
   removePaymentProvider
 );
 
-router.get("/reservations", getReservations);
-router.get("/reservations/:id", getReservationById);
+router.get("/reservations", requireRoles("OWNER", "ADMIN"), getReservations);
+router.get(
+  "/reservations/:id",
+  requireRoles("OWNER", "ADMIN"),
+  getReservationById
+);
 
 router.get(
   "/payment-method-configs",
