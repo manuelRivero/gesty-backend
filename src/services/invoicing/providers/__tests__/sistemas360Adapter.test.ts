@@ -13,6 +13,7 @@ vi.mock("../sistemas360Client", async () => {
     sistemas360Reintentar: vi.fn(),
     sistemas360DescargarPdf: vi.fn(),
     sistemas360Ping: vi.fn(),
+    sistemas360LookupCuit: vi.fn(),
   };
 });
 
@@ -24,10 +25,12 @@ import {
   sistemas360CrearComprobante,
   sistemas360DescargarPdf,
   sistemas360ListEmisores,
+  sistemas360LookupCuit,
   sistemas360Reintentar,
   sistemas360Ping,
 } from "../sistemas360Client";
 import { Sistemas360Adapter, sistemas360ValidateToken } from "../sistemas360Adapter";
+import { CuitNotFoundError } from "../../../../domain/invoicing/types";
 import type { IssueInvoiceRequest } from "../../../../domain/invoicing/types";
 
 function mocked(fn: unknown): ReturnType<typeof vi.fn> {
@@ -127,6 +130,30 @@ describe("Sistemas360Adapter.registerIssuer", () => {
     expect(result.externalIssuerId).toBe("88");
   });
 
+  it("rechaza la alta si la respuesta del proveedor no trae un identificador válido (nunca persistir undefined)", async () => {
+    mocked(sistemas360ListEmisores).mockResolvedValue([]);
+    mocked(sistemas360CreateEmisor).mockResolvedValue({ cuit: "20123456786" });
+    const adapter = new Sistemas360Adapter("central-token");
+
+    await expect(
+      adapter.registerIssuer({
+        issuer: { cuit: "20123456786", razonSocial: "Test", condicionIva: "RI", domicilioFiscal: "" },
+      })
+    ).rejects.toThrow(/identificador numérico válido/);
+  });
+
+  it("prefiere emisor_id sobre id cuando el proveedor devuelve ambos (contrato oficial confirmado)", async () => {
+    mocked(sistemas360ListEmisores).mockResolvedValue([]);
+    mocked(sistemas360CreateEmisor).mockResolvedValue({ emisor_id: 555, id: 1, cuit: "20123456786" });
+    const adapter = new Sistemas360Adapter("central-token");
+
+    const result = await adapter.registerIssuer({
+      issuer: { cuit: "20123456786", razonSocial: "Test", condicionIva: "RI", domicilioFiscal: "" },
+    });
+
+    expect(result.externalIssuerId).toBe("555");
+  });
+
   it("propaga businessId a cada llamada real del cliente (listado + alta) para atribución de consumo", async () => {
     mocked(sistemas360ListEmisores).mockResolvedValue([]);
     mocked(sistemas360CreateEmisor).mockResolvedValue({ id: 88, cuit: "20123456786" });
@@ -142,6 +169,62 @@ describe("Sistemas360Adapter.registerIssuer", () => {
       expect.objectContaining({ cuit: "20123456786" }),
       "biz-9"
     );
+  });
+});
+
+describe("Sistemas360Adapter.lookupCuit", () => {
+  it("consulta el padrón y normaliza la respuesta, sin crear ni listar emisores", async () => {
+    mocked(sistemas360LookupCuit).mockResolvedValue({
+      cuit: "20123456786",
+      razon_social: "Restaurante Test",
+      condicion_iva: "Responsable Inscripto",
+      domicilio_fiscal: "Calle Falsa 123",
+    });
+    const adapter = new Sistemas360Adapter("central-token", null, "biz-1");
+
+    const result = await adapter.lookupCuit("20-12345678-6");
+
+    expect(sistemas360LookupCuit).toHaveBeenCalledWith("central-token", "20123456786", "biz-1");
+    expect(sistemas360ListEmisores).not.toHaveBeenCalled();
+    expect(sistemas360CreateEmisor).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      cuit: "20123456786",
+      razonSocial: "Restaurante Test",
+      condicionIva: "RI",
+      condicionIvaRaw: "Responsable Inscripto",
+      domicilioFiscal: "Calle Falsa 123",
+    });
+  });
+
+  it("lanza CuitNotFoundError cuando el proveedor responde 404", async () => {
+    mocked(sistemas360LookupCuit).mockRejectedValue(
+      new Sistemas360HttpError("Sistemas 360 respondió 404 en /cuit/20123456786", 404, {})
+    );
+    const adapter = new Sistemas360Adapter("central-token");
+
+    await expect(adapter.lookupCuit("20123456786")).rejects.toBeInstanceOf(CuitNotFoundError);
+  });
+
+  it("no reconoce una condición de IVA inesperada como RI/CF/etc., pero conserva el valor crudo", async () => {
+    mocked(sistemas360LookupCuit).mockResolvedValue({
+      cuit: "20123456786",
+      condicion_iva: "Algo nuevo no mapeado",
+    });
+    const adapter = new Sistemas360Adapter("central-token");
+
+    const result = await adapter.lookupCuit("20123456786");
+
+    expect(result.condicionIva).toBe("NO_CATEGORIZADO");
+    expect(result.condicionIvaRaw).toBe("Algo nuevo no mapeado");
+  });
+
+  it("traduce un error 403 (token sin permisos de cuenta) a error técnico del dominio", async () => {
+    mocked(sistemas360LookupCuit).mockRejectedValue(
+      new Sistemas360HttpError("Sistemas 360 respondió 403 en /cuit/20123456786", 403, {})
+    );
+    const adapter = new Sistemas360Adapter("central-token");
+
+    await expect(adapter.lookupCuit("20123456786")).rejects.toThrow(/token de cuenta/);
   });
 });
 

@@ -33,6 +33,8 @@ vi.mock("../../billing/billingLock", () => ({
       release();
     }
   }),
+  BillingLockTimeoutError: class extends Error {},
+  BillingLockUnavailableError: class extends Error {},
 }));
 
 vi.mock("../billingProviderFactory", () => ({
@@ -42,7 +44,7 @@ vi.mock("../billingProviderFactory", () => ({
 
 import { prisma } from "../../../lib/prisma";
 import { resolveBillingProvider } from "../billingProviderFactory";
-import { ensureEmisorProvisioned } from "../emisorProvisioning.service";
+import { ensureEmisorProvisioned, provisionAfterFiscalSave } from "../emisorProvisioning.service";
 import {
   checkFiscalConfigurationConnectivity,
   upsertFiscalConfiguration,
@@ -271,5 +273,48 @@ describe("fiscalConfiguration.service", () => {
       credentialErrors: ["No hay una cuenta central activa de Sistemas 360 con token configurado."],
       issuerStatus: null,
     });
+  });
+
+  /**
+   * `upsertFiscalConfiguration` y `ensureEmisorProvisioned`/`provisionAfterFiscalSave` usan el
+   * MISMO namespace de advisory lock (`fiscalConfigurationLock.ts`). El mock de `withBillingLock`
+   * de este archivo serializa adquisiciones del mismo `namespace:key` encadenando promesas: si el
+   * guardado llamara al aprovisionamiento DESDE DENTRO de su propio callback (lock anidado), la
+   * segunda adquisición esperaría indefinidamente a que la primera se liberara — y la primera
+   * nunca se libera porque está esperando a la segunda. Este test falla por timeout si eso ocurre;
+   * si resuelve, confirma que son dos adquisiciones secuenciales, no anidadas.
+   */
+  it("guardar y luego aprovisionar (orquestación del PUT) no anida el lock — no hay deadlock", async () => {
+    let current: Record<string, unknown> | null = null;
+    mocked(prisma.fiscal_configuration.findUnique).mockImplementation(async () => current);
+    mocked(prisma.fiscal_configuration.upsert).mockImplementation(async ({ create, update }) => {
+      current = { ...(current ?? {}), ...(create ?? {}), ...(update ?? {}) };
+      return current;
+    });
+    mocked(prisma.fiscal_configuration.findFirst).mockResolvedValue(null);
+    mocked(prisma.fiscal_configuration.updateMany).mockImplementation(async ({ data }) => {
+      current = { ...(current ?? {}), ...data };
+      return { count: 1 };
+    });
+    const registerIssuer = vi.fn().mockResolvedValue({
+      status: "pending_validation",
+      externalIssuerId: "99",
+      detail: "Emisor creado.",
+    });
+    mocked(resolveBillingProvider).mockResolvedValue({ registerIssuer });
+
+    await upsertFiscalConfiguration("business-1", {
+      cuit: "20123456786",
+      razonSocial: "Restaurante Test",
+      condicionIva: "RI",
+      domicilioFiscal: "Calle 123",
+      autoIssueOnline: true,
+      autoIssueCash: false,
+    });
+    // Si lo anterior no hubiera liberado su lock (llamada anidada), esto nunca resolvería.
+    const summary = await provisionAfterFiscalSave("business-1");
+
+    expect(summary.outcome).toBe("provisioned");
+    expect(registerIssuer).toHaveBeenCalledTimes(1);
   });
 });

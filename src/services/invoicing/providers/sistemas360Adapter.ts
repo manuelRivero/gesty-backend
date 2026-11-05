@@ -1,6 +1,7 @@
 import type { BillingProvider } from "../../../domain/invoicing/billingProvider.port";
 import type {
   BillingProviderCapability,
+  CuitLookupResult,
   FiscalCustomer,
   FiscalInvoiceLineItem,
   FiscalInvoiceResult,
@@ -10,8 +11,10 @@ import type {
   IssuerStatusResult,
   ValidateConfigurationResult,
 } from "../../../domain/invoicing/types";
-import { BillingProviderTechnicalError } from "../../../domain/invoicing/types";
+import { BillingProviderTechnicalError, CuitNotFoundError } from "../../../domain/invoicing/types";
 import {
+  extractEmisorId,
+  sanitizeForLog,
   Sistemas360HttpError,
   Sistemas360ResponseShapeError,
   sistemas360BuscarPorReferenciaExterna,
@@ -21,6 +24,7 @@ import {
   sistemas360GetComprobante,
   sistemas360GetEstadoFiscal,
   sistemas360ListEmisores,
+  sistemas360LookupCuit,
   sistemas360Ping,
   sistemas360Reintentar,
   type Sistemas360Cliente,
@@ -29,11 +33,38 @@ import {
 } from "./sistemas360Client";
 import {
   condicionIvaToReceptorId,
+  normalizeCondicionIvaFromPadron,
   normalizeSistemas360Response,
   voucherTypeToTipoComprobante,
 } from "./sistemas360Normalizer";
 
 const UNSUPPORTED: ReadonlySet<BillingProviderCapability> = new Set();
+
+// Serializado a JSON para no depender de la profundidad default de `console.debug`/`console.error`
+// (2) — a partir de ahí Node imprime `[Object]` y trunca justo lo que esta instrumentación
+// necesita mostrar completo (ver `describeError`/`httpBody`).
+function logDebug(message: string, extra?: Record<string, unknown>): void {
+  console.debug("[Sistemas360Adapter]", message, JSON.stringify(extra ?? {}, null, 2));
+}
+
+function logError(message: string, extra?: Record<string, unknown>): void {
+  console.error("[Sistemas360Adapter]", message, JSON.stringify(extra ?? {}, null, 2));
+}
+
+/** Vuelca toda la información diagnosticable de una excepción sin asumir su tipo concreto. */
+function describeError(err: unknown): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    errorName: err instanceof Error ? err.name : typeof err,
+    errorMessage: err instanceof Error ? err.message : String(err),
+    stack: err instanceof Error ? err.stack : undefined,
+  };
+  if (err instanceof Sistemas360HttpError) {
+    base.httpStatus = err.status;
+    base.httpBody = sanitizeForLog(err.body);
+    base.cause = err.cause instanceof Error ? { name: err.cause.name, message: err.cause.message } : err.cause;
+  }
+  return base;
+}
 
 function toSistemas360Cliente(customer: FiscalCustomer): Sistemas360Cliente {
   if (customer.documentType === "CONSUMIDOR_FINAL" || !customer.documentNumber) {
@@ -115,18 +146,32 @@ export class Sistemas360Adapter implements BillingProvider {
    */
   async registerIssuer(request: IssuerRegistrationRequest): Promise<IssuerStatusResult> {
     try {
+      logDebug("registerIssuer: buscando emisor existente por CUIT", {
+        businessId: this.businessId,
+        method: "GET",
+        endpoint: "/emisores",
+      });
       const existentes = await sistemas360ListEmisores(this.token, this.businessId);
       const match = existentes.find((e) => normalizeCuit(e.cuit) === normalizeCuit(request.issuer.cuit));
       if (match) {
+        logDebug("registerIssuer: emisor existente encontrado, no se crea uno nuevo", {
+          businessId: this.businessId,
+          habilitadoProduccion: Boolean(match.habilitado_produccion),
+        });
         return {
           status: match.habilitado_produccion ? "validated" : "pending_validation",
-          externalIssuerId: String(match.id),
+          externalIssuerId: String(extractEmisorId(match)),
           detail: match.habilitado_produccion
             ? "Emisor ya habilitado para producción en la cuenta de Sistemas 360."
             : "Emisor existente en la cuenta, todavía no habilitado para producción.",
         };
       }
 
+      logDebug("registerIssuer: sin emisor existente, creando uno nuevo", {
+        businessId: this.businessId,
+        method: "POST",
+        endpoint: "/emisores",
+      });
       const created = await sistemas360CreateEmisor(
         this.token,
         {
@@ -135,13 +180,49 @@ export class Sistemas360Adapter implements BillingProvider {
         },
         this.businessId
       );
+      logDebug("registerIssuer: emisor creado correctamente", { businessId: this.businessId });
       return {
         status: "pending_validation",
-        externalIssuerId: String(created.id),
+        externalIssuerId: String(extractEmisorId(created)),
         detail: "Emisor creado en Sistemas 360. Falta habilitación para producción (certificado/WSFE).",
       };
     } catch (err) {
+      logError("registerIssuer: la operación falló", {
+        businessId: this.businessId,
+        ...describeError(err),
+      });
       if (err instanceof Sistemas360HttpError) {
+        throw new BillingProviderTechnicalError(this.name, providerErrorMessage(err), err);
+      }
+      if (err instanceof Sistemas360ResponseShapeError) {
+        throw new BillingProviderTechnicalError(this.name, err.message, err);
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Consulta de solo lectura al padrón (FASE: cierre de integración). Nunca crea ni modifica un
+   * emisor — a diferencia de `registerIssuer`, no llama a `sistemas360ListEmisores` ni
+   * `sistemas360CreateEmisor`. El llamador (`cuitLookup.service.ts`) decide si usa el resultado
+   * para prellenar la configuración fiscal del negocio.
+   */
+  async lookupCuit(cuit: string): Promise<CuitLookupResult> {
+    const normalizedCuit = cuit.replace(/\D/g, "");
+    try {
+      const found = await sistemas360LookupCuit(this.token, normalizedCuit, this.businessId);
+      return {
+        cuit: found.cuit ?? normalizedCuit,
+        razonSocial: found.razon_social ?? null,
+        condicionIva: normalizeCondicionIvaFromPadron(found.condicion_iva),
+        condicionIvaRaw: found.condicion_iva ?? null,
+        domicilioFiscal: found.domicilio_fiscal ?? null,
+      };
+    } catch (err) {
+      if (err instanceof Sistemas360HttpError) {
+        if (err.status === 404) {
+          throw new CuitNotFoundError(normalizedCuit);
+        }
         throw new BillingProviderTechnicalError(this.name, providerErrorMessage(err), err);
       }
       if (err instanceof Sistemas360ResponseShapeError) {

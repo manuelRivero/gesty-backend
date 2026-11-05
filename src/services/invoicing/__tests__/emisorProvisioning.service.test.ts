@@ -10,6 +10,8 @@ vi.mock("../../../lib/prisma", () => ({
 
 vi.mock("../../billing/billingLock", () => ({
   withBillingLock: vi.fn((_ns: string, _key: string, fn: () => unknown) => fn()),
+  BillingLockTimeoutError: class extends Error {},
+  BillingLockUnavailableError: class extends Error {},
 }));
 
 vi.mock("../fiscalConfiguration.service", () => ({
@@ -24,7 +26,9 @@ vi.mock("../billingProviderFactory", () => ({
 import { prisma } from "../../../lib/prisma";
 import { getFiscalConfiguration } from "../fiscalConfiguration.service";
 import { resolveBillingProvider, resolveCurrentEnvironment } from "../billingProviderFactory";
-import { ensureEmisorProvisioned } from "../emisorProvisioning.service";
+import { BillingProviderTechnicalError } from "../../../domain/invoicing/types";
+import { BillingLockTimeoutError } from "../../billing/billingLock";
+import { ensureEmisorProvisioned, provisionAfterFiscalSave } from "../emisorProvisioning.service";
 
 function mocked(fn: unknown): ReturnType<typeof vi.fn> {
   return fn as ReturnType<typeof vi.fn>;
@@ -149,6 +153,8 @@ describe("ensureEmisorProvisioned", () => {
         external_issuer_id: "99",
         external_issuer_cuit: "20123456786",
         external_issuer_environment: "sandbox",
+        status: "validated",
+        validated_at: expect.any(Date),
       }),
     });
     expect(result).toEqual({ provisioned: true, externalIssuerId: "99", status: "pending_validation", detail: "Emisor creado." });
@@ -294,6 +300,68 @@ describe("ensureEmisorProvisioned", () => {
     const result = await ensureEmisorProvisioned("biz-3");
 
     expect(result).toEqual({ provisioned: false, externalIssuerId: null, status: "not_configured", detail: "Faltan datos fiscales del negocio." });
+  });
+});
+
+describe("provisionAfterFiscalSave", () => {
+  it("mapea un aprovisionamiento exitoso a outcome 'provisioned'", async () => {
+    mocked(getFiscalConfiguration).mockResolvedValue(baseFiscalConfig());
+    const registerIssuer = vi.fn().mockResolvedValue({
+      status: "pending_validation",
+      externalIssuerId: "99",
+      detail: "Emisor creado.",
+    });
+    mocked(resolveBillingProvider).mockResolvedValue({ registerIssuer });
+    mocked(prisma.fiscal_configuration.findFirst).mockResolvedValue(null);
+    mocked(prisma.fiscal_configuration.updateMany).mockResolvedValue({ count: 1 });
+
+    const summary = await provisionAfterFiscalSave("biz-1");
+
+    expect(summary).toEqual({ outcome: "provisioned", detail: "Emisor creado." });
+  });
+
+  it("mapea un conflicto de pertenencia entre negocios a outcome 'requires_attention'", async () => {
+    mocked(getFiscalConfiguration).mockResolvedValue(baseFiscalConfig());
+    const registerIssuer = vi.fn().mockResolvedValue({
+      status: "pending_validation",
+      externalIssuerId: "77",
+      detail: "Emisor existente en la cuenta, todavía no habilitado para producción.",
+    });
+    mocked(resolveBillingProvider).mockResolvedValue({ registerIssuer });
+    mocked(prisma.fiscal_configuration.findFirst).mockResolvedValue({ id: "fc-other-business" });
+
+    const summary = await provisionAfterFiscalSave("biz-1");
+
+    expect(summary.outcome).toBe("requires_attention");
+  });
+
+  it("mapea un error técnico del proveedor a outcome 'pending' sin lanzar (el guardado ya se persistió)", async () => {
+    mocked(getFiscalConfiguration).mockResolvedValue(baseFiscalConfig());
+    const registerIssuer = vi.fn().mockRejectedValue(
+      new BillingProviderTechnicalError("sistemas360", "Sistemas 360 respondió 500 en /emisores", null)
+    );
+    mocked(resolveBillingProvider).mockResolvedValue({ registerIssuer });
+
+    const summary = await provisionAfterFiscalSave("biz-1");
+
+    expect(summary.outcome).toBe("pending");
+    expect(summary.detail).not.toMatch(/500|sistemas360/i);
+  });
+
+  it("mapea un lock ocupado por otra operación del mismo negocio a outcome 'pending' sin lanzar", async () => {
+    mocked(getFiscalConfiguration).mockRejectedValue(new BillingLockTimeoutError());
+
+    const summary = await provisionAfterFiscalSave("biz-1");
+
+    expect(summary.outcome).toBe("pending");
+  });
+
+  it("datos fiscales incompletos (nunca debería pasar después de un guardado válido) también caen en 'pending', no en una excepción", async () => {
+    mocked(getFiscalConfiguration).mockResolvedValue(baseFiscalConfig({ cuit: null }));
+
+    const summary = await provisionAfterFiscalSave("biz-1");
+
+    expect(summary.outcome).toBe("pending");
   });
 });
 

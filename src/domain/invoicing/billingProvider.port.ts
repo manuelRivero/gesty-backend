@@ -1,5 +1,6 @@
 import type {
   BillingProviderCapability,
+  CuitLookupResult,
   FiscalInvoiceResult,
   IssueCreditNoteRequest,
   IssueInvoiceRequest,
@@ -20,6 +21,12 @@ export interface BillingProvider {
   validateConfiguration(): Promise<ValidateConfigurationResult>;
 
   registerIssuer(request: IssuerRegistrationRequest): Promise<IssuerStatusResult>;
+
+  /**
+   * Consulta de solo lectura al padrón por CUIT. Nunca debe registrar ni modificar un emisor —
+   * eso sigue siendo responsabilidad exclusiva de `registerIssuer`.
+   */
+  lookupCuit(cuit: string): Promise<CuitLookupResult>;
 
   getIssuerStatus(): Promise<IssuerStatusResult>;
 

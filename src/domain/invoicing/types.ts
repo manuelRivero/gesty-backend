@@ -99,6 +99,28 @@ export interface IssuerRegistrationRequest {
   issuer: FiscalIssuerConfig;
 }
 
+/**
+ * Resultado normalizado de la consulta de solo lectura al padrón (`GET /api/cuit/{cuit}`).
+ * Nunca registra ni modifica un emisor — ver `BillingProvider.lookupCuit`.
+ */
+export interface CuitLookupResult {
+  cuit: string;
+  razonSocial: string | null;
+  condicionIva: CondicionIva;
+  /** Condición de IVA tal como la devolvió el padrón, sin normalizar (ver `sistemas360Normalizer`). */
+  condicionIvaRaw: string | null;
+  domicilioFiscal: string | null;
+}
+
+/** El padrón no tiene ningún registro para el CUIT consultado (404 del proveedor). No es un
+ * CUIT mal formado (eso se valida antes, localmente) ni un error técnico. */
+export class CuitNotFoundError extends Error {
+  constructor(public readonly cuit: string) {
+    super(`No se encontró el CUIT ${cuit} en el padrón.`);
+    this.name = "CuitNotFoundError";
+  }
+}
+
 export interface IssuerStatusResult {
   status: "not_configured" | "pending_validation" | "validated" | "rejected";
   externalIssuerId: string | null;

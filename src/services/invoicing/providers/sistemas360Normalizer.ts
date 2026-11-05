@@ -20,6 +20,26 @@ export function condicionIvaToReceptorId(condicionIva: CondicionIva): number {
   return CONDICION_IVA_RECEPTOR_ID[condicionIva];
 }
 
+/**
+ * Mapeo tolerante de la condición de IVA tal como la devuelve el padrón (`GET /api/cuit/{cuit}`)
+ * a `CondicionIva`. El shape exacto de ese campo no se verificó contra sandbox real (ver
+ * auditoría de cierre) — por eso es best-effort por substring y SIEMPRE se acompaña del valor
+ * crudo del proveedor (`CuitLookupResult.condicionIvaRaw`) para que el llamador no pierda
+ * información si el mapeo no reconoce el valor.
+ */
+export function normalizeCondicionIvaFromPadron(raw: string | null | undefined): CondicionIva {
+  if (!raw) return "NO_CATEGORIZADO";
+  const normalized = raw
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "");
+  if (normalized.includes("MONOTRIBUT")) return "MONOTRIBUTO";
+  if (normalized.includes("EXENT")) return "EXENTO";
+  if (normalized.includes("CONSUMIDOR FINAL") || normalized === "CF") return "CF";
+  if (normalized.includes("RESPONSABLE INSCRIPTO") || normalized === "RI") return "RI";
+  return "NO_CATEGORIZADO";
+}
+
 const TIPO_COMPROBANTE_BY_VOUCHER: Record<FiscalVoucherType, string> = {
   A: "factura_a",
   B: "factura_b",

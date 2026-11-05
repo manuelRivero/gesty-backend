@@ -1,12 +1,13 @@
 import type { Request, Response } from "express";
 import { FiscalInvoiceKind } from "@prisma/client";
-import { BillingProviderTechnicalError } from "../domain/invoicing/types";
+import { BillingProviderTechnicalError, CuitNotFoundError } from "../domain/invoicing/types";
 import {
   checkFiscalConfigurationConnectivity,
   getFiscalConfiguration,
   InvalidFiscalConfigurationError,
   upsertFiscalConfiguration,
 } from "../services/invoicing/fiscalConfiguration.service";
+import { InvalidCuitError, lookupCuit, NoCentralProviderError } from "../services/invoicing/cuitLookup.service";
 import {
   getInvoicingAddon,
   setInvoicingAddonEnabled,
@@ -17,9 +18,10 @@ import {
   listInvoices,
   requestInvoiceEmission,
 } from "../services/invoicing/invoice.service";
-import { ensureEmisorProvisioned } from "../services/invoicing/emisorProvisioning.service";
+import { ensureEmisorProvisioned, provisionAfterFiscalSave } from "../services/invoicing/emisorProvisioning.service";
 import { resolveBillingProvider } from "../services/invoicing/billingProviderFactory";
 import { sistemas360HealthArca } from "../services/invoicing/providers/sistemas360Client";
+import { BillingLockTimeoutError, BillingLockUnavailableError } from "../services/billing/billingLock";
 import { prisma } from "../lib/prisma";
 
 function businessIdOrThrow(req: Request, res: Response): string | null {
@@ -45,11 +47,17 @@ export async function getFiscalConfigurationHandler(req: Request, res: Response)
   res.json({ fiscalConfiguration: config });
 }
 
+/**
+ * Guarda los datos fiscales y, como una SEGUNDA operación independiente (con su propio lock —
+ * ver `provisionAfterFiscalSave`), dispara el aprovisionamiento automático del emisor. El
+ * guardado ya se persistió para el momento en que se llama a `provisionAfterFiscalSave`: un
+ * fallo ahí nunca se informa como si los datos fiscales no se hubieran guardado.
+ */
 export async function putFiscalConfigurationHandler(req: Request, res: Response): Promise<void> {
   const businessId = businessIdOrThrow(req, res);
   if (!businessId) return;
   try {
-    const config = await upsertFiscalConfiguration(businessId, {
+    await upsertFiscalConfiguration(businessId, {
       cuit: String(req.body.cuit ?? ""),
       razonSocial: String(req.body.razonSocial ?? ""),
       condicionIva: String(req.body.condicionIva ?? ""),
@@ -57,10 +65,45 @@ export async function putFiscalConfigurationHandler(req: Request, res: Response)
       autoIssueOnline: Boolean(req.body.autoIssueOnline ?? true),
       autoIssueCash: Boolean(req.body.autoIssueCash ?? false),
     });
-    res.json({ fiscalConfiguration: config });
   } catch (err) {
     if (err instanceof InvalidFiscalConfigurationError) {
       res.status(400).json({ error: err.message, details: err.errors });
+      return;
+    }
+    throw err;
+  }
+
+  const provisioning = await provisionAfterFiscalSave(businessId);
+  const config = await getFiscalConfiguration(businessId);
+  res.json({ fiscalConfiguration: config, provisioning });
+}
+
+/**
+ * Consulta de solo lectura al padrón por CUIT (FASE: cierre de integración, autocompletar el
+ * formulario fiscal). Nunca registra un emisor — eso sigue siendo exclusivo de
+ * `postProvisionEmisorHandler`, que el frontend dispara en un paso de confirmación aparte.
+ */
+export async function getCuitLookupHandler(req: Request, res: Response): Promise<void> {
+  const businessId = businessIdOrThrow(req, res);
+  if (!businessId) return;
+  try {
+    const result = await lookupCuit(businessId, String(req.params.cuit ?? ""));
+    res.json({ cuitLookup: result });
+  } catch (err) {
+    if (err instanceof InvalidCuitError) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    if (err instanceof CuitNotFoundError) {
+      res.status(404).json({ error: err.message });
+      return;
+    }
+    if (err instanceof NoCentralProviderError) {
+      res.status(409).json({ error: err.message });
+      return;
+    }
+    if (err instanceof BillingProviderTechnicalError) {
+      res.status(502).json({ error: err.message });
       return;
     }
     throw err;
@@ -120,12 +163,40 @@ export async function getOrderInvoicesHandler(req: Request, res: Response): Prom
   res.json({ invoices });
 }
 
-/** Emisión manual desde el dashboard (FASE 7: historial > "Emitir manualmente"). */
+/**
+ * Emisión manual desde el dashboard (FASE 7: historial > "Emitir manualmente"). Dispara el mismo
+ * aprovisionamiento lazy que la emisión automática (`requestInvoiceEmission` →
+ * `ensureEmisorProvisioned`) si el emisor todavía no está asociado — un error técnico del
+ * proveedor o el lock ocupado por otra operación del mismo negocio no debe convertirse en un 500
+ * genérico sin información.
+ */
 export async function postEmitOrderInvoiceHandler(req: Request, res: Response): Promise<void> {
   const businessId = businessIdOrThrow(req, res);
   if (!businessId) return;
-  const outcome = await requestInvoiceEmission(businessId, String(req.params.orderId), FiscalInvoiceKind.invoice);
-  res.status(outcome.emitted ? 201 : 409).json(outcome);
+  try {
+    const outcome = await requestInvoiceEmission(businessId, String(req.params.orderId), FiscalInvoiceKind.invoice);
+    res.status(outcome.emitted ? 201 : 409).json(outcome);
+  } catch (err) {
+    if (err instanceof BillingProviderTechnicalError) {
+      console.error("[AdminInvoicing] postEmitOrderInvoiceHandler: error técnico del proveedor durante el aprovisionamiento automático", {
+        businessId,
+        errorName: err.name,
+        errorMessage: err.message,
+        stack: err.stack,
+        cause:
+          err.cause instanceof Error
+            ? { name: err.cause.name, message: err.cause.message, stack: err.cause.stack }
+            : err.cause,
+      });
+      res.status(502).json({ error: err.message });
+      return;
+    }
+    if (err instanceof BillingLockTimeoutError || err instanceof BillingLockUnavailableError) {
+      res.status(409).json({ error: err.message });
+      return;
+    }
+    throw err;
+  }
 }
 
 /**
@@ -141,6 +212,19 @@ export async function postProvisionEmisorHandler(req: Request, res: Response): P
     res.status(result.provisioned ? 200 : 409).json(result);
   } catch (err) {
     if (err instanceof BillingProviderTechnicalError) {
+      // Catch final de la operación: deja constancia server-side de la excepción completa
+      // (incluida su `cause` original) antes de responder con el mensaje ya sanitizado al
+      // cliente — este catch es el último punto donde esa información todavía existe.
+      console.error("[AdminInvoicing] postProvisionEmisorHandler: error técnico del proveedor", {
+        businessId,
+        errorName: err.name,
+        errorMessage: err.message,
+        stack: err.stack,
+        cause:
+          err.cause instanceof Error
+            ? { name: err.cause.name, message: err.cause.message, stack: err.cause.stack }
+            : err.cause,
+      });
       res.status(502).json({ error: err.message });
       return;
     }

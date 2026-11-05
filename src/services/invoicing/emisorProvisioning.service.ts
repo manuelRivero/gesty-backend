@@ -1,6 +1,8 @@
-import { Prisma } from "@prisma/client";
+import { FiscalConfigStatus, Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import type { CondicionIva, IssuerStatusResult } from "../../domain/invoicing/types";
+import { BillingProviderTechnicalError } from "../../domain/invoicing/types";
+import { BillingLockTimeoutError, BillingLockUnavailableError } from "../billing/billingLock";
 import { resolveBillingProvider, resolveCurrentEnvironment } from "./billingProviderFactory";
 import { getFiscalConfiguration } from "./fiscalConfiguration.service";
 import { withFiscalConfigurationLock } from "./fiscalConfigurationLock";
@@ -14,6 +16,10 @@ export interface EmisorProvisioningResult {
 
 function normalizeCuit(cuit: string | null | undefined): string {
   return (cuit ?? "").replace(/\D/g, "");
+}
+
+function logDebug(businessId: string, message: string, extra?: Record<string, unknown>): void {
+  console.debug("[EmisorProvisioning]", message, { businessId, ...extra });
 }
 
 function isExternalIssuerUniqueConflict(error: unknown): boolean {
@@ -58,8 +64,15 @@ function isExternalIssuerUniqueConflict(error: unknown): boolean {
  */
 export async function ensureEmisorProvisioned(businessId: string): Promise<EmisorProvisioningResult> {
   return withFiscalConfigurationLock(businessId, async () => {
+    logDebug(businessId, "Iniciando verificación/asociación de emisor");
+
     const fresh = await getFiscalConfiguration(businessId);
     if (!fresh || !fresh.cuit || !fresh.razon_social) {
+      logDebug(businessId, "Faltan datos fiscales, se aborta", {
+        hasFiscalConfiguration: Boolean(fresh),
+        hasCuit: Boolean(fresh?.cuit),
+        hasRazonSocial: Boolean(fresh?.razon_social),
+      });
       return { provisioned: false, externalIssuerId: null, status: "not_configured", detail: "Faltan datos fiscales del negocio." };
     }
 
@@ -67,6 +80,7 @@ export async function ensureEmisorProvisioned(businessId: string): Promise<Emiso
     const normalizedCuit = normalizeCuit(cuit);
     const environment = await resolveCurrentEnvironment();
     if (!environment) {
+      logDebug(businessId, "No se pudo determinar el entorno activo de Sistemas 360");
       return { provisioned: false, externalIssuerId: null, status: "not_configured", detail: "No se pudo determinar el entorno activo de Sistemas 360." };
     }
 
@@ -75,21 +89,50 @@ export async function ensureEmisorProvisioned(businessId: string): Promise<Emiso
       fresh.external_issuer_environment === environment &&
       normalizeCuit(fresh.external_issuer_cuit) === normalizedCuit
     ) {
+      logDebug(businessId, "Ya asociado, no se requiere acción", {
+        environment,
+        externalIssuerId: fresh.external_issuer_id,
+      });
       return { provisioned: true, externalIssuerId: fresh.external_issuer_id, status: "pending_validation", detail: "Ya asociado." };
     }
 
     const provider = await resolveBillingProvider(businessId, { environment });
     if (!provider) {
+      logDebug(businessId, "Sin token central activo para el entorno", { environment });
       return { provisioned: false, externalIssuerId: null, status: "not_configured", detail: "No hay token central de Sistemas 360 configurado/activo." };
     }
 
-    const result = await provider.registerIssuer({
-      issuer: {
-        cuit,
-        razonSocial: fresh.razon_social,
-        condicionIva: (fresh.condicion_iva ?? "NO_CATEGORIZADO") as CondicionIva,
-        domicilioFiscal: fresh.domicilio_fiscal ?? "",
-      },
+    logDebug(businessId, "Llamando a registerIssuer en el proveedor", {
+      environment,
+      normalizedCuit,
+      condicionIva: fresh.condicion_iva ?? "NO_CATEGORIZADO",
+    });
+
+    let result: Awaited<ReturnType<typeof provider.registerIssuer>>;
+    try {
+      result = await provider.registerIssuer({
+        issuer: {
+          cuit,
+          razonSocial: fresh.razon_social,
+          condicionIva: (fresh.condicion_iva ?? "NO_CATEGORIZADO") as CondicionIva,
+          domicilioFiscal: fresh.domicilio_fiscal ?? "",
+        },
+      });
+    } catch (err) {
+      // No se swallowea: se deja constancia en este eslabón intermedio y se relanza la misma
+      // excepción (con su `cause` original intacta) para que el catch final del controller
+      // también pueda verla.
+      logDebug(businessId, "registerIssuer lanzó una excepción", {
+        environment,
+        errorName: err instanceof Error ? err.name : typeof err,
+        errorMessage: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+
+    logDebug(businessId, "Respuesta de registerIssuer", {
+      status: result.status,
+      externalIssuerId: result.externalIssuerId,
     });
 
     if (result.externalIssuerId) {
@@ -105,6 +148,11 @@ export async function ensureEmisorProvisioned(businessId: string): Promise<Emiso
         select: { id: true },
       });
       if (ownedByOther) {
+        logDebug(businessId, "Conflicto: emisor ya asociado a otro negocio", {
+          environment,
+          externalIssuerId: result.externalIssuerId,
+          ownedByFiscalConfigurationId: ownedByOther.id,
+        });
         return {
           provisioned: false,
           externalIssuerId: null,
@@ -128,11 +176,20 @@ export async function ensureEmisorProvisioned(businessId: string): Promise<Emiso
             external_issuer_id: result.externalIssuerId,
             external_issuer_cuit: normalizedCuit,
             external_issuer_environment: environment,
+            // Misma escritura, sin adquirir el lock una segunda vez (ver `provisionAfterFiscalSave`):
+            // la asociación recién persistida es, por definición, la que corresponde al CUIT y
+            // entorno que se acaban de resolver arriba.
+            status: FiscalConfigStatus.validated,
+            validated_at: new Date(),
             updated_at: new Date(),
           },
         });
       } catch (error) {
         if (!isExternalIssuerUniqueConflict(error)) throw error;
+        logDebug(businessId, "Conflicto de unicidad al persistir external_issuer_id", {
+          environment,
+          externalIssuerId: result.externalIssuerId,
+        });
         return {
           provisioned: false,
           externalIssuerId: null,
@@ -141,12 +198,19 @@ export async function ensureEmisorProvisioned(businessId: string): Promise<Emiso
             "El emisor de Sistemas 360 se asoció a otro negocio durante la operación. No se asignó a este negocio; contactá a soporte para resolverlo.",
         };
       }
+      logDebug(businessId, "Escritura condicional de external_issuer_id", {
+        updatedRows: saved.count,
+        externalIssuerId: result.externalIssuerId,
+      });
       if (saved.count !== 1) {
         const latest = await getFiscalConfiguration(businessId);
         const alreadyAssociated =
           latest?.external_issuer_id === result.externalIssuerId &&
           latest.external_issuer_environment === environment &&
           normalizeCuit(latest.external_issuer_cuit) === normalizeCuit(latest.cuit);
+        logDebug(businessId, "La configuración fiscal cambió durante la asociación (carrera detectada)", {
+          alreadyAssociated,
+        });
         return {
           provisioned: alreadyAssociated,
           externalIssuerId: alreadyAssociated ? latest.external_issuer_id : null,
@@ -158,6 +222,11 @@ export async function ensureEmisorProvisioned(businessId: string): Promise<Emiso
       }
     }
 
+    logDebug(businessId, "Finalizando verificación/asociación de emisor", {
+      provisioned: Boolean(result.externalIssuerId),
+      status: result.status,
+    });
+
     return {
       provisioned: Boolean(result.externalIssuerId),
       externalIssuerId: result.externalIssuerId,
@@ -165,4 +234,49 @@ export async function ensureEmisorProvisioned(businessId: string): Promise<Emiso
       detail: result.detail,
     };
   });
+}
+
+export type FiscalProvisioningOutcome = "provisioned" | "pending" | "requires_attention";
+
+export interface FiscalProvisioningSummary {
+  outcome: FiscalProvisioningOutcome;
+  detail: string | null;
+}
+
+function toProvisioningOutcome(result: EmisorProvisioningResult): FiscalProvisioningOutcome {
+  if (result.provisioned) return "provisioned";
+  if (result.status === "conflict") return "requires_attention";
+  return "pending";
+}
+
+/**
+ * Variante de `ensureEmisorProvisioned` para el flujo de guardado (`putFiscalConfigurationHandler`):
+ * se invoca DESPUÉS de que `upsertFiscalConfiguration` ya liberó su lock (mismo namespace que
+ * `ensureEmisorProvisioned` — ver `fiscalConfigurationLock.ts`); nunca se llama desde dentro del
+ * callback que mantiene ese lock, para no anidar dos adquisiciones del mismo advisory lock.
+ *
+ * Nunca lanza por un fallo del proveedor o del lock: un error técnico de Sistemas 360 (o el lock
+ * ocupado por otra operación del mismo negocio) no significa que los datos fiscales no se
+ * guardaron — se normaliza a `pending` (recuperable, reintentable sin perder los datos) en vez de
+ * convertirse en un 500 para el PUT que ya persistió la configuración con éxito.
+ */
+export async function provisionAfterFiscalSave(businessId: string): Promise<FiscalProvisioningSummary> {
+  try {
+    const result = await ensureEmisorProvisioned(businessId);
+    return { outcome: toProvisioningOutcome(result), detail: result.detail };
+  } catch (err) {
+    if (err instanceof BillingProviderTechnicalError) {
+      return {
+        outcome: "pending",
+        detail: "No se pudo completar la asociación con Sistemas 360 todavía. Gesty va a reintentarlo automáticamente.",
+      };
+    }
+    if (err instanceof BillingLockTimeoutError || err instanceof BillingLockUnavailableError) {
+      return {
+        outcome: "pending",
+        detail: "Hay otra operación de facturación en curso para este negocio. Gesty va a reintentarlo automáticamente.",
+      };
+    }
+    throw err;
+  }
 }

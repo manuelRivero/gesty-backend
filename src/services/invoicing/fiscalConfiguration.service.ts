@@ -87,24 +87,6 @@ export async function upsertFiscalConfiguration(
   });
 }
 
-export async function markFiscalConfigurationValidated(
-  businessId: string,
-  externalIssuerId: string | null
-): Promise<void> {
-  await withFiscalConfigurationLock(businessId, async () => {
-    await prisma.fiscal_configuration.update({
-      where: { business_id: businessId },
-      data: {
-        status: FiscalConfigStatus.validated,
-        validated_at: new Date(),
-        external_issuer_id: externalIssuerId,
-        external_issuer_cuit: null,
-        external_issuer_environment: null,
-      },
-    });
-  });
-}
-
 /**
  * Verifica la configuración central de Sistemas 360 y consulta el estado del emisor sin alterar
  * `status`: la respuesta del proveedor no sustituye la validación fiscal persistida.

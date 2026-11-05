@@ -171,6 +171,7 @@ import {
 } from "../controllers/adminDraftOrder.controller";
 import {
   getArcaHealthHandler,
+  getCuitLookupHandler,
   getFiscalConfigurationHandler,
   getInvoicingAddonHandler,
   getInvoicingUsageHandler,
@@ -608,6 +609,7 @@ router.get("/invoicing/arca-health", requireRoles("OWNER", "ADMIN"), getArcaHeal
 router.get("/invoicing/fiscal-configuration", requireRoles("OWNER", "ADMIN"), getFiscalConfigurationHandler);
 router.put("/invoicing/fiscal-configuration", requireRoles("OWNER", "ADMIN"), putFiscalConfigurationHandler);
 router.get("/invoicing/fiscal-configuration/issuer-connectivity", requireRoles("OWNER", "ADMIN"), getIssuerConnectivityHandler);
+router.get("/invoicing/fiscal-configuration/cuit-lookup/:cuit", requireRoles("OWNER", "ADMIN"), getCuitLookupHandler);
 router.get("/invoicing/addon", requireRoles("OWNER", "ADMIN"), getInvoicingAddonHandler);
 router.put("/invoicing/addon", requireRoles("OWNER", "ADMIN"), putInvoicingAddonHandler);
 router.get("/invoicing/usage", requireRoles("OWNER", "ADMIN"), getInvoicingUsageHandler);
