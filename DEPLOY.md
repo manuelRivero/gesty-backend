@@ -12,7 +12,7 @@ VPS de DonWeb **sin subir el código fuente**. El reverse proxy y TLS los gestio
 | Puerto interno | `5001` |
 | Comando de arranque | `node dist/index.js` |
 | WebSockets | Sí (Socket.IO en el mismo servidor HTTP) |
-| Migraciones al arrancar | **No** — el esquema Prisma lo gestiona `food-service-backend`; aplicar migraciones allí antes de desplegar |
+| Migraciones al arrancar | **No** — el esquema Prisma (`prisma/schema.prisma`, `prisma/migrations/`) lo gestiona **este repositorio**, única fuente de verdad; aplicar las migraciones manualmente antes de desplegar (ver §7) |
 | Imagen Docker Hub | `manuelrivero/food-service-agent:latest` |
 | Ruta en VPS | `/opt/apps/food-service-agent` |
 
@@ -66,7 +66,7 @@ Plantilla comentada: [`.env.example`](.env.example).
 - **Nginx Proxy Manager** corriendo en Docker (red externa `proxy-network`).
 - Dominio con registro **A** apuntando a la IP del VPS (ej. `api.tu-dominio.com` → `138.36.238.15`).
 - No modificar registros de correo (MX, `mail.*`, TXT SPF/DKIM) si el dominio ya tiene hosting compartido.
-- Base de datos Postgres accesible (`DATABASE_URL`) con esquema ya migrado desde `food-service-backend` (Neon u Postgres local; ver §8).
+- Base de datos Postgres accesible (`DATABASE_URL`) con el esquema de `prisma/schema.prisma` **de este repositorio** ya migrado (Neon u Postgres local; ver §7-§8).
 - Cuenta Docker Hub: `manuelrivero`.
 
 ## 1. Build y push de la imagen (máquina local o CI)
@@ -313,20 +313,21 @@ cálculo de diffs se hace desde tu máquina local, contra el VPS a través del t
      "docker restart food-service-agent && docker logs --tail 50 food-service-agent"
    ```
 
-### 7.2 (Legacy / deprecado) Migrar desde `food-service-backend`
+### 7.2 (Histórico, eliminado) Migrar desde `food-service-backend`
 
-Método anterior, ya no es el flujo recomendado — se documenta solo por referencia histórica.
-Dependía de un repo separado (`food-service-backend`) gestionando el esquema y de scripts SQL
-sueltos (p. ej. `prisma/sql/*.sql`) aplicados manualmente, lo cual generó desfases entre el
-schema de Prisma y la base real (columnas esperadas por el cliente que no existían en la BD).
-
-```bash
-# En el repo food-service-backend (no en el VPS de esta app) — DEPRECADO
-npx prisma migrate deploy
-```
+Método anterior, **ya no aplica**: dependía de un repo separado (`food-service-backend`)
+gestionando el esquema y de scripts SQL sueltos (p. ej. `prisma/sql/*.sql`) aplicados
+manualmente, lo cual generó desfases entre el schema de Prisma y la base real (columnas
+esperadas por el cliente que no existían en la BD) — ese fue precisamente el motivo de la
+decisión arquitectónica de dejar de depender de ese repo. Este repositorio (`gesty-backend`,
+antes `food-service-agent`) es ahora la **única fuente de verdad** de `prisma/schema.prisma`
+y de `prisma/migrations/`; el script `prisma:sync` que copiaba el schema desde
+`food-service-backend` fue eliminado de `package.json`. No correr `prisma migrate deploy` en
+ningún otro repo para esta base de datos.
 
 Si encontrás un script suelto en `prisma/sql/` sin migración formal asociada, preferí el
-flujo de §7.1 (diff contra Neon) en vez de aplicar el script a ciegas.
+flujo de §7.1 (diff contra Neon) o una migración manual nueva en `prisma/migrations/` de este
+repo en vez de aplicar el script a ciegas.
 
 ## 8. Migrar Neon → Postgres en el VPS
 

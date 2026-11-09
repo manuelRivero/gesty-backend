@@ -40,6 +40,16 @@ import {
   removeEnvironment
 } from "../controllers/adminEnvironments.controller";
 import {
+  getOccupiedTables,
+  getTableTabById_,
+  getTableTabs,
+  patchReassignTableTab,
+  postAssignTableToTab,
+  postCloseTableTab,
+  postOpenTableTab,
+  postTransferTable
+} from "../controllers/adminTableTab.controller";
+import {
   getBusinessHourById,
   getBusinessHours,
   patchBusinessHour,
@@ -483,6 +493,21 @@ router.get("/tables/:id", requireRoles("OWNER", "ADMIN"), getTableById);
 router.post("/tables", requireRoles("OWNER", "ADMIN"), postTable);
 router.patch("/tables/:id", requireRoles("OWNER", "ADMIN"), patchTable);
 router.delete("/tables/:id", requireRoles("OWNER", "ADMIN"), removeTable);
+
+// Operación de salón sobre mesas (Fase 2, POS_TECHNICAL_DESIGN.md §4.A/§4.B).
+// `MOZO` todavía no existe como rol (PROPUESTA TÉCNICA sin aprobar, §4.F/§9) —
+// se habilita `STAFF` como el rol existente más cercano a esa operación hasta
+// que se apruebe un rol dedicado; reemplazar por `MOZO` cuando se decida.
+const TABLE_TAB_ROLES = ["OWNER", "ADMIN", "STAFF"] as const;
+router.get("/table-tabs", requireRoles(...TABLE_TAB_ROLES), getTableTabs);
+router.get("/table-tabs/occupied-tables", requireRoles(...TABLE_TAB_ROLES), getOccupiedTables);
+router.get("/table-tabs/:id", requireRoles(...TABLE_TAB_ROLES), getTableTabById_);
+router.post("/table-tabs", requireRoles(...TABLE_TAB_ROLES), postOpenTableTab);
+router.post("/table-tabs/:id/tables", requireRoles(...TABLE_TAB_ROLES), postAssignTableToTab);
+router.post("/table-tabs/:id/transfer", requireRoles(...TABLE_TAB_ROLES), postTransferTable);
+router.patch("/table-tabs/:id/assignee", requireRoles(...TABLE_TAB_ROLES), patchReassignTableTab);
+router.post("/table-tabs/:id/close", requireRoles(...TABLE_TAB_ROLES), postCloseTableTab);
+
 router.get("/business-hours", requireRoles("OWNER", "ADMIN"), getBusinessHours);
 router.get(
   "/business-hours/:id",

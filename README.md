@@ -2,7 +2,7 @@
 
 Implementación del bot conversacional de WhatsApp con **LangGraph + LangChain** sobre Node.js / TypeScript. Reemplaza el orquestador imperativo de [`food-service-backend/src/controllers/webhook/`](../food-service-backend/src/controllers/webhook/) por un `StateGraph` donde cada guard, wizard y handler es un nodo.
 
-Comparte la misma BD Postgres y el mismo `prisma/schema.prisma` que el backend original (sincronizado con `npm run prisma:sync`).
+Comparte la misma BD Postgres que el backend original, pero `prisma/schema.prisma` y `prisma/migrations/` de **este** repositorio son la única fuente de verdad del esquema y de las migraciones — ya no se sincronizan desde `food-service-backend` (el script `prisma:sync` que hacía esa copia fue eliminado).
 
 ## Alcance
 
@@ -24,7 +24,6 @@ dry-run y comparar con el backend viejo.
 ```bash
 cp .env.example .env
 npm install
-npm run prisma:sync   # sincroniza schema desde food-service-backend
 npm run prisma:generate
 npm run dev
 ```

@@ -11,7 +11,6 @@
     "start": "NODE_ENV=production node dist/index.js",
     "dev": "NODE_ENV=development nodemon --exec ts-node src/index.ts",
     "prisma:generate": "prisma generate",
-    "prisma:sync": "cp ../food-service-backend/prisma/schema.prisma ./prisma/schema.prisma",
     "parity:run": "NODE_ENV=development ts-node --project scripts/parity/tsconfig.json scripts/parity/runner.ts",
     "embed:seed": "NODE_ENV=development ts-node scripts/embedding/create-menu_item-vector.ts",
     "seed:reservation-slots": "NODE_ENV=development ts-node scripts/reservation/seed-reservation-slots.ts",

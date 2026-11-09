@@ -60,6 +60,7 @@ model business {
   reservation_slot          reservation_slot[]
   subscription              subscription?
   table                     table[]
+  table_tab                 table_tab[]
   conversation_note         conversation_note[]
   canned_reply              canned_reply[]
   storefront_order_push_subscription storefront_order_push_subscription[]
@@ -83,6 +84,8 @@ model business_user {
   assigned_conversations conversation[] @relation("ConversationAssignee")
   support_acked_conversations conversation[] @relation("ConversationSupportAck")
   conversation_notes conversation_note[]
+  opened_table_tabs    table_tab[] @relation("TableTabOpenedBy")
+  assigned_table_tabs  table_tab[] @relation("TableTabAssignedTo")
 
   @@unique([user_id, business_id], map: "unique_user_business")
 }
@@ -673,12 +676,65 @@ model table {
   rotation          Float?
   reservation_block reservation_block[]
   reservation_table reservation_table[]
+  table_tab_table   table_tab_table[]
   business          business            @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_table_business")
   environment       environment         @relation(fields: [environment_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_table_environment")
 
   @@index([business_id], map: "idx_table_business")
   @@index([environment_id], map: "idx_table_environment")
   @@index([business_id, environment_id], map: "idx_table_business_environment")
+}
+
+/// Cuenta de consumo de salón (POS, Fase 2 de `docs/arquitectura/POS_TECHNICAL_DESIGN.md §4.A/§4.B`).
+/// Agrupa N rondas (`orders`, vínculo `orders.table_tab_id` llega en Fase 3) y N asignaciones de mesa
+/// (`table_tab_table`, N:N). El estado de ocupación de una mesa es siempre DERIVADO de la existencia de
+/// una fila activa en `table_tab_table` cuya `table_tab` esté `open` — nunca un campo propio de `table`.
+model table_tab {
+  id                String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id       String          @db.Uuid
+  status            TableTabStatus  @default(open)
+  opened_at         DateTime        @default(now()) @db.Timestamptz(6)
+  closed_at         DateTime?       @db.Timestamptz(6)
+  /// Quién abrió la cuenta. Requerido por la aplicación en el momento de creación (no nullable en la
+  /// práctica); nullable a nivel de columna solo para permitir `SetNull` si el `business_user` se borra,
+  /// mismo patrón que `orders.assigned_delivery_user_id`.
+  opened_by_user_id String?         @db.Uuid
+  /// Mozo responsable actual. Por defecto, igual a `opened_by_user_id`; actualizable vía PATCH simple en
+  /// cambio de turno (DECISIÓN APROBADA — MVP sin tabla de eventos de reasignación, ver §4.A).
+  assigned_user_id  String?         @db.Uuid
+  business          business        @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_table_tab_business")
+  opened_by         business_user?  @relation("TableTabOpenedBy", fields: [opened_by_user_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  assigned_to       business_user?  @relation("TableTabAssignedTo", fields: [assigned_user_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  tables            table_tab_table[]
+
+  @@index([business_id], map: "idx_table_tab_business")
+  @@index([business_id, status], map: "idx_table_tab_business_status")
+}
+
+enum TableTabStatus {
+  open
+  closed
+  /// Reservado para cuando se implemente la fusión de cuentas (fuera del alcance de la Fase 2).
+  merged
+}
+
+/// Asignación N:N cuenta↔mesa. Nunca se edita una fila existente para "mover" una mesa — se cierra
+/// (`unassigned_at = now()`) y se abre una nueva, preservando el historial de qué mesa ocupó la cuenta
+/// en cada momento (DECISIÓN APROBADA — "mesa actual", sin explotar este historial en reportes del MVP).
+/// La unicidad de la asignación ACTIVA por mesa (a lo sumo una fila con `unassigned_at IS NULL` por
+/// `table_id`) se garantiza con un índice único parcial creado por migración SQL manual (no expresable
+/// en el DSL declarativo de Prisma) — ver `prisma/migrations/*_table_tab_active_assignment_unique`.
+model table_tab_table {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  table_tab_id  String    @db.Uuid
+  table_id      String    @db.Uuid
+  assigned_at   DateTime  @default(now()) @db.Timestamptz(6)
+  unassigned_at DateTime? @db.Timestamptz(6)
+  table_tab     table_tab @relation(fields: [table_tab_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_table_tab_table_tab")
+  table         table     @relation(fields: [table_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_table_tab_table_table")
+
+  @@index([table_tab_id], map: "idx_table_tab_table_tab")
+  @@index([table_id], map: "idx_table_tab_table_table")
 }
 
 model reservation_config {
