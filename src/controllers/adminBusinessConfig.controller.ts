@@ -75,6 +75,20 @@ export async function getAdminBusinessConfig(req: Request, res: Response) {
   });
 }
 
+/**
+ * Flag mínimo para gatear el sidebar/rutas de salón (POS/KDS) desde roles que
+ * no pueden leer `GET /config` completo (ej. MOZO) sin exponerles el resto
+ * de la configuración del negocio (whatsapp, bot, etc.).
+ */
+export async function getAdminSalonFeatureFlag(req: Request, res: Response) {
+  const businessId = req.user?.businessId;
+  if (!businessId) {
+    return res.status(401).json({ error: "No autenticado" });
+  }
+  const cfg = await getBusinessConfig(businessId);
+  return res.json({ salon_enabled: cfg.salon_enabled });
+}
+
 export async function createAdminBusinessConfig(req: Request, res: Response) {
   const businessId = req.user?.businessId;
   if (!businessId) {

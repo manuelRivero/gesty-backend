@@ -6,7 +6,7 @@ import {
   hasPendingTabPayment
 } from "./tabPayment.service";
 import { hasOpenBillableCharge } from "./billableCharge.service";
-import { emitAdminTableTabClosed } from "../socket/adminSocket";
+import { emitAdminTableTabClosed, emitAdminTableTabOpened } from "../socket/adminSocket";
 
 /**
  * Fase 2 de `docs/arquitectura/POS_TECHNICAL_DESIGN.md §4.A/§4.B`: apertura,
@@ -147,7 +147,7 @@ export async function openTableTab(params: {
 }): Promise<OpenTableTabResult> {
   const { businessId, tableId, openedByUserId } = params;
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     await acquireTableLock(tx, businessId, tableId);
 
     const table = await tx.table.findFirst({
@@ -180,6 +180,21 @@ export async function openTableTab(params: {
 
     return { ok: true, tableTab: mapTableTab(created) } as const;
   });
+
+  // Post-commit, fire-and-forget: para que ADMIN/OWNER vean en su propio
+  // plano que la mesa se ocupó sin tener que refrescar (mismo patrón que
+  // `closeTableTab`/`emitAdminTableTabClosed`).
+  if (result.ok) {
+    emitAdminTableTabOpened(businessId, {
+      tableTabId: result.tableTab.id,
+      assignedUserAppUserId: result.tableTab.assignedUserAppUserId,
+      assignedUserName: result.tableTab.assignedUserName,
+      tableIds: result.tableTab.tables.map((t) => t.tableId),
+      tableNames: result.tableTab.tables.map((t) => t.tableName)
+    });
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -388,7 +403,9 @@ export async function closeTableTab(params: {
     // `unassigned_at IS NULL`, así que después del `updateMany` de abajo
     // quedaría vacío — necesitamos los nombres para la notificación al mozo.
     const beforeClose = await loadTableTabOrThrow(tx, businessId, tableTabId);
-    const tableNames = mapTableTab(beforeClose).tables.map((t) => t.tableName);
+    const beforeCloseTables = mapTableTab(beforeClose).tables;
+    const tableIds = beforeCloseTables.map((t) => t.tableId);
+    const tableNames = beforeCloseTables.map((t) => t.tableName);
 
     await tx.table_tab_table.updateMany({
       where: { table_tab_id: tableTabId, unassigned_at: null },
@@ -406,6 +423,7 @@ export async function closeTableTab(params: {
       tableTab: updatedDto,
       hasPendingKitchenItems,
       assignedUserAppUserId: updatedDto.assignedUserAppUserId,
+      tableIds,
       tableNames
     } as const;
   });
@@ -414,6 +432,7 @@ export async function closeTableTab(params: {
     emitAdminTableTabClosed(businessId, {
       tableTabId,
       assignedUserAppUserId: result.assignedUserAppUserId,
+      tableIds: result.tableIds,
       tableNames: result.tableNames
     });
   }

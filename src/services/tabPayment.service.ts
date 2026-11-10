@@ -1,4 +1,10 @@
-import { KitchenTicketItemStatus, OrderPaymentStatus, Prisma, TabPaymentStatus } from "@prisma/client";
+import {
+  KitchenTicketItemStatus,
+  OrderPaymentStatus,
+  Prisma,
+  TabPaymentMethod,
+  TabPaymentStatus
+} from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { acquireTabLock } from "./adminTableTabRound.service";
 
@@ -76,6 +82,26 @@ export async function getTableTabBalance(
 ): Promise<Prisma.Decimal> {
   const dues = await getTableTabOrderDues(tx, businessId, tableTabId);
   return dues.reduce((sum, d) => sum.add(d.due), ZERO);
+}
+
+/**
+ * Distingue "cuenta recién abierta, sin rondas todavía" de "cuenta con
+ * órdenes ya pagadas" — ambas tienen saldo $0, pero solo la segunda está
+ * "lista para cerrar" (admin, floor-plan en amarillo, §4.F). Sin esto,
+ * `getTableTabBalance` devuelve 0 para una mesa recién abierta (sin órdenes)
+ * exactamente igual que para una ya pagada, y el frontend no puede
+ * distinguirlas.
+ */
+export async function hasTableTabOrders(
+  tx: Prisma.TransactionClient,
+  businessId: string,
+  tableTabId: string
+): Promise<boolean> {
+  const row = await tx.orders.findFirst({
+    where: { business_id: businessId, table_tab_id: tableTabId },
+    select: { id: true }
+  });
+  return row !== null;
 }
 
 export async function hasPendingTabPayment(
@@ -167,13 +193,28 @@ export async function reconcileOrderPaymentStatus(
 
 export type TabPaymentAllocationInput = { orderId: string; amount: Prisma.Decimal };
 
+/**
+ * Una línea de cobro por medio (DECISIÓN APROBADA, ampliación de §4.D): un
+ * cobro puede partirse entre efectivo/tarjeta/transferencia/QR. Cada línea se
+ * persiste como su propia fila `tab_payment` — nunca varios montos en una
+ * sola fila — porque cada medio es un hecho físico distinto (cuánto entró de
+ * cada uno) que la caja necesita poder reconciliar por separado.
+ */
+export type TabPaymentLineInput = { method: TabPaymentMethod; amountTendered: Prisma.Decimal };
+
 export type RecordTabPaymentResult =
   | {
       ok: true;
-      tabPaymentId: string;
-      amountTendered: Prisma.Decimal;
-      amountApplied: Prisma.Decimal;
-      change: Prisma.Decimal;
+      payments: Array<{
+        tabPaymentId: string;
+        method: TabPaymentMethod;
+        amountTendered: Prisma.Decimal;
+        amountApplied: Prisma.Decimal;
+        change: Prisma.Decimal;
+      }>;
+      totalAmountTendered: Prisma.Decimal;
+      totalAmountApplied: Prisma.Decimal;
+      totalChange: Prisma.Decimal;
       allocations: Array<{ orderId: string; amount: Prisma.Decimal }>;
     }
   | {
@@ -187,15 +228,64 @@ export type RecordTabPaymentResult =
       orderId?: string;
     };
 
+/**
+ * Reparte `totalApplied` (ya validado ≤ Σ capacidades) secuencialmente entre
+ * las líneas de cobro, y dentro de cada línea, secuencialmente entre las
+ * órdenes de `orderAllocations` — un "merge" de dos colas: se drena la orden
+ * actual con la capacidad de la línea actual hasta que una de las dos se
+ * agota, y se avanza a la siguiente. El resultado: cada línea recibe su
+ * propio subconjunto de aplicaciones que suma exactamente su `amountApplied`,
+ * y la unión de todas las líneas para una orden dada suma exactamente la
+ * entrada original de `orderAllocations` para esa orden.
+ *
+ * El vuelto cae por convención en las ÚLTIMAS líneas de la lista (las que
+ * quedan con capacidad sin consumir una vez agotadas las órdenes) — por eso
+ * el cajero debería poner el efectivo al final si quiere que el vuelto salga
+ * de ahí. No hay noción de "vuelto por transferencia" en el mundo real; esta
+ * regla es deliberadamente simple, no un intento de resolverlo mejor.
+ */
+export function splitAllocationsAcrossLines(
+  orderAllocations: Array<{ orderId: string; amount: Prisma.Decimal }>,
+  lineCapacities: Prisma.Decimal[]
+): Array<Array<{ orderId: string; amount: Prisma.Decimal }>> {
+  const perLine: Array<Array<{ orderId: string; amount: Prisma.Decimal }>> = lineCapacities.map(
+    () => []
+  );
+
+  let orderIdx = 0;
+  let orderRemaining = orderAllocations[0]?.amount ?? ZERO;
+
+  for (let lineIdx = 0; lineIdx < lineCapacities.length; lineIdx++) {
+    let lineRemaining = lineCapacities[lineIdx];
+    while (lineRemaining.gt(ZERO) && orderIdx < orderAllocations.length) {
+      const take = Prisma.Decimal.min(lineRemaining, orderRemaining);
+      if (take.gt(ZERO)) {
+        perLine[lineIdx].push({ orderId: orderAllocations[orderIdx].orderId, amount: take });
+        lineRemaining = lineRemaining.sub(take);
+        orderRemaining = orderRemaining.sub(take);
+      }
+      if (orderRemaining.lte(ZERO)) {
+        orderIdx += 1;
+        orderRemaining = orderAllocations[orderIdx]?.amount ?? ZERO;
+      }
+    }
+  }
+
+  return perLine;
+}
+
 export async function recordTabPayment(params: {
   businessId: string;
   tableTabId: string;
-  amountTendered: Prisma.Decimal;
+  /** Una o más líneas de medio de pago — el orden importa para el vuelto (ver `splitAllocationsAcrossLines`). */
+  payments: TabPaymentLineInput[];
   /** Si se omite, se reparte FIFO por defecto entre las órdenes con deuda, oldest-first. */
   allocations?: TabPaymentAllocationInput[];
   userId: string;
 }): Promise<RecordTabPaymentResult> {
-  const { businessId, tableTabId, amountTendered, allocations, userId } = params;
+  const { businessId, tableTabId, payments, allocations, userId } = params;
+
+  const totalAmountTendered = payments.reduce((sum, p) => sum.add(p.amountTendered), ZERO);
 
   return prisma.$transaction(async (tx) => {
     await acquireTabLock(tx, businessId, tableTabId);
@@ -213,7 +303,8 @@ export async function recordTabPayment(params: {
     if (allocations && allocations.length > 0) {
       // Asignación explícita del cajero — revalidada servidor-side contra la
       // deuda REAL de cada orden, nunca confiando en un reparto calculado en
-      // el cliente (§4.D).
+      // el cliente (§4.D). Se valida contra el TOTAL de todas las líneas —
+      // partir ese total entre medios es ortogonal a partirlo entre órdenes.
       let allocatedTotal = ZERO;
       for (const a of allocations) {
         const due = dueByOrder.get(a.orderId);
@@ -225,7 +316,7 @@ export async function recordTabPayment(params: {
         }
         allocatedTotal = allocatedTotal.add(a.amount);
       }
-      if (allocatedTotal.gt(amountTendered)) {
+      if (allocatedTotal.gt(totalAmountTendered)) {
         return { ok: false, reason: "ALLOCATIONS_EXCEED_AMOUNT_TENDERED" } as const;
       }
       finalAllocations = allocations
@@ -233,7 +324,7 @@ export async function recordTabPayment(params: {
         .map((a) => ({ orderId: a.orderId, amount: a.amount }));
     } else {
       // FIFO por defecto: cubre primero la ronda más antigua con saldo pendiente.
-      let remaining = amountTendered.gt(ZERO) ? amountTendered : ZERO;
+      let remaining = totalAmountTendered.gt(ZERO) ? totalAmountTendered : ZERO;
       finalAllocations = [];
       for (const d of dues) {
         if (remaining.lte(ZERO)) break;
@@ -245,24 +336,52 @@ export async function recordTabPayment(params: {
       }
     }
 
-    const amountApplied = finalAllocations.reduce((sum, a) => sum.add(a.amount), ZERO);
-    if (amountApplied.lte(ZERO) && amountTendered.lte(ZERO)) {
+    const totalAmountApplied = finalAllocations.reduce((sum, a) => sum.add(a.amount), ZERO);
+    if (totalAmountApplied.lte(ZERO) && totalAmountTendered.lte(ZERO)) {
       return { ok: false, reason: "NOTHING_TO_APPLY" } as const;
     }
 
-    const payment = await tx.tab_payment.create({
-      data: {
-        business_id: businessId,
-        table_tab_id: tableTabId,
-        amount_tendered: amountTendered,
-        amount_applied: amountApplied,
-        status: TabPaymentStatus.confirmed,
-        created_by_user_id: userId,
-        applications: {
-          create: finalAllocations.map((a) => ({ order_id: a.orderId, amount: a.amount }))
+    const perLineAllocations = splitAllocationsAcrossLines(
+      finalAllocations,
+      payments.map((p) => p.amountTendered)
+    );
+
+    const createdPayments: Array<{
+      tabPaymentId: string;
+      method: TabPaymentMethod;
+      amountTendered: Prisma.Decimal;
+      amountApplied: Prisma.Decimal;
+      change: Prisma.Decimal;
+    }> = [];
+
+    for (let i = 0; i < payments.length; i++) {
+      const line = payments[i];
+      const lineAllocations = perLineAllocations[i];
+      const lineApplied = lineAllocations.reduce((sum, a) => sum.add(a.amount), ZERO);
+
+      const payment = await tx.tab_payment.create({
+        data: {
+          business_id: businessId,
+          table_tab_id: tableTabId,
+          amount_tendered: line.amountTendered,
+          amount_applied: lineApplied,
+          payment_method: line.method,
+          status: TabPaymentStatus.confirmed,
+          created_by_user_id: userId,
+          applications: {
+            create: lineAllocations.map((a) => ({ order_id: a.orderId, amount: a.amount }))
+          }
         }
-      }
-    });
+      });
+
+      createdPayments.push({
+        tabPaymentId: payment.id,
+        method: line.method,
+        amountTendered: line.amountTendered,
+        amountApplied: lineApplied,
+        change: line.amountTendered.sub(lineApplied)
+      });
+    }
 
     await reconcileOrderPaymentStatus(
       tx,
@@ -272,10 +391,10 @@ export async function recordTabPayment(params: {
 
     return {
       ok: true,
-      tabPaymentId: payment.id,
-      amountTendered,
-      amountApplied,
-      change: amountTendered.sub(amountApplied),
+      payments: createdPayments,
+      totalAmountTendered,
+      totalAmountApplied,
+      totalChange: totalAmountTendered.sub(totalAmountApplied),
       allocations: finalAllocations
     } as const;
   });

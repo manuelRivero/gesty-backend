@@ -896,6 +896,19 @@ enum TabPaymentStatus {
   reversed
 }
 
+/// Medio de cobro físico en el salón (registro manual del cajero, no un
+/// gateway) — distinto del catálogo `PAYMENT_METHOD_IDS` de e-commerce
+/// (`src/domain/payment/paymentMethods.ts`), que modela checkout remoto vía
+/// WhatsApp/storefront. Un cobro partido entre medios (DECISIÓN APROBADA,
+/// §4.D ampliada) genera una fila `tab_payment` por medio, nunca una sola
+/// fila con varios montos.
+enum TabPaymentMethod {
+  cash
+  card
+  transfer
+  qr
+}
+
 /// `amount_tendered` es lo que efectivamente entró; `amount_applied` (≤
 /// `amount_tendered`) es lo aplicado a deuda real de la cuenta — la diferencia
 /// es vuelto, calculado y nunca persistido como crédito (DECISIÓN APROBADA —
@@ -910,6 +923,7 @@ model tab_payment {
   table_tab_id       String                    @db.Uuid
   amount_tendered    Decimal                   @db.Decimal(12, 2)
   amount_applied     Decimal                   @db.Decimal(12, 2)
+  payment_method     TabPaymentMethod          @default(cash)
   status             TabPaymentStatus          @default(confirmed)
   reversal_of_id     String?                   @db.Uuid
   /// Único por negocio cuando no es null — índice único parcial creado por

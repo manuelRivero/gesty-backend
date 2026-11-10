@@ -39,6 +39,7 @@ export async function getOrderVolume(input: AnalyticsPeriodInput) {
           AND (o.created_at AT TIME ZONE ${input.tz})::date
                 BETWEEN ${input.from}::date AND ${input.to}::date
           AND o.status <> ${OrderStatus.draft}::"OrderStatus"
+          AND o.fulfillment_type IS DISTINCT FROM 'DINE_IN'::"FulfillmentType"
       ) d
       GROUP BY d.date
     `
@@ -88,6 +89,7 @@ export async function getClientRanking(input: AnalyticsPeriodInput & { limit: nu
         AND (o.created_at AT TIME ZONE ${input.tz})::date
               BETWEEN ${input.from}::date AND ${input.to}::date
         AND o.status <> ${OrderStatus.draft}::"OrderStatus"
+        AND o.fulfillment_type IS DISTINCT FROM 'DINE_IN'::"FulfillmentType"
       GROUP BY c.id, c.name, c.phone_number
       ORDER BY COUNT(o.id) DESC
       LIMIT ${input.limit}
@@ -138,6 +140,7 @@ export async function getTopDishes(input: AnalyticsPeriodInput & { limit: number
         AND (o.created_at AT TIME ZONE ${input.tz})::date
               BETWEEN ${input.from}::date AND ${input.to}::date
         AND o.status <> ${OrderStatus.draft}::"OrderStatus"
+        AND o.fulfillment_type IS DISTINCT FROM 'DINE_IN'::"FulfillmentType"
       GROUP BY oi.menu_item_id, mi.name
       ORDER BY SUM(oi.quantity) DESC
       LIMIT ${input.limit}

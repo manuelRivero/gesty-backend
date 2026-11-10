@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
-import { Prisma } from "@prisma/client";
+import { Prisma, TabPaymentMethod } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { getTableTabBalance, recordTabPayment } from "../services/tabPayment.service";
 import { getBusinessUserIdForActor } from "../services/businessUserContext.service";
@@ -19,7 +19,17 @@ const decimalAmount = z
   .refine((d) => d.gt(0), "El monto debe ser mayor a 0");
 
 const recordPaymentSchema = z.object({
-  amountTendered: decimalAmount,
+  // Una o más líneas de medio de pago — el cobro puede partirse entre
+  // efectivo/tarjeta/transferencia/QR (ampliación de §4.D).
+  payments: z
+    .array(
+      z.object({
+        method: z.nativeEnum(TabPaymentMethod),
+        amountTendered: decimalAmount
+      })
+    )
+    .min(1)
+    .max(10),
   // Asignación explícita del cajero — opcional, FIFO por defecto si se omite (§4.D).
   allocations: z
     .array(
@@ -98,7 +108,7 @@ export async function postRecordTabPayment(req: Request, res: Response) {
   const result = await recordTabPayment({
     businessId: auth.businessId,
     tableTabId: parsedParams.data.id,
-    amountTendered: parsed.data.amountTendered,
+    payments: parsed.data.payments.map((p) => ({ method: p.method, amountTendered: p.amountTendered })),
     allocations: parsed.data.allocations?.map((a) => ({ orderId: a.orderId, amount: a.amount })),
     userId: businessUserId
   });
@@ -115,10 +125,10 @@ export async function postRecordTabPayment(req: Request, res: Response) {
   }
 
   return res.status(201).json({
-    tabPaymentId: result.tabPaymentId,
-    amountTendered: result.amountTendered,
-    amountApplied: result.amountApplied,
-    change: result.change,
+    payments: result.payments,
+    totalAmountTendered: result.totalAmountTendered,
+    totalAmountApplied: result.totalAmountApplied,
+    totalChange: result.totalChange,
     allocations: result.allocations
   });
 }

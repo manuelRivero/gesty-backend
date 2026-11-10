@@ -125,6 +125,11 @@ function applyDeliveryAssignmentFilters(
 
   if (params.fulfillmentType) {
     where.fulfillment_type = params.fulfillmentType;
+  } else {
+    // Pantalla de "Pedidos" = lo que sale del local. Salón (DINE_IN) se
+    // gestiona desde /pos, y sin este default aparecía mezclado acá con
+    // botones de cambio de estado que no le corresponden.
+    where.fulfillment_type = { not: FulfillmentType.DINE_IN };
   }
 
   if (params.assignedDeliveryUserId) {

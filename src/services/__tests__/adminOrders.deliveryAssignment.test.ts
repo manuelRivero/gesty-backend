@@ -79,6 +79,7 @@ describe("listAdminOrders delivery assignment filters", () => {
     expect(mockedCount).toHaveBeenCalledWith({
       where: {
         business_id: "biz-1",
+        fulfillment_type: { not: FulfillmentType.DINE_IN },
         assigned_delivery_user_id: null
       }
     });
@@ -96,6 +97,7 @@ describe("listAdminOrders delivery assignment filters", () => {
     expect(mockedCount).toHaveBeenCalledWith({
       where: {
         business_id: "biz-1",
+        fulfillment_type: { not: FulfillmentType.DINE_IN },
         assigned_delivery_user_id: "mem-delivery-2"
       }
     });

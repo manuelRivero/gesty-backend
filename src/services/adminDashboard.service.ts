@@ -75,7 +75,8 @@ function mapReservationStatusRows(rows: GroupRow[]): Record<string, number> {
 export async function getAdminDashboardSummary(input: DashboardPeriodInput) {
   const previous = previousEquivalentPeriod(input.from, input.to);
 
-  // Total pedidos del período (excluye borradores)
+  // Total pedidos del período (excluye borradores y mesas de salón — ese
+  // ciclo se gestiona desde /pos, no desde el dashboard de "lo externo")
   const ordersCurrentRows = await prisma.$queryRaw<Array<{ count: bigint }>>(
     Prisma.sql`
       SELECT COUNT(*)::bigint AS count
@@ -83,6 +84,7 @@ export async function getAdminDashboardSummary(input: DashboardPeriodInput) {
       WHERE o.business_id = ${input.businessId}::uuid
         AND ((o.created_at AT TIME ZONE ${input.tz})::date BETWEEN ${input.from}::date AND ${input.to}::date)
         AND o.status <> ${OrderStatus.draft}::"OrderStatus"
+        AND o.fulfillment_type IS DISTINCT FROM 'DINE_IN'::"FulfillmentType"
     `
   );
   const ordersPreviousRows = await prisma.$queryRaw<Array<{ count: bigint }>>(
@@ -92,6 +94,7 @@ export async function getAdminDashboardSummary(input: DashboardPeriodInput) {
       WHERE o.business_id = ${input.businessId}::uuid
         AND ((o.created_at AT TIME ZONE ${input.tz})::date BETWEEN ${previous.from}::date AND ${previous.to}::date)
         AND o.status <> ${OrderStatus.draft}::"OrderStatus"
+        AND o.fulfillment_type IS DISTINCT FROM 'DINE_IN'::"FulfillmentType"
     `
   );
 
@@ -101,6 +104,7 @@ export async function getAdminDashboardSummary(input: DashboardPeriodInput) {
       FROM orders o
       WHERE o.business_id = ${input.businessId}::uuid
         AND ((o.created_at AT TIME ZONE ${input.tz})::date BETWEEN ${input.from}::date AND ${input.to}::date)
+        AND o.fulfillment_type IS DISTINCT FROM 'DINE_IN'::"FulfillmentType"
       GROUP BY o.status
     `
   );
@@ -111,6 +115,7 @@ export async function getAdminDashboardSummary(input: DashboardPeriodInput) {
       FROM orders o
       WHERE o.business_id = ${input.businessId}::uuid
         AND ((o.created_at AT TIME ZONE ${input.tz})::date BETWEEN ${input.from}::date AND ${input.to}::date)
+        AND o.fulfillment_type IS DISTINCT FROM 'DINE_IN'::"FulfillmentType"
       GROUP BY o.payment_status
     `
   );

@@ -14,6 +14,8 @@ import {
 import { createTableTabRound } from "../services/adminTableTabRound.service";
 import { cancelOrderItem } from "../services/kitchenTicketItem.service";
 import { getBusinessUserIdForActor } from "../services/businessUserContext.service";
+import { getTableTabBalance, hasTableTabOrders } from "../services/tabPayment.service";
+import { prisma } from "../lib/prisma";
 import { OrderItemAdjustmentReason } from "@prisma/client";
 import type { BusinessUserRole } from "../types/auth";
 
@@ -104,7 +106,27 @@ export async function getTableTabs(req: Request, res: Response) {
   const auth = requireAuth(req, res);
   if (!auth) return;
 
-  const items = await listOpenTableTabs({ businessId: auth.businessId });
+  const rows = await listOpenTableTabs({ businessId: auth.businessId });
+
+  // Saldo por cuenta — solo ADMIN/OWNER (caja/encargado). El mozo nunca ve
+  // montos (§4.F); por eso esto no es parte del DTO base de `listOpenTableTabs`,
+  // se agrega acá condicionalmente según el rol del actor autenticado.
+  // Sirve, entre otras cosas, para que el panel pinte "lista para cerrar" las
+  // mesas con saldo en $0 que todavía no se cerraron.
+  if (auth.role !== "ADMIN" && auth.role !== "OWNER") {
+    return res.json({ items: rows });
+  }
+
+  const items = await Promise.all(
+    rows.map(async (row) => ({
+      ...row,
+      balance: await getTableTabBalance(prisma, auth.businessId, row.id),
+      // Para que el admin no pinte de amarillo ("lista para cerrar") una mesa
+      // recién abierta sin ítems — ambas tienen saldo $0, pero solo la que
+      // tuvo órdenes y ya las pagó está lista para cerrarse.
+      hasOrders: await hasTableTabOrders(prisma, auth.businessId, row.id)
+    }))
+  );
   return res.json({ items });
 }
 

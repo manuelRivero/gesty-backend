@@ -814,24 +814,45 @@ export function emitAdminKitchenTicketItemStatusChanged(
 
 /**
  * Payload del canal Socket `admin:table_tab` — ciclo de vida de la cuenta de
- * salón. Hoy solo `table_tab.closed`: el mozo que la tenía asignada necesita
- * saber que ADMIN/OWNER (los únicos que pueden cerrar, ver §4.F) cerraron su
- * mesa, para que no quede esperando sin saberlo. Siempre post-commit,
- * fire-and-forget — mismo patrón que el resto de canales de este archivo.
+ * salón. `table_tab.closed`: el mozo que la tenía asignada necesita saber que
+ * ADMIN/OWNER (los únicos que pueden cerrar, ver §4.F) cerraron su mesa, para
+ * que no quede esperando sin saberlo. `table_tab.opened`: ADMIN/OWNER
+ * necesitan ver en su propio plano que un mozo ocupó una mesa, sin tener que
+ * refrescar la pantalla (mismo criterio de "mutación local, nunca refetch"
+ * que `table_tab.closed`). Siempre post-commit, fire-and-forget — mismo
+ * patrón que el resto de canales de este archivo.
  *
  * `assignedUserAppUserId` es `AppUser.id` (no `business_user.id`) a
  * propósito: es lo único que el cliente del mozo puede comparar directo
  * contra su propio JWT decodificado, sin necesitar un endpoint nuevo para
  * resolver su `business_user.id`.
  */
-export type AdminTableTabRealtimePayload = {
-  type: "table_tab.closed";
-  businessId: string;
-  tableTabId: string;
-  assignedUserAppUserId: string | null;
-  tableNames: string[];
-  at: string;
-};
+export type AdminTableTabRealtimePayload =
+  | {
+      type: "table_tab.closed";
+      businessId: string;
+      tableTabId: string;
+      assignedUserAppUserId: string | null;
+      /** Ids reales de las mesas liberadas — para que el cliente las sacque del
+       * mapa de ocupación en memoria sin tener que volver a pedir el listado
+       * completo (`tableNames` es solo para mostrar, no sirve para mutar estado). */
+      tableIds: string[];
+      tableNames: string[];
+      at: string;
+    }
+  | {
+      type: "table_tab.opened";
+      businessId: string;
+      tableTabId: string;
+      assignedUserAppUserId: string | null;
+      assignedUserName: string | null;
+      /** Mesa recién ocupada — una cuenta recién abierta nunca trae órdenes
+       * todavía, por eso no se manda `balance`/`hasOrders`: el cliente la
+       * agrega al mapa de ocupación asumiendo saldo $0 y sin órdenes. */
+      tableIds: string[];
+      tableNames: string[];
+      at: string;
+    };
 
 function emitAdminTableTabChannel(
   businessId: string,
@@ -855,7 +876,12 @@ function emitAdminTableTabChannel(
 
 export function emitAdminTableTabClosed(
   businessId: string,
-  payload: { tableTabId: string; assignedUserAppUserId: string | null; tableNames: string[] }
+  payload: {
+    tableTabId: string;
+    assignedUserAppUserId: string | null;
+    tableIds: string[];
+    tableNames: string[];
+  }
 ): void {
   emitAdminTableTabChannel(
     businessId,
@@ -864,9 +890,36 @@ export function emitAdminTableTabClosed(
       businessId,
       tableTabId: payload.tableTabId,
       assignedUserAppUserId: payload.assignedUserAppUserId,
+      tableIds: payload.tableIds,
       tableNames: payload.tableNames,
       at: new Date().toISOString()
     },
     "closed"
+  );
+}
+
+export function emitAdminTableTabOpened(
+  businessId: string,
+  payload: {
+    tableTabId: string;
+    assignedUserAppUserId: string | null;
+    assignedUserName: string | null;
+    tableIds: string[];
+    tableNames: string[];
+  }
+): void {
+  emitAdminTableTabChannel(
+    businessId,
+    {
+      type: "table_tab.opened",
+      businessId,
+      tableTabId: payload.tableTabId,
+      assignedUserAppUserId: payload.assignedUserAppUserId,
+      assignedUserName: payload.assignedUserName,
+      tableIds: payload.tableIds,
+      tableNames: payload.tableNames,
+      at: new Date().toISOString()
+    },
+    "opened"
   );
 }

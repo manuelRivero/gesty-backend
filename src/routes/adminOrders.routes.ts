@@ -106,6 +106,7 @@ import {
 import {
   createAdminBusinessConfig,
   getAdminBusinessConfig,
+  getAdminSalonFeatureFlag,
   patchAdminBusinessConfig,
   removeAdminBusinessConfig
 } from "../controllers/adminBusinessConfig.controller";
@@ -316,6 +317,11 @@ router.post(
   postAdminBillingSubscriptionChangePlan
 );
 router.get("/config", requireRoles("OWNER", "ADMIN"), getAdminBusinessConfig);
+router.get(
+  "/config/salon-enabled",
+  requireRoles("OWNER", "ADMIN", "MOZO"),
+  getAdminSalonFeatureFlag
+);
 router.get(
   "/config/bot-personalities",
   requireRoles("OWNER", "ADMIN"),
