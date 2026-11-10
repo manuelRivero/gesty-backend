@@ -62,6 +62,8 @@ model business {
   table                     table[]
   table_tab                 table_tab[]
   preparation_station       preparation_station[]
+  tab_payment               tab_payment[]
+  billable_charge           billable_charge[]
   conversation_note         conversation_note[]
   canned_reply              canned_reply[]
   storefront_order_push_subscription storefront_order_push_subscription[]
@@ -88,6 +90,7 @@ model business_user {
   opened_table_tabs    table_tab[] @relation("TableTabOpenedBy")
   assigned_table_tabs  table_tab[] @relation("TableTabAssignedTo")
   requested_order_item_adjustments order_item_adjustment[] @relation("OrderItemAdjustmentRequestedBy")
+  created_tab_payments tab_payment[] @relation("TabPaymentCreatedBy")
 
   @@unique([user_id, business_id], map: "unique_user_business")
 }
@@ -445,6 +448,7 @@ model order_item {
   orders          orders    @relation(fields: [order_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   kitchen_ticket_item kitchen_ticket_item?
   order_item_adjustment order_item_adjustment[]
+  billable_charge_line billable_charge_line[]
 }
 
 model orders {
@@ -487,6 +491,7 @@ model orders {
   storefront_order_push_subscription storefront_order_push_subscription[]
   fiscal_invoice             fiscal_invoice[]
   kitchen_ticket             kitchen_ticket[]
+  tab_payment_application    tab_payment_application[]
 
   @@index([customer_address_id], map: "idx_orders_customer_address")
   @@index([assigned_delivery_user_id], map: "idx_orders_assigned_delivery_user")
@@ -718,6 +723,8 @@ model table_tab {
   assigned_to       business_user?  @relation("TableTabAssignedTo", fields: [assigned_user_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
   tables            table_tab_table[]
   orders            orders[]
+  tab_payment       tab_payment[]
+  billable_charge   billable_charge[]
 
   @@index([business_id], map: "idx_table_tab_business")
   @@index([business_id, status], map: "idx_table_tab_business_status")
@@ -873,6 +880,115 @@ model order_item_adjustment {
   kitchen_ticket_item_event      kitchen_ticket_item_event? @relation(fields: [kitchen_ticket_item_event_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
 
   @@index([order_item_id], map: "idx_order_item_adjustment_order_item")
+}
+
+/// Fase 6 (POS_TECHNICAL_DESIGN.md §4.D): el ledger de pagos de una cuenta de
+/// salón. `pending` existe para integraciones de pago asíncronas futuras (hoy
+/// ningún código de este repo crea una fila en `pending` — el registro de pago
+/// de Fase 6 es siempre efectivo/síncrono y confirma de inmediato — pero el
+/// bloqueo duro de cierre que exige "ningún pago pending" debe ser correcto
+/// desde el modelo de datos, no agregarse recién cuando exista esa integración).
+enum TabPaymentStatus {
+  pending
+  confirmed
+  /// Reverso: fila nueva con `reversal_of_id` apuntando al original y montos
+  /// de signo contrario — nunca se edita/borra una fila `confirmed` (§5).
+  reversed
+}
+
+/// `amount_tendered` es lo que efectivamente entró; `amount_applied` (≤
+/// `amount_tendered`) es lo aplicado a deuda real de la cuenta — la diferencia
+/// es vuelto, calculado y nunca persistido como crédito (DECISIÓN APROBADA —
+/// vuelto dinámico, sin saldo a favor, §4.D). `idempotency_key` deja la puerta
+/// abierta a reintentos seguros desde el cliente (nullable: el único
+/// mecanismo de registro hoy es sincrónico desde el panel, no todos los
+/// llamadores necesitan una clave). El reparto entre órdenes vive en
+/// `tab_payment_application`, nunca en un campo de este modelo.
+model tab_payment {
+  id                 String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id        String                    @db.Uuid
+  table_tab_id       String                    @db.Uuid
+  amount_tendered    Decimal                   @db.Decimal(12, 2)
+  amount_applied     Decimal                   @db.Decimal(12, 2)
+  status             TabPaymentStatus          @default(confirmed)
+  reversal_of_id     String?                   @db.Uuid
+  /// Único por negocio cuando no es null — índice único parcial creado por
+  /// migración SQL manual (no expresable en el DSL declarativo de Prisma),
+  /// mismo patrón ya usado por `table_tab_table`.
+  idempotency_key    String?
+  created_by_user_id String?                   @db.Uuid
+  created_at         DateTime                  @default(now()) @db.Timestamptz(6)
+  business           business                  @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_tab_payment_business")
+  table_tab          table_tab                 @relation(fields: [table_tab_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_tab_payment_table_tab")
+  reversal_of        tab_payment?              @relation("TabPaymentReversal", fields: [reversal_of_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  reversals          tab_payment[]             @relation("TabPaymentReversal")
+  created_by         business_user?            @relation("TabPaymentCreatedBy", fields: [created_by_user_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  applications       tab_payment_application[]
+
+  @@index([table_tab_id], map: "idx_tab_payment_table_tab")
+  @@index([business_id, status], map: "idx_tab_payment_business_status")
+}
+
+/// Reparto de un `tab_payment` entre las órdenes/rondas con saldo pendiente de
+/// la cuenta (FIFO por defecto, o asignación explícita del cajero — ambas
+/// decisiones ya aprobadas, §4.D). El saldo de cada orden, y de la cuenta, se
+/// calcula siempre por agregación sobre esta tabla — nunca un campo cacheado.
+model tab_payment_application {
+  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tab_payment_id String      @db.Uuid
+  order_id       String      @db.Uuid
+  amount         Decimal     @db.Decimal(12, 2)
+  created_at     DateTime    @default(now()) @db.Timestamptz(6)
+  tab_payment    tab_payment @relation(fields: [tab_payment_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_tab_payment_application_payment")
+  order          orders      @relation(fields: [order_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_tab_payment_application_order")
+
+  @@index([tab_payment_id], map: "idx_tab_payment_application_payment")
+  @@index([order_id], map: "idx_tab_payment_application_order")
+}
+
+enum BillableChargeStatus {
+  /// Pendiente de emisión fiscal — bloquea duro el cierre de la cuenta (§4.B/§4.E).
+  open
+  /// Ya tiene un `fiscal_invoice` emitido — deja de bloquear el cierre.
+  issued
+}
+
+/// Fase 7 (POS_TECHNICAL_DESIGN.md §4.E): entidad intermedia entre `table_tab`
+/// y `fiscal_invoice` — snapshot de qué líneas (de una o varias rondas) se
+/// facturan juntas y por qué monto, equivalente para facturación de lo que
+/// `payment_intent` es para pago (una intención con snapshot, no el resultado).
+model billable_charge {
+  id             String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id    String                   @db.Uuid
+  table_tab_id   String                   @db.Uuid
+  amount         Decimal                  @db.Decimal(12, 2)
+  status         BillableChargeStatus     @default(open)
+  created_at     DateTime                 @default(now()) @db.Timestamptz(6)
+  business       business                 @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_billable_charge_business")
+  table_tab      table_tab                @relation(fields: [table_tab_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_billable_charge_table_tab")
+  lines          billable_charge_line[]
+  fiscal_invoice fiscal_invoice[]
+
+  @@index([table_tab_id], map: "idx_billable_charge_table_tab")
+  @@index([business_id, status], map: "idx_billable_charge_business_status")
+}
+
+/// Cuánto de cada `order_item` ya fue facturado — consultada siempre por suma,
+/// nunca cacheada de forma mutable (DECISIÓN APROBADA, §4.E). Un `billable_charge`
+/// nuevo sobre una orden ya parcialmente facturada solo puede tomar la cantidad
+/// remanente (`order_item.quantity − Σ quantity_billed` ya confirmada) — esto
+/// es lo que previene la doble facturación parcial a nivel de aplicación.
+model billable_charge_line {
+  id                 String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  billable_charge_id String          @db.Uuid
+  order_item_id      String          @db.Uuid
+  quantity_billed    Int
+  created_at         DateTime        @default(now()) @db.Timestamptz(6)
+  billable_charge    billable_charge @relation(fields: [billable_charge_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_billable_charge_line_charge")
+  order_item         order_item      @relation(fields: [order_item_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_billable_charge_line_order_item")
+
+  @@index([billable_charge_id], map: "idx_billable_charge_line_charge")
+  @@index([order_item_id], map: "idx_billable_charge_line_order_item")
 }
 
 model reservation_config {
@@ -1319,10 +1435,19 @@ model fiscal_configuration {
 /// Registro de comprobantes (facturas y notas de crédito) emitidos o en curso de emisión.
 /// La idempotencia es estructural: a lo sumo un registro por (business_id, order_id, kind) vía
 /// `@@unique` — reintentos, webhooks duplicados y timeouts deben actualizar la misma fila, nunca crear otra.
+/// Fase 7 (POS_TECHNICAL_DESIGN.md §4.E): `order_id`/`billable_charge_id` son
+/// mutuamente excluyentes y uno de los dos es siempre requerido — CHECK
+/// constraint manual (no expresable en el DSL declarativo de Prisma, mismo
+/// patrón ya usado por `reservation`/`spatial_ref_sys`), ver migración
+/// `20261110100000_add_billable_charge`.
 model fiscal_invoice {
   id                  String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   business_id         String              @db.Uuid
-  order_id            String              @db.Uuid
+  /// Nullable desde Fase 7: una factura de salón consolidada cuelga de
+  /// `billable_charge_id` en vez de `order_id` (flujo e-commerce sin cambios).
+  order_id            String?             @db.Uuid
+  /// Fase 7: paralelo a `order_id`, para facturación de salón consolidada/parcial.
+  billable_charge_id  String?             @db.Uuid
   kind                FiscalInvoiceKind   @default(invoice)
   provider            String
   /// "sandbox" | "production" (solo Sistemas 360, vía cuenta central): entorno con el que se
@@ -1353,11 +1478,14 @@ model fiscal_invoice {
   created_at          DateTime            @default(now()) @db.Timestamptz(6)
   updated_at          DateTime            @default(now()) @updatedAt @db.Timestamptz(6)
   business            business            @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  orders              orders              @relation(fields: [order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  orders              orders?             @relation(fields: [order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  billable_charge     billable_charge?    @relation(fields: [billable_charge_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_fiscal_invoice_billable_charge")
 
   @@unique([business_id, order_id, kind], map: "unique_fiscal_invoice_business_order_kind")
+  @@unique([business_id, billable_charge_id, kind], map: "unique_fiscal_invoice_business_billable_charge_kind", where: raw("(billable_charge_id IS NOT NULL)"))
   @@index([business_id, status], map: "idx_fiscal_invoice_business_status")
   @@index([business_id, order_id], map: "idx_fiscal_invoice_business_order")
+  @@index([business_id, billable_charge_id], map: "idx_fiscal_invoice_business_billable_charge")
 }
 
 /// Complemento comercial opcional de facturación electrónica. Independiente de `plan`/`subscription`

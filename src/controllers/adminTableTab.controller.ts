@@ -312,5 +312,7 @@ export async function postCloseTableTab(req: Request, res: Response) {
     return res.status(result.reason === "TABLE_TAB_NOT_FOUND" ? 404 : 409).json({ error: result.reason });
   }
 
-  return res.json(result.tableTab);
+  // `hasPendingKitchenItems`: advertencia blanda (§4.B) — el cierre ya
+  // ocurrió, el frontend decide si muestra un modal informativo al respecto.
+  return res.json({ ...result.tableTab, hasPendingKitchenItems: result.hasPendingKitchenItems });
 }

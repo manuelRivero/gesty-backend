@@ -60,6 +60,8 @@ import {
   postAssignMenuItemStation,
   postPreparationStation
 } from "../controllers/preparationStation.controller";
+import { postRecordTabPayment } from "../controllers/tabPayment.controller";
+import { postCreateBillableCharge } from "../controllers/billableCharge.controller";
 import {
   getBusinessHourById,
   getBusinessHours,
@@ -530,6 +532,20 @@ router.post(
   "/table-tabs/:id/cancel-item",
   requireRoles(...TABLE_TAB_ROLES),
   postCancelTableTabItem
+);
+
+// Ledger de pagos de cuenta (Fase 6, POS_TECHNICAL_DESIGN.md §4.D).
+router.post(
+  "/table-tabs/:id/payments",
+  requireRoles(...TABLE_TAB_ROLES),
+  postRecordTabPayment
+);
+
+// Facturación consolidada del consumo de salón (Fase 7, POS_TECHNICAL_DESIGN.md §4.E).
+router.post(
+  "/table-tabs/:id/billable-charges",
+  requireRoles(...TABLE_TAB_ROLES),
+  postCreateBillableCharge
 );
 
 // Comandas y estaciones (Fase 4, POS_TECHNICAL_DESIGN.md §4.C).

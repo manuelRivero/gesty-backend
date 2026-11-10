@@ -2,6 +2,7 @@ import { KitchenTicketItemStatus, OrderItemAdjustmentReason, Prisma } from "@pri
 import { prisma } from "../lib/prisma";
 import { tabLockKey, acquireTabLock } from "./adminTableTabRound.service";
 import { emitAdminKitchenTicketItemStatusChanged } from "../socket/adminSocket";
+import { reconcileOrderPaymentStatus } from "./tabPayment.service";
 import type { BusinessUserRole } from "../types/auth";
 
 /**
@@ -216,6 +217,10 @@ export async function cancelOrderItem(params: {
         kitchen_ticket_item_event_id: ticketEventId
       }
     });
+
+    // La anulación reduce la deuda efectiva de la orden (§4.D) — puede hacer
+    // que una orden ya cubierta por pagos previos pase a `paid` recién ahora.
+    await reconcileOrderPaymentStatus(tx, businessId, [orderItem.order_id]);
 
     return {
       ok: true,

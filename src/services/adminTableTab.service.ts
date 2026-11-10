@@ -1,15 +1,21 @@
 import { Prisma, TableTabStatus } from "@prisma/client";
 import { prisma } from "../lib/prisma";
+import {
+  getTableTabBalance,
+  hasPendingOrPreparingKitchenItems,
+  hasPendingTabPayment
+} from "./tabPayment.service";
+import { hasOpenBillableCharge } from "./billableCharge.service";
 
 /**
  * Fase 2 de `docs/arquitectura/POS_TECHNICAL_DESIGN.md §4.A/§4.B`: apertura,
- * transferencia y cierre FÍSICO de una cuenta de salón sobre una o varias
- * mesas. No incluye todavía ningún invariante económico (saldo, pagos
- * `pending`) — esos bloqueos duros de cierre (§4.B, DECISIÓN APROBADA) se
- * incorporan en la Fase 6, cuando exista el ledger de pagos y `orders`
- * tenga `table_tab_id` (Fase 3). Cerrar una cuenta acá solo libera las
- * mesas; la Fase 6 debe llamar a estas funciones DESPUÉS de validar sus
- * propios bloqueos, nunca reemplazarlas.
+ * transferencia y cierre de una cuenta de salón sobre una o varias mesas.
+ *
+ * El cierre (`closeTableTab`) incorpora los tres invariantes económicos
+ * aprobados en §4.B ("cierre estricto basado en invariantes contables"):
+ * tres bloqueos duros (saldo ≠ 0, pago `pending` abierto, `billable_charge`
+ * `open` sin facturar — este último agregado en Fase 7, ya con la tabla
+ * existente) más una advertencia blanda (productos sin despachar).
  */
 
 // ---------------------------------------------------------------------------
@@ -314,12 +320,21 @@ export async function reassignTableTab(params: {
 }
 
 // ---------------------------------------------------------------------------
-// Cierre físico — sin invariantes económicos todavía (ver nota de cabecera).
+// Cierre — invariantes económicos de Fase 6 (§4.B, DECISIÓN APROBADA, ver
+// cabecera del archivo).
 // ---------------------------------------------------------------------------
 
 export type CloseTableTabResult =
-  | { ok: true; tableTab: AdminTableTabDto }
-  | { ok: false; reason: "TABLE_TAB_NOT_FOUND" | "TABLE_TAB_NOT_OPEN" };
+  | { ok: true; tableTab: AdminTableTabDto; hasPendingKitchenItems: boolean }
+  | {
+      ok: false;
+      reason:
+        | "TABLE_TAB_NOT_FOUND"
+        | "TABLE_TAB_NOT_OPEN"
+        | "BALANCE_NOT_ZERO"
+        | "PENDING_PAYMENT_EXISTS"
+        | "OPEN_BILLABLE_CHARGE_EXISTS";
+    };
 
 export async function closeTableTab(params: {
   businessId: string;
@@ -338,6 +353,26 @@ export async function closeTableTab(params: {
       return { ok: false, reason: "TABLE_TAB_NOT_OPEN" } as const;
     }
 
+    // Bloqueos duros — releídos BAJO el lock, nunca sobre un saldo leído
+    // antes de adquirirlo (§4.B, "Impacto técnico").
+    const balance = await getTableTabBalance(tx, businessId, tableTabId);
+    if (!balance.isZero()) {
+      return { ok: false, reason: "BALANCE_NOT_ZERO" } as const;
+    }
+    if (await hasPendingTabPayment(tx, businessId, tableTabId)) {
+      return { ok: false, reason: "PENDING_PAYMENT_EXISTS" } as const;
+    }
+    if (await hasOpenBillableCharge(tx, businessId, tableTabId)) {
+      return { ok: false, reason: "OPEN_BILLABLE_CHARGE_EXISTS" } as const;
+    }
+
+    // Advertencia blanda — informativa, nunca bloquea (§4.B).
+    const hasPendingKitchenItems = await hasPendingOrPreparingKitchenItems(
+      tx,
+      businessId,
+      tableTabId
+    );
+
     await tx.table_tab_table.updateMany({
       where: { table_tab_id: tableTabId, unassigned_at: null },
       data: { unassigned_at: new Date() }
@@ -348,7 +383,7 @@ export async function closeTableTab(params: {
     });
 
     const updated = await loadTableTabOrThrow(tx, businessId, tableTabId);
-    return { ok: true, tableTab: mapTableTab(updated) } as const;
+    return { ok: true, tableTab: mapTableTab(updated), hasPendingKitchenItems } as const;
   });
 }
 
