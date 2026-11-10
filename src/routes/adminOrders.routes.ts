@@ -45,11 +45,18 @@ import {
   getTableTabs,
   patchReassignTableTab,
   postAssignTableToTab,
+  postCancelTableTabItem,
   postCloseTableTab,
   postCreateTableTabRound,
   postOpenTableTab,
   postTransferTable
 } from "../controllers/adminTableTab.controller";
+import { patchKitchenTicketItemStatus } from "../controllers/kitchenTicketItem.controller";
+import {
+  getPreparationStations,
+  postAssignMenuItemStation,
+  postPreparationStation
+} from "../controllers/preparationStation.controller";
 import {
   getBusinessHourById,
   getBusinessHours,
@@ -509,6 +516,32 @@ router.post("/table-tabs/:id/transfer", requireRoles(...TABLE_TAB_ROLES), postTr
 router.post("/table-tabs/:id/rounds", requireRoles(...TABLE_TAB_ROLES), postCreateTableTabRound);
 router.patch("/table-tabs/:id/assignee", requireRoles(...TABLE_TAB_ROLES), patchReassignTableTab);
 router.post("/table-tabs/:id/close", requireRoles(...TABLE_TAB_ROLES), postCloseTableTab);
+
+// Anulación de ítem desde el salón (Fase 4, POS_TECHNICAL_DESIGN.md §4.C). La
+// exigencia de rol elevado (ADMIN/OWNER) + motivo cuando el ítem ya está
+// `preparing`/`ready` se aplica DENTRO del servicio (`cancelOrderItem`), no
+// acá — a nivel de ruta se admite el mismo set que el resto de table-tabs
+// porque la anulación sin fricción (ítem `pending`) sí debe quedar disponible
+// para STAFF.
+router.post(
+  "/table-tabs/:id/cancel-item",
+  requireRoles(...TABLE_TAB_ROLES),
+  postCancelTableTabItem
+);
+
+// Comandas y estaciones (Fase 4, POS_TECHNICAL_DESIGN.md §4.C).
+router.patch(
+  "/kitchen-tickets/items/:id/status",
+  requireRoles(...TABLE_TAB_ROLES),
+  patchKitchenTicketItemStatus
+);
+router.get("/kitchen-stations", requireRoles("OWNER", "ADMIN"), getPreparationStations);
+router.post("/kitchen-stations", requireRoles("OWNER", "ADMIN"), postPreparationStation);
+router.post(
+  "/kitchen-stations/:id/menu-items",
+  requireRoles("OWNER", "ADMIN"),
+  postAssignMenuItemStation
+);
 
 router.get("/business-hours", requireRoles("OWNER", "ADMIN"), getBusinessHours);
 router.get(

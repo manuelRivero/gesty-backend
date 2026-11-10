@@ -33,10 +33,10 @@ import { computeOrderPricing, type PricingItem } from "./pricing.service";
 // bloquean entre sí.
 // ---------------------------------------------------------------------------
 
-const tabLockKey = (businessId: string, tableTabId: string): string =>
+export const tabLockKey = (businessId: string, tableTabId: string): string =>
   `table-tab:tab:${businessId}:${tableTabId}`;
 
-const acquireTabLock = (
+export const acquireTabLock = (
   tx: Prisma.TransactionClient,
   businessId: string,
   tableTabId: string

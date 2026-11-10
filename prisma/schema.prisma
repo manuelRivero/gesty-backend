@@ -87,6 +87,7 @@ model business_user {
   conversation_notes conversation_note[]
   opened_table_tabs    table_tab[] @relation("TableTabOpenedBy")
   assigned_table_tabs  table_tab[] @relation("TableTabAssignedTo")
+  requested_order_item_adjustments order_item_adjustment[] @relation("OrderItemAdjustmentRequestedBy")
 
   @@unique([user_id, business_id], map: "unique_user_business")
 }
@@ -443,6 +444,7 @@ model order_item {
   menu_item       menu_item @relation(fields: [menu_item_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   orders          orders    @relation(fields: [order_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   kitchen_ticket_item kitchen_ticket_item?
+  order_item_adjustment order_item_adjustment[]
 }
 
 model orders {
@@ -822,6 +824,7 @@ model kitchen_ticket_item_event {
   created_at            DateTime            @default(now()) @db.Timestamptz(6)
   created_by_user_id    String?             @db.Uuid
   kitchen_ticket_item   kitchen_ticket_item @relation(fields: [kitchen_ticket_item_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_kitchen_ticket_item_event_item")
+  order_item_adjustment order_item_adjustment[]
 
   @@index([kitchen_ticket_item_id], map: "idx_kitchen_ticket_item_event_item")
 }
@@ -833,6 +836,43 @@ enum KitchenTicketItemStatus {
   /// Ítem cancelado desde cocina (p. ej. sin stock) — separado de `OrderStatus.cancelled`,
   /// que es una decisión comercial distinta.
   canceled
+}
+
+/// Motivo estructurado de anulación, exigido cuando el `kitchen_ticket_item` ya
+/// estaba `preparing`/`ready` al momento de anular (POS_TECHNICAL_DESIGN.md §4.C,
+/// "DECISIÓN APROBADA — anulación de productos y su impacto económico").
+enum OrderItemAdjustmentReason {
+  OUT_OF_STOCK
+  CUSTOMER_REQUEST
+  KITCHEN_ERROR
+  OTHER
+}
+
+/// Anulación compensatoria de un `order_item` ya confirmado (Fase 4,
+/// POS_TECHNICAL_DESIGN.md §4.C). Nunca edita/borra `order_item` — es una fila
+/// nueva, igual que los reversos de `tab_payment` (§5): el saldo de la cuenta se
+/// recalcula por agregación (`Σ order_item` + `Σ order_item_adjustment.amount`,
+/// este último siempre ≤ 0), nunca mutando un campo cacheado.
+///
+/// `kitchen_ticket_item_event_id` referencia el evento que registró el estado del
+/// `kitchen_ticket_item` en el momento exacto de la anulación (compare-and-swap
+/// dentro de la misma transacción) — reconcilia por construcción el ledger de
+/// ajustes con el de cocina, sin depender de sincronización manual posterior.
+model order_item_adjustment {
+  id                            String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  order_item_id                 String                     @db.Uuid
+  /// Siempre ≤ 0 por ahora: el único tipo de ajuste implementado es la anulación.
+  amount                         Decimal                    @db.Decimal(12, 2)
+  /// Obligatorio si el ítem ya estaba `preparing`/`ready` al anular; null si estaba `pending`.
+  reason                         OrderItemAdjustmentReason?
+  requested_by_user_id           String?                    @db.Uuid
+  kitchen_ticket_item_event_id   String?                    @db.Uuid
+  created_at                     DateTime                   @default(now()) @db.Timestamptz(6)
+  order_item                     order_item                 @relation(fields: [order_item_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_order_item_adjustment_order_item")
+  requested_by                   business_user?             @relation("OrderItemAdjustmentRequestedBy", fields: [requested_by_user_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  kitchen_ticket_item_event      kitchen_ticket_item_event? @relation(fields: [kitchen_ticket_item_event_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([order_item_id], map: "idx_order_item_adjustment_order_item")
 }
 
 model reservation_config {

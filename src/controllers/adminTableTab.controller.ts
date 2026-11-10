@@ -11,6 +11,9 @@ import {
   transferTable
 } from "../services/adminTableTab.service";
 import { createTableTabRound } from "../services/adminTableTabRound.service";
+import { cancelOrderItem } from "../services/kitchenTicketItem.service";
+import { OrderItemAdjustmentReason } from "@prisma/client";
+import type { BusinessUserRole } from "../types/auth";
 
 /** Alineado con UUID en PostgreSQL; Zod `.uuid()` rechaza variantes RFC. */
 const postgresUuid = z.string().regex(
@@ -51,15 +54,24 @@ const createRoundSchema = z.object({
     .max(50)
 });
 
-function requireAuth(req: Request, res: Response): { businessId: string; userId: string } | null {
+function requireAuth(
+  req: Request,
+  res: Response
+): { businessId: string; userId: string; role: BusinessUserRole } | null {
   const businessId = req.user?.businessId;
   const userId = req.user?.userId;
-  if (!businessId || !userId) {
+  const role = req.user?.role;
+  if (!businessId || !userId || !role) {
     res.status(401).json({ error: "No autenticado" });
     return null;
   }
-  return { businessId, userId };
+  return { businessId, userId, role };
 }
+
+const cancelItemSchema = z.object({
+  orderItemId: postgresUuid,
+  reason: z.nativeEnum(OrderItemAdjustmentReason).optional()
+});
 
 export async function getTableTabs(req: Request, res: Response) {
   const auth = requireAuth(req, res);
@@ -244,6 +256,42 @@ export async function postCreateTableTabRound(req: Request, res: Response) {
   }
 
   return res.status(201).json({ orderId: result.orderId, total: result.total });
+}
+
+export async function postCancelTableTabItem(req: Request, res: Response) {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+
+  const parsedParams = idParamSchema.safeParse(req.params);
+  if (!parsedParams.success) {
+    return res.status(400).json({ error: "id inválido" });
+  }
+  const parsed = cancelItemSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Body inválido", details: parsed.error.flatten() });
+  }
+
+  const result = await cancelOrderItem({
+    businessId: auth.businessId,
+    tableTabId: parsedParams.data.id,
+    orderItemId: parsed.data.orderItemId,
+    userId: auth.userId,
+    userRole: auth.role,
+    reason: parsed.data.reason
+  });
+
+  if (!result.ok) {
+    const statusByReason: Record<typeof result.reason, number> = {
+      ORDER_ITEM_NOT_FOUND: 404,
+      ALREADY_CANCELED: 409,
+      ROLE_NOT_ALLOWED: 403,
+      REASON_REQUIRED: 400,
+      CONCURRENT_STATUS_CHANGE: 409
+    };
+    return res.status(statusByReason[result.reason]).json({ error: result.reason });
+  }
+
+  return res.json({ adjustmentId: result.adjustmentId, amount: result.amount });
 }
 
 export async function postCloseTableTab(req: Request, res: Response) {
