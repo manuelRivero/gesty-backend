@@ -75,6 +75,7 @@ export type BusinessConfig = {
   bot_personality_id: string;
   ambassadors_enabled: boolean;
   owner_whatsapp_phones: string[];
+  salon_enabled: boolean;
 };
 
 /** Defaults limpios (D1): capacidades off; bot on (D11); storefront on (incluido en plan, kill switch admin). */
@@ -107,6 +108,7 @@ export const DEFAULT_CONFIG: BusinessConfig = {
   bot_personality_id: NEUTRAL_PERSONALITY_ID,
   ambassadors_enabled: false,
   owner_whatsapp_phones: [],
+  salon_enabled: false,
 };
 
 export type BusinessConfigPatch = Partial<BusinessConfig>;
@@ -284,7 +286,8 @@ async function fetchBusinessConfigRow(
       external_delivery_enabled,
       bot_personality_id,
       ambassadors_enabled,
-      owner_whatsapp_phones
+      owner_whatsapp_phones,
+      salon_enabled
     FROM business_config
     WHERE business_id = ${businessId}::uuid
     LIMIT 1
@@ -416,7 +419,8 @@ export async function upsertBusinessConfig(
       external_delivery_enabled,
       bot_personality_id,
       ambassadors_enabled,
-      owner_whatsapp_phones
+      owner_whatsapp_phones,
+      salon_enabled
     ) VALUES (
       ${businessId}::uuid,
       ${next.bot_enabled},
@@ -446,7 +450,8 @@ export async function upsertBusinessConfig(
       ${next.external_delivery_enabled},
       ${next.bot_personality_id}::uuid,
       ${next.ambassadors_enabled},
-      ${toPgTextArray(next.owner_whatsapp_phones)}
+      ${toPgTextArray(next.owner_whatsapp_phones)},
+      ${next.salon_enabled}
     )
     ON CONFLICT (business_id)
     DO UPDATE SET
@@ -477,7 +482,8 @@ export async function upsertBusinessConfig(
       external_delivery_enabled = EXCLUDED.external_delivery_enabled,
       bot_personality_id = EXCLUDED.bot_personality_id,
       ambassadors_enabled = EXCLUDED.ambassadors_enabled,
-      owner_whatsapp_phones = EXCLUDED.owner_whatsapp_phones
+      owner_whatsapp_phones = EXCLUDED.owner_whatsapp_phones,
+      salon_enabled = EXCLUDED.salon_enabled
   `;
 
   return next;

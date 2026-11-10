@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { recordTabPayment } from "../services/tabPayment.service";
+import { getBusinessUserIdForActor } from "../services/businessUserContext.service";
 
 const postgresUuid = z.string().regex(
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/,
@@ -40,6 +41,23 @@ function requireAuth(req: Request, res: Response): { businessId: string; userId:
   return { businessId, userId };
 }
 
+/** `req.user.userId` es `AppUser.id`; `tab_payment.created_by_user_id` referencia `business_user(id)`. */
+async function resolveActorBusinessUserId(
+  req: Request,
+  res: Response,
+  auth: { businessId: string; userId: string }
+): Promise<string | null> {
+  const businessUserId = await getBusinessUserIdForActor({
+    userId: auth.userId,
+    businessId: auth.businessId
+  });
+  if (!businessUserId) {
+    res.status(403).json({ error: "ACTOR_WITHOUT_MEMBERSHIP" });
+    return null;
+  }
+  return businessUserId;
+}
+
 export async function postRecordTabPayment(req: Request, res: Response) {
   const auth = requireAuth(req, res);
   if (!auth) return;
@@ -53,12 +71,15 @@ export async function postRecordTabPayment(req: Request, res: Response) {
     return res.status(400).json({ error: "Body inválido", details: parsed.error.flatten() });
   }
 
+  const businessUserId = await resolveActorBusinessUserId(req, res, auth);
+  if (!businessUserId) return;
+
   const result = await recordTabPayment({
     businessId: auth.businessId,
     tableTabId: parsedParams.data.id,
     amountTendered: parsed.data.amountTendered,
     allocations: parsed.data.allocations?.map((a) => ({ orderId: a.orderId, amount: a.amount })),
-    userId: auth.userId
+    userId: businessUserId
   });
 
   if (!result.ok) {

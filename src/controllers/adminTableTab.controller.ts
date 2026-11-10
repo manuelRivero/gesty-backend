@@ -12,6 +12,7 @@ import {
 } from "../services/adminTableTab.service";
 import { createTableTabRound } from "../services/adminTableTabRound.service";
 import { cancelOrderItem } from "../services/kitchenTicketItem.service";
+import { getBusinessUserIdForActor } from "../services/businessUserContext.service";
 import { OrderItemAdjustmentReason } from "@prisma/client";
 import type { BusinessUserRole } from "../types/auth";
 
@@ -68,6 +69,31 @@ function requireAuth(
   return { businessId, userId, role };
 }
 
+/**
+ * `req.user.userId` (JWT) es `AppUser.id`, no `business_user.id` — las FKs de
+ * salón (`table_tab.opened_by_user_id`, `order_item_adjustment.requested_by_user_id`,
+ * etc.) apuntan a `business_user`, igual que `orders.assigned_delivery_user_id`
+ * ya resolvía vía `getBusinessUserIdForActor` (`adminOrders.controller.ts`).
+ * Devuelve 403 si el actor autenticado no tiene membresía en este negocio
+ * (no debería pasar para un JWT válido, pero una FK rota en producción es
+ * peor que un 403 bien explicado).
+ */
+async function resolveActorBusinessUserId(
+  req: Request,
+  res: Response,
+  auth: { businessId: string; userId: string }
+): Promise<string | null> {
+  const businessUserId = await getBusinessUserIdForActor({
+    userId: auth.userId,
+    businessId: auth.businessId
+  });
+  if (!businessUserId) {
+    res.status(403).json({ error: "ACTOR_WITHOUT_MEMBERSHIP" });
+    return null;
+  }
+  return businessUserId;
+}
+
 const cancelItemSchema = z.object({
   orderItemId: postgresUuid,
   reason: z.nativeEnum(OrderItemAdjustmentReason).optional()
@@ -114,10 +140,13 @@ export async function postOpenTableTab(req: Request, res: Response) {
     return res.status(400).json({ error: "Body inválido", details: parsed.error.flatten() });
   }
 
+  const businessUserId = await resolveActorBusinessUserId(req, res, auth);
+  if (!businessUserId) return;
+
   const result = await openTableTab({
     businessId: auth.businessId,
     tableId: parsed.data.tableId,
-    openedByUserId: auth.userId
+    openedByUserId: businessUserId
   });
 
   if (!result.ok) {
@@ -271,11 +300,14 @@ export async function postCancelTableTabItem(req: Request, res: Response) {
     return res.status(400).json({ error: "Body inválido", details: parsed.error.flatten() });
   }
 
+  const businessUserId = await resolveActorBusinessUserId(req, res, auth);
+  if (!businessUserId) return;
+
   const result = await cancelOrderItem({
     businessId: auth.businessId,
     tableTabId: parsedParams.data.id,
     orderItemId: parsed.data.orderItemId,
-    userId: auth.userId,
+    userId: businessUserId,
     userRole: auth.role,
     reason: parsed.data.reason
   });

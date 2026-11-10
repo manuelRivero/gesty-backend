@@ -3,6 +3,7 @@ import { z } from "zod";
 import { KitchenTicketItemStatus } from "@prisma/client";
 import { advanceKitchenTicketItemStatus } from "../services/kitchenTicketItem.service";
 import { listKitchenTickets } from "../services/kitchenTicket.service";
+import { getBusinessUserIdForActor } from "../services/businessUserContext.service";
 
 const postgresUuid = z.string().regex(
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/,
@@ -24,6 +25,23 @@ function requireAuth(req: Request, res: Response): { businessId: string; userId:
     return null;
   }
   return { businessId, userId };
+}
+
+/** `req.user.userId` es `AppUser.id`; `kitchen_ticket_item_event.created_by_user_id` referencia `business_user(id)`. */
+async function resolveActorBusinessUserId(
+  req: Request,
+  res: Response,
+  auth: { businessId: string; userId: string }
+): Promise<string | null> {
+  const businessUserId = await getBusinessUserIdForActor({
+    userId: auth.userId,
+    businessId: auth.businessId
+  });
+  if (!businessUserId) {
+    res.status(403).json({ error: "ACTOR_WITHOUT_MEMBERSHIP" });
+    return null;
+  }
+  return businessUserId;
 }
 
 /**
@@ -61,11 +79,14 @@ export async function patchKitchenTicketItemStatus(req: Request, res: Response) 
     return res.status(400).json({ error: "Body inválido", details: parsed.error.flatten() });
   }
 
+  const businessUserId = await resolveActorBusinessUserId(req, res, auth);
+  if (!businessUserId) return;
+
   const result = await advanceKitchenTicketItemStatus({
     businessId: auth.businessId,
     kitchenTicketItemId: parsedParams.data.id,
     toStatus: parsed.data.status,
-    userId: auth.userId
+    userId: businessUserId
   });
 
   if (!result.ok) {
