@@ -42,6 +42,7 @@ import {
 import {
   getOccupiedTables,
   getTableTabById_,
+  getTableTabOrders,
   getTableTabs,
   patchReassignTableTab,
   postAssignTableToTab,
@@ -60,7 +61,10 @@ import {
   postAssignMenuItemStation,
   postPreparationStation
 } from "../controllers/preparationStation.controller";
-import { postRecordTabPayment } from "../controllers/tabPayment.controller";
+import {
+  getTableTabBalanceHandler,
+  postRecordTabPayment
+} from "../controllers/tabPayment.controller";
 import { postCreateBillableCharge } from "../controllers/billableCharge.controller";
 import {
   getBusinessHourById,
@@ -436,8 +440,11 @@ router.get(
   requireRoles("OWNER", "ADMIN"),
   getMenuCategoryTagsOptions
 );
-router.get("/menu-items", requireRoles("OWNER", "ADMIN"), getMenuItems);
-router.get("/menu-items/:id", requireRoles("OWNER", "ADMIN"), getMenuItemById);
+// Lectura abierta a MOZO también: el panel de `/pos` necesita el menú para
+// armar una ronda (`POST /table-tabs/:id/rounds`). El CRUD del menú sigue
+// exclusivo de OWNER/ADMIN.
+router.get("/menu-items", requireRoles("OWNER", "ADMIN", "MOZO"), getMenuItems);
+router.get("/menu-items/:id", requireRoles("OWNER", "ADMIN", "MOZO"), getMenuItemById);
 router.post("/menu-items", requireRoles("OWNER", "ADMIN"), postMenuItem);
 router.patch("/menu-items/:id", requireRoles("OWNER", "ADMIN"), patchMenuItem);
 router.delete("/menu-items/:id", requireRoles("OWNER", "ADMIN"), removeMenuItem);
@@ -501,61 +508,80 @@ router.post("/environments", requireRoles("OWNER", "ADMIN"), postEnvironment);
 router.patch("/environments/:id", requireRoles("OWNER", "ADMIN"), patchEnvironment);
 router.delete("/environments/:id", requireRoles("OWNER", "ADMIN"), removeEnvironment);
 
-router.get("/tables", requireRoles("OWNER", "ADMIN"), getTables);
-router.get("/tables/:id", requireRoles("OWNER", "ADMIN"), getTableById);
+// Lectura abierta a MOZO también: `/pos` necesita el catálogo de mesas
+// (nombre/capacidad/entorno) para dibujar la grilla — ver `app/(dashboard)/pos`
+// en gesty-admin. El CRUD del plano (crear/editar/borrar mesa) sigue exclusivo
+// de OWNER/ADMIN, igual que siempre.
+router.get("/tables", requireRoles("OWNER", "ADMIN", "MOZO"), getTables);
+router.get("/tables/:id", requireRoles("OWNER", "ADMIN", "MOZO"), getTableById);
 router.post("/tables", requireRoles("OWNER", "ADMIN"), postTable);
 router.patch("/tables/:id", requireRoles("OWNER", "ADMIN"), patchTable);
 router.delete("/tables/:id", requireRoles("OWNER", "ADMIN"), removeTable);
 
-// Operación de salón sobre mesas (Fase 2, POS_TECHNICAL_DESIGN.md §4.A/§4.B).
-// `MOZO` todavía no existe como rol (PROPUESTA TÉCNICA sin aprobar, §4.F/§9) —
-// se habilita `STAFF` como el rol existente más cercano a esa operación hasta
-// que se apruebe un rol dedicado; reemplazar por `MOZO` cuando se decida.
-const TABLE_TAB_ROLES = ["OWNER", "ADMIN", "STAFF"] as const;
-router.get("/table-tabs", requireRoles(...TABLE_TAB_ROLES), getTableTabs);
-router.get("/table-tabs/occupied-tables", requireRoles(...TABLE_TAB_ROLES), getOccupiedTables);
-router.get("/table-tabs/:id", requireRoles(...TABLE_TAB_ROLES), getTableTabById_);
-router.post("/table-tabs", requireRoles(...TABLE_TAB_ROLES), postOpenTableTab);
-router.post("/table-tabs/:id/tables", requireRoles(...TABLE_TAB_ROLES), postAssignTableToTab);
-router.post("/table-tabs/:id/transfer", requireRoles(...TABLE_TAB_ROLES), postTransferTable);
-router.post("/table-tabs/:id/rounds", requireRoles(...TABLE_TAB_ROLES), postCreateTableTabRound);
-router.patch("/table-tabs/:id/assignee", requireRoles(...TABLE_TAB_ROLES), patchReassignTableTab);
-router.post("/table-tabs/:id/close", requireRoles(...TABLE_TAB_ROLES), postCloseTableTab);
+// Operación de salón sobre mesas y comandas (Fases 2/4, POS_TECHNICAL_DESIGN.md
+// §4.A/§4.B/§4.C/§4.F). Matriz confirmada tras auditar cómo lo resuelven POS
+// reales (Fudo separa explícitamente el permiso "Cerrar ventas" de "Cobrar
+// mesa" — cerrar/cobrar/facturar quedan en el nivel de supervisor/caja, nunca
+// en el mozo que toma el pedido):
+//   - Lectura (ver mesas/cuentas y su consumo): MOZO + ADMIN/OWNER — el
+//     encargado necesita poder revisar la cuenta ANTES de decidir cerrarla.
+//   - Operación de mesa (abrir, asignar/transferir mesa, crear ronda,
+//     reasignar mozo): MOZO exclusivo — es el trabajo del mozo, no del dueño.
+//   - Cerrar cuenta, cobrar, facturar: ADMIN/OWNER exclusivo — el mozo nunca
+//     maneja caja ni decide que una cuenta está saldada.
+const TABLE_TAB_READ_ROLES = ["MOZO", "ADMIN", "OWNER"] as const;
+const TABLE_TAB_OPERATE_ROLES = ["MOZO"] as const;
+const TAB_PAYMENT_AND_BILLING_ROLES = ["OWNER", "ADMIN"] as const;
 
-// Anulación de ítem desde el salón (Fase 4, POS_TECHNICAL_DESIGN.md §4.C). La
-// exigencia de rol elevado (ADMIN/OWNER) + motivo cuando el ítem ya está
-// `preparing`/`ready` se aplica DENTRO del servicio (`cancelOrderItem`), no
-// acá — a nivel de ruta se admite el mismo set que el resto de table-tabs
-// porque la anulación sin fricción (ítem `pending`) sí debe quedar disponible
-// para STAFF.
+router.get("/table-tabs", requireRoles(...TABLE_TAB_READ_ROLES), getTableTabs);
+router.get("/table-tabs/occupied-tables", requireRoles(...TABLE_TAB_READ_ROLES), getOccupiedTables);
+router.get("/table-tabs/:id", requireRoles(...TABLE_TAB_READ_ROLES), getTableTabById_);
+router.get("/table-tabs/:id/orders", requireRoles(...TABLE_TAB_READ_ROLES), getTableTabOrders);
+router.post("/table-tabs", requireRoles(...TABLE_TAB_OPERATE_ROLES), postOpenTableTab);
+router.post("/table-tabs/:id/tables", requireRoles(...TABLE_TAB_OPERATE_ROLES), postAssignTableToTab);
+router.post("/table-tabs/:id/transfer", requireRoles(...TABLE_TAB_OPERATE_ROLES), postTransferTable);
+router.post("/table-tabs/:id/rounds", requireRoles(...TABLE_TAB_OPERATE_ROLES), postCreateTableTabRound);
+router.patch("/table-tabs/:id/assignee", requireRoles(...TABLE_TAB_OPERATE_ROLES), patchReassignTableTab);
+
+// Cierre de cuenta: exclusivo de ADMIN/OWNER (encargado/caja), NO el mozo —
+// ver matriz arriba. El mozo sirve, no cierra ni verifica caja.
+router.post("/table-tabs/:id/close", requireRoles(...TAB_PAYMENT_AND_BILLING_ROLES), postCloseTableTab);
+
+// Anulación de ítem desde el salón (Fase 4, POS_TECHNICAL_DESIGN.md §4.C): el
+// mozo puede anular sin fricción si el ítem sigue `pending` (sin costo
+// hundido); si ya está `preparing`/`ready`, la regla ya aprobada exige
+// ADMIN/OWNER + motivo. Por eso el endpoint admite ambos sets — el servicio
+// (`cancelOrderItem`) decide el permiso exacto según el estado real del ítem.
 router.post(
   "/table-tabs/:id/cancel-item",
-  requireRoles(...TABLE_TAB_ROLES),
+  requireRoles("MOZO", "ADMIN", "OWNER"),
   postCancelTableTabItem
 );
 
-// Ledger de pagos de cuenta (Fase 6, POS_TECHNICAL_DESIGN.md §4.D).
+router.get(
+  "/table-tabs/:id/balance",
+  requireRoles(...TAB_PAYMENT_AND_BILLING_ROLES),
+  getTableTabBalanceHandler
+);
 router.post(
   "/table-tabs/:id/payments",
-  requireRoles(...TABLE_TAB_ROLES),
+  requireRoles(...TAB_PAYMENT_AND_BILLING_ROLES),
   postRecordTabPayment
 );
-
-// Facturación consolidada del consumo de salón (Fase 7, POS_TECHNICAL_DESIGN.md §4.E).
 router.post(
   "/table-tabs/:id/billable-charges",
-  requireRoles(...TABLE_TAB_ROLES),
+  requireRoles(...TAB_PAYMENT_AND_BILLING_ROLES),
   postCreateBillableCharge
 );
 
-// Comandas y estaciones (Fase 4, POS_TECHNICAL_DESIGN.md §4.C).
-// `GET /kitchen-tickets` es el snapshot REST que el KDS usa al montar,
-// reconectar o como polling de seguridad (Fase 5, §4.C) — nunca debe
-// depender solo de `admin:kitchen` (Socket.IO) para su estado.
-router.get("/kitchen-tickets", requireRoles(...TABLE_TAB_ROLES), getKitchenTickets);
+// Comandas y estaciones (Fase 4, POS_TECHNICAL_DESIGN.md §4.C). El snapshot
+// REST (`GET /kitchen-tickets`, usado por el KDS al montar/reconectar/polling,
+// Fase 5, §4.C) y la transición de estado quedan exclusivos de MOZO — no es
+// parte de la decisión de hoy (cierre/cobro/facturación), sin cambios.
+router.get("/kitchen-tickets", requireRoles(...TABLE_TAB_OPERATE_ROLES), getKitchenTickets);
 router.patch(
   "/kitchen-tickets/items/:id/status",
-  requireRoles(...TABLE_TAB_ROLES),
+  requireRoles(...TABLE_TAB_OPERATE_ROLES),
   patchKitchenTicketItemStatus
 );
 router.get("/kitchen-stations", requireRoles("OWNER", "ADMIN"), getPreparationStations);

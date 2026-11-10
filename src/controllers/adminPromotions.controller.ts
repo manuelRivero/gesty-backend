@@ -17,6 +17,7 @@ import type { Request, Response } from 'express';
 import { z } from 'zod';
 import type { business as Business } from '@prisma/client';
 import { prisma } from '../lib/prisma';
+import { queryBoolean } from '../utils/zodHelpers';
 import {
   detectAudioMimeFromBuffer,
   MAX_PROMOTION_AUDIO_BYTES,
@@ -85,7 +86,7 @@ const listQuerySchema = z.object({
   pageSize: z.coerce.number().int().positive().max(100).optional(),
   status: z.enum(['draft', 'active', 'paused', 'archived']).optional(),
   q: z.string().max(120).optional(),
-  includeArchived: z.coerce.boolean().optional(),
+  includeArchived: queryBoolean(false),
 });
 
 const idParamSchema = z.object({ id: z.string().uuid() });

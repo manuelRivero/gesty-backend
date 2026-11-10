@@ -184,17 +184,23 @@ Se adopta íntegramente el diseño de `KITCHEN_AUDIT.md §13`, con los puntos qu
 
 ### 4.F Usuarios, permisos y tiempo real
 
-**HECHO**: roles actuales `SUPER_ADMIN, OWNER, ADMIN, STAFF, DELIVERY` (`src/types/auth.ts:2-8`); `STAFF`/`DELIVERY` acceden hoy por exclusión (cero `requireRoles("STAFF", ...)` en todo `src/routes/`, confirmado con grep propio en `KITCHEN_AUDIT.md §11`).
+**HECHO (histórico)**: roles previos a esta decisión `SUPER_ADMIN, OWNER, ADMIN, STAFF, DELIVERY` (`src/types/auth.ts:2-8`); `STAFF`/`DELIVERY` accedían por exclusión (cero `requireRoles("STAFF", ...)` en todo `src/routes/`, confirmado con grep propio en `KITCHEN_AUDIT.md §11`).
 
-**PROPUESTA TÉCNICA — roles nuevos** (ninguno existe hoy, todos requieren aprobación explícita antes de implementarse):
+**DECISIÓN APROBADA — rol `MOZO` dedicado, auditada contra un POS real**: se agregó `MOZO` a `BUSINESS_USER_ROLES` (ya no un stand-in sobre `STAFF`). Antes de fijar la matriz de permisos se auditó cómo lo resuelve Fudo (POS de salón de uso real en Argentina, vía su centro de ayuda oficial): Fudo separa explícitamente el permiso **"Cerrar ventas"** (libera la mesa) del de **"Cobrar mesa"** (cobra al comensal, no cierra) — ambos viven típicamente a nivel de encargado/caja, nunca en el mozo que toma el pedido. Esa separación confirmó la corrección propuesta por el usuario sobre un diseño anterior (donde `MOZO` había quedado erróneamente como exclusivo de **todo** el módulo, incluyendo cierre) y fijó la matriz final:
 
-| Rol | Alcance propuesto |
-|---|---|
-| `MOZO` | Abre/cierra cuentas, crea rondas, ve comandas de sus mesas, marca `entregado`. No cambia estado de preparación. |
-| `COCINA` | Ciclo `pendiente→en_preparación→listo` de sus tickets. No ve montos ni medios de pago. |
-| `CAJERO` | Ve saldo/consumo, aplica pagos, cierra cuenta. Ve montos que `COCINA` no debe ver. |
+| Operación | Rol | Razón |
+|---|---|---|
+| Ver mesas/cuentas y su consumo (`GET table-tabs`) | `MOZO` **y** `ADMIN`/`OWNER` | el encargado necesita revisar la cuenta antes de decidir cerrarla |
+| Abrir cuenta, asignar/transferir mesa, crear ronda, reasignar mozo | `MOZO` exclusivo | operación de mesa — trabajo del mozo |
+| Anular ítem | `MOZO` (sin motivo si `pending`) + `ADMIN`/`OWNER` (con motivo si `preparing`/`ready`) | ya aprobado en Fase 4 (§4.C); el mozo no tiene permiso de anular algo con costo hundido sin supervisión |
+| **Cerrar cuenta** | `ADMIN`/`OWNER` exclusivo | caja/encargado — el mozo nunca decide que una cuenta está saldada |
+| Cobrar (`tab_payment`) | `ADMIN`/`OWNER` exclusivo | caja — ya estaba así desde Fase 6 |
+| Facturación (`billable_charge`) | `ADMIN`/`OWNER` exclusivo | administración — ya estaba así desde Fase 7 |
+| Comandas de cocina (`kitchen_ticket*`) | `MOZO` exclusivo | no forma parte de esta decisión; sin rol `COCINA` dedicado, lo cubre `MOZO` |
 
-- **PENDIENTE**: si `MOZO` reemplaza a `STAFF` para ese perfil o convive como rol nuevo adicional.
+Implementado en `src/types/auth.ts` (`BUSINESS_USER_ROLES`/`ASSIGNABLE_BUSINESS_USER_ROLES`), `src/routes/adminOrders.routes.ts` (`TABLE_TAB_READ_ROLES`/`TABLE_TAB_OPERATE_ROLES`/`TAB_PAYMENT_AND_BILLING_ROLES`), `src/socket/adminSocket.ts` (`KITCHEN_NOTIFICATION_ROLES` ya no usa `STAFF` como stand-in), y en `gesty-admin` (`lib/access-control.ts`, `components/app-sidebar.tsx`, `/pos` muestra "Abrir cuenta" solo a `MOZO` y "Cerrar cuenta" solo a `ADMIN`/`OWNER`).
+
+- **PENDIENTE**: rol `COCINA` dedicado (hoy `MOZO` cubre comandas también); rol `CAJERO` dedicado si algún día se necesita separar cobro de administración general (hoy lo cubren `ADMIN`/`OWNER` sin distinción).
 - **PROPUESTA TÉCNICA — cambios requeridos en sockets**: extender/duplicar `ADMIN_NOTIFICATION_ROLES` (ver §4.C), agregar sala(s) nueva(s) por estación/rol de cocina en paralelo a `admin:<businessId>`, y actualizar los type guards del cliente (`gesty-admin/lib/types/admin-realtime.ts`) para los nuevos tipos de evento (`kitchen_ticket.*`). **No se auditó el contenido línea por línea de ese archivo** (confirmado como no verificado en `KITCHEN_AUDIT.md`, nota de alcance) — su actualización exacta queda como tarea de implementación, no de diseño.
 - **Aislamiento multi-tenant**: patrón existente `tenantBusinessId(req)` (`auth.middleware.ts:47-53`), manual por query, **sin Row-Level-Security de respaldo** (riesgo estructural preexistente, agravado por cada tabla nueva de salón/cocina si no se mantiene la disciplina).
 - **PROPUESTA TÉCNICA — auditoría de acciones sensibles**: hoy `orders.update` no registra autoría de quién cambió el estado desde el panel admin (`POS_MASTER_SPEC.md §6`). Para el POS de salón, se recomienda que **toda** transición de `table_tab`, `tab_payment` y `kitchen_ticket_item` quede registrada con actor+timestamp desde el primer diseño (vía las tablas de eventos ya propuestas en 4.A/4.C), para no heredar la misma laguna de auditabilidad que ya existe en `OrderStatus`.

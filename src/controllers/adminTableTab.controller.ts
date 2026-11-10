@@ -6,6 +6,7 @@ import {
   getTableTabById,
   listOccupiedTableIds,
   listOpenTableTabs,
+  listTableTabOrders,
   openTableTab,
   reassignTableTab,
   transferTable
@@ -129,6 +130,23 @@ export async function getTableTabById_(req: Request, res: Response) {
     return res.status(404).json({ error: "Cuenta de mesa no encontrada" });
   }
   return res.json(row);
+}
+
+/** "El pedido" de la cuenta — rondas + ítems, para el sidebar de `/pos`. */
+export async function getTableTabOrders(req: Request, res: Response) {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+
+  const parsedParams = idParamSchema.safeParse(req.params);
+  if (!parsedParams.success) {
+    return res.status(400).json({ error: "id inválido" });
+  }
+
+  const items = await listTableTabOrders({
+    businessId: auth.businessId,
+    tableTabId: parsedParams.data.id
+  });
+  return res.json({ items });
 }
 
 export async function postOpenTableTab(req: Request, res: Response) {

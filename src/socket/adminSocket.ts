@@ -38,11 +38,11 @@ const ADMIN_NOTIFICATION_ROLES = new Set<BusinessUserRole>(["OWNER", "ADMIN"]);
  * Fase 5 (`docs/arquitectura/POS_TECHNICAL_DESIGN.md §4.C`, hallazgo ya
  * señalado en `KITCHEN_AUDIT.md §9`): `ADMIN_NOTIFICATION_ROLES` dejaba
  * afuera a cualquier rol de cocina/mozo — una tablet de cocina conectándose
- * con un token `STAFF` era expulsada de inmediato (`socket.disconnect`) antes
- * de poder unirse a ninguna sala. No existe todavía un rol `COCINA` dedicado
- * (`BUSINESS_USER_ROLES` en `src/types/auth.ts` no lo tiene, §4.F sin
- * aprobar) — se usa `STAFF` como stand-in, mismo criterio ya aplicado en
- * `TABLE_TAB_ROLES` (`adminOrders.routes.ts`).
+ * era expulsada de inmediato (`socket.disconnect`) antes de poder unirse a
+ * ninguna sala. `MOZO` es ahora un rol dedicado y exclusivo de mesas/comandas
+ * (`BUSINESS_USER_ROLES`/`TABLE_TAB_ROLES` en `adminOrders.routes.ts`) — ya no
+ * un stand-in sobre `STAFF`. No existe todavía un rol `COCINA` separado
+ * (§4.F); hasta que se apruebe, `MOZO` también cubre esa notificación.
  *
  * No se separa en una sala/namespace distinta: todos los clientes admin
  * comparten hoy la misma sala `admin:<businessId>` y el mismo set de eventos
@@ -51,7 +51,7 @@ const ADMIN_NOTIFICATION_ROLES = new Set<BusinessUserRole>(["OWNER", "ADMIN"]);
  * constante solo ensancha el PORTÓN de conexión para que ese cliente deje de
  * ser expulsado; no filtra qué eventos recibe cada rol dentro de la sala.
  */
-const KITCHEN_NOTIFICATION_ROLES = new Set<BusinessUserRole>(["OWNER", "ADMIN", "STAFF"]);
+const KITCHEN_NOTIFICATION_ROLES = new Set<BusinessUserRole>(["OWNER", "ADMIN", "MOZO"]);
 
 const CONNECTABLE_ADMIN_ROLES = new Set<BusinessUserRole>([
   ...ADMIN_NOTIFICATION_ROLES,
@@ -809,5 +809,64 @@ export function emitAdminKitchenTicketItemStatusChanged(
       at: new Date().toISOString()
     },
     "status_changed"
+  );
+}
+
+/**
+ * Payload del canal Socket `admin:table_tab` — ciclo de vida de la cuenta de
+ * salón. Hoy solo `table_tab.closed`: el mozo que la tenía asignada necesita
+ * saber que ADMIN/OWNER (los únicos que pueden cerrar, ver §4.F) cerraron su
+ * mesa, para que no quede esperando sin saberlo. Siempre post-commit,
+ * fire-and-forget — mismo patrón que el resto de canales de este archivo.
+ *
+ * `assignedUserAppUserId` es `AppUser.id` (no `business_user.id`) a
+ * propósito: es lo único que el cliente del mozo puede comparar directo
+ * contra su propio JWT decodificado, sin necesitar un endpoint nuevo para
+ * resolver su `business_user.id`.
+ */
+export type AdminTableTabRealtimePayload = {
+  type: "table_tab.closed";
+  businessId: string;
+  tableTabId: string;
+  assignedUserAppUserId: string | null;
+  tableNames: string[];
+  at: string;
+};
+
+function emitAdminTableTabChannel(
+  businessId: string,
+  body: AdminTableTabRealtimePayload,
+  logDetail: string
+): void {
+  if (!io) {
+    console.error(
+      `${LOG} emit admin:table_tab OMITIDO (${logDetail}): Socket.IO no inicializado businessId=${businessId}`
+    );
+    return;
+  }
+  const room = adminRoom(businessId);
+  const before = roomSize(io, room);
+  io.to(room).emit("admin:table_tab", body);
+  const after = roomSize(io, room);
+  console.debug(
+    `${LOG} emit admin:table_tab type=${body.type} room=${room} socketsEnSala=${before} (tras emit=${after})`
+  );
+}
+
+export function emitAdminTableTabClosed(
+  businessId: string,
+  payload: { tableTabId: string; assignedUserAppUserId: string | null; tableNames: string[] }
+): void {
+  emitAdminTableTabChannel(
+    businessId,
+    {
+      type: "table_tab.closed",
+      businessId,
+      tableTabId: payload.tableTabId,
+      assignedUserAppUserId: payload.assignedUserAppUserId,
+      tableNames: payload.tableNames,
+      at: new Date().toISOString()
+    },
+    "closed"
   );
 }

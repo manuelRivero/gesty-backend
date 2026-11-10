@@ -6,6 +6,7 @@ import {
   hasPendingTabPayment
 } from "./tabPayment.service";
 import { hasOpenBillableCharge } from "./billableCharge.service";
+import { emitAdminTableTabClosed } from "../socket/adminSocket";
 
 /**
  * Fase 2 de `docs/arquitectura/POS_TECHNICAL_DESIGN.md §4.A/§4.B`: apertura,
@@ -70,6 +71,14 @@ const tableTabInclude = {
   tables: {
     where: { unassigned_at: null },
     include: { table: { select: { id: true, name: true, environment_id: true } } }
+  },
+  // Mozo responsable actual — mostrado en el panel admin ("quién atiende esta
+  // mesa") y usado para identificar a quién notificar al cerrar la cuenta.
+  // `app_user.id` (no `business_user.id`) porque es lo que el frontend puede
+  // comparar directo contra el JWT del mozo logueado (ver `adminSocket.ts`,
+  // evento `table_tab.closed`).
+  assigned_to: {
+    select: { id: true, app_user: { select: { id: true, name: true } } }
   }
 } as const;
 
@@ -84,6 +93,8 @@ function mapTableTab(row: TableTabWithTables) {
     closedAt: row.closed_at,
     openedByUserId: row.opened_by_user_id,
     assignedUserId: row.assigned_user_id,
+    assignedUserName: row.assigned_to?.app_user.name ?? null,
+    assignedUserAppUserId: row.assigned_to?.app_user.id ?? null,
     tables: row.tables.map((t) => ({
       tableId: t.table_id,
       tableName: t.table.name,
@@ -342,7 +353,7 @@ export async function closeTableTab(params: {
 }): Promise<CloseTableTabResult> {
   const { businessId, tableTabId } = params;
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     await acquireTabLock(tx, businessId, tableTabId);
 
     const tab = await tx.table_tab.findFirst({ where: { id: tableTabId, business_id: businessId } });
@@ -373,6 +384,12 @@ export async function closeTableTab(params: {
       tableTabId
     );
 
+    // Capturado ANTES de cerrar: `mapTableTab` filtra `tables` por
+    // `unassigned_at IS NULL`, así que después del `updateMany` de abajo
+    // quedaría vacío — necesitamos los nombres para la notificación al mozo.
+    const beforeClose = await loadTableTabOrThrow(tx, businessId, tableTabId);
+    const tableNames = mapTableTab(beforeClose).tables.map((t) => t.tableName);
+
     await tx.table_tab_table.updateMany({
       where: { table_tab_id: tableTabId, unassigned_at: null },
       data: { unassigned_at: new Date() }
@@ -383,8 +400,25 @@ export async function closeTableTab(params: {
     });
 
     const updated = await loadTableTabOrThrow(tx, businessId, tableTabId);
-    return { ok: true, tableTab: mapTableTab(updated), hasPendingKitchenItems } as const;
+    const updatedDto = mapTableTab(updated);
+    return {
+      ok: true,
+      tableTab: updatedDto,
+      hasPendingKitchenItems,
+      assignedUserAppUserId: updatedDto.assignedUserAppUserId,
+      tableNames
+    } as const;
   });
+
+  if (result.ok) {
+    emitAdminTableTabClosed(businessId, {
+      tableTabId,
+      assignedUserAppUserId: result.assignedUserAppUserId,
+      tableNames: result.tableNames
+    });
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -424,4 +458,59 @@ export async function listOccupiedTableIds(params: { businessId: string }): Prom
     select: { table_id: true }
   });
   return new Set(rows.map((r) => r.table_id));
+}
+
+export type TableTabOrderItemDto = {
+  id: string;
+  menuItemId: string;
+  menuItemName: string;
+  quantity: number;
+  unitPrice: Prisma.Decimal;
+  notes: string | null;
+  variation: string | null;
+};
+
+export type TableTabOrderDto = {
+  orderId: string;
+  createdAt: Date;
+  status: string;
+  totalAmount: Prisma.Decimal | null;
+  items: TableTabOrderItemDto[];
+};
+
+/**
+ * Rondas (`orders`) de una cuenta de salón con sus ítems — "el pedido" que el
+ * mozo/encargado necesita ver al clickear una mesa ocupada en `/pos`. Snapshot
+ * simple: no reconcilia `order_item_adjustment` (anulaciones) todavía, cada
+ * ítem se muestra tal como se confirmó en su ronda.
+ */
+export async function listTableTabOrders(params: {
+  businessId: string;
+  tableTabId: string;
+}): Promise<TableTabOrderDto[]> {
+  const orders = await prisma.orders.findMany({
+    where: { business_id: params.businessId, table_tab_id: params.tableTabId },
+    orderBy: { created_at: "asc" },
+    include: {
+      order_item: {
+        include: { menu_item: { select: { id: true, name: true } } }
+      }
+    }
+  });
+
+  return orders.map((order) => ({
+    orderId: order.id,
+    createdAt: order.created_at,
+    status: order.status,
+    totalAmount: order.total_amount,
+    items: order.order_item.map((item) => ({
+      id: item.id,
+      menuItemId: item.menu_item_id,
+      menuItemName: item.menu_item.name,
+      quantity: item.quantity,
+      unitPrice: item.unit_price,
+      notes: item.notes,
+      variation: item.variation
+    }))
+  }));
 }

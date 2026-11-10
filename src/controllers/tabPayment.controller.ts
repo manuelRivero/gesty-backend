@@ -1,7 +1,8 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
-import { recordTabPayment } from "../services/tabPayment.service";
+import { prisma } from "../lib/prisma";
+import { getTableTabBalance, recordTabPayment } from "../services/tabPayment.service";
 import { getBusinessUserIdForActor } from "../services/businessUserContext.service";
 
 const postgresUuid = z.string().regex(
@@ -56,6 +57,26 @@ async function resolveActorBusinessUserId(
     return null;
   }
   return businessUserId;
+}
+
+/**
+ * Saldo pendiente de la cuenta — solo ADMIN/OWNER (caja/encargado). El mozo
+ * nunca ve montos de cobro, solo lleva el dinero/comprobante hasta caja (ver
+ * decisión de roles, POS_TECHNICAL_DESIGN.md §4.F). Lectura simple fuera de
+ * transacción — la atomicidad real se aplica dentro de `recordTabPayment`/
+ * `closeTableTab`, esto es solo para mostrarle al cajero cuánto falta cobrar.
+ */
+export async function getTableTabBalanceHandler(req: Request, res: Response) {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+
+  const parsedParams = idParamSchema.safeParse(req.params);
+  if (!parsedParams.success) {
+    return res.status(400).json({ error: "id inválido" });
+  }
+
+  const balance = await getTableTabBalance(prisma, auth.businessId, parsedParams.data.id);
+  return res.json({ balance });
 }
 
 export async function postRecordTabPayment(req: Request, res: Response) {

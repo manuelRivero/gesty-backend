@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { MenuCategoryTag } from "@prisma/client";
 import { z } from "zod";
+import { queryBoolean } from "../utils/zodHelpers";
 import {
   createAdminMenuItem,
   deleteAdminMenuItem,
@@ -22,8 +23,8 @@ const listQuerySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   categoryId: z.string().uuid().optional(),
   q: z.string().min(1).optional(),
-  includeUnavailable: z.coerce.boolean().optional().default(false),
-  all: z.coerce.boolean().optional().default(false)
+  includeUnavailable: queryBoolean(false),
+  all: queryBoolean(false)
 });
 
 const menuItemPriceSchema = z.object({

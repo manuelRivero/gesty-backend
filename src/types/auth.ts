@@ -4,7 +4,11 @@ export const BUSINESS_USER_ROLES = [
   "OWNER",
   "ADMIN",
   "STAFF",
-  "DELIVERY"
+  "DELIVERY",
+  /// Mesas/comandas de salón (POS_TECHNICAL_DESIGN.md §4.F) — rol dedicado,
+  /// ya no un stand-in de STAFF. Exclusivo: OWNER/ADMIN no operan table-tabs
+  /// ni kitchen-tickets (decisión del negocio, no una limitación técnica).
+  "MOZO"
 ] as const;
 export type BusinessUserRole = (typeof BUSINESS_USER_ROLES)[number];
 
@@ -13,7 +17,8 @@ export const ASSIGNABLE_BUSINESS_USER_ROLES = [
   "OWNER",
   "ADMIN",
   "STAFF",
-  "DELIVERY"
+  "DELIVERY",
+  "MOZO"
 ] as const;
 export type AssignableBusinessUserRole =
   (typeof ASSIGNABLE_BUSINESS_USER_ROLES)[number];
