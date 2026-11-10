@@ -5,10 +5,14 @@ export const BUSINESS_USER_ROLES = [
   "ADMIN",
   "STAFF",
   "DELIVERY",
-  /// Mesas/comandas de salón (POS_TECHNICAL_DESIGN.md §4.F) — rol dedicado,
-  /// ya no un stand-in de STAFF. Exclusivo: OWNER/ADMIN no operan table-tabs
-  /// ni kitchen-tickets (decisión del negocio, no una limitación técnica).
-  "MOZO"
+  /// Mesas de salón (POS_TECHNICAL_DESIGN.md §4.F) — rol dedicado, ya no un
+  /// stand-in de STAFF. Exclusivo: OWNER/ADMIN no operan table-tabs
+  /// (decisión del negocio, no una limitación técnica).
+  "MOZO",
+  /// Comandas de cocina (KDS) — rol independiente de MOZO. Mozo opera la
+  /// mesa (/pos), cocina opera las comandas (/kds); ninguno ve la pantalla
+  /// del otro.
+  "COCINA"
 ] as const;
 export type BusinessUserRole = (typeof BUSINESS_USER_ROLES)[number];
 
@@ -18,7 +22,8 @@ export const ASSIGNABLE_BUSINESS_USER_ROLES = [
   "ADMIN",
   "STAFF",
   "DELIVERY",
-  "MOZO"
+  "MOZO",
+  "COCINA"
 ] as const;
 export type AssignableBusinessUserRole =
   (typeof ASSIGNABLE_BUSINESS_USER_ROLES)[number];

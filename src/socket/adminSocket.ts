@@ -39,23 +39,28 @@ const ADMIN_NOTIFICATION_ROLES = new Set<BusinessUserRole>(["OWNER", "ADMIN"]);
  * señalado en `KITCHEN_AUDIT.md §9`): `ADMIN_NOTIFICATION_ROLES` dejaba
  * afuera a cualquier rol de cocina/mozo — una tablet de cocina conectándose
  * era expulsada de inmediato (`socket.disconnect`) antes de poder unirse a
- * ninguna sala. `MOZO` es ahora un rol dedicado y exclusivo de mesas/comandas
- * (`BUSINESS_USER_ROLES`/`TABLE_TAB_ROLES` en `adminOrders.routes.ts`) — ya no
- * un stand-in sobre `STAFF`. No existe todavía un rol `COCINA` separado
- * (§4.F); hasta que se apruebe, `MOZO` también cubre esa notificación.
+ * ninguna sala. `MOZO` (mesas/comandas de salón) y `COCINA` (comandas de
+ * cocina) son ahora roles dedicados e independientes entre sí
+ * (`BUSINESS_USER_ROLES` en `src/types/auth.ts`) — ninguno es stand-in del
+ * otro ni de `STAFF`.
  *
  * No se separa en una sala/namespace distinta: todos los clientes admin
  * comparten hoy la misma sala `admin:<businessId>` y el mismo set de eventos
- * Socket.IO (`admin:order`, `admin:whatsapp`, `admin:kitchen`, etc.) — el
- * cliente de cocina simplemente ignora los eventos que no le interesan. Esta
- * constante solo ensancha el PORTÓN de conexión para que ese cliente deje de
- * ser expulsado; no filtra qué eventos recibe cada rol dentro de la sala.
+ * Socket.IO (`admin:order`, `admin:whatsapp`, `admin:kitchen`, `admin:table_tab`,
+ * etc.) — cada cliente simplemente ignora los eventos que no le interesan.
+ * Estas constantes solo ensanchan el PORTÓN de conexión para que esos
+ * clientes dejen de ser expulsados; no filtran qué eventos recibe cada rol
+ * dentro de la sala.
  */
-const KITCHEN_NOTIFICATION_ROLES = new Set<BusinessUserRole>(["OWNER", "ADMIN", "MOZO"]);
+const KITCHEN_NOTIFICATION_ROLES = new Set<BusinessUserRole>(["OWNER", "ADMIN", "COCINA"]);
+
+/** Mesas/comandas de salón (`admin:table_tab`) — ver nota arriba. */
+const SALON_NOTIFICATION_ROLES = new Set<BusinessUserRole>(["OWNER", "ADMIN", "MOZO"]);
 
 const CONNECTABLE_ADMIN_ROLES = new Set<BusinessUserRole>([
   ...ADMIN_NOTIFICATION_ROLES,
-  ...KITCHEN_NOTIFICATION_ROLES
+  ...KITCHEN_NOTIFICATION_ROLES,
+  ...SALON_NOTIFICATION_ROLES
 ]);
 
 function getTokenFromHandshake(socket: Socket): string | undefined {
@@ -744,6 +749,18 @@ export type AdminKitchenRealtimePayload =
       fromStatus: string | null;
       toStatus: string;
       at: string;
+    }
+  | {
+      /** Comanda de una mesa de salón pasó a `ready` — avisa al mozo responsable
+       * para que la retire, sin que tenga que estar mirando la pantalla de cocina. */
+      type: "kitchen_ticket_item.ready_for_pickup";
+      businessId: string;
+      kitchenTicketItemId: string;
+      assignedUserAppUserId: string | null;
+      tableNames: string[];
+      menuItemName: string;
+      quantity: number;
+      at: string;
     };
 
 function emitAdminKitchenChannel(
@@ -809,6 +826,32 @@ export function emitAdminKitchenTicketItemStatusChanged(
       at: new Date().toISOString()
     },
     "status_changed"
+  );
+}
+
+export function emitAdminKitchenTicketItemReadyForPickup(
+  businessId: string,
+  payload: {
+    kitchenTicketItemId: string;
+    assignedUserAppUserId: string | null;
+    tableNames: string[];
+    menuItemName: string;
+    quantity: number;
+  }
+): void {
+  emitAdminKitchenChannel(
+    businessId,
+    {
+      type: "kitchen_ticket_item.ready_for_pickup",
+      businessId,
+      kitchenTicketItemId: payload.kitchenTicketItemId,
+      assignedUserAppUserId: payload.assignedUserAppUserId,
+      tableNames: payload.tableNames,
+      menuItemName: payload.menuItemName,
+      quantity: payload.quantity,
+      at: new Date().toISOString()
+    },
+    "ready_for_pickup"
   );
 }
 

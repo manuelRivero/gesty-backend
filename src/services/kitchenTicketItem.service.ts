@@ -1,7 +1,10 @@
 import { KitchenTicketItemStatus, OrderItemAdjustmentReason, Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { tabLockKey, acquireTabLock } from "./adminTableTabRound.service";
-import { emitAdminKitchenTicketItemStatusChanged } from "../socket/adminSocket";
+import {
+  emitAdminKitchenTicketItemStatusChanged,
+  emitAdminKitchenTicketItemReadyForPickup
+} from "../socket/adminSocket";
 import { reconcileOrderPaymentStatus } from "./tabPayment.service";
 import type { BusinessUserRole } from "../types/auth";
 
@@ -54,7 +57,27 @@ export async function advanceKitchenTicketItemStatus(params: {
       select: {
         id: true,
         status: true,
-        kitchen_ticket: { select: { id: true, order_id: true, station_id: true } }
+        kitchen_ticket: {
+          select: {
+            id: true,
+            order_id: true,
+            station_id: true,
+            order: {
+              select: {
+                table_tab: {
+                  select: {
+                    assigned_to: { select: { app_user: { select: { id: true } } } },
+                    tables: {
+                      where: { unassigned_at: null },
+                      select: { table: { select: { name: true } } }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        order_item: { select: { quantity: true, menu_item: { select: { name: true } } } }
       }
     });
     if (!current) {
@@ -81,6 +104,8 @@ export async function advanceKitchenTicketItemStatus(params: {
       }
     });
 
+    const tableTab = current.kitchen_ticket.order.table_tab;
+
     return {
       ok: true,
       id: current.id,
@@ -88,7 +113,11 @@ export async function advanceKitchenTicketItemStatus(params: {
       fromStatus: expectedFrom,
       kitchenTicketId: current.kitchen_ticket.id,
       orderId: current.kitchen_ticket.order_id,
-      stationId: current.kitchen_ticket.station_id
+      stationId: current.kitchen_ticket.station_id,
+      assignedUserAppUserId: tableTab?.assigned_to?.app_user.id ?? null,
+      tableNames: tableTab?.tables.map((t) => t.table.name) ?? [],
+      menuItemName: current.order_item.menu_item.name,
+      quantity: current.order_item.quantity
     } as const;
   });
 
@@ -101,6 +130,16 @@ export async function advanceKitchenTicketItemStatus(params: {
       fromStatus: result.fromStatus,
       toStatus: result.status
     });
+
+    if (result.status === KitchenTicketItemStatus.ready && result.tableNames.length > 0) {
+      emitAdminKitchenTicketItemReadyForPickup(businessId, {
+        kitchenTicketItemId: result.id,
+        assignedUserAppUserId: result.assignedUserAppUserId,
+        tableNames: result.tableNames,
+        menuItemName: result.menuItemName,
+        quantity: result.quantity
+      });
+    }
   }
 
   return result;

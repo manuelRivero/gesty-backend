@@ -319,7 +319,7 @@ router.post(
 router.get("/config", requireRoles("OWNER", "ADMIN"), getAdminBusinessConfig);
 router.get(
   "/config/salon-enabled",
-  requireRoles("OWNER", "ADMIN", "MOZO"),
+  requireRoles("OWNER", "ADMIN", "MOZO", "COCINA"),
   getAdminSalonFeatureFlag
 );
 router.get(
@@ -538,6 +538,9 @@ router.delete("/tables/:id", requireRoles("OWNER", "ADMIN"), removeTable);
 const TABLE_TAB_READ_ROLES = ["MOZO", "ADMIN", "OWNER"] as const;
 const TABLE_TAB_OPERATE_ROLES = ["MOZO"] as const;
 const TAB_PAYMENT_AND_BILLING_ROLES = ["OWNER", "ADMIN"] as const;
+// Comandas/KDS: rol independiente de MOZO (mozo opera la mesa en /pos,
+// cocina opera las comandas en /kds; ninguno ve la pantalla del otro).
+const KITCHEN_TICKET_ROLES = ["COCINA", "ADMIN", "OWNER"] as const;
 
 router.get("/table-tabs", requireRoles(...TABLE_TAB_READ_ROLES), getTableTabs);
 router.get("/table-tabs/occupied-tables", requireRoles(...TABLE_TAB_READ_ROLES), getOccupiedTables);
@@ -582,12 +585,12 @@ router.post(
 
 // Comandas y estaciones (Fase 4, POS_TECHNICAL_DESIGN.md §4.C). El snapshot
 // REST (`GET /kitchen-tickets`, usado por el KDS al montar/reconectar/polling,
-// Fase 5, §4.C) y la transición de estado quedan exclusivos de MOZO — no es
-// parte de la decisión de hoy (cierre/cobro/facturación), sin cambios.
-router.get("/kitchen-tickets", requireRoles(...TABLE_TAB_OPERATE_ROLES), getKitchenTickets);
+// Fase 5, §4.C) y la transición de estado quedan exclusivos de COCINA —
+// MOZO no opera comandas, igual que COCINA no opera mesas.
+router.get("/kitchen-tickets", requireRoles(...KITCHEN_TICKET_ROLES), getKitchenTickets);
 router.patch(
   "/kitchen-tickets/items/:id/status",
-  requireRoles(...TABLE_TAB_OPERATE_ROLES),
+  requireRoles(...KITCHEN_TICKET_ROLES),
   patchKitchenTicketItemStatus
 );
 router.get("/kitchen-stations", requireRoles("OWNER", "ADMIN"), getPreparationStations);
