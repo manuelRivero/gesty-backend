@@ -35,6 +35,7 @@ import {
   buildPendingTipablesPatch,
 } from './pendingTipables.service';
 import { resolveCartShippingBullet } from './cartShippingCopy';
+import { toBotFulfillmentType } from '../helpers/fulfillmentType.helper';
 import { hasOpenOrderLines } from './pendingOrderLines.service';
 
 /**
@@ -577,7 +578,7 @@ export async function presentItemNoteSuccessList(params: {
     shippingBullet = await resolveCartShippingBullet({
       businessId: params.businessId,
       customerId: params.customerId,
-      fulfillmentType: draft.fulfillment_type,
+      fulfillmentType: toBotFulfillmentType(draft.fulfillment_type),
     });
   } catch (err) {
     console.error('[item-note] shipping bullet failed', err);
@@ -684,8 +685,9 @@ export async function tryPresentComplementSuggestions(params: {
       ? await resolveCartShippingBullet({
           businessId: business.id,
           customerId,
-          fulfillmentType:
-            fulfillmentType ?? draftTotals?.fulfillment_type ?? null,
+          fulfillmentType: toBotFulfillmentType(
+            fulfillmentType ?? draftTotals?.fulfillment_type ?? null
+          ),
         })
       : '';
 

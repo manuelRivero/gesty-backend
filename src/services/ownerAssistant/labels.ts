@@ -25,6 +25,7 @@ export const PAYMENT_STATUS_LABEL_ES: Record<OrderPaymentStatus, string> = {
 export const FULFILLMENT_LABEL_ES: Record<FulfillmentType, string> = {
   [FulfillmentType.DELIVERY]: 'delivery',
   [FulfillmentType.TAKE_AWAY]: 'retiro',
+  [FulfillmentType.DINE_IN]: 'salón',
 };
 
 export const shortOrderId = (orderId: string): string =>

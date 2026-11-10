@@ -46,6 +46,7 @@ import {
   patchReassignTableTab,
   postAssignTableToTab,
   postCloseTableTab,
+  postCreateTableTabRound,
   postOpenTableTab,
   postTransferTable
 } from "../controllers/adminTableTab.controller";
@@ -505,6 +506,7 @@ router.get("/table-tabs/:id", requireRoles(...TABLE_TAB_ROLES), getTableTabById_
 router.post("/table-tabs", requireRoles(...TABLE_TAB_ROLES), postOpenTableTab);
 router.post("/table-tabs/:id/tables", requireRoles(...TABLE_TAB_ROLES), postAssignTableToTab);
 router.post("/table-tabs/:id/transfer", requireRoles(...TABLE_TAB_ROLES), postTransferTable);
+router.post("/table-tabs/:id/rounds", requireRoles(...TABLE_TAB_ROLES), postCreateTableTabRound);
 router.patch("/table-tabs/:id/assignee", requireRoles(...TABLE_TAB_ROLES), patchReassignTableTab);
 router.post("/table-tabs/:id/close", requireRoles(...TABLE_TAB_ROLES), postCloseTableTab);
 

@@ -61,6 +61,7 @@ import { resolveCartPromotions } from "./promotions/resolveCartPromotions";
 import { resolveEffectivePrice } from "../helpers/menuItemPrice.helper";
 import { resolveDeliveryContext } from "./deliveryFee.service";
 import { resolveCartShippingBullet } from "./cartShippingCopy";
+import { toBotFulfillmentType } from "../helpers/fulfillmentType.helper";
 import {
   formatCartGuidanceBlock,
   syncOrderCoverageToConversationState,
@@ -600,7 +601,7 @@ export const buildAddItemMessage = async (
   const shippingBullet = await resolveCartShippingBullet({
     businessId: business.id,
     customerId: customer.id,
-    fulfillmentType,
+    fulfillmentType: toBotFulfillmentType(fulfillmentType),
   });
   const shippingBlock = shippingBullet ? `\n${shippingBullet}` : '';
   const mainInner =
@@ -635,7 +636,7 @@ export const buildAddItemMessage = async (
     addedQuantity: qty,
     maxItems: 5,
     customerId: customer.id,
-    fulfillmentType,
+    fulfillmentType: toBotFulfillmentType(fulfillmentType),
   });
   if (suggestionList) {
     // La lista ya trae confirmación + total + pitch (mensaje único).
@@ -1198,7 +1199,7 @@ export const buildCartSummaryMessage = async (params: {
   const shippingBullet = await resolveCartShippingBullet({
     businessId,
     customerId,
-    fulfillmentType,
+    fulfillmentType: toBotFulfillmentType(fulfillmentType),
   });
   const shippingBlock = shippingBullet ? `\n${shippingBullet}` : '';
 

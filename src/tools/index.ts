@@ -22,7 +22,8 @@
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
 import type { RunnableConfig } from '@langchain/core/runnables';
-import { Prisma, OrderStatus } from '@prisma/client';
+import { FulfillmentType, Prisma, OrderStatus } from '@prisma/client';
+import { assertNever } from '../lib/assertNever';
 import { MenuService } from '../services/menu.service';
 import { getBusinessOpenInfo } from '../services/businessHours.service';
 import {
@@ -163,6 +164,32 @@ import {
 import { hasVariations, matchVariation } from '../services/menu/menuItemVariations';
 import { userMessageSelectsCandidate } from '../services/complementSelectionGate.service';
 import { SUPPORT_MESSAGE, handOverToHuman } from '../services/humanHandover.service';
+
+/**
+ * Tipo de entrega a usar para el lookup de cobertura/costo de envío en
+ * `getCart` — ver comentario en el call site. `switch` exhaustivo: un
+ * `draft_order` de salón no debería existir hoy (las rondas de salón se
+ * crean directo en `orders`, nunca pasan por `draft_order`), pero si
+ * `fulfillment_type` alguna vez tomara `DINE_IN` acá, debe fallar el build
+ * en vez de tratarlo como `DELIVERY` en silencio.
+ */
+function resolveDeliveryLookupType(
+  fulfillmentType: FulfillmentType | null
+): 'DELIVERY' | null {
+  if (fulfillmentType == null) {
+    return 'DELIVERY';
+  }
+  switch (fulfillmentType) {
+    case FulfillmentType.TAKE_AWAY:
+      return null;
+    case FulfillmentType.DELIVERY:
+      return 'DELIVERY';
+    case FulfillmentType.DINE_IN:
+      return null;
+    default:
+      return assertNever(fulfillmentType);
+  }
+}
 
 const toJson = (data: unknown): string => {
   try {
@@ -864,7 +891,14 @@ export const getCartTool = new DynamicStructuredTool<
     // anterior. Sin este `?? 'DELIVERY'`, la respuesta decía "necesito tu
     // dirección" aunque el sistema ya la tuviera, solo porque todavía no se
     // había tocado el botón de delivery (bug real, encontrado en prueba manual).
-    const deliveryLookupType = draft.fulfillment_type === 'TAKE_AWAY' ? null : 'DELIVERY';
+    //
+    // `switch` exhaustivo en vez de ternario: un `draft_order` de salón nunca
+    // debería existir (las rondas de salón se crean directo en `orders` vía
+    // `adminTableTabRound.service.ts`, nunca pasan por `draft_order`), pero si
+    // `fulfillment_type` alguna vez tomara `DINE_IN` acá, un ternario binario
+    // lo habría tratado como `DELIVERY` en silencio — con el `switch` el build
+    // rompe en `default` en vez de eso.
+    const deliveryLookupType = resolveDeliveryLookupType(draft.fulfillment_type);
     const deliveryCtx = await resolveDeliveryContext({
       customerId,
       businessId,

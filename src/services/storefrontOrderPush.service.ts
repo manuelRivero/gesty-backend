@@ -75,7 +75,12 @@ const NOTIFIABLE: Record<
     OrderStatus.shipped,
     OrderStatus.delivered,
     OrderStatus.cancelled
-  ])
+  ]),
+  // Las rondas de salón no tienen suscripción de push de storefront (se
+  // crean directo en `orders` vía `adminTableTabRound.service.ts`, nunca
+  // pasan por el storefront público) — nunca notifica, no por omisión sino
+  // porque no hay ningún caso de uso real que lo requiera.
+  [FulfillmentType.DINE_IN]: new Set([])
 };
 
 const PREPARING_TAKEAWAY_COPY = {

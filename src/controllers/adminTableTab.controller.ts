@@ -10,6 +10,7 @@ import {
   reassignTableTab,
   transferTable
 } from "../services/adminTableTab.service";
+import { createTableTabRound } from "../services/adminTableTabRound.service";
 
 /** Alineado con UUID en PostgreSQL; Zod `.uuid()` rechaza variantes RFC. */
 const postgresUuid = z.string().regex(
@@ -34,6 +35,20 @@ const transferSchema = z.object({
 
 const reassignSchema = z.object({
   assignedUserId: postgresUuid
+});
+
+const createRoundSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        menuItemId: postgresUuid,
+        quantity: z.coerce.number().int().min(1).max(99),
+        notes: z.string().trim().max(500).optional(),
+        variation: z.string().trim().min(1).max(120).optional()
+      })
+    )
+    .min(1)
+    .max(50)
 });
 
 function requireAuth(req: Request, res: Response): { businessId: string; userId: string } | null {
@@ -193,6 +208,42 @@ export async function patchReassignTableTab(req: Request, res: Response) {
   }
 
   return res.json(result.tableTab);
+}
+
+export async function postCreateTableTabRound(req: Request, res: Response) {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+
+  const parsedParams = idParamSchema.safeParse(req.params);
+  if (!parsedParams.success) {
+    return res.status(400).json({ error: "id inválido" });
+  }
+  const parsed = createRoundSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Body inválido", details: parsed.error.flatten() });
+  }
+
+  const result = await createTableTabRound({
+    businessId: auth.businessId,
+    tableTabId: parsedParams.data.id,
+    items: parsed.data.items
+  });
+
+  if (!result.ok) {
+    const statusByReason: Record<typeof result.reason, number> = {
+      EMPTY_ROUND: 400,
+      TABLE_TAB_NOT_FOUND: 404,
+      TABLE_TAB_NOT_OPEN: 409,
+      MENU_ITEM_NOT_FOUND: 404,
+      MENU_ITEM_UNAVAILABLE: 409,
+      PRICE_NOT_AVAILABLE: 409
+    };
+    return res
+      .status(statusByReason[result.reason])
+      .json({ error: result.reason, menuItemId: result.menuItemId });
+  }
+
+  return res.status(201).json({ orderId: result.orderId, total: result.total });
 }
 
 export async function postCloseTableTab(req: Request, res: Response) {

@@ -9,6 +9,7 @@ import {
   resolveEffectivePrice
 } from "../helpers/menuItemPrice.helper";
 import { prisma } from "../lib/prisma";
+import { assertNever } from "../lib/assertNever";
 import { findOrCreateCustomer } from "../repositories/customer.repository";
 import { findCoverageZoneForPoint } from "../repositories/coverageZone.repository";
 import type { CoverageZoneRow } from "../repositories/coverageZone.repository";
@@ -537,6 +538,31 @@ async function pendingCheckoutUrlForOrder(
 }
 
 /**
+ * Mostrador/storefront queda fuera del alcance del POS de salón (decisión
+ * aprobada, `POS_TECHNICAL_DESIGN.md §3.1`: "Mostrador queda fuera de esta
+ * primera fase") — por eso `CreatePublicCounterOrderInput.fulfillmentType`
+ * sigue acotado a `"TAKE_AWAY" | "DELIVERY"`, nunca `"DINE_IN"`, y el `z.enum`
+ * del controller (`publicOrders.controller.ts`) ya rechaza cualquier otro
+ * valor con 400 antes de llegar acá. El `switch` exhaustivo es una segunda
+ * red de seguridad: si ese tipo se ensancha más adelante sin querer incluir
+ * salón acá, el build rompe en `default` en vez de coercionar en silencio a
+ * `TAKE_AWAY` como hacía el ternario original.
+ */
+function resolvePublicCounterFulfillmentType(
+  fulfillmentType: "TAKE_AWAY" | "DELIVERY" | undefined
+): FulfillmentType {
+  const value = fulfillmentType ?? "TAKE_AWAY";
+  switch (value) {
+    case "DELIVERY":
+      return FulfillmentType.DELIVERY;
+    case "TAKE_AWAY":
+      return FulfillmentType.TAKE_AWAY;
+    default:
+      return assertNever(value);
+  }
+}
+
+/**
  * Crea un pedido de autoservicio web (cash mostrador o online MP).
  * Sin conversation/draft: `status=placed`, `payment_status=unpaid`.
  */
@@ -569,10 +595,9 @@ export async function createPublicCounterOrder(
     );
   }
 
-  const fulfillmentType =
-    input.fulfillmentType === "DELIVERY"
-      ? FulfillmentType.DELIVERY
-      : FulfillmentType.TAKE_AWAY;
+  const fulfillmentType = resolvePublicCounterFulfillmentType(
+    input.fulfillmentType
+  );
 
   if (fulfillmentType === FulfillmentType.TAKE_AWAY) {
     if (!config.takeaway_enabled) {

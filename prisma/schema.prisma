@@ -61,6 +61,7 @@ model business {
   subscription              subscription?
   table                     table[]
   table_tab                 table_tab[]
+  preparation_station       preparation_station[]
   conversation_note         conversation_note[]
   canned_reply              canned_reply[]
   storefront_order_push_subscription storefront_order_push_subscription[]
@@ -304,6 +305,7 @@ model menu_item {
   menu_item_price       menu_item_price[]
   order_item            order_item[]
   promotion_product     promotion_product[]
+  menu_item_station     menu_item_station?
 
   @@index([embedding])
 }
@@ -440,6 +442,7 @@ model order_item {
   variation       String?
   menu_item       menu_item @relation(fields: [menu_item_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   orders          orders    @relation(fields: [order_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  kitchen_ticket_item kitchen_ticket_item?
 }
 
 model orders {
@@ -465,9 +468,13 @@ model orders {
   promotion_discount          Decimal?           @db.Decimal(12, 2)
   /// Repartidor asignado (membresía business_user con rol DELIVERY).
   assigned_delivery_user_id   String?            @db.Uuid
+  /// Ronda de una cuenta de salón (Fase 3, POS_TECHNICAL_DESIGN.md §4.B). Nullable:
+  /// nunca afecta delivery/take-away, que no tienen `table_tab`.
+  table_tab_id                String?            @db.Uuid
   order_item                  order_item[]
   order_promotion             order_promotion[]
   assigned_delivery_user      business_user?     @relation("OrderAssignedDelivery", fields: [assigned_delivery_user_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  table_tab                   table_tab?         @relation(fields: [table_tab_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_orders_table_tab")
   business                    business           @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   conversation              conversation?      @relation(fields: [conversation_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   currency                  currency           @relation(fields: [currency_code], references: [code], onDelete: NoAction, onUpdate: NoAction)
@@ -477,9 +484,11 @@ model orders {
   payment_proof             payment_proof[]
   storefront_order_push_subscription storefront_order_push_subscription[]
   fiscal_invoice             fiscal_invoice[]
+  kitchen_ticket             kitchen_ticket[]
 
   @@index([customer_address_id], map: "idx_orders_customer_address")
   @@index([assigned_delivery_user_id], map: "idx_orders_assigned_delivery_user")
+  @@index([table_tab_id], map: "idx_orders_table_tab")
   @@index([business_id], map: "idx_orders_ambassador_pending", where: raw("((ambassador_public_code IS NOT NULL) AND (ambassador_notified_at IS NULL))"))
 }
 
@@ -706,6 +715,7 @@ model table_tab {
   opened_by         business_user?  @relation("TableTabOpenedBy", fields: [opened_by_user_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
   assigned_to       business_user?  @relation("TableTabAssignedTo", fields: [assigned_user_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
   tables            table_tab_table[]
+  orders            orders[]
 
   @@index([business_id], map: "idx_table_tab_business")
   @@index([business_id, status], map: "idx_table_tab_business_status")
@@ -735,6 +745,94 @@ model table_tab_table {
 
   @@index([table_tab_id], map: "idx_table_tab_table_tab")
   @@index([table_id], map: "idx_table_tab_table_table")
+}
+
+/// Estación de preparación (cocina, barra, etc.) — Fase 4 de POS_TECHNICAL_DESIGN.md.
+/// Ruteo de comandas: cada `menu_item` apunta a una única estación (`menu_item_station`).
+model preparation_station {
+  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  business_id       String              @db.Uuid
+  name              String
+  is_active         Boolean             @default(true)
+  created_at        DateTime            @default(now()) @db.Timestamptz(6)
+  business          business            @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_preparation_station_business")
+  menu_item_station menu_item_station[]
+  kitchen_ticket    kitchen_ticket[]
+
+  @@index([business_id], map: "idx_preparation_station_business")
+}
+
+/// Ruteo simple: 1 estación por `menu_item` (no N:N). `menu_item_id` es único para
+/// garantizar ese invariante a nivel de base de datos, no solo de aplicación.
+model menu_item_station {
+  id         String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  menu_item_id String            @unique @db.Uuid
+  station_id String              @db.Uuid
+  menu_item  menu_item           @relation(fields: [menu_item_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_menu_item_station_menu_item")
+  station    preparation_station @relation(fields: [station_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_menu_item_station_station")
+
+  @@index([station_id], map: "idx_menu_item_station_station")
+}
+
+/// Comanda por orden × estación: una orden multi-estación (p. ej. cocina + barra)
+/// genera UN `kitchen_ticket` por cada estación involucrada. `@@unique([order_id,
+/// station_id])` es la clave de idempotencia (Fase 4, POS_TECHNICAL_DESIGN.md) — un
+/// reintento de generación de comandas sobre la misma orden nunca duplica el ticket
+/// de una estación, hace upsert sobre esta fila.
+model kitchen_ticket {
+  id         String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  order_id   String               @db.Uuid
+  station_id String               @db.Uuid
+  created_at DateTime             @default(now()) @db.Timestamptz(6)
+  order      orders               @relation(fields: [order_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_kitchen_ticket_order")
+  station    preparation_station  @relation(fields: [station_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_kitchen_ticket_station")
+  kitchen_ticket_item kitchen_ticket_item[]
+
+  @@unique([order_id, station_id], map: "unique_kitchen_ticket_order_station")
+  @@index([station_id], map: "idx_kitchen_ticket_station")
+}
+
+/// Línea de comanda: 1:1 con el `order_item` que le dio origen (el ruteo de
+/// `menu_item_station` decide a qué `kitchen_ticket` pertenece). El estado de esta fila
+/// (`KitchenTicketItemStatus`) es puramente operativo de cocina — NUNCA muta
+/// `orders.status` (`OrderStatus`) directamente; son máquinas de estado separadas
+/// (ver POS_TECHNICAL_DESIGN.md §4.B / Fase 4).
+model kitchen_ticket_item {
+  id                String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kitchen_ticket_id String                  @db.Uuid
+  order_item_id     String                  @unique @db.Uuid
+  status            KitchenTicketItemStatus @default(pending)
+  created_at        DateTime                @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime                @default(now()) @updatedAt @db.Timestamptz(6)
+  kitchen_ticket       kitchen_ticket             @relation(fields: [kitchen_ticket_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_kitchen_ticket_item_ticket")
+  order_item           order_item                 @relation(fields: [order_item_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_kitchen_ticket_item_order_item")
+  kitchen_ticket_item_event kitchen_ticket_item_event[]
+
+  @@index([kitchen_ticket_id], map: "idx_kitchen_ticket_item_ticket")
+}
+
+/// Historial de transiciones de `kitchen_ticket_item.status`. Append-only: cada cambio
+/// de estado agrega una fila, nunca se edita/borra una existente (mismo principio
+/// snapshot/append-only que el resto del ledger económico del sistema).
+model kitchen_ticket_item_event {
+  id                    String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kitchen_ticket_item_id String             @db.Uuid
+  from_status           KitchenTicketItemStatus?
+  to_status             KitchenTicketItemStatus
+  created_at            DateTime            @default(now()) @db.Timestamptz(6)
+  created_by_user_id    String?             @db.Uuid
+  kitchen_ticket_item   kitchen_ticket_item @relation(fields: [kitchen_ticket_item_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_kitchen_ticket_item_event_item")
+
+  @@index([kitchen_ticket_item_id], map: "idx_kitchen_ticket_item_event_item")
+}
+
+enum KitchenTicketItemStatus {
+  pending
+  preparing
+  ready
+  /// Ítem cancelado desde cocina (p. ej. sin stock) — separado de `OrderStatus.cancelled`,
+  /// que es una decisión comercial distinta.
+  canceled
 }
 
 model reservation_config {
@@ -1080,6 +1178,9 @@ enum OrderStatus {
 enum FulfillmentType {
   DELIVERY
   TAKE_AWAY
+  /// Consumo en salón (Fase 3, POS_TECHNICAL_DESIGN.md §4.B). Nunca pasa por
+  /// `draft_order`/`cart.service.ts` — se crea directo vía `adminTableTabRound.service.ts`.
+  DINE_IN
 }
 
 /// Cobro: independiente del flujo operativo (logística). Solo dos valores: pendiente vs cobrado.
