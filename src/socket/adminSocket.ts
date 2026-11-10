@@ -34,6 +34,30 @@ function adminRoom(businessId: string): string {
 
 const ADMIN_NOTIFICATION_ROLES = new Set<BusinessUserRole>(["OWNER", "ADMIN"]);
 
+/**
+ * Fase 5 (`docs/arquitectura/POS_TECHNICAL_DESIGN.md §4.C`, hallazgo ya
+ * señalado en `KITCHEN_AUDIT.md §9`): `ADMIN_NOTIFICATION_ROLES` dejaba
+ * afuera a cualquier rol de cocina/mozo — una tablet de cocina conectándose
+ * con un token `STAFF` era expulsada de inmediato (`socket.disconnect`) antes
+ * de poder unirse a ninguna sala. No existe todavía un rol `COCINA` dedicado
+ * (`BUSINESS_USER_ROLES` en `src/types/auth.ts` no lo tiene, §4.F sin
+ * aprobar) — se usa `STAFF` como stand-in, mismo criterio ya aplicado en
+ * `TABLE_TAB_ROLES` (`adminOrders.routes.ts`).
+ *
+ * No se separa en una sala/namespace distinta: todos los clientes admin
+ * comparten hoy la misma sala `admin:<businessId>` y el mismo set de eventos
+ * Socket.IO (`admin:order`, `admin:whatsapp`, `admin:kitchen`, etc.) — el
+ * cliente de cocina simplemente ignora los eventos que no le interesan. Esta
+ * constante solo ensancha el PORTÓN de conexión para que ese cliente deje de
+ * ser expulsado; no filtra qué eventos recibe cada rol dentro de la sala.
+ */
+const KITCHEN_NOTIFICATION_ROLES = new Set<BusinessUserRole>(["OWNER", "ADMIN", "STAFF"]);
+
+const CONNECTABLE_ADMIN_ROLES = new Set<BusinessUserRole>([
+  ...ADMIN_NOTIFICATION_ROLES,
+  ...KITCHEN_NOTIFICATION_ROLES
+]);
+
 function getTokenFromHandshake(socket: Socket): string | undefined {
   const auth = socket.handshake.auth;
   if (typeof auth === "object" && auth !== null) {
@@ -144,7 +168,7 @@ export function attachAdminSocket(httpServer: HttpServer): Server {
       socket.disconnect(true);
       return;
     }
-    if (!role || !ADMIN_NOTIFICATION_ROLES.has(role)) {
+    if (!role || !CONNECTABLE_ADMIN_ROLES.has(role)) {
       console.debug(
         `${LOG} conexión sin permiso para notificaciones admin socket.id=${socket.id} businessId=${businessId} role=${role ?? "?"}`
       );
@@ -687,5 +711,103 @@ export function emitAdminConversationSentimentUpdated(
   io.to(room).emit("admin:conversation_sentiment", body);
   console.debug(
     `${LOG} emit admin:conversation_sentiment sentiment=${payload.sentiment} room=${room} conversationId=${payload.conversationId}`
+  );
+}
+
+/**
+ * Payload del canal Socket `admin:kitchen` (Fase 5,
+ * `docs/arquitectura/POS_TECHNICAL_DESIGN.md §4.C`). Siempre emitido
+ * **después del commit** de la transacción que originó el cambio — nunca
+ * dentro de ella — y siempre fire-and-forget: la persistencia
+ * (`kitchen_ticket`/`kitchen_ticket_item`) es la única fuente de verdad, este
+ * evento es solo un aviso de baja latencia. El KDS nunca debe reconstruir su
+ * estado solo a partir de estos eventos — ver `GET /api/admin/kitchen-tickets`
+ * (snapshot REST) para la estrategia de recuperación ante reconexión/pérdida
+ * de evento.
+ */
+export type AdminKitchenRealtimePayload =
+  | {
+      type: "kitchen_ticket.created";
+      businessId: string;
+      kitchenTicketId: string;
+      orderId: string;
+      stationId: string;
+      at: string;
+    }
+  | {
+      type: "kitchen_ticket_item.status_changed";
+      businessId: string;
+      kitchenTicketItemId: string;
+      kitchenTicketId: string;
+      stationId: string;
+      orderId: string;
+      fromStatus: string | null;
+      toStatus: string;
+      at: string;
+    };
+
+function emitAdminKitchenChannel(
+  businessId: string,
+  body: AdminKitchenRealtimePayload,
+  logDetail: string
+): void {
+  if (!io) {
+    console.error(
+      `${LOG} emit admin:kitchen OMITIDO (${logDetail}): Socket.IO no inicializado businessId=${businessId}`
+    );
+    return;
+  }
+  const room = adminRoom(businessId);
+  const before = roomSize(io, room);
+  io.to(room).emit("admin:kitchen", body);
+  const after = roomSize(io, room);
+  console.debug(
+    `${LOG} emit admin:kitchen type=${body.type} room=${room} socketsEnSala=${before} (tras emit=${after})`
+  );
+}
+
+export function emitAdminKitchenTicketCreated(
+  businessId: string,
+  payload: { kitchenTicketId: string; orderId: string; stationId: string }
+): void {
+  emitAdminKitchenChannel(
+    businessId,
+    {
+      type: "kitchen_ticket.created",
+      businessId,
+      kitchenTicketId: payload.kitchenTicketId,
+      orderId: payload.orderId,
+      stationId: payload.stationId,
+      at: new Date().toISOString()
+    },
+    "created"
+  );
+}
+
+export function emitAdminKitchenTicketItemStatusChanged(
+  businessId: string,
+  payload: {
+    kitchenTicketItemId: string;
+    kitchenTicketId: string;
+    stationId: string;
+    orderId: string;
+    fromStatus: string | null;
+    toStatus: string;
+  }
+): void {
+  emitAdminKitchenChannel(
+    businessId,
+    {
+      type: "kitchen_ticket_item.status_changed",
+      businessId,
+      kitchenTicketItemId: payload.kitchenTicketItemId,
+      kitchenTicketId: payload.kitchenTicketId,
+      stationId: payload.stationId,
+      orderId: payload.orderId,
+      fromStatus: payload.fromStatus,
+      toStatus: payload.toStatus,
+      at: new Date().toISOString()
+    },
+    "status_changed"
   );
 }

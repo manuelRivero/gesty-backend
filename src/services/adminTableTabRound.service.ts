@@ -2,6 +2,7 @@ import { FulfillmentType, OrderPaymentStatus, OrderStatus, Prisma } from "@prism
 import { prisma } from "../lib/prisma";
 import { activePriceSelect, resolveEffectivePrice } from "../helpers/menuItemPrice.helper";
 import { computeOrderPricing, type PricingItem } from "./pricing.service";
+import { emitAdminKitchenTicketCreated } from "../socket/adminSocket";
 
 /**
  * Fase 3 de `docs/arquitectura/POS_TECHNICAL_DESIGN.md §4.B`: crea una ronda
@@ -120,7 +121,7 @@ export async function createTableTabRound(params: {
     return { ok: false, reason: "EMPTY_ROUND" };
   }
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     await acquireTabLock(tx, businessId, tableTabId);
 
     const tab = await tx.table_tab.findFirst({
@@ -207,10 +208,27 @@ export async function createTableTabRound(params: {
       include: { order_item: true }
     });
 
-    await generateKitchenTickets(tx, order.id, order.order_item);
+    const createdTickets = await generateKitchenTickets(tx, order.id, order.order_item);
 
-    return { ok: true, orderId: order.id, total: pricing.total } as const;
+    return { ok: true, orderId: order.id, total: pricing.total, createdTickets } as const;
   });
+
+  // Fase 5 (POS_TECHNICAL_DESIGN.md §4.C): notificación SIEMPRE después del
+  // commit de la transacción — fire-and-forget, nunca dentro de ella. La
+  // persistencia ya es la fuente de verdad; esto es solo aviso de baja
+  // latencia para el KDS (que de todos modos no debe confiar únicamente en
+  // el socket, ver `GET /api/admin/kitchen-tickets`).
+  if (result.ok) {
+    for (const ticket of result.createdTickets) {
+      emitAdminKitchenTicketCreated(businessId, {
+        kitchenTicketId: ticket.id,
+        orderId: result.orderId,
+        stationId: ticket.station_id
+      });
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -230,7 +248,7 @@ async function generateKitchenTickets(
   tx: Prisma.TransactionClient,
   orderId: string,
   orderItems: Array<{ id: string; menu_item_id: string }>
-): Promise<void> {
+): Promise<Array<{ id: string; station_id: string }>> {
   const menuItemIds = [...new Set(orderItems.map((i) => i.menu_item_id))];
   const stationLinks = await tx.menu_item_station.findMany({
     where: { menu_item_id: { in: menuItemIds } }
@@ -249,12 +267,14 @@ async function generateKitchenTickets(
     }
   }
 
+  const createdTickets: Array<{ id: string; station_id: string }> = [];
   for (const [stationId, orderItemIds] of orderItemIdsByStationId) {
     const ticket = await tx.kitchen_ticket.upsert({
       where: { order_id_station_id: { order_id: orderId, station_id: stationId } },
       update: {},
       create: { order_id: orderId, station_id: stationId }
     });
+    createdTickets.push({ id: ticket.id, station_id: ticket.station_id });
 
     await tx.kitchen_ticket_item.createMany({
       data: orderItemIds.map((orderItemId) => ({
@@ -263,4 +283,6 @@ async function generateKitchenTickets(
       }))
     });
   }
+
+  return createdTickets;
 }

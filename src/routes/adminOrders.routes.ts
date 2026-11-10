@@ -51,7 +51,10 @@ import {
   postOpenTableTab,
   postTransferTable
 } from "../controllers/adminTableTab.controller";
-import { patchKitchenTicketItemStatus } from "../controllers/kitchenTicketItem.controller";
+import {
+  getKitchenTickets,
+  patchKitchenTicketItemStatus
+} from "../controllers/kitchenTicketItem.controller";
 import {
   getPreparationStations,
   postAssignMenuItemStation,
@@ -530,6 +533,10 @@ router.post(
 );
 
 // Comandas y estaciones (Fase 4, POS_TECHNICAL_DESIGN.md §4.C).
+// `GET /kitchen-tickets` es el snapshot REST que el KDS usa al montar,
+// reconectar o como polling de seguridad (Fase 5, §4.C) — nunca debe
+// depender solo de `admin:kitchen` (Socket.IO) para su estado.
+router.get("/kitchen-tickets", requireRoles(...TABLE_TAB_ROLES), getKitchenTickets);
 router.patch(
   "/kitchen-tickets/items/:id/status",
   requireRoles(...TABLE_TAB_ROLES),

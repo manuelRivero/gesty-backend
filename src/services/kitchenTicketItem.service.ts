@@ -1,6 +1,7 @@
 import { KitchenTicketItemStatus, OrderItemAdjustmentReason, Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { tabLockKey, acquireTabLock } from "./adminTableTabRound.service";
+import { emitAdminKitchenTicketItemStatusChanged } from "../socket/adminSocket";
 import type { BusinessUserRole } from "../types/auth";
 
 /**
@@ -46,10 +47,14 @@ export async function advanceKitchenTicketItemStatus(params: {
   const { businessId, kitchenTicketItemId, toStatus, userId } = params;
   const expectedFrom = FORWARD_TRANSITIONS[toStatus];
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const current = await tx.kitchen_ticket_item.findFirst({
       where: { id: kitchenTicketItemId, kitchen_ticket: { order: { business_id: businessId } } },
-      select: { id: true, status: true }
+      select: {
+        id: true,
+        status: true,
+        kitchen_ticket: { select: { id: true, order_id: true, station_id: true } }
+      }
     });
     if (!current) {
       return { ok: false, reason: "NOT_FOUND" } as const;
@@ -75,8 +80,29 @@ export async function advanceKitchenTicketItemStatus(params: {
       }
     });
 
-    return { ok: true, id: current.id, status: toStatus as KitchenTicketItemStatus } as const;
+    return {
+      ok: true,
+      id: current.id,
+      status: toStatus as KitchenTicketItemStatus,
+      fromStatus: expectedFrom,
+      kitchenTicketId: current.kitchen_ticket.id,
+      orderId: current.kitchen_ticket.order_id,
+      stationId: current.kitchen_ticket.station_id
+    } as const;
   });
+
+  if (result.ok) {
+    emitAdminKitchenTicketItemStatusChanged(businessId, {
+      kitchenTicketItemId: result.id,
+      kitchenTicketId: result.kitchenTicketId,
+      stationId: result.stationId,
+      orderId: result.orderId,
+      fromStatus: result.fromStatus,
+      toStatus: result.status
+    });
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -113,7 +139,7 @@ export async function cancelOrderItem(params: {
 }): Promise<CancelOrderItemResult> {
   const { businessId, tableTabId, orderItemId, userId, userRole, reason } = params;
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     await acquireTabLock(tx, businessId, tableTabId);
 
     const orderItem = await tx.order_item.findFirst({
@@ -121,7 +147,11 @@ export async function cancelOrderItem(params: {
         id: orderItemId,
         orders: { business_id: businessId, table_tab_id: tableTabId }
       },
-      include: { kitchen_ticket_item: true }
+      include: {
+        kitchen_ticket_item: {
+          include: { kitchen_ticket: { select: { id: true, order_id: true, station_id: true } } }
+        }
+      }
     });
     if (!orderItem) {
       return { ok: false, reason: "ORDER_ITEM_NOT_FOUND" } as const;
@@ -187,6 +217,33 @@ export async function cancelOrderItem(params: {
       }
     });
 
-    return { ok: true, adjustmentId: adjustment.id, amount: adjustment.amount } as const;
+    return {
+      ok: true,
+      adjustmentId: adjustment.id,
+      amount: adjustment.amount,
+      canceledTicketItem: ticketItem
+        ? {
+            kitchenTicketItemId: ticketItem.id,
+            kitchenTicketId: ticketItem.kitchen_ticket.id,
+            orderId: ticketItem.kitchen_ticket.order_id,
+            stationId: ticketItem.kitchen_ticket.station_id,
+            fromStatus: currentKitchenStatus
+          }
+        : null
+    } as const;
   });
+
+  if (result.ok && result.canceledTicketItem) {
+    const t = result.canceledTicketItem;
+    emitAdminKitchenTicketItemStatusChanged(businessId, {
+      kitchenTicketItemId: t.kitchenTicketItemId,
+      kitchenTicketId: t.kitchenTicketId,
+      stationId: t.stationId,
+      orderId: t.orderId,
+      fromStatus: t.fromStatus,
+      toStatus: KitchenTicketItemStatus.canceled
+    });
+  }
+
+  return result;
 }
