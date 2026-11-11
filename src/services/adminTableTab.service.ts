@@ -5,7 +5,9 @@ import {
   hasPendingOrPreparingKitchenItems,
   hasPendingTabPayment
 } from "./tabPayment.service";
-import { hasOpenBillableCharge } from "./billableCharge.service";
+import { createBillableChargeForAllUnbilledItems } from "./billableCharge.service";
+import { triggerAutomaticInvoiceEmissionForBillableCharge } from "./invoicing/invoice.service";
+import { BillableChargeStatus } from "@prisma/client";
 import { emitAdminTableTabClosed, emitAdminTableTabOpened } from "../socket/adminSocket";
 
 /**
@@ -360,6 +362,8 @@ export type CloseTableTabResult =
         | "BALANCE_NOT_ZERO"
         | "PENDING_PAYMENT_EXISTS"
         | "OPEN_BILLABLE_CHARGE_EXISTS";
+      /** Solo en `OPEN_BILLABLE_CHARGE_EXISTS` — permite reintentar la emisión fire-and-forget (§4.E). */
+      billableChargeId?: string;
     };
 
 export async function closeTableTab(params: {
@@ -388,8 +392,17 @@ export async function closeTableTab(params: {
     if (await hasPendingTabPayment(tx, businessId, tableTabId)) {
       return { ok: false, reason: "PENDING_PAYMENT_EXISTS" } as const;
     }
-    if (await hasOpenBillableCharge(tx, businessId, tableTabId)) {
-      return { ok: false, reason: "OPEN_BILLABLE_CHARGE_EXISTS" } as const;
+    // Red de seguridad (§4.E): por si el disparo fire-and-forget de
+    // `autoBillAndInvoiceTableTab` (post-pago) todavía no corrió para cuando
+    // alguien ya intenta cerrar — consolida lo que quede sin facturar ANTES
+    // del chequeo de bloqueo duro de abajo, bajo el mismo lock de cuenta.
+    await createBillableChargeForAllUnbilledItems(tx, businessId, tableTabId);
+    const openCharge = await tx.billable_charge.findFirst({
+      where: { business_id: businessId, table_tab_id: tableTabId, status: BillableChargeStatus.open },
+      select: { id: true }
+    });
+    if (openCharge) {
+      return { ok: false, reason: "OPEN_BILLABLE_CHARGE_EXISTS", billableChargeId: openCharge.id } as const;
     }
 
     // Advertencia blanda — informativa, nunca bloquea (§4.B).
@@ -435,6 +448,14 @@ export async function closeTableTab(params: {
       tableIds: result.tableIds,
       tableNames: result.tableNames
     });
+  } else if (result.reason === "OPEN_BILLABLE_CHARGE_EXISTS" && result.billableChargeId) {
+    // Fire-and-forget: le da a un segundo intento de cierre inmediato buena
+    // chance de encontrar el charge ya `issued` (§4.E).
+    void triggerAutomaticInvoiceEmissionForBillableCharge(businessId, result.billableChargeId).catch(
+      (err) => {
+        console.error("[Invoicing] Error en auto-facturación al intentar cerrar la cuenta:", err);
+      }
+    );
   }
 
   return result;

@@ -7,6 +7,8 @@ import {
 } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { acquireTabLock } from "./adminTableTabRound.service";
+import { createBillableChargeForAllUnbilledItems } from "./billableCharge.service";
+import { triggerAutomaticInvoiceEmissionForBillableCharge } from "./invoicing/invoice.service";
 
 /**
  * Fase 6 de `docs/arquitectura/POS_TECHNICAL_DESIGN.md §4.D`: ledger de pagos
@@ -183,6 +185,32 @@ export async function reconcileOrderPaymentStatus(
       data: { payment_status: due.lte(ZERO) ? OrderPaymentStatus.paid : OrderPaymentStatus.unpaid }
     });
   }
+}
+
+/**
+ * Fase 7 (§4.E): dispara la facturación consolidada de una cuenta de salón
+ * apenas su saldo llega a $0. Siempre fire-and-forget desde el llamador
+ * (nunca debe bloquear la respuesta de un pago) — por eso no lanza: cualquier
+ * fallo queda contenido y logueado por el propio `triggerAutomaticInvoiceEmissionForBillableCharge`
+ * (que nunca lanza) o cae en el `catch` del llamador.
+ *
+ * Re-chequea el saldo en su propia transacción (puede correr milisegundos
+ * después de que otro proceso ya movió la cuenta) antes de crear el cargo —
+ * nunca factura una cuenta que, para cuando este hook corrió, ya tiene saldo
+ * pendiente de nuevo (ej. se agregó una ronda nueva entre medio).
+ */
+export async function autoBillAndInvoiceTableTab(businessId: string, tableTabId: string): Promise<void> {
+  const result = await prisma.$transaction(async (tx) => {
+    await acquireTabLock(tx, businessId, tableTabId);
+    const balance = await getTableTabBalance(tx, businessId, tableTabId);
+    if (!balance.lte(ZERO)) {
+      return { ok: true, nothingToBill: true } as const;
+    }
+    return createBillableChargeForAllUnbilledItems(tx, businessId, tableTabId);
+  });
+  if (!result.ok || "nothingToBill" in result) return;
+
+  await triggerAutomaticInvoiceEmissionForBillableCharge(businessId, result.billableChargeId);
 }
 
 // ---------------------------------------------------------------------------
@@ -397,5 +425,14 @@ export async function recordTabPayment(params: {
       totalChange: totalAmountTendered.sub(totalAmountApplied),
       allocations: finalAllocations
     } as const;
+  }).then((result) => {
+    // Fire-and-forget, fuera de la transacción de pago (§4.E): nunca debe
+    // demorar ni poder revertir la confirmación del pago en curso.
+    if (result.ok) {
+      void autoBillAndInvoiceTableTab(businessId, tableTabId).catch((err) => {
+        console.error("[Invoicing] Error en auto-facturación de cuenta de salón:", err);
+      });
+    }
+    return result;
   });
 }

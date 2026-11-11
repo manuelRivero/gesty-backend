@@ -1,4 +1,4 @@
-import { FiscalInvoiceStatus, FiscalInvoiceKind, Prisma, type fiscal_invoice } from "@prisma/client";
+import { BillableChargeStatus, FiscalInvoiceStatus, FiscalInvoiceKind, Prisma, type fiscal_invoice } from "@prisma/client";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc";
 import { prisma } from "../../lib/prisma";
@@ -67,6 +67,27 @@ function isFiscalInvoiceUniqueConflict(err: unknown): boolean {
   return false;
 }
 
+/** Fase 7: misma unicidad que `isFiscalInvoiceUniqueConflict`, pero para el índice parcial (business_id, billable_charge_id, kind). */
+function isFiscalInvoiceBillableChargeUniqueConflict(err: unknown): boolean {
+  if (!(err instanceof Prisma.PrismaClientKnownRequestError)) return false;
+  if (err.code !== "P2002") return false;
+  const target = (err.meta as { target?: unknown } | undefined)?.target;
+  if (typeof target === "string") {
+    return target.includes("unique_fiscal_invoice_business_billable_charge_kind");
+  }
+  if (Array.isArray(target)) return target.includes("billable_charge_id") && target.includes("kind");
+  return false;
+}
+
+/** Fase 7: idempotency key para el target `billable_charge` — namespace propio, nunca colisiona con el de `order`. */
+function idempotencyKeyForBillableCharge(
+  businessId: string,
+  billableChargeId: string,
+  kind: FiscalInvoiceKind
+): string {
+  return `${businessId}:billable_charge:${billableChargeId}:${kind}`;
+}
+
 async function buildLineItems(orderId: string): Promise<FiscalInvoiceLineItem[]> {
   const items = await prisma.order_item.findMany({
     where: { order_id: orderId },
@@ -79,6 +100,32 @@ async function buildLineItems(orderId: string): Promise<FiscalInvoiceLineItem[]>
       description: item.variation ? `${item.menu_item.name} (${item.variation})` : item.menu_item.name,
       quantity: 1,
       unitPrice: gross,
+      vatRate: 21,
+    };
+  });
+}
+
+/**
+ * Fase 7: líneas de un `billable_charge` (cuenta de salón consolidada) — cada
+ * `billable_charge_line` ya reservó una cantidad exacta (`quantity_billed`)
+ * de un `order_item` concreto; el precio neto por unidad es el mismo cálculo
+ * que `createBillableChargeInTx` usó para componer `billable_charge.amount`
+ * (`unit_price` menos descuento prorrateado), así que `Σ(unitPrice*quantity)`
+ * de estas líneas reconcilia exactamente con ese monto.
+ */
+async function buildLineItemsForBillableCharge(billableChargeId: string): Promise<FiscalInvoiceLineItem[]> {
+  const lines = await prisma.billable_charge_line.findMany({
+    where: { billable_charge_id: billableChargeId },
+    include: { order_item: { include: { menu_item: { select: { name: true } } } } },
+  });
+  return lines.map((line) => {
+    const oi = line.order_item;
+    const discountPerUnit = oi.discount_amount ? Number(oi.discount_amount) / oi.quantity : 0;
+    const unitNet = Number(oi.unit_price) - discountPerUnit;
+    return {
+      description: oi.variation ? `${oi.menu_item.name} (${oi.variation})` : oi.menu_item.name,
+      quantity: line.quantity_billed,
+      unitPrice: unitNet,
       vatRate: 21,
     };
   });
@@ -200,6 +247,57 @@ async function claimInvoiceRow(
       // no pasó por este lock), se trata igual que una fila existente en vez de fallar.
       const raced = await prisma.fiscal_invoice.findUniqueOrThrow({
         where: { business_id_order_id_kind: { business_id: businessId, order_id: orderId, kind } },
+      });
+      return claimOrDecide(raced);
+    }
+  }
+
+  return claimOrDecide(existing);
+}
+
+/** Fase 7: mismo reclamo atómico que `claimInvoiceRow`, pero contra el índice parcial de `billable_charge_id`. */
+async function claimInvoiceRowForBillableCharge(
+  businessId: string,
+  billableChargeId: string,
+  kind: FiscalInvoiceKind,
+  key: string,
+  provider: string,
+  amount: number,
+  currencyCode: string,
+  providerEnvironment: string | null
+): Promise<ClaimDecision> {
+  const existing = await prisma.fiscal_invoice.findUnique({
+    where: {
+      business_id_billable_charge_id_kind: { business_id: businessId, billable_charge_id: billableChargeId, kind },
+    },
+  });
+
+  if (!existing) {
+    try {
+      const created = await prisma.fiscal_invoice.create({
+        data: {
+          business_id: businessId,
+          billable_charge_id: billableChargeId,
+          kind,
+          provider,
+          provider_environment: providerEnvironment,
+          idempotency_key: key,
+          amount,
+          currency_code: currencyCode,
+          status: FiscalInvoiceStatus.processing,
+        },
+      });
+      return { action: "issue", invoice: created };
+    } catch (err) {
+      if (!isFiscalInvoiceBillableChargeUniqueConflict(err)) throw err;
+      const raced = await prisma.fiscal_invoice.findUniqueOrThrow({
+        where: {
+          business_id_billable_charge_id_kind: {
+            business_id: businessId,
+            billable_charge_id: billableChargeId,
+            kind,
+          },
+        },
       });
       return claimOrDecide(raced);
     }
@@ -591,6 +689,217 @@ export async function triggerAutomaticInvoiceEmission(
   return requestInvoiceEmission(businessId, orderId, FiscalInvoiceKind.invoice);
 }
 
+/** Marca el `billable_charge` como `issued` tras una emisión exitosa — deja de bloquear el cierre de la cuenta (§4.E). */
+async function markBillableChargeIssuedIfEmitted(
+  billableChargeId: string,
+  outcome: InvoiceEmissionOutcome
+): Promise<void> {
+  if (!outcome.emitted) return;
+  await prisma.billable_charge.updateMany({
+    where: { id: billableChargeId, status: BillableChargeStatus.open },
+    data: { status: BillableChargeStatus.issued },
+  });
+}
+
+/**
+ * Fase 7 (§4.E): orquesta la emisión de un comprobante consolidado para una
+ * cuenta de salón ya liquidada (`billable_charge`), en vez de un `order_id`
+ * individual. Mismo pipeline de idempotencia/lock/proveedor que
+ * `requestInvoiceEmission` (reutiliza `runIssue`/`runReconcile`, genéricos
+ * sobre la fila `fiscal_invoice`) — difiere solo en: no hay cliente real
+ * (consumidor final directo), no hay chequeo de `payment_status` (la garantía
+ * de "ya está pagado" la da quien invoca esto, ver `tabPayment.service.ts`),
+ * y no hay ajustes a nivel de pedido (envío/promoción no aplican a salón).
+ */
+export async function requestInvoiceEmissionForBillableCharge(
+  businessId: string,
+  billableChargeId: string,
+  kind: FiscalInvoiceKind = FiscalInvoiceKind.invoice
+): Promise<InvoiceEmissionOutcome> {
+  if (!(await isInvoicingAddonEnabled(businessId))) {
+    return { emitted: false, reason: "addon_disabled" };
+  }
+
+  const charge = await prisma.billable_charge.findFirst({
+    where: { id: billableChargeId, business_id: businessId },
+  });
+  if (!charge) return { emitted: false, reason: "billable_charge_not_found" };
+  if (Number(charge.amount) <= 0) return { emitted: false, reason: "billable_charge_amount_missing" };
+
+  const currencyCode = "ARS"; // `billable_charge` no tiene columna de moneda propia — mismo invariante que ya aplica a `order`.
+
+  let fiscalConfig = await getFiscalConfiguration(businessId);
+  if (!fiscalConfig || !fiscalConfig.cuit) {
+    return { emitted: false, reason: "fiscal_configuration_incomplete" };
+  }
+
+  const normalizedCuit = fiscalConfig.cuit.replace(/\D/g, "");
+  const providerEnvironment = await resolveCurrentEnvironment();
+  if (
+    !providerEnvironment ||
+    !fiscalConfig.external_issuer_id ||
+    fiscalConfig.external_issuer_environment !== providerEnvironment ||
+    (fiscalConfig.external_issuer_cuit ?? "").replace(/\D/g, "") !== normalizedCuit
+  ) {
+    const provisioning = await ensureEmisorProvisioned(businessId);
+    if (!provisioning.provisioned) {
+      return { emitted: false, reason: "emisor_not_provisioned" };
+    }
+    fiscalConfig = await getFiscalConfiguration(businessId);
+    if (
+      !fiscalConfig?.cuit ||
+      !fiscalConfig.external_issuer_id ||
+      fiscalConfig.external_issuer_environment !== providerEnvironment ||
+      (fiscalConfig.external_issuer_cuit ?? "").replace(/\D/g, "") !==
+        fiscalConfig.cuit.replace(/\D/g, "")
+    ) {
+      return { emitted: false, reason: "emisor_not_provisioned" };
+    }
+  }
+
+  if (!fiscalConfig) return { emitted: false, reason: "fiscal_configuration_incomplete" };
+  const provider = await resolveBillingProvider(businessId);
+  if (!provider) {
+    return { emitted: false, reason: "provider_not_configured" };
+  }
+
+  const voucherType = resolveVoucherTypeForConsumidorFinal(
+    (fiscalConfig.condicion_iva ?? "NO_CATEGORIZADO") as CondicionIva
+  );
+  if (!voucherType) {
+    return { emitted: false, reason: "voucher_type_undetermined" };
+  }
+
+  let items: FiscalInvoiceLineItem[];
+  try {
+    items = await buildLineItemsForBillableCharge(billableChargeId);
+  } catch {
+    return { emitted: false, reason: "line_items_build_error" };
+  }
+
+  const itemsTotal = items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+  if (Math.abs(itemsTotal - Number(charge.amount)) > 0.01) {
+    return { emitted: false, reason: "line_items_total_mismatch" };
+  }
+
+  const key = idempotencyKeyForBillableCharge(businessId, billableChargeId, kind);
+  let claim: ClaimDecision;
+  try {
+    claim = await withBillingLock(INVOICING_EMISSION_NAMESPACE, key, () =>
+      claimInvoiceRowForBillableCharge(
+        businessId,
+        billableChargeId,
+        kind,
+        key,
+        "sistemas360",
+        Number(charge.amount),
+        currencyCode,
+        providerEnvironment
+      )
+    );
+  } catch (err) {
+    if (err instanceof BillingLockTimeoutError || err instanceof BillingLockUnavailableError) {
+      return { emitted: false, reason: "lock_unavailable" };
+    }
+    throw err;
+  }
+
+  if (claim.action === "return_existing") {
+    await markBillableChargeIssuedIfEmitted(billableChargeId, { emitted: claim.emitted, invoice: claim.invoice });
+    return { emitted: claim.emitted, invoice: claim.invoice, reason: claim.reason };
+  }
+
+  if (claim.action === "reconcile") {
+    const reconcileProvider = claim.invoice.provider_environment
+      ? await resolveBillingProvider(businessId, {
+          environment: claim.invoice.provider_environment as "sandbox" | "production",
+        })
+      : provider;
+    if (!reconcileProvider) {
+      const updated = await markProviderUnavailable(
+        claim.invoice.id,
+        "Sistemas 360 no está disponible para el entorno de emisión original."
+      );
+      return { emitted: false, invoice: updated, reason: "provider_not_configured" };
+    }
+    const outcome = await runReconcile(reconcileProvider, claim.invoice, key);
+    await markBillableChargeIssuedIfEmitted(billableChargeId, outcome);
+    return outcome;
+  }
+
+  try {
+    const outcome = await withFiscalConfigurationLock(businessId, async () => {
+      const currentConfig = await getFiscalConfiguration(businessId);
+      if (
+        !currentConfig?.cuit ||
+        !currentConfig.external_issuer_id ||
+        currentConfig.external_issuer_environment !== providerEnvironment ||
+        (currentConfig.external_issuer_cuit ?? "").replace(/\D/g, "") !==
+          currentConfig.cuit.replace(/\D/g, "")
+      ) {
+        const failed = await markFailedBeforeSend(
+          claim.invoice.id,
+          new Error("La asociación del emisor no corresponde al CUIT fiscal vigente.")
+        );
+        return { emitted: false, invoice: failed, reason: "emisor_not_provisioned" };
+      }
+
+      const currentVoucherType = resolveVoucherTypeForConsumidorFinal(
+        (currentConfig.condicion_iva ?? "NO_CATEGORIZADO") as CondicionIva
+      );
+      if (!currentVoucherType) {
+        const failed = await markFailedBeforeSend(
+          claim.invoice.id,
+          new Error("No se pudo determinar el tipo de comprobante para la condición fiscal vigente.")
+        );
+        return { emitted: false, invoice: failed, reason: "voucher_type_undetermined" };
+      }
+
+      const request: IssueInvoiceRequest = {
+        externalReference: key,
+        voucherType: currentVoucherType,
+        issuer: {
+          cuit: currentConfig.cuit,
+          razonSocial: currentConfig.razon_social ?? "",
+          condicionIva: (currentConfig.condicion_iva ?? "NO_CATEGORIZADO") as CondicionIva,
+          domicilioFiscal: currentConfig.domicilio_fiscal ?? "",
+          externalIssuerId: currentConfig.external_issuer_id,
+        },
+        customer: buildCustomer({ name: null, phone_number: "" }),
+        items,
+        totalAmount: Number(charge.amount),
+        currencyCode,
+      };
+
+      return runIssue(provider, claim.invoice, request);
+    });
+    await markBillableChargeIssuedIfEmitted(billableChargeId, outcome);
+    return outcome;
+  } catch (err) {
+    if (err instanceof BillingLockTimeoutError || err instanceof BillingLockUnavailableError) {
+      const failed = await markFailedBeforeSend(claim.invoice.id, err);
+      return { emitted: false, invoice: failed, reason: "fiscal_configuration_lock_unavailable" };
+    }
+    throw err;
+  }
+}
+
+/**
+ * Fase 7: mismo punto de entrada fire-and-forget que `triggerAutomaticInvoiceEmission`,
+ * pero para un `billable_charge` — el pago de salón es conceptualmente "cash"
+ * (nunca hay checkout online de por medio), así que reusa `auto_issue_cash`.
+ */
+export async function triggerAutomaticInvoiceEmissionForBillableCharge(
+  businessId: string,
+  billableChargeId: string
+): Promise<InvoiceEmissionOutcome> {
+  const fiscalConfig = await getFiscalConfiguration(businessId);
+  if (!fiscalConfig) return { emitted: false, reason: "fiscal_configuration_missing" };
+  if (!fiscalConfig.auto_issue_cash) return { emitted: false, reason: "auto_issue_disabled" };
+
+  return requestInvoiceEmissionForBillableCharge(businessId, billableChargeId, FiscalInvoiceKind.invoice);
+}
+
 export async function getInvoicesForOrder(businessId: string, orderId: string): Promise<fiscal_invoice[]> {
   return prisma.fiscal_invoice.findMany({
     where: { business_id: businessId, order_id: orderId },
@@ -687,6 +996,9 @@ export async function reconcilePendingInvoices(
       continue;
     }
     const outcome = await runReconcile(provider, invoice, invoice.idempotency_key);
+    if (invoice.billable_charge_id) {
+      await markBillableChargeIssuedIfEmitted(invoice.billable_charge_id, outcome);
+    }
     if (outcome.reason !== "reconciliation_error") reconciled += 1;
   }
 
