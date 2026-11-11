@@ -46,9 +46,18 @@ const PROCESSING_STALE_MS = 2 * 60_000;
 /** Tope de reconciliaciones automáticas antes de requerir revisión manual (ver `listInvoicingIssuesHandler`). */
 const MAX_AUTO_RECONCILE_RETRIES = 10;
 
-/** Estados terminales: no corresponde reintentar emisión ni volver a contabilizar. */
+/**
+ * Estados terminales: no corresponde reintentar emisión ni volver a contabilizar.
+ * `simulated` es terminal igual que `authorized` — es un resultado de sandbox ya completo y
+ * estable. Si no estuviera acá, `decideFromExisting` cae en su rama default (`reconcile`) ante
+ * cualquier llamada posterior, y `GET /comprobantes?referencia_externa=...` de Sistemas 360 no
+ * encuentra comprobantes `simulado` existentes (confirmado contra sandbox, nov. 2026 — bug
+ * reportado al proveedor) — `persistProviderResult` entonces sobrescribe sin condición un
+ * comprobante ya simulado con éxito (CAE, número, etc.) por un falso "no encontrado".
+ */
 const TERMINAL_STATUSES: FiscalInvoiceStatus[] = [
   FiscalInvoiceStatus.authorized,
+  FiscalInvoiceStatus.simulated,
   FiscalInvoiceStatus.rejected,
   FiscalInvoiceStatus.cancelled,
 ];
@@ -134,19 +143,56 @@ async function persistProviderCondicionIvaCache(
   }
 }
 
-async function buildLineItemsForBillableCharge(billableChargeId: string): Promise<FiscalInvoiceLineItem[]> {
+/**
+ * Prorratea el descuento manual de cuenta (`billable_charge.manual_discount_applied`, ej.
+ * "cliente VIP") entre las líneas ya calculadas, proporcional al peso de cada línea en el total
+ * crudo — para que `Σ(líneas ajustadas) === billable_charge.amount` exactamente (el remanente de
+ * redondeo cae siempre en la última línea, nunca se "pierde" ni sobra un centavo).
+ */
+export async function buildLineItemsForBillableCharge(billableChargeId: string): Promise<FiscalInvoiceLineItem[]> {
+  const charge = await prisma.billable_charge.findUnique({
+    where: { id: billableChargeId },
+    select: { manual_discount_applied: true },
+  });
   const lines = await prisma.billable_charge_line.findMany({
     where: { billable_charge_id: billableChargeId },
     include: { order_item: { include: { menu_item: { select: { name: true } } } } },
   });
-  return lines.map((line) => {
+
+  const rawLines = lines.map((line) => {
     const oi = line.order_item;
     const discountPerUnit = oi.discount_amount ? Number(oi.discount_amount) / oi.quantity : 0;
     const unitNet = Number(oi.unit_price) - discountPerUnit;
     return {
       description: oi.variation ? `${oi.menu_item.name} (${oi.variation})` : oi.menu_item.name,
       quantity: line.quantity_billed,
-      unitPrice: unitNet,
+      lineTotal: unitNet * line.quantity_billed,
+    };
+  });
+
+  const manualDiscount = Number(charge?.manual_discount_applied ?? 0);
+  const rawTotal = rawLines.reduce((sum, l) => sum + l.lineTotal, 0);
+  if (manualDiscount <= 0 || rawTotal <= 0) {
+    return rawLines.map((l) => ({
+      description: l.description,
+      quantity: l.quantity,
+      unitPrice: l.quantity > 0 ? l.lineTotal / l.quantity : 0,
+      vatRate: 21,
+    }));
+  }
+
+  let remainingDiscount = Math.round(manualDiscount * 100) / 100;
+  return rawLines.map((line, i) => {
+    const isLast = i === rawLines.length - 1;
+    const share = isLast
+      ? remainingDiscount
+      : Math.round(((manualDiscount * line.lineTotal) / rawTotal) * 100) / 100;
+    remainingDiscount = Math.round((remainingDiscount - share) * 100) / 100;
+    const adjustedTotal = line.lineTotal - share;
+    return {
+      description: line.description,
+      quantity: line.quantity,
+      unitPrice: line.quantity > 0 ? adjustedTotal / line.quantity : 0,
       vatRate: 21,
     };
   });

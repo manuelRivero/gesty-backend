@@ -718,6 +718,16 @@ model table_tab {
   /// Mozo responsable actual. Por defecto, igual a `opened_by_user_id`; actualizable vía PATCH simple en
   /// cambio de turno (DECISIÓN APROBADA — MVP sin tabla de eventos de reasignación, ver §4.A).
   assigned_user_id  String?         @db.Uuid
+  /// Descuento manual a nivel de cuenta (ej. "cliente VIP") — nunca toca `order_item.discount_amount`
+  /// (reservado para promos de WhatsApp/storefront) ni `orders.total_amount`. Se resta UNA vez del
+  /// saldo agregado (`getTableTabBalance`) y, al facturar, del `billable_charge.amount` — ver
+  /// `manual_discount_applied_to_invoice` para la protección contra doble descuento.
+  manual_discount_amount             Decimal  @default(0) @db.Decimal(12, 2)
+  manual_discount_reason             String?
+  /// `true` una vez que el descuento ya se restó de algún `billable_charge.amount` (ver
+  /// `createBillableChargeForAllUnbilledItems`) — evita restarlo dos veces si la función corre más
+  /// de una vez (fire-and-forget post-pago + red de seguridad en `closeTableTab`).
+  manual_discount_applied_to_invoice Boolean  @default(false)
   business          business        @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_table_tab_business")
   opened_by         business_user?  @relation("TableTabOpenedBy", fields: [opened_by_user_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
   assigned_to       business_user?  @relation("TableTabAssignedTo", fields: [assigned_user_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
@@ -976,6 +986,10 @@ model billable_charge {
   business_id    String                   @db.Uuid
   table_tab_id   String                   @db.Uuid
   amount         Decimal                  @db.Decimal(12, 2)
+  /// Cuánto del descuento manual de la cuenta (`table_tab.manual_discount_amount`) absorbió ESTE
+  /// cargo puntual — ya restado de `amount`. Permite que `buildLineItemsForBillableCharge` sepa
+  /// exactamente cuánto prorratear en las líneas de esta factura sin inferirlo de otro lado.
+  manual_discount_applied Decimal        @default(0) @db.Decimal(12, 2)
   status         BillableChargeStatus     @default(open)
   created_at     DateTime                 @default(now()) @db.Timestamptz(6)
   business       business                 @relation(fields: [business_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_billable_charge_business")

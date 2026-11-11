@@ -46,6 +46,7 @@ import {
   getTableTabs,
   patchReassignTableTab,
   postAssignTableToTab,
+  patchTableTabDiscount,
   postCancelTableTabItem,
   postCloseTableTab,
   postCreateTableTabRound,
@@ -556,6 +557,14 @@ router.patch("/table-tabs/:id/assignee", requireRoles(...TABLE_TAB_OPERATE_ROLES
 // Cierre de cuenta: exclusivo de ADMIN/OWNER (encargado/caja), NO el mozo —
 // ver matriz arriba. El mozo sirve, no cierra ni verifica caja.
 router.post("/table-tabs/:id/close", requireRoles(...TAB_PAYMENT_AND_BILLING_ROLES), postCloseTableTab);
+
+// Descuento manual de cuenta (ej. "cliente VIP") — exclusivo de ADMIN/OWNER,
+// igual que cobrar/cerrar.
+router.patch(
+  "/table-tabs/:id/discount",
+  requireRoles(...TAB_PAYMENT_AND_BILLING_ROLES),
+  patchTableTabDiscount
+);
 
 // Anulación de ítem desde el salón (Fase 4, POS_TECHNICAL_DESIGN.md §4.C): el
 // mozo puede anular sin fricción si el ítem sigue `pending` (sin costo

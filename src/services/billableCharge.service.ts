@@ -112,17 +112,35 @@ export async function createBillableChargeInTx(
     amount = amount.add(unitNet.mul(line.quantity));
   }
 
+  // Descuento manual de cuenta (ej. "cliente VIP", `table_tab.manual_discount_amount`) — se
+  // resta UNA SOLA VEZ en la vida de la cuenta, nunca dos (`manual_discount_applied_to_invoice`
+  // marca que ya se aplicó a algún `billable_charge`; el flag se fija en la MISMA transacción que
+  // crea este cargo, así que una segunda llamada concurrente/posterior no vuelve a restarlo).
+  let manualDiscountApplied = new Prisma.Decimal(0);
+  if (!tab.manual_discount_applied_to_invoice && tab.manual_discount_amount.gt(0)) {
+    manualDiscountApplied = Prisma.Decimal.min(tab.manual_discount_amount, amount);
+    amount = amount.sub(manualDiscountApplied);
+  }
+
   const charge = await tx.billable_charge.create({
     data: {
       business_id: businessId,
       table_tab_id: tableTabId,
       amount,
+      manual_discount_applied: manualDiscountApplied,
       status: BillableChargeStatus.open,
       lines: {
         create: lines.map((l) => ({ order_item_id: l.orderItemId, quantity_billed: l.quantity }))
       }
     }
   });
+
+  if (manualDiscountApplied.gt(0)) {
+    await tx.table_tab.update({
+      where: { id: tableTabId },
+      data: { manual_discount_applied_to_invoice: true }
+    });
+  }
 
   return { ok: true, billableChargeId: charge.id, amount: charge.amount };
 }

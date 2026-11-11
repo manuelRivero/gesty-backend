@@ -2,6 +2,7 @@ import { Prisma, TableTabStatus } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import {
   getTableTabBalance,
+  getTableTabOrderDues,
   hasPendingOrPreparingKitchenItems,
   hasPendingTabPayment
 } from "./tabPayment.service";
@@ -459,6 +460,61 @@ export async function closeTableTab(params: {
   }
 
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Descuento manual de cuenta (ej. "cliente VIP") — exclusivo de ADMIN/OWNER,
+// igual que cobrar/cerrar. Nunca toca `order_item.discount_amount` (reservado
+// para promos de WhatsApp/storefront) ni `orders.total_amount` — se resta a
+// nivel agregado en `getTableTabBalance` y, al facturar, en
+// `createBillableChargeForAllUnbilledItems`.
+// ---------------------------------------------------------------------------
+
+export type SetTableTabManualDiscountResult =
+  | { ok: true; manualDiscountAmount: string; manualDiscountReason: string | null }
+  | { ok: false; reason: "TABLE_TAB_NOT_FOUND" | "TABLE_TAB_NOT_OPEN" | "DISCOUNT_EXCEEDS_BALANCE" };
+
+/**
+ * Fija (reemplaza, no acumula) el descuento manual de la cuenta. Valida
+ * contra el saldo CRUDO (sin ningún descuento ya aplicado) para no permitir
+ * un descuento mayor a la deuda real.
+ */
+export async function setTableTabManualDiscount(params: {
+  businessId: string;
+  tableTabId: string;
+  amount: Prisma.Decimal;
+  reason?: string | null;
+}): Promise<SetTableTabManualDiscountResult> {
+  const { businessId, tableTabId, amount, reason } = params;
+
+  return prisma.$transaction(async (tx) => {
+    await acquireTabLock(tx, businessId, tableTabId);
+
+    const tab = await tx.table_tab.findFirst({ where: { id: tableTabId, business_id: businessId } });
+    if (!tab) {
+      return { ok: false, reason: "TABLE_TAB_NOT_FOUND" } as const;
+    }
+    if (tab.status !== TableTabStatus.open) {
+      return { ok: false, reason: "TABLE_TAB_NOT_OPEN" } as const;
+    }
+
+    const dues = await getTableTabOrderDues(tx, businessId, tableTabId);
+    const rawBalance = dues.reduce((sum, d) => sum.add(d.due), new Prisma.Decimal(0));
+    if (amount.gt(rawBalance)) {
+      return { ok: false, reason: "DISCOUNT_EXCEEDS_BALANCE" } as const;
+    }
+
+    const updated = await tx.table_tab.update({
+      where: { id: tableTabId },
+      data: { manual_discount_amount: amount, manual_discount_reason: reason ?? null }
+    });
+
+    return {
+      ok: true,
+      manualDiscountAmount: updated.manual_discount_amount.toString(),
+      manualDiscountReason: updated.manual_discount_reason
+    } as const;
+  });
 }
 
 // ---------------------------------------------------------------------------

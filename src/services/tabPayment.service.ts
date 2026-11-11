@@ -76,14 +76,29 @@ export async function getTableTabOrderDues(
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
 }
 
-/** Saldo total de la cuenta — suma de la deuda de cada una de sus órdenes. */
+/**
+ * Saldo total de la cuenta — suma de la deuda de cada una de sus órdenes,
+ * menos el descuento manual de cuenta (`table_tab.manual_discount_amount`,
+ * ej. "cliente VIP") si lo hay. El descuento se resta UNA vez a nivel
+ * agregado acá, nunca por order — `getTableTabOrderDues` sigue devolviendo
+ * la deuda real sin descuento (lo usan `listTableTabOrders`/el detalle de
+ * "el pedido" para mostrar el desglose real de cada ronda).
+ */
 export async function getTableTabBalance(
   tx: Prisma.TransactionClient,
   businessId: string,
   tableTabId: string
 ): Promise<Prisma.Decimal> {
   const dues = await getTableTabOrderDues(tx, businessId, tableTabId);
-  return dues.reduce((sum, d) => sum.add(d.due), ZERO);
+  const rawBalance = dues.reduce((sum, d) => sum.add(d.due), ZERO);
+
+  const tab = await tx.table_tab.findFirst({
+    where: { id: tableTabId, business_id: businessId },
+    select: { manual_discount_amount: true }
+  });
+  const discount = tab?.manual_discount_amount ?? ZERO;
+  const discounted = rawBalance.sub(discount);
+  return discounted.gt(ZERO) ? discounted : ZERO;
 }
 
 /**

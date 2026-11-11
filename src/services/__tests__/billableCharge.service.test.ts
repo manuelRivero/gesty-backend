@@ -13,15 +13,23 @@ const TABLE_TAB_ID = "tab-1";
 function makeTx(overrides: {
   orderItems?: Array<{ id: string; quantity: number; unit_price: Prisma.Decimal; discount_amount: Prisma.Decimal | null }>;
   billedLines?: Array<{ order_item_id: string; quantity_billed: number }>;
+  manualDiscountAmount?: Prisma.Decimal;
+  manualDiscountAppliedToInvoice?: boolean;
 }) {
   const orderItems = overrides.orderItems ?? [];
   const billedLines = overrides.billedLines ?? [];
   const create = vi.fn().mockImplementation(({ data }: { data: { amount: Prisma.Decimal } }) =>
     Promise.resolve({ id: "charge-1", amount: data.amount })
   );
+  const tableTabUpdate = vi.fn().mockResolvedValue({ id: TABLE_TAB_ID });
   const tx = {
     table_tab: {
-      findFirst: vi.fn().mockResolvedValue({ id: TABLE_TAB_ID }),
+      findFirst: vi.fn().mockResolvedValue({
+        id: TABLE_TAB_ID,
+        manual_discount_amount: overrides.manualDiscountAmount ?? new Prisma.Decimal(0),
+        manual_discount_applied_to_invoice: overrides.manualDiscountAppliedToInvoice ?? false,
+      }),
+      update: tableTabUpdate,
     },
     order_item: {
       // Usada por `createBillableChargeForAllUnbilledItems` (select: {id, quantity})
@@ -40,7 +48,7 @@ function makeTx(overrides: {
       create,
     },
   };
-  return { tx, create };
+  return { tx, create, tableTabUpdate };
 }
 
 describe("createBillableChargeForAllUnbilledItems", () => {
@@ -107,5 +115,71 @@ describe("createBillableChargeForAllUnbilledItems", () => {
     if (!result.ok || "nothingToBill" in result) throw new Error("esperaba un charge creado");
     // unitNet = 100 - (40/4) = 90; remanente completo (4) => 360.
     expect(result.amount.toNumber()).toBe(360);
+  });
+});
+
+describe("createBillableChargeForAllUnbilledItems — descuento manual de cuenta (VIP)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("resta el descuento manual del monto final y marca manual_discount_applied_to_invoice", async () => {
+    const { tx, create, tableTabUpdate } = makeTx({
+      orderItems: [{ id: "oi-a", quantity: 2, unit_price: new Prisma.Decimal(100), discount_amount: null }],
+      billedLines: [],
+      manualDiscountAmount: new Prisma.Decimal(50),
+      manualDiscountAppliedToInvoice: false,
+    });
+
+    const result = await createBillableChargeForAllUnbilledItems(tx as any, BUSINESS_ID, TABLE_TAB_ID);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok || "nothingToBill" in result) throw new Error("esperaba un charge creado");
+    // Crudo: 200. Descuento: 50. Final: 150.
+    expect(result.amount.toNumber()).toBe(150);
+    const callArg = create.mock.calls[0][0];
+    expect(callArg.data.manual_discount_applied.toNumber()).toBe(50);
+    expect(tableTabUpdate).toHaveBeenCalledWith({
+      where: { id: TABLE_TAB_ID },
+      data: { manual_discount_applied_to_invoice: true },
+    });
+  });
+
+  it("NUNCA resta el descuento dos veces, aunque se llame dos veces seguidas", async () => {
+    const { tx, create, tableTabUpdate } = makeTx({
+      orderItems: [
+        { id: "oi-a", quantity: 1, unit_price: new Prisma.Decimal(100), discount_amount: null },
+        { id: "oi-b", quantity: 1, unit_price: new Prisma.Decimal(100), discount_amount: null },
+      ],
+      billedLines: [{ order_item_id: "oi-a", quantity_billed: 1 }],
+      manualDiscountAmount: new Prisma.Decimal(30),
+      // Simula que una llamada anterior YA aplicó el descuento a otro billable_charge.
+      manualDiscountAppliedToInvoice: true,
+    });
+
+    const result = await createBillableChargeForAllUnbilledItems(tx as any, BUSINESS_ID, TABLE_TAB_ID);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok || "nothingToBill" in result) throw new Error("esperaba un charge creado");
+    // Solo oi-b tiene remanente (100) — SIN restar el descuento de nuevo.
+    expect(result.amount.toNumber()).toBe(100);
+    expect(create.mock.calls[0][0].data.manual_discount_applied.toNumber()).toBe(0);
+    expect(tableTabUpdate).not.toHaveBeenCalled();
+  });
+
+  it("nunca deja el monto negativo si el descuento manual supera el remanente de este cargo puntual", async () => {
+    const { tx, create } = makeTx({
+      orderItems: [{ id: "oi-a", quantity: 1, unit_price: new Prisma.Decimal(50), discount_amount: null }],
+      billedLines: [],
+      manualDiscountAmount: new Prisma.Decimal(80),
+      manualDiscountAppliedToInvoice: false,
+    });
+
+    const result = await createBillableChargeForAllUnbilledItems(tx as any, BUSINESS_ID, TABLE_TAB_ID);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok || "nothingToBill" in result) throw new Error("esperaba un charge creado");
+    expect(result.amount.toNumber()).toBe(0);
+    expect(create.mock.calls[0][0].data.manual_discount_applied.toNumber()).toBe(50);
   });
 });

@@ -287,6 +287,33 @@ describe("requestInvoiceEmission", () => {
     expect(outcome).toEqual({ emitted: true, invoice: existing, reason: FiscalInvoiceStatus.authorized });
   });
 
+  it("es terminal: si ya existe un comprobante 'simulated' (sandbox), no vuelve a reconciliar ni a sobrescribirlo — Sistemas 360 no encuentra comprobantes simulado por referencia_externa (bug reportado), así que reconciliar de nuevo los degradaría a 'requires_review'", async () => {
+    mocked(isInvoicingAddonEnabled).mockResolvedValue(true);
+    mocked(prisma.orders.findFirst).mockResolvedValue(baseOrder());
+    mocked(getFiscalConfiguration).mockResolvedValue(baseFiscalConfig());
+
+    const existing = {
+      id: "inv-1",
+      business_id: BUSINESS_A,
+      order_id: ORDER_1,
+      kind: FiscalInvoiceKind.invoice,
+      status: FiscalInvoiceStatus.simulated,
+      cae: "90031000000001",
+      comprobante_numero: 1,
+    };
+    mocked(prisma.fiscal_invoice.findUnique).mockResolvedValue(existing);
+
+    const issueInvoice = vi.fn();
+    const getInvoiceStatus = vi.fn();
+    mocked(resolveBillingProvider).mockResolvedValue(buildProvider({ issueInvoice, getInvoiceStatus }));
+
+    const outcome = await requestInvoiceEmission(BUSINESS_A, ORDER_1, FiscalInvoiceKind.invoice);
+
+    expect(issueInvoice).not.toHaveBeenCalled();
+    expect(getInvoiceStatus).not.toHaveBeenCalled();
+    expect(outcome).toEqual({ emitted: false, invoice: existing, reason: FiscalInvoiceStatus.simulated });
+  });
+
   it("aísla por negocio: busca el pedido acotado a business_id", async () => {
     mocked(isInvoicingAddonEnabled).mockResolvedValue(true);
     mocked(prisma.orders.findFirst).mockResolvedValue(null);

@@ -9,8 +9,10 @@ import {
   listTableTabOrders,
   openTableTab,
   reassignTableTab,
+  setTableTabManualDiscount,
   transferTable
 } from "../services/adminTableTab.service";
+import { Prisma } from "@prisma/client";
 import { createTableTabRound } from "../services/adminTableTabRound.service";
 import { cancelOrderItem } from "../services/kitchenTicketItem.service";
 import { getBusinessUserIdForActor } from "../services/businessUserContext.service";
@@ -387,4 +389,44 @@ export async function postCloseTableTab(req: Request, res: Response) {
   // `hasPendingKitchenItems`: advertencia blanda (§4.B) — el cierre ya
   // ocurrió, el frontend decide si muestra un modal informativo al respecto.
   return res.json({ ...result.tableTab, hasPendingKitchenItems: result.hasPendingKitchenItems });
+}
+
+const setDiscountSchema = z.object({
+  amount: z.number().min(0),
+  reason: z.string().trim().max(200).optional()
+});
+
+export async function patchTableTabDiscount(req: Request, res: Response) {
+  const auth = requireAuth(req, res);
+  if (!auth) return;
+
+  const parsedParams = idParamSchema.safeParse(req.params);
+  if (!parsedParams.success) {
+    return res.status(400).json({ error: "id inválido" });
+  }
+  const parsedBody = setDiscountSchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    return res.status(400).json({ error: "Body inválido", details: parsedBody.error.flatten() });
+  }
+
+  const result = await setTableTabManualDiscount({
+    businessId: auth.businessId,
+    tableTabId: parsedParams.data.id,
+    amount: new Prisma.Decimal(parsedBody.data.amount),
+    reason: parsedBody.data.reason
+  });
+
+  if (!result.ok) {
+    const statusByReason: Record<typeof result.reason, number> = {
+      TABLE_TAB_NOT_FOUND: 404,
+      TABLE_TAB_NOT_OPEN: 409,
+      DISCOUNT_EXCEEDS_BALANCE: 409
+    };
+    return res.status(statusByReason[result.reason]).json({ error: result.reason });
+  }
+
+  return res.json({
+    manualDiscountAmount: result.manualDiscountAmount,
+    manualDiscountReason: result.manualDiscountReason
+  });
 }

@@ -86,7 +86,15 @@ export async function getTableTabBalanceHandler(req: Request, res: Response) {
   }
 
   const balance = await getTableTabBalance(prisma, auth.businessId, parsedParams.data.id);
-  return res.json({ balance });
+  const tab = await prisma.table_tab.findFirst({
+    where: { id: parsedParams.data.id, business_id: auth.businessId },
+    select: { manual_discount_amount: true, manual_discount_reason: true }
+  });
+  return res.json({
+    balance,
+    manualDiscountAmount: tab?.manual_discount_amount.toString() ?? "0",
+    manualDiscountReason: tab?.manual_discount_reason ?? null
+  });
 }
 
 export async function postRecordTabPayment(req: Request, res: Response) {
