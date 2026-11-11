@@ -18,7 +18,11 @@ import {
   listInvoices,
   requestInvoiceEmission,
 } from "../services/invoicing/invoice.service";
-import { ensureEmisorProvisioned, provisionAfterFiscalSave } from "../services/invoicing/emisorProvisioning.service";
+import {
+  ensureEmisorProvisioned,
+  provisionAfterFiscalSave,
+  syncProviderCondicionIva,
+} from "../services/invoicing/emisorProvisioning.service";
 import { resolveBillingProvider } from "../services/invoicing/billingProviderFactory";
 import { sistemas360HealthArca } from "../services/invoicing/providers/sistemas360Client";
 import { BillingLockTimeoutError, BillingLockUnavailableError } from "../services/billing/billingLock";
@@ -76,6 +80,19 @@ export async function putFiscalConfigurationHandler(req: Request, res: Response)
   const provisioning = await provisionAfterFiscalSave(businessId);
   const config = await getFiscalConfiguration(businessId);
   res.json({ fiscalConfiguration: config, provisioning });
+}
+
+/**
+ * Fuerza una resincronización del cache informativo `provider_condicion_iva` (ver
+ * `syncProviderCondicionIva`) — para que el admin pueda confirmar desde `/settings` qué tiene
+ * registrado HOY el proveedor para el emisor, sin tener que esperar a la próxima emisión real.
+ */
+export async function postSyncProviderCondicionIvaHandler(req: Request, res: Response): Promise<void> {
+  const businessId = businessIdOrThrow(req, res);
+  if (!businessId) return;
+  const providerCondicionIva = await syncProviderCondicionIva(businessId);
+  const config = await getFiscalConfiguration(businessId);
+  res.json({ providerCondicionIva, fiscalConfiguration: config });
 }
 
 /**

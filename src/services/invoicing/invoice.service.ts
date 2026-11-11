@@ -113,6 +113,27 @@ async function buildLineItems(orderId: string): Promise<FiscalInvoiceLineItem[]>
  * (`unit_price` menos descuento prorrateado), así que `Σ(unitPrice*quantity)`
  * de estas líneas reconcilia exactamente con ese monto.
  */
+/**
+ * Cache informativo (`fiscal_configuration.provider_condicion_iva`) — NUNCA la fuente de la
+ * decisión de emisión (eso siempre se consulta en vivo vía `provider.getIssuerCondicionIva()`,
+ * ver `requestInvoiceEmission`/`requestInvoiceEmissionForBillableCharge`). Solo alimenta la nota
+ * de `/settings` para que el admin vea qué tiene registrado el proveedor sin tener que ir a
+ * revisar logs. Fire-and-forget: un fallo acá nunca debe afectar la emisión real.
+ */
+async function persistProviderCondicionIvaCache(
+  businessId: string,
+  condicionIva: CondicionIva
+): Promise<void> {
+  try {
+    await prisma.fiscal_configuration.updateMany({
+      where: { business_id: businessId },
+      data: { provider_condicion_iva: condicionIva, provider_condicion_iva_checked_at: new Date() },
+    });
+  } catch (err) {
+    console.error("[Invoicing] No se pudo actualizar el cache de condición de IVA del proveedor:", err);
+  }
+}
+
 async function buildLineItemsForBillableCharge(billableChargeId: string): Promise<FiscalInvoiceLineItem[]> {
   const lines = await prisma.billable_charge_line.findMany({
     where: { billable_charge_id: billableChargeId },
@@ -545,9 +566,12 @@ export async function requestInvoiceEmission(
     return { emitted: false, reason: "provider_not_configured" };
   }
 
-  const voucherType = resolveVoucherTypeForConsumidorFinal(
-    (fiscalConfig.condicion_iva ?? "NO_CATEGORIZADO") as CondicionIva
-  );
+  // Fuente de verdad: lo que el PROVEEDOR tiene registrado para el emisor, nunca
+  // `fiscalConfig.condicion_iva` (editable a mano, puede desincronizarse del emisor ya creado —
+  // `registerIssuer` no lo actualiza después de la asociación inicial).
+  const issuerCondicionIva = await provider.getIssuerCondicionIva();
+  void persistProviderCondicionIvaCache(businessId, issuerCondicionIva);
+  const voucherType = resolveVoucherTypeForConsumidorFinal(issuerCondicionIva);
   if (!voucherType) {
     return { emitted: false, reason: "voucher_type_undetermined" };
   }
@@ -630,9 +654,11 @@ export async function requestInvoiceEmission(
         return { emitted: false, invoice: failed, reason: "emisor_not_provisioned" };
       }
 
-      const currentVoucherType = resolveVoucherTypeForConsumidorFinal(
-        (currentConfig.condicion_iva ?? "NO_CATEGORIZADO") as CondicionIva
-      );
+      // Re-chequeado contra el proveedor (no el cache ya leído arriba): la revalidación dentro de
+      // este lock existe justo para cubrir un cambio entre la primera lectura y el envío.
+      const currentIssuerCondicionIva = await provider.getIssuerCondicionIva();
+      void persistProviderCondicionIvaCache(businessId, currentIssuerCondicionIva);
+      const currentVoucherType = resolveVoucherTypeForConsumidorFinal(currentIssuerCondicionIva);
       if (!currentVoucherType) {
         const failed = await markFailedBeforeSend(
           claim.invoice.id,
@@ -647,7 +673,7 @@ export async function requestInvoiceEmission(
         issuer: {
           cuit: currentConfig.cuit,
           razonSocial: currentConfig.razon_social ?? "",
-          condicionIva: (currentConfig.condicion_iva ?? "NO_CATEGORIZADO") as CondicionIva,
+          condicionIva: currentIssuerCondicionIva,
           domicilioFiscal: currentConfig.domicilio_fiscal ?? "",
           externalIssuerId: currentConfig.external_issuer_id,
         },
@@ -763,9 +789,11 @@ export async function requestInvoiceEmissionForBillableCharge(
     return { emitted: false, reason: "provider_not_configured" };
   }
 
-  const voucherType = resolveVoucherTypeForConsumidorFinal(
-    (fiscalConfig.condicion_iva ?? "NO_CATEGORIZADO") as CondicionIva
-  );
+  // Fuente de verdad: lo que el PROVEEDOR tiene registrado para el emisor (ver mismo criterio en
+  // `requestInvoiceEmission`), nunca `fiscalConfig.condicion_iva` local.
+  const issuerCondicionIva = await provider.getIssuerCondicionIva();
+  void persistProviderCondicionIvaCache(businessId, issuerCondicionIva);
+  const voucherType = resolveVoucherTypeForConsumidorFinal(issuerCondicionIva);
   if (!voucherType) {
     return { emitted: false, reason: "voucher_type_undetermined" };
   }
@@ -844,9 +872,9 @@ export async function requestInvoiceEmissionForBillableCharge(
         return { emitted: false, invoice: failed, reason: "emisor_not_provisioned" };
       }
 
-      const currentVoucherType = resolveVoucherTypeForConsumidorFinal(
-        (currentConfig.condicion_iva ?? "NO_CATEGORIZADO") as CondicionIva
-      );
+      const currentIssuerCondicionIva = await provider.getIssuerCondicionIva();
+      void persistProviderCondicionIvaCache(businessId, currentIssuerCondicionIva);
+      const currentVoucherType = resolveVoucherTypeForConsumidorFinal(currentIssuerCondicionIva);
       if (!currentVoucherType) {
         const failed = await markFailedBeforeSend(
           claim.invoice.id,
@@ -861,7 +889,7 @@ export async function requestInvoiceEmissionForBillableCharge(
         issuer: {
           cuit: currentConfig.cuit,
           razonSocial: currentConfig.razon_social ?? "",
-          condicionIva: (currentConfig.condicion_iva ?? "NO_CATEGORIZADO") as CondicionIva,
+          condicionIva: currentIssuerCondicionIva,
           domicilioFiscal: currentConfig.domicilio_fiscal ?? "",
           externalIssuerId: currentConfig.external_issuer_id,
         },
@@ -893,10 +921,13 @@ export async function triggerAutomaticInvoiceEmissionForBillableCharge(
   businessId: string,
   billableChargeId: string
 ): Promise<InvoiceEmissionOutcome> {
-  const fiscalConfig = await getFiscalConfiguration(businessId);
-  if (!fiscalConfig) return { emitted: false, reason: "fiscal_configuration_missing" };
-  if (!fiscalConfig.auto_issue_cash) return { emitted: false, reason: "auto_issue_disabled" };
-
+  // A diferencia de `triggerAutomaticInvoiceEmission` (pedidos online/delivery),
+  // esto NO respeta `auto_issue_cash`: el pago de una cuenta de salón es
+  // siempre "efectivo" conceptualmente (no existe un checkout online
+  // alternativo para DINE_IN), y el cierre de la mesa queda duro-bloqueado
+  // (`OPEN_BILLABLE_CHARGE_EXISTS`) hasta que el `billable_charge` se
+  // facture — si este disparo respetara el flag y estuviera apagado, ninguna
+  // mesa con consumo podría cerrarse nunca. Decisión explícita del negocio.
   return requestInvoiceEmissionForBillableCharge(businessId, billableChargeId, FiscalInvoiceKind.invoice);
 }
 

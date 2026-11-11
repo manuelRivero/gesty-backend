@@ -1,6 +1,7 @@
 import type { BillingProvider } from "../../../domain/invoicing/billingProvider.port";
 import type {
   BillingProviderCapability,
+  CondicionIva,
   CuitLookupResult,
   FiscalCustomer,
   FiscalInvoiceLineItem,
@@ -22,6 +23,7 @@ import {
   sistemas360CrearComprobante,
   sistemas360DescargarPdf,
   sistemas360GetComprobante,
+  sistemas360GetEmisor,
   sistemas360GetEstadoFiscal,
   sistemas360ListEmisores,
   sistemas360LookupCuit,
@@ -83,20 +85,40 @@ function toSistemas360Cliente(customer: FiscalCustomer): Sistemas360Cliente {
   };
 }
 
+/**
+ * `item.unitPrice` es siempre el precio BRUTO (con IVA incluido) — el mismo que ya se le muestra
+ * al cliente en el pedido/cuenta, calculado en `invoice.service.ts` (`buildLineItems`/
+ * `buildLineItemsForBillableCharge`). Nunca se toca ese cálculo ni ningún otro llamador: este es
+ * el ÚNICO lugar que conoce el contrato real de Sistemas 360 y hace la conversión.
+ *
+ * Sistemas 360 documenta `precios_incluyen_iva: true` para mandar el precio bruto tal cual
+ * (https://api.sistemas360.ar/documentacion-api, "Precios con IVA incluido") — pero confirmado
+ * en vivo contra sandbox (nov. 2026): el `total` que valida en `POST /comprobantes` se calcula
+ * igual como `precio_unitario * cantidad * (1 + iva/100)` sin importar ese flag, así que mandar
+ * el bruto ahí duplica el IVA (422 "el total informado no coincide con el total calculado").
+ * Por eso SIEMPRE mandamos el precio NETO (bruto / (1 + iva/100), sin ese flag) — es el único
+ * modo donde el total que ellos recalculan coincide con el bruto que ya le mostramos al cliente.
+ * Si Sistemas 360 corrige ese comportamiento más adelante, hay que revisar esta función primero.
+ */
 function toSistemas360Items(items: FiscalInvoiceLineItem[], voucherType: "A" | "B" | "C"): Sistemas360Item[] {
-  return items.map((item) => ({
-    descripcion: item.description,
-    cantidad: item.quantity,
-    precio_unitario: item.unitPrice,
-    // Factura C no lleva desglose de IVA por ítem (ver documentación de Sistemas 360).
-    ...(voucherType === "C"
-      ? {}
-      : {
-          tipo_impuesto: "gravado" as const,
-          iva: item.vatRate,
-          precios_incluyen_iva: true,
-        }),
-  }));
+  return items.map((item) => {
+    if (voucherType === "C") {
+      // Factura C no lleva desglose de IVA por ítem (ver documentación de Sistemas 360).
+      return {
+        descripcion: item.description,
+        cantidad: item.quantity,
+        precio_unitario: item.unitPrice,
+      };
+    }
+    const netUnitPrice = Math.round((item.unitPrice / (1 + item.vatRate / 100)) * 100) / 100;
+    return {
+      descripcion: item.description,
+      cantidad: item.quantity,
+      precio_unitario: netUnitPrice,
+      tipo_impuesto: "gravado" as const,
+      iva: item.vatRate,
+    };
+  });
 }
 
 function toEmisorId(externalIssuerId: string | null | undefined): number | undefined {
@@ -257,6 +279,23 @@ export class Sistemas360Adapter implements BillingProvider {
     }
   }
 
+  /**
+   * Fuente de verdad para el tipo de comprobante a emitir — ver doc del puerto. Consulta el
+   * emisor TAL COMO Sistemas 360 lo tiene registrado hoy, nunca lo que Gesty guardó localmente.
+   */
+  async getIssuerCondicionIva(): Promise<CondicionIva> {
+    if (!this.emisorId) return "NO_CATEGORIZADO";
+    try {
+      const emisor = await sistemas360GetEmisor(this.token, this.emisorId, this.businessId);
+      return normalizeCondicionIvaFromPadron(emisor.condicion_iva);
+    } catch (err) {
+      if (err instanceof Sistemas360HttpError) {
+        throw new BillingProviderTechnicalError(this.name, err.message, err);
+      }
+      throw err;
+    }
+  }
+
   async issueInvoice(request: IssueInvoiceRequest): Promise<FiscalInvoiceResult> {
     return this.crearComprobante(request, false, undefined);
   }
@@ -301,7 +340,7 @@ export class Sistemas360Adapter implements BillingProvider {
    */
   async getInvoiceStatus(externalReference: string): Promise<FiscalInvoiceResult> {
     try {
-      const found = await sistemas360BuscarPorReferenciaExterna(this.token, externalReference, this.businessId);
+      const found = await sistemas360BuscarPorReferenciaExterna(this.token, externalReference, this.emisorId, this.businessId);
       if (!found) {
         // Sin rastro en el proveedor: no hay nada que reconciliar todavía (pudo no haber llegado
         // a enviarse). El llamador decide qué hacer con esto a través de `requires_review`.
@@ -349,7 +388,7 @@ export class Sistemas360Adapter implements BillingProvider {
   }
 
   async getInvoice(externalReference: string): Promise<FiscalInvoiceResult> {
-    const found = await sistemas360BuscarPorReferenciaExterna(this.token, externalReference, this.businessId);
+    const found = await sistemas360BuscarPorReferenciaExterna(this.token, externalReference, this.emisorId, this.businessId);
     if (!found) throw new BillingProviderTechnicalError(this.name, "Comprobante no encontrado", null);
     const detail = await sistemas360GetComprobante(this.token, found.id, this.businessId);
     return normalizeSistemas360Response(detail as Sistemas360ComprobanteResponse);
@@ -358,7 +397,7 @@ export class Sistemas360Adapter implements BillingProvider {
   /** Descarga el PDF autenticado y lo devuelve como data URL — no hay URL pública reutilizable. */
   async getInvoicePdf(externalReference: string): Promise<string | null> {
     try {
-      const found = await sistemas360BuscarPorReferenciaExterna(this.token, externalReference, this.businessId);
+      const found = await sistemas360BuscarPorReferenciaExterna(this.token, externalReference, this.emisorId, this.businessId);
       if (!found) return null;
       const pdf = await sistemas360DescargarPdf(this.token, found.id, "a4", this.businessId);
       return `data:application/pdf;base64,${pdf.toString("base64")}`;

@@ -394,16 +394,29 @@ export async function sistemas360CrearComprobante(
   return request(token, "POST", "/comprobantes", { body: payload, businessId });
 }
 
+/**
+ * `emisor_id` es obligatorio cuando se usa un "token de cuenta" (administra varios emisores) —
+ * confirmado contra sandbox: sin él, `GET /comprobantes` devuelve 422 `emisor_requerido`. Se pasa
+ * como query param, igual que lo exige la API para esta búsqueda de solo lectura (a diferencia de
+ * `POST /comprobantes`, que lo recibe en el body).
+ */
 export async function sistemas360BuscarPorReferenciaExterna(
   token: string,
   referenciaExterna: string,
+  emisorId?: number | null,
   businessId?: string
 ): Promise<Sistemas360ComprobanteData | null> {
   const result = await request<{ data?: Sistemas360ComprobanteData[] } | Sistemas360ComprobanteData[]>(
     token,
     "GET",
     "/comprobantes",
-    { query: { referencia_externa: referenciaExterna }, businessId }
+    {
+      query: {
+        referencia_externa: referenciaExterna,
+        ...(emisorId != null ? { emisor_id: emisorId } : {})
+      },
+      businessId
+    }
   );
   const list = Array.isArray(result) ? result : result.data ?? [];
   return list[0] ?? null;

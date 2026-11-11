@@ -29,10 +29,15 @@ export function condicionIvaToReceptorId(condicionIva: CondicionIva): number {
  */
 export function normalizeCondicionIvaFromPadron(raw: string | null | undefined): CondicionIva {
   if (!raw) return "NO_CATEGORIZADO";
+  // Tolerante a ambos formatos observados: el padrón usa espacios ("RESPONSABLE INSCRIPTO"),
+  // el emisor de Sistemas 360 (`GET /emisores`) usa guion bajo ("responsable_inscripto") — se
+  // normalizan los separadores a espacio ANTES de comparar para no depender de cuál mandó cada
+  // endpoint.
   const normalized = raw
     .toUpperCase()
     .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "");
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[_-]/g, " ");
   if (normalized.includes("MONOTRIBUT")) return "MONOTRIBUTO";
   if (normalized.includes("EXENT")) return "EXENTO";
   if (normalized.includes("CONSUMIDOR FINAL") || normalized === "CF") return "CF";

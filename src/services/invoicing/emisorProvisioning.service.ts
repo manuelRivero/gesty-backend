@@ -93,6 +93,11 @@ export async function ensureEmisorProvisioned(businessId: string): Promise<Emiso
         environment,
         externalIssuerId: fresh.external_issuer_id,
       });
+      // A propósito, NO se dispara `syncProviderCondicionIva` acá: el único motivo de este
+      // camino rápido es evitar cualquier llamada al proveedor cuando ya está todo asociado
+      // (consumo de cuota — ver métricas por negocio). El cache se mantiene fresco de otra
+      // forma: cada emisión real ya consulta y persiste la condición en vivo (`invoice.service.ts`),
+      // y el admin puede forzar una resincronización manual desde `/settings`.
       return { provisioned: true, externalIssuerId: fresh.external_issuer_id, status: "pending_validation", detail: "Ya asociado." };
     }
 
@@ -227,6 +232,10 @@ export async function ensureEmisorProvisioned(businessId: string): Promise<Emiso
       status: result.status,
     });
 
+    if (result.externalIssuerId) {
+      void syncProviderCondicionIva(businessId);
+    }
+
     return {
       provisioned: Boolean(result.externalIssuerId),
       externalIssuerId: result.externalIssuerId,
@@ -278,5 +287,38 @@ export async function provisionAfterFiscalSave(businessId: string): Promise<Fisc
       };
     }
     throw err;
+  }
+}
+
+/**
+ * Refresca el cache informativo `fiscal_configuration.provider_condicion_iva` consultando lo que
+ * el PROVEEDOR tiene registrado para el emisor vinculado (§ hallazgo "condición de IVA
+ * desincronizada" — `registerIssuer` nunca la actualiza después de la asociación inicial, así que
+ * sin esto el admin no tiene forma de ver que puede haber divergido del campo local editable).
+ *
+ * Es SOLO un cache para mostrar en `/settings` — la decisión real de qué tipo de comprobante
+ * emitir siempre consulta al proveedor en vivo (`invoice.service.ts`), nunca este valor cacheado.
+ * Nunca lanza: cualquier fallo se loguea y devuelve `null`, para que pueda llamarse
+ * fire-and-forget desde `ensureEmisorProvisioned` sin arriesgar el provisioning en sí.
+ */
+export async function syncProviderCondicionIva(businessId: string): Promise<CondicionIva | null> {
+  try {
+    const environment = await resolveCurrentEnvironment();
+    if (!environment) return null;
+    const provider = await resolveBillingProvider(businessId, { environment });
+    if (!provider) return null;
+
+    const condicionIva = await provider.getIssuerCondicionIva();
+    await prisma.fiscal_configuration.updateMany({
+      where: { business_id: businessId },
+      data: { provider_condicion_iva: condicionIva, provider_condicion_iva_checked_at: new Date() },
+    });
+    return condicionIva;
+  } catch (err) {
+    logDebug(businessId, "No se pudo sincronizar la condición de IVA del proveedor", {
+      errorName: err instanceof Error ? err.name : typeof err,
+      errorMessage: err instanceof Error ? err.message : String(err),
+    });
+    return null;
   }
 }

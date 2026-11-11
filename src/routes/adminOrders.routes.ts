@@ -209,6 +209,7 @@ import {
   listInvoicesHandler,
   postEmitOrderInvoiceHandler,
   postProvisionEmisorHandler,
+  postSyncProviderCondicionIvaHandler,
   putFiscalConfigurationHandler,
   putInvoicingAddonHandler
 } from "../controllers/adminInvoicing.controller";
@@ -726,6 +727,11 @@ router.delete(
 router.get("/invoicing/arca-health", requireRoles("OWNER", "ADMIN"), getArcaHealthHandler);
 router.get("/invoicing/fiscal-configuration", requireRoles("OWNER", "ADMIN"), getFiscalConfigurationHandler);
 router.put("/invoicing/fiscal-configuration", requireRoles("OWNER", "ADMIN"), putFiscalConfigurationHandler);
+router.post(
+  "/invoicing/fiscal-configuration/sync-condicion-iva",
+  requireRoles("OWNER", "ADMIN"),
+  postSyncProviderCondicionIvaHandler
+);
 router.get("/invoicing/fiscal-configuration/issuer-connectivity", requireRoles("OWNER", "ADMIN"), getIssuerConnectivityHandler);
 router.get("/invoicing/fiscal-configuration/cuit-lookup/:cuit", requireRoles("OWNER", "ADMIN"), getCuitLookupHandler);
 router.get("/invoicing/addon", requireRoles("OWNER", "ADMIN"), getInvoicingAddonHandler);

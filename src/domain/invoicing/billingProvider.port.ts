@@ -1,5 +1,6 @@
 import type {
   BillingProviderCapability,
+  CondicionIva,
   CuitLookupResult,
   FiscalInvoiceResult,
   IssueCreditNoteRequest,
@@ -29,6 +30,16 @@ export interface BillingProvider {
   lookupCuit(cuit: string): Promise<CuitLookupResult>;
 
   getIssuerStatus(): Promise<IssuerStatusResult>;
+
+  /**
+   * Condición de IVA que el PROVEEDOR tiene registrada para el emisor vinculado — única fuente
+   * de verdad para resolver el tipo de comprobante a emitir (A/B/C). Nunca debe asumirse igual
+   * a `fiscal_configuration.condicion_iva` local: ese campo es editable a mano en el admin y
+   * puede desincronizarse del emisor ya creado en el proveedor (`registerIssuer` no lo
+   * actualiza después de la creación). Devuelve `"NO_CATEGORIZADO"` si no hay emisor vinculado
+   * o no se pudo determinar.
+   */
+  getIssuerCondicionIva(): Promise<CondicionIva>;
 
   issueInvoice(request: IssueInvoiceRequest): Promise<FiscalInvoiceResult>;
 

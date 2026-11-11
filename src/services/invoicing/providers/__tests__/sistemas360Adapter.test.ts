@@ -6,6 +6,7 @@ vi.mock("../sistemas360Client", async () => {
     ...actual,
     sistemas360ListEmisores: vi.fn(),
     sistemas360CreateEmisor: vi.fn(),
+    sistemas360GetEmisor: vi.fn(),
     sistemas360GetEstadoFiscal: vi.fn(),
     sistemas360CrearComprobante: vi.fn(),
     sistemas360BuscarPorReferenciaExterna: vi.fn(),
@@ -24,6 +25,7 @@ import {
   sistemas360CreateEmisor,
   sistemas360CrearComprobante,
   sistemas360DescargarPdf,
+  sistemas360GetEmisor,
   sistemas360ListEmisores,
   sistemas360LookupCuit,
   sistemas360Reintentar,
@@ -279,6 +281,40 @@ describe("Sistemas360Adapter.issueInvoice", () => {
     // atribución (hallazgo "instrumentación real de requests", "no contabilizar dos veces").
     expect(mocked(sistemas360CrearComprobante).mock.calls[0]).toHaveLength(2);
   });
+
+  it("manda el precio NETO (sin IVA) por ítem, nunca el bruto con `precios_incluyen_iva` — confirmado contra sandbox que Sistemas 360 recalcula el total sumando IVA sin importar ese flag", async () => {
+    mocked(sistemas360CrearComprobante).mockResolvedValue({
+      ok: true,
+      data: { id: 1, entorno: "pruebas", modo_simulacion: true, estado: "autorizado", tipo_comprobante: "factura_b", cae: "71234567890123" },
+    });
+    const adapter = new Sistemas360Adapter("central-token", null);
+
+    await adapter.issueInvoice(baseRequest());
+
+    const payload = mocked(sistemas360CrearComprobante).mock.calls[0][1];
+    expect(payload.items).toEqual([
+      {
+        descripcion: "Milanesa",
+        cantidad: 1,
+        precio_unitario: 826.45, // 1000 / 1.21, redondeado a 2 decimales
+        tipo_impuesto: "gravado",
+        iva: 21,
+      },
+    ]);
+  });
+
+  it("factura C no manda desglose de IVA por ítem (precio bruto tal cual)", async () => {
+    mocked(sistemas360CrearComprobante).mockResolvedValue({
+      ok: true,
+      data: { id: 1, entorno: "pruebas", modo_simulacion: true, estado: "autorizado", tipo_comprobante: "factura_c", cae: "71234567890123" },
+    });
+    const adapter = new Sistemas360Adapter("central-token", null);
+
+    await adapter.issueInvoice(baseRequest({ voucherType: "C" }));
+
+    const payload = mocked(sistemas360CrearComprobante).mock.calls[0][1];
+    expect(payload.items).toEqual([{ descripcion: "Milanesa", cantidad: 1, precio_unitario: 1000 }]);
+  });
 });
 
 describe("Sistemas360Adapter.getInvoiceStatus", () => {
@@ -364,5 +400,37 @@ describe("Sistemas360Adapter.getInvoicePdf", () => {
     const adapter = new Sistemas360Adapter("central-token");
 
     expect(await adapter.getInvoicePdf("biz-1:order-6:invoice")).toBeNull();
+  });
+});
+
+describe("getIssuerCondicionIva", () => {
+  it("devuelve NO_CATEGORIZADO sin consultar al proveedor si no hay emisor vinculado", async () => {
+    const adapter = new Sistemas360Adapter("central-token", null, "biz-1");
+
+    const result = await adapter.getIssuerCondicionIva();
+
+    expect(result).toBe("NO_CATEGORIZADO");
+    expect(sistemas360GetEmisor).not.toHaveBeenCalled();
+  });
+
+  it("consulta el emisor vinculado y normaliza su condición de IVA (nunca la local)", async () => {
+    mocked(sistemas360GetEmisor).mockResolvedValue({
+      emisor_id: 310,
+      cuit: "30990100019",
+      condicion_iva: "responsable_inscripto",
+    });
+    const adapter = new Sistemas360Adapter("central-token", 310, "biz-1");
+
+    const result = await adapter.getIssuerCondicionIva();
+
+    expect(result).toBe("RI");
+    expect(sistemas360GetEmisor).toHaveBeenCalledWith("central-token", 310, "biz-1");
+  });
+
+  it("propaga un error técnico si Sistemas 360 falla al consultar el emisor", async () => {
+    mocked(sistemas360GetEmisor).mockRejectedValue(new Sistemas360HttpError("falló", 500, null));
+    const adapter = new Sistemas360Adapter("central-token", 310, "biz-1");
+
+    await expect(adapter.getIssuerCondicionIva()).rejects.toThrow();
   });
 });

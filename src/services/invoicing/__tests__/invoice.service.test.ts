@@ -69,6 +69,19 @@ function mocked(fn: unknown): ReturnType<typeof vi.fn> {
   return fn as ReturnType<typeof vi.fn>;
 }
 
+/**
+ * Mock mínimo de `BillingProvider` para estos tests. `getIssuerCondicionIva` default resuelve
+ * `"RI"` — coincide con `baseFiscalConfig().condicion_iva` para no alterar las expectativas ya
+ * existentes (`voucherType: "B"`) ahora que la resolución del tipo de comprobante consulta al
+ * provider en vez de leer la config local directamente.
+ */
+function buildProvider(overrides: Record<string, unknown> = {}): unknown {
+  return {
+    getIssuerCondicionIva: vi.fn().mockResolvedValue("RI"),
+    ...overrides,
+  };
+}
+
 const BUSINESS_A = "business-a";
 const ORDER_1 = "order-1";
 
@@ -193,7 +206,7 @@ describe("requestInvoiceEmission", () => {
       status: FiscalInvoiceStatus.failed,
     });
     const issueInvoice = vi.fn();
-    mocked(resolveBillingProvider).mockResolvedValue({ issueInvoice } as unknown as never);
+    mocked(resolveBillingProvider).mockResolvedValue(buildProvider({ issueInvoice }));
 
     const outcome = await requestInvoiceEmission(BUSINESS_A, ORDER_1, FiscalInvoiceKind.invoice);
 
@@ -230,7 +243,7 @@ describe("requestInvoiceEmission", () => {
       errorMessage: null,
       raw: {},
     });
-    mocked(resolveBillingProvider).mockResolvedValue({ issueInvoice } as unknown as never);
+    mocked(resolveBillingProvider).mockResolvedValue(buildProvider({ issueInvoice }));
     mocked(prisma.fiscal_invoice.updateMany).mockResolvedValue({ count: 1 });
     mocked(prisma.fiscal_invoice.findUniqueOrThrow).mockResolvedValue({
       ...createdRow,
@@ -265,7 +278,7 @@ describe("requestInvoiceEmission", () => {
     mocked(prisma.fiscal_invoice.findUnique).mockResolvedValue(existing);
 
     const issueInvoice = vi.fn();
-    mocked(resolveBillingProvider).mockResolvedValue({ issueInvoice } as unknown as never);
+    mocked(resolveBillingProvider).mockResolvedValue(buildProvider({ issueInvoice }));
 
     const outcome = await requestInvoiceEmission(BUSINESS_A, ORDER_1, FiscalInvoiceKind.invoice);
 
@@ -303,7 +316,7 @@ describe("requestInvoiceEmission", () => {
 
     const issueInvoice = vi.fn();
     const getInvoiceStatus = vi.fn();
-    mocked(resolveBillingProvider).mockResolvedValue({ issueInvoice, getInvoiceStatus } as unknown as never);
+    mocked(resolveBillingProvider).mockResolvedValue(buildProvider({ issueInvoice, getInvoiceStatus }));
 
     const outcome = await requestInvoiceEmission(BUSINESS_A, ORDER_1, FiscalInvoiceKind.invoice);
 
@@ -337,7 +350,7 @@ describe("requestInvoiceEmission", () => {
     mocked(prisma.fiscal_invoice.findUniqueOrThrow).mockResolvedValueOnce(racedRow);
 
     const issueInvoice = vi.fn();
-    mocked(resolveBillingProvider).mockResolvedValue({ issueInvoice } as unknown as never);
+    mocked(resolveBillingProvider).mockResolvedValue(buildProvider({ issueInvoice }));
 
     const outcome = await requestInvoiceEmission(BUSINESS_A, ORDER_1, FiscalInvoiceKind.invoice);
 
@@ -365,7 +378,7 @@ describe("requestInvoiceEmission", () => {
       errorMessage: null,
       raw: {},
     });
-    mocked(resolveBillingProvider).mockResolvedValue({ issueInvoice } as unknown as never);
+    mocked(resolveBillingProvider).mockResolvedValue(buildProvider({ issueInvoice }));
     // Primer updateMany (persistir el resultado del proveedor) falla; el segundo (el propio
     // `markRequiresReview`, que registra el estado incierto) sí debe poder completarse.
     mocked(prisma.fiscal_invoice.updateMany)
@@ -411,7 +424,7 @@ describe("requestInvoiceEmission", () => {
       errorMessage: null,
       raw: {},
     });
-    mocked(resolveBillingProvider).mockResolvedValue({ issueInvoice, getInvoiceStatus } as unknown as never);
+    mocked(resolveBillingProvider).mockResolvedValue(buildProvider({ issueInvoice, getInvoiceStatus }));
     mocked(prisma.fiscal_invoice.updateMany).mockResolvedValue({ count: 1 });
     mocked(prisma.fiscal_invoice.findUniqueOrThrow).mockResolvedValue({ ...stuck, status: FiscalInvoiceStatus.authorized });
 
@@ -452,7 +465,7 @@ describe("requestInvoiceEmission", () => {
     ]);
 
     const issueInvoice = vi.fn();
-    mocked(resolveBillingProvider).mockResolvedValue({ issueInvoice } as unknown as never);
+    mocked(resolveBillingProvider).mockResolvedValue(buildProvider({ issueInvoice }));
 
     const outcome = await requestInvoiceEmission(BUSINESS_A, ORDER_1, FiscalInvoiceKind.invoice);
 
@@ -486,7 +499,7 @@ describe("requestInvoiceEmission", () => {
       errorMessage: null,
       raw: {},
     });
-    mocked(resolveBillingProvider).mockResolvedValue({ issueInvoice } as unknown as never);
+    mocked(resolveBillingProvider).mockResolvedValue(buildProvider({ issueInvoice }));
     mocked(prisma.fiscal_invoice.updateMany).mockResolvedValue({ count: 1 });
     mocked(prisma.fiscal_invoice.findUniqueOrThrow).mockResolvedValue({ ...createdRow, status: FiscalInvoiceStatus.processing });
 
@@ -523,7 +536,7 @@ describe("requestInvoiceEmission", () => {
       errorMessage: "timeout",
       raw: {},
     });
-    mocked(resolveBillingProvider).mockResolvedValue({ issueInvoice, getInvoiceStatus } as unknown as never);
+    mocked(resolveBillingProvider).mockResolvedValue(buildProvider({ issueInvoice, getInvoiceStatus }));
     mocked(prisma.fiscal_invoice.updateMany).mockResolvedValue({ count: 1 });
     mocked(prisma.fiscal_invoice.findUniqueOrThrow).mockResolvedValue(stuck);
 
@@ -604,7 +617,7 @@ describe("requestInvoiceEmission", () => {
       errorMessage: null,
       raw: {},
     });
-    mocked(resolveBillingProvider).mockResolvedValueOnce({ issueInvoice, getInvoiceStatus } as unknown as never);
+    mocked(resolveBillingProvider).mockResolvedValueOnce(buildProvider({ issueInvoice, getInvoiceStatus }));
     mocked(prisma.fiscal_invoice.findUniqueOrThrow).mockResolvedValue({
       ...row,
       status: FiscalInvoiceStatus.authorized,
@@ -628,7 +641,7 @@ describe("requestInvoiceEmission", () => {
     const createdRow = { id: "inv-1", business_id: BUSINESS_A, status: FiscalInvoiceStatus.processing };
     mocked(prisma.fiscal_invoice.create).mockResolvedValueOnce(createdRow);
     const issueInvoiceFail = vi.fn().mockRejectedValue(new Error("fallo de red simulado"));
-    mocked(resolveBillingProvider).mockResolvedValue({ issueInvoice: issueInvoiceFail } as unknown as never);
+    mocked(resolveBillingProvider).mockResolvedValue(buildProvider({ issueInvoice: issueInvoiceFail }));
     mocked(prisma.fiscal_invoice.updateMany).mockResolvedValue({ count: 1 });
     mocked(prisma.fiscal_invoice.findUniqueOrThrow).mockResolvedValueOnce({
       ...createdRow,
@@ -656,7 +669,7 @@ describe("requestInvoiceEmission", () => {
       errorMessage: null,
       raw: {},
     });
-    mocked(resolveBillingProvider).mockResolvedValue({ getInvoiceStatus } as unknown as never);
+    mocked(resolveBillingProvider).mockResolvedValue(buildProvider({ getInvoiceStatus }));
 
     await requestInvoiceEmission(BUSINESS_A, ORDER_1, FiscalInvoiceKind.invoice);
 
@@ -694,7 +707,7 @@ describe("requestInvoiceEmission", () => {
       errorMessage: null,
       raw: {},
     });
-    mocked(resolveBillingProvider).mockResolvedValue({ issueInvoice, getInvoiceStatus } as unknown as never);
+    mocked(resolveBillingProvider).mockResolvedValue(buildProvider({ issueInvoice, getInvoiceStatus }));
     mocked(prisma.fiscal_invoice.updateMany).mockResolvedValue({ count: 1 });
     mocked(prisma.fiscal_invoice.findUniqueOrThrow).mockResolvedValue({
       ...interrupted,
@@ -737,7 +750,7 @@ describe("requestInvoiceEmission", () => {
       errorMessage: null,
       raw: {},
     });
-    mocked(resolveBillingProvider).mockResolvedValue({ issueInvoice, getInvoiceStatus } as unknown as never);
+    mocked(resolveBillingProvider).mockResolvedValue(buildProvider({ issueInvoice, getInvoiceStatus }));
     mocked(prisma.fiscal_invoice.updateMany).mockResolvedValue({ count: 1 });
     mocked(prisma.fiscal_invoice.findUniqueOrThrow).mockResolvedValue({ ...row, status: FiscalInvoiceStatus.processing });
 

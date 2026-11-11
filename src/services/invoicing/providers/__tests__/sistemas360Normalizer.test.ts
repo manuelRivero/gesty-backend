@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   condicionIvaToReceptorId,
+  normalizeCondicionIvaFromPadron,
   normalizeSistemas360Response,
   voucherTypeToTipoComprobante,
 } from "../sistemas360Normalizer";
@@ -94,5 +95,24 @@ describe("normalizeSistemas360Response", () => {
   it("conserva el providerInvoiceId como string del id numérico de Sistemas 360", () => {
     const result = normalizeSistemas360Response(buildResponse({ id: 999 }));
     expect(result.providerInvoiceId).toBe("999");
+  });
+});
+
+describe("normalizeCondicionIvaFromPadron", () => {
+  it("reconoce el formato del emisor (guion bajo, minúsculas)", () => {
+    expect(normalizeCondicionIvaFromPadron("responsable_inscripto")).toBe("RI");
+    expect(normalizeCondicionIvaFromPadron("monotributo")).toBe("MONOTRIBUTO");
+  });
+
+  it("reconoce el formato del padrón (espacios, mayúsculas)", () => {
+    expect(normalizeCondicionIvaFromPadron("RESPONSABLE INSCRIPTO")).toBe("RI");
+    expect(normalizeCondicionIvaFromPadron("MONOTRIBUTO")).toBe("MONOTRIBUTO");
+    expect(normalizeCondicionIvaFromPadron("EXENTO")).toBe("EXENTO");
+  });
+
+  it("devuelve NO_CATEGORIZADO para valores vacíos o no reconocidos", () => {
+    expect(normalizeCondicionIvaFromPadron(null)).toBe("NO_CATEGORIZADO");
+    expect(normalizeCondicionIvaFromPadron(undefined)).toBe("NO_CATEGORIZADO");
+    expect(normalizeCondicionIvaFromPadron("algo_desconocido")).toBe("NO_CATEGORIZADO");
   });
 });
